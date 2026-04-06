@@ -11,24 +11,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       - name: Check for SDK update
         id: check
         continue-on-error: true
-        run: npm run check-sdk-update
+        run: pnpm run check-sdk-update
 
       - name: Update SDK and typecheck
         if: steps.check.outcome == 'failure'
         id: typecheck
         continue-on-error: true
         run: |
-          npm install @apps-in-toss/web-framework@latest
-          npm run typecheck 2>&1 | tee typecheck-output.txt
+          pnpm add @apps-in-toss/web-framework@latest
+          pnpm run typecheck 2>&1 | tee typecheck-output.txt
 
       - name: Create issue if update available
         if: steps.check.outcome == 'failure'
@@ -51,8 +54,8 @@ jobs:
               hasTypeErrors ? '```\n' + typecheckOutput.slice(0, 3000) + '\n```' : '',
               '',
               '### Action Required',
-              '1. `npm install @apps-in-toss/web-framework@latest`',
-              '2. `npm run typecheck` — fix any type errors',
+              '1. `pnpm add @apps-in-toss/web-framework@latest`',
+              '2. `pnpm run typecheck` — fix any type errors',
               '3. Check for new exports that need mock implementations',
             ].join('\n');
 
