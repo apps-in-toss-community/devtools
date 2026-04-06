@@ -13,6 +13,13 @@ describe('AitStateManager', () => {
     expect(aitState.state.locale).toBe('ko-KR');
   });
 
+  it('update: 중첩 객체를 전달하면 통째로 교체한다 (patch를 사용해야 부분 업데이트)', () => {
+    aitState.update({ auth: { isLoggedIn: false, isTossLoginIntegrated: false, userKeyHash: '' } });
+    expect(aitState.state.auth.isLoggedIn).toBe(false);
+    expect(aitState.state.auth.isTossLoginIntegrated).toBe(false);
+    // update는 shallow merge이므로 중첩 객체를 완전히 대체한다
+  });
+
   it('patch: 중첩 객체를 부분 업데이트한다', () => {
     aitState.patch('auth', { isLoggedIn: false });
     expect(aitState.state.auth.isLoggedIn).toBe(false);

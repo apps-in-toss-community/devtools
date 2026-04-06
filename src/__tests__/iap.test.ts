@@ -19,16 +19,17 @@ describe('IAP mock', () => {
   });
 
   describe('createOneTimePurchaseOrder', () => {
-    it('성공 시 onEvent가 호출된다', async () => {
+    it('성공 시 onEvent가 호출되고 cancel 함수를 반환한다', async () => {
       const onEvent = vi.fn();
       const onError = vi.fn();
       const processProductGrant = vi.fn().mockResolvedValue(true);
 
-      IAP.createOneTimePurchaseOrder({
+      const cancel = IAP.createOneTimePurchaseOrder({
         options: { sku: 'mock-gem-100', processProductGrant },
         onEvent,
         onError,
       });
+      expect(typeof cancel).toBe('function');
 
       await vi.advanceTimersByTimeAsync(300);
 

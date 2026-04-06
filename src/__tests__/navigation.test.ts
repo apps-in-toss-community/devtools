@@ -180,16 +180,9 @@ describe('Navigation mock', () => {
       expect(handler).toHaveBeenCalledTimes(1);
     });
 
-    it('subscribe: safeAreaInsets 외 상태 변경에도 콜백이 호출된다 (aitState.subscribe 위임)', () => {
-      const handler = vi.fn();
-      const unsub = SafeAreaInsets.subscribe({ onEvent: handler });
-
-      // safeAreaInsets가 아닌 다른 상태 변경
-      aitState.update({ locale: 'en-US' });
-      expect(handler).toHaveBeenCalledTimes(1);
-
-      unsub();
-    });
+    // TODO: SafeAreaInsets.subscribe는 현재 aitState.subscribe에 위임하므로
+    // safeAreaInsets 외 상태 변경에도 콜백이 호출된다. 향후 insets 변경 시에만 호출되도록 개선 필요.
+    it.todo('subscribe: safeAreaInsets 변경 시에만 콜백이 호출되어야 한다');
   });
 
   describe('graniteEvent', () => {

@@ -17,12 +17,12 @@ describe('createMockProxy', () => {
   });
 
   it('미구현 프로퍼티 접근 시 경고를 출력하고 no-op 함수를 반환한다', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const mock = createMockProxy('TestModule', { existing: () => 42 });
-    const fn = (mock as Record<string, unknown>)['unknownMethod'] as () => Promise<undefined>;
+    const ref = createMockProxy('TestModule', { existing: () => 42 }) as Record<string, unknown>;
+    const fn = ref['unknownMethod'] as () => Promise<undefined>;
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('TestModule.unknownMethod is not mocked yet'));
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('TestModule.unknownMethod is not mocked yet'));
 
     const result = await fn();
     expect(result).toBeUndefined();
@@ -31,9 +31,9 @@ describe('createMockProxy', () => {
   it('같은 미구현 프로퍼티에 대해 경고는 한 번만 출력된다', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    const mock = createMockProxy('TestModule', {});
-    (mock as Record<string, unknown>)['foo'];
-    (mock as Record<string, unknown>)['foo'];
+    const ref = createMockProxy('TestModule', {}) as Record<string, unknown>;
+    ref['foo'];
+    ref['foo'];
 
     const fooWarnings = warnSpy.mock.calls.filter(c =>
       (c[0] as string).includes('TestModule.foo'),
@@ -43,8 +43,7 @@ describe('createMockProxy', () => {
 
   it('미구현 프로퍼티는 접근할 때마다 새 no-op 함수 인스턴스를 반환한다', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const mock = createMockProxy('TestModuleInstance', {});
-    const ref = (mock as Record<string, unknown>);
+    const ref = createMockProxy('TestModuleInstance', {}) as Record<string, unknown>;
     const fn1 = ref['bar'];
     const fn2 = ref['bar'];
     expect(fn1).not.toBe(fn2);

@@ -76,22 +76,19 @@ describe('Ads mock', () => {
   });
 
   describe('loadFullScreenAd / showFullScreenAd', () => {
-    it('loadFullScreenAd 후 showFullScreenAd가 동작한다', async () => {
+    // source delays: show@100, dismissed@1500
+    it('loadFullScreenAd 후 showFullScreenAd 전체 이벤트 시퀀스', async () => {
       const loadEvent = vi.fn();
-      const loadError = vi.fn();
-
-      loadFullScreenAd({ onEvent: loadEvent, onError: loadError });
+      loadFullScreenAd({ onEvent: loadEvent, onError: vi.fn() });
       await vi.advanceTimersByTimeAsync(200);
-
       expect(loadEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'loaded' }));
 
       const showEvent = vi.fn();
-      const showError = vi.fn();
+      showFullScreenAd({ onEvent: showEvent, onError: vi.fn() });
+      await vi.advanceTimersByTimeAsync(1500);
 
-      showFullScreenAd({ onEvent: showEvent, onError: showError });
-      await vi.advanceTimersByTimeAsync(100);
-
-      expect(showEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'show' }));
+      const eventTypes = showEvent.mock.calls.map((c: unknown[]) => (c[0] as { type: string }).type);
+      expect(eventTypes).toEqual(['show', 'dismissed']);
     });
 
     it('showFullScreenAd: 로드되지 않았으면 에러를 반환한다', () => {
