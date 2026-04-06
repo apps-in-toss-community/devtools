@@ -33,6 +33,7 @@ describe('Ads mock', () => {
     });
 
     // setTimeout 지연 값은 ads/index.ts의 showAppsInTossAdMob 구현과 일치해야 한다
+    // source delays: requested@50, show@100, impression@150, userEarnedReward@1000, dismissed@1500
     it('showAppsInTossAdMob: 로드 후 이벤트 시퀀스가 발생한다', async () => {
       // load first
       const loadEvent = vi.fn();
@@ -40,24 +41,13 @@ describe('Ads mock', () => {
       await vi.advanceTimersByTimeAsync(200);
       expect(aitState.state.ads.isLoaded).toBe(true);
 
-      // show
+      // show — advance to 1500ms to flush all events at once
       const showEvent = vi.fn();
       GoogleAdMob.showAppsInTossAdMob({ onEvent: showEvent, onError: vi.fn() });
+      await vi.advanceTimersByTimeAsync(1500);
 
-      await vi.advanceTimersByTimeAsync(50);
-      expect(showEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'requested' }));
-
-      await vi.advanceTimersByTimeAsync(50);
-      expect(showEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'show' }));
-
-      await vi.advanceTimersByTimeAsync(50);
-      expect(showEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'impression' }));
-
-      await vi.advanceTimersByTimeAsync(850);
-      expect(showEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'userEarnedReward' }));
-
-      await vi.advanceTimersByTimeAsync(500);
-      expect(showEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'dismissed' }));
+      const eventTypes = showEvent.mock.calls.map((c: unknown[]) => (c[0] as { type: string }).type);
+      expect(eventTypes).toEqual(['requested', 'show', 'impression', 'userEarnedReward', 'dismissed']);
       expect(aitState.state.ads.isLoaded).toBe(false);
     });
 

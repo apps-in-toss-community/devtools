@@ -21,6 +21,11 @@ import {
   setScreenAwakeMode,
   requestReview,
   tdsEvent,
+  share,
+  setIosSwipeGestureEnabled,
+  setDeviceOrientation,
+  setSecureScreen,
+  getSafeAreaInsets,
 } from '../mock/navigation/index.js';
 
 describe('Navigation mock', () => {
@@ -135,6 +140,27 @@ describe('Navigation mock', () => {
     expect((requestReview as unknown as { isSupported: () => boolean }).isSupported()).toBe(true);
   });
 
+  it('share: 에러 없이 실행된다', async () => {
+    await expect(share({ message: 'hello' })).resolves.toBeUndefined();
+  });
+
+  it('setIosSwipeGestureEnabled: 에러 없이 실행된다', async () => {
+    await expect(setIosSwipeGestureEnabled({ isEnabled: true })).resolves.toBeUndefined();
+  });
+
+  it('setDeviceOrientation: 에러 없이 실행된다', async () => {
+    await expect(setDeviceOrientation({ type: 'landscape' })).resolves.toBeUndefined();
+  });
+
+  it('setSecureScreen: 설정한 값을 반환한다', async () => {
+    const result = await setSecureScreen({ enabled: true });
+    expect(result).toEqual({ enabled: true });
+  });
+
+  it('getSafeAreaInsets (deprecated): top 값을 반환한다', () => {
+    expect(getSafeAreaInsets()).toBe(47);
+  });
+
   describe('SafeAreaInsets', () => {
     it('get: 현재 safe area insets를 반환한다', () => {
       const insets = SafeAreaInsets.get();
@@ -152,6 +178,17 @@ describe('Navigation mock', () => {
       unsub();
       aitState.patch('safeAreaInsets', { top: 60 });
       expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('subscribe: safeAreaInsets 외 상태 변경에도 콜백이 호출된다 (aitState.subscribe 위임)', () => {
+      const handler = vi.fn();
+      const unsub = SafeAreaInsets.subscribe({ onEvent: handler });
+
+      // safeAreaInsets가 아닌 다른 상태 변경
+      aitState.update({ locale: 'en-US' });
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      unsub();
     });
   });
 

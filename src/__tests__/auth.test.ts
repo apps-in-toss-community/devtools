@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { aitState } from '../mock/state.js';
-import { appLogin, getIsTossLoginIntegratedService, getUserKeyForGame } from '../mock/auth/index.js';
+import { appLogin, getIsTossLoginIntegratedService, getUserKeyForGame, appsInTossSignTossCert } from '../mock/auth/index.js';
 
 describe('Auth mock', () => {
   beforeEach(() => {
@@ -35,5 +35,9 @@ describe('Auth mock', () => {
     aitState.patch('auth', { userKeyHash: '' });
     const result = await getUserKeyForGame();
     expect(result).toBeUndefined();
+  });
+
+  it('appsInTossSignTossCert: 에러 없이 실행된다', async () => {
+    await expect(appsInTossSignTossCert({ txId: 'mock-tx' })).resolves.toBeUndefined();
   });
 });

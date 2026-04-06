@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { aitState } from '../mock/state.js';
-import { IAP, resetOrderCounter } from '../mock/iap/index.js';
+import { IAP, checkoutPayment } from '../mock/iap/index.js';
 
 describe('IAP mock', () => {
   beforeEach(() => {
     aitState.reset();
-    resetOrderCounter();
     vi.useFakeTimers();
   });
 
@@ -90,5 +89,20 @@ describe('IAP mock', () => {
     expect(aitState.state.iap.completedOrders).toContainEqual(
       expect.objectContaining({ orderId: 'order-1', status: 'COMPLETED' }),
     );
+  });
+
+  describe('checkoutPayment', () => {
+    it('성공 시 { success: true }를 반환한다', async () => {
+      const promise = checkoutPayment({ params: { payToken: 'token-1' } });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await promise).toEqual({ success: true });
+    });
+
+    it('실패 시 reason을 포함한다', async () => {
+      aitState.patch('payment', { nextResult: 'fail', failReason: 'Insufficient funds' });
+      const promise = checkoutPayment({ params: { payToken: 'token-2' } });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await promise).toEqual({ success: false, reason: 'Insufficient funds' });
+    });
   });
 });

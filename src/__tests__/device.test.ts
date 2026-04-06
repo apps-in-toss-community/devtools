@@ -41,6 +41,7 @@ describe('Device mock', () => {
   });
 
   describe('saveBase64Data', () => {
+    // vi.spyOn은 vitest.config.ts의 restoreMocks: true에 의해 자동 복원된다
     it('에러 없이 실행된다', async () => {
       const clickSpy = vi.fn();
       const originalCreateElement = document.createElement.bind(document);

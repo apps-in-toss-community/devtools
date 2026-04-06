@@ -279,8 +279,7 @@ class AitStateManager {
 
   reset() {
     const deviceId = this._state.deviceId;
-    this._state = structuredClone(DEFAULT_STATE);
-    this._state.deviceId = deviceId;
+    this._state = { ...structuredClone(DEFAULT_STATE), deviceId };
     this._notify();
   }
 

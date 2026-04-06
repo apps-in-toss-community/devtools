@@ -40,4 +40,14 @@ describe('createMockProxy', () => {
     );
     expect(fooWarnings).toHaveLength(1);
   });
+
+  it('미구현 프로퍼티는 접근할 때마다 새 no-op 함수 인스턴스를 반환한다', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mock = createMockProxy('TestModuleInstance', {});
+    const ref = (mock as Record<string, unknown>);
+    const fn1 = ref['bar'];
+    const fn2 = ref['bar'];
+    expect(fn1).not.toBe(fn2);
+    expect(typeof fn1).toBe('function');
+  });
 });

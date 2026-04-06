@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { aitState } from '../mock/state.js';
 import {
   grantPromotionReward,
+  grantPromotionRewardForGame,
   getGameCenterGameProfile,
   submitGameCenterLeaderBoardScore,
+  openGameCenterLeaderboard,
 } from '../mock/game/index.js';
 
 describe('Game mock', () => {
@@ -37,5 +39,16 @@ describe('Game mock', () => {
     expect(aitState.state.game.leaderboardScores).toContainEqual(
       expect.objectContaining({ score: '1000' }),
     );
+  });
+
+  it('grantPromotionRewardForGame: reward key를 반환한다', async () => {
+    const result = await grantPromotionRewardForGame({
+      params: { promotionCode: 'GAME1', amount: 50 },
+    });
+    expect(result).toHaveProperty('key', expect.stringMatching(/^mock-reward-/));
+  });
+
+  it('openGameCenterLeaderboard: 에러 없이 실행된다', async () => {
+    await expect(openGameCenterLeaderboard()).resolves.toBeUndefined();
   });
 });
