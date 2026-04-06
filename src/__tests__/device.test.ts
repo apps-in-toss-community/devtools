@@ -42,13 +42,18 @@ describe('Device mock', () => {
 
   describe('saveBase64Data', () => {
     it('에러 없이 실행된다', async () => {
-      // document.createElement('a').click()을 mock
       const clickSpy = vi.fn();
-      vi.spyOn(document, 'createElement').mockReturnValueOnce({
-        set href(_v: string) {},
-        set download(_v: string) {},
-        click: clickSpy,
-      } as unknown as HTMLAnchorElement);
+      const originalCreateElement = document.createElement.bind(document);
+      vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        if (tag === 'a') {
+          return {
+            set href(_v: string) {},
+            set download(_v: string) {},
+            click: clickSpy,
+          } as unknown as HTMLAnchorElement;
+        }
+        return originalCreateElement(tag);
+      });
 
       await saveBase64Data({
         data: 'dGVzdA==',

@@ -141,14 +141,17 @@ describe('Navigation mock', () => {
       expect(insets).toEqual({ top: 47, bottom: 34, left: 0, right: 0 });
     });
 
-    it('subscribe: 상태 변경 시 콜백이 호출된다', () => {
+    it('subscribe: 상태 변경 시 콜백이 호출되고 unsubscribe 후 호출되지 않는다', () => {
       const handler = vi.fn();
       const unsub = SafeAreaInsets.subscribe({ onEvent: handler });
 
       aitState.patch('safeAreaInsets', { top: 50 });
       expect(handler).toHaveBeenCalledWith(expect.objectContaining({ top: 50 }));
+      expect(handler).toHaveBeenCalledTimes(1);
 
       unsub();
+      aitState.patch('safeAreaInsets', { top: 60 });
+      expect(handler).toHaveBeenCalledTimes(1);
     });
   });
 

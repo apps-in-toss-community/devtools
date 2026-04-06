@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createMockProxy, resetWarned } from '../mock/proxy.js';
 
+// resetWarned()는 모든 모듈의 WARNED 캐시를 전역으로 초기화한다.
+// 다른 테스트 파일에서 createMockProxy 기반 모듈(IAP, Ads 등)을 사용할 경우
+// 해당 파일에서도 resetWarned()를 호출해야 경고 관련 테스트가 정확하다.
 describe('createMockProxy', () => {
   beforeEach(() => {
     resetWarned();

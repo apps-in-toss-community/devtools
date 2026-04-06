@@ -35,6 +35,21 @@ describe('AitStateManager', () => {
     expect(listener).toHaveBeenCalledTimes(2); // 구독 해제 후 호출 안 됨
   });
 
+  it('subscribe: 리스너 콜백 내에서 새 상태를 읽을 수 있다', () => {
+    let capturedLocale = '';
+    const unsub = aitState.subscribe(() => {
+      capturedLocale = aitState.state.locale;
+    });
+
+    aitState.update({ locale: 'en-US' });
+    expect(capturedLocale).toBe('en-US');
+
+    aitState.patch('brand', { displayName: 'Changed' });
+    expect(aitState.state.brand.displayName).toBe('Changed');
+
+    unsub();
+  });
+
   it('trigger: CustomEvent를 dispatch한다', () => {
     const handler = vi.fn();
     window.addEventListener('__ait:backEvent', handler);
