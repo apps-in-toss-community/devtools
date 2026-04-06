@@ -5,12 +5,13 @@
 import { aitState } from '../state.js';
 import { createMockProxy } from '../proxy.js';
 
+// orderCounter는 모듈 레벨 상태로 reset()에 의해 초기화되지 않는다.
+// 테스트에서는 orderId를 stringContaining('mock-order-')로 검증하여 카운터 값에 의존하지 않는다.
 let orderCounter = 0;
 
 function generateOrderId(): string {
   return `mock-order-${++orderCounter}-${Date.now()}`;
 }
-
 
 interface IapCreateOneTimePurchaseOrderOptions {
   options: {
