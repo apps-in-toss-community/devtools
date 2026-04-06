@@ -125,22 +125,17 @@ function StorageSection() {
   );
 }
 
-function useRefresh(intervalMs = 1000) {
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-}
-
 function EnvironmentSection() {
+  const [platform, setPlatform] = useState(getPlatformOS());
+  const [env, setEnv] = useState(getOperationalEnvironment());
   const [network, setNetwork] = useState<string>('');
-  useRefresh();
-  const platform = getPlatformOS();
-  const env = getOperationalEnvironment();
 
   useEffect(() => {
-    const refresh = () => getNetworkStatus().then(setNetwork);
+    const refresh = () => {
+      setPlatform(getPlatformOS());
+      setEnv(getOperationalEnvironment());
+      getNetworkStatus().then(setNetwork);
+    };
     refresh();
     const id = setInterval(refresh, 1000);
     return () => clearInterval(id);
