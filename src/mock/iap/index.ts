@@ -11,6 +11,11 @@ function generateOrderId(): string {
   return `mock-order-${++orderCounter}-${Date.now()}`;
 }
 
+/** 테스트에서 orderCounter를 초기화할 때 사용 */
+export function resetOrderCounter(): void {
+  orderCounter = 0;
+}
+
 interface IapCreateOneTimePurchaseOrderOptions {
   options: {
     sku?: string;

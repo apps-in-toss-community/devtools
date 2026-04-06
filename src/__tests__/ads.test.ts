@@ -74,11 +74,13 @@ describe('Ads mock', () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
 
-      TossAds.attach('ad-group-1', container);
-      expect(container.children).toHaveLength(1);
-      expect(container.children[0].textContent).toContain('TossAds Placeholder');
-
-      document.body.removeChild(container);
+      try {
+        TossAds.attach('ad-group-1', container);
+        expect(container.children).toHaveLength(1);
+        expect(container.children[0].textContent).toContain('TossAds Placeholder');
+      } finally {
+        container.remove();
+      }
     });
   });
 

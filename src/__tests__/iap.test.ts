@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { aitState } from '../mock/state.js';
-import { IAP } from '../mock/iap/index.js';
+import { IAP, resetOrderCounter } from '../mock/iap/index.js';
 
 describe('IAP mock', () => {
   beforeEach(() => {
     aitState.reset();
+    resetOrderCounter();
     vi.useFakeTimers();
   });
 

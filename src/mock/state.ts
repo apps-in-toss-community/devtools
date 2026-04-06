@@ -265,7 +265,10 @@ class AitStateManager {
 
   /** 분석 로그 추가 */
   logAnalytics(entry: Omit<AnalyticsLogEntry, 'timestamp'>) {
-    this._state.analyticsLog.push({ ...entry, timestamp: Date.now() });
+    this._state = {
+      ...this._state,
+      analyticsLog: [...this._state.analyticsLog, { ...entry, timestamp: Date.now() }],
+    };
     this._notify();
   }
 
