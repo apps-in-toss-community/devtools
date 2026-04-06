@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   appLogin,
   Storage,
@@ -125,13 +125,25 @@ function StorageSection() {
   );
 }
 
+function useRefresh(intervalMs = 1000) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+}
+
 function EnvironmentSection() {
   const [network, setNetwork] = useState<string>('');
+  useRefresh();
   const platform = getPlatformOS();
   const env = getOperationalEnvironment();
 
   useEffect(() => {
-    getNetworkStatus().then(setNetwork);
+    const refresh = () => getNetworkStatus().then(setNetwork);
+    refresh();
+    const id = setInterval(refresh, 1000);
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -217,11 +229,15 @@ function IAPSection() {
 
 function AnalyticsSection() {
   const [clicked, setClicked] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   const handleClick = async () => {
     await Analytics.click({ component: 'demo_button', page: 'main' });
     setClicked(true);
-    setTimeout(() => setClicked(false), 1500);
+    clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => setClicked(false), 1500);
   };
 
   return (
@@ -237,11 +253,13 @@ function AnalyticsSection() {
   );
 }
 
+let eventCounter = 0;
+
 function EventSection() {
-  const [events, setEvents] = useState<string[]>([]);
+  const [events, setEvents] = useState<{ id: number; text: string }[]>([]);
 
   const addEvent = useCallback((name: string) => {
-    setEvents((prev) => [`[${new Date().toLocaleTimeString()}] ${name}`, ...prev].slice(0, 10));
+    setEvents((prev) => [{ id: ++eventCounter, text: `[${new Date().toLocaleTimeString()}] ${name}` }, ...prev].slice(0, 10));
   }, []);
 
   useEffect(() => {
@@ -265,8 +283,8 @@ function EventSection() {
       </p>
       {events.length > 0 ? (
         <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
-          {events.map((e, i) => (
-            <div key={i} style={{ padding: '4px 0', borderBottom: `1px solid ${colors.border}` }}>{e}</div>
+          {events.map((e) => (
+            <div key={e.id} style={{ padding: '4px 0', borderBottom: `1px solid ${colors.border}` }}>{e.text}</div>
           ))}
         </div>
       ) : (

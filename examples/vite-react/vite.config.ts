@@ -9,8 +9,10 @@ const panelEntry = resolve(aitRoot, 'dist/panel/index.js');
 
 export default defineConfig({
   plugins: [
-    // In file:-linked packages, bare specifiers like 'ait-devtools/mock'
-    // may fail to resolve. Map all relevant IDs to absolute paths.
+    // Override the unplugin's resolveId: in file:-linked packages, bare
+    // specifiers like 'ait-devtools/mock' fail to resolve. This plugin maps
+    // all relevant IDs (including the @apps-in-toss/* aliases that the
+    // unplugin would normally handle) to absolute paths instead.
     {
       name: 'ait-devtools-resolve',
       enforce: 'pre',
