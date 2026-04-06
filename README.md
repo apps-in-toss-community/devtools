@@ -1,6 +1,6 @@
 # ait-devtools
 
-`@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다.
+`@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
 
 앱인토스(Apps in Toss) 미니앱을 **일반 브라우저**에서 개발하고 테스트할 수 있게 해줍니다. 토스 앱 없이도 SDK의 모든 기능을 시뮬레이션하여 빠른 개발 사이클을 지원합니다.
 
@@ -77,6 +77,8 @@ module.exports = {
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': 'ait-devtools/mock',
+      '@apps-in-toss/web-bridge': 'ait-devtools/mock',
+      '@apps-in-toss/web-analytics': 'ait-devtools/mock',
     },
   },
 }
@@ -84,7 +86,7 @@ module.exports = {
 
 ## Floating DevTools Panel
 
-플러그인 사용 시 진입점 파일에 패널이 자동 주입됩니다 (`panel: false` 옵션으로 비활성화 가능).
+플러그인 사용 시 진입점 파일에 패널이 자동 주입됩니다 (`aitDevtools.vite({ panel: false })`로 비활성화 가능).
 
 화면 우하단의 **'AIT' 버튼**을 클릭하면 DevTools 패널이 토글됩니다.
 
@@ -113,6 +115,9 @@ __ait.update({ platform: 'android', locale: 'en-US' });
 
 // 이벤트 트리거
 __ait.trigger('backEvent');
+
+// 중첩 상태 업데이트 (permissions, iap 등)
+__ait.patch('permissions', { camera: 'denied' });
 
 // 현재 상태 조회
 console.log(__ait.state.platform);
@@ -200,9 +205,12 @@ console.log(__ait.state.platform);
 | API | 설명 |
 |---|---|
 | `IAP.createOneTimePurchaseOrder` | 일회성 구매 주문 생성 |
+| `IAP.createSubscriptionPurchaseOrder` | 구독 구매 주문 생성 |
 | `IAP.getProductItemList` | 상품 목록 조회 |
 | `IAP.getPendingOrders` | 대기 중 주문 조회 |
+| `IAP.getCompletedOrRefundedOrders` | 완료/환불 주문 조회 |
 | `IAP.completeProductGrant` | 상품 지급 완료 |
+| `IAP.getSubscriptionInfo` | 구독 정보 조회 |
 | `checkoutPayment` | TossPay 결제 |
 
 ### 광고
@@ -211,7 +219,12 @@ console.log(__ait.state.platform);
 |---|---|
 | `GoogleAdMob.loadAppsInTossAdMob` | AdMob 광고 로드 |
 | `GoogleAdMob.showAppsInTossAdMob` | AdMob 광고 표시 |
-| `TossAds` | 토스 광고 네임스페이스 |
+| `GoogleAdMob.isAppsInTossAdMobLoaded` | AdMob 광고 로드 여부 확인 |
+| `TossAds.initialize` | 토스 광고 초기화 |
+| `TossAds.attach` | 광고 슬롯 부착 |
+| `TossAds.attachBanner` | 배너 광고 부착 |
+| `TossAds.destroy` | 광고 슬롯 제거 |
+| `TossAds.destroyAll` | 모든 광고 슬롯 제거 |
 | `loadFullScreenAd` | 전면 광고 로드 |
 | `showFullScreenAd` | 전면 광고 표시 |
 
@@ -256,7 +269,7 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 
 ### 2. Proxy Fallback
 
-미구현 API에 접근하면 에러 대신 경고 로그와 함께 기본값을 반환하는 Proxy fallback으로 graceful하게 처리합니다. 새로운 SDK API가 추가되어도 앱이 크래시하지 않습니다.
+미구현 API에 접근하면 에러 대신 경고 로그와 함께 no-op 함수를 반환하는 Proxy fallback으로 graceful하게 처리합니다. 새로운 SDK API가 추가되어도 앱이 크래시하지 않습니다.
 
 ### 3. GitHub Actions 주간 CI
 
