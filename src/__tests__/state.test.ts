@@ -68,7 +68,7 @@ describe('AitStateManager', () => {
 
   it('reset: 중첩 객체가 deep-clone되어 이전 상태와 독립적이다', () => {
     aitState.patch('iap', {
-      completedOrders: [{ orderId: 'x', sku: 'x', status: 'COMPLETED' as const, date: '' }],
+      completedOrders: [{ orderId: 'x', sku: 'x', status: 'COMPLETED', date: '' }],
     });
     aitState.patch('auth', { isLoggedIn: false });
 

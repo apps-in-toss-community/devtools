@@ -251,9 +251,9 @@ class AitStateManager {
   ) {
     const current = this._state[key];
     if (typeof current === 'object' && current !== null && !Array.isArray(current)) {
-      (this._state[key] as Record<string, unknown>) = { ...(current as Record<string, unknown>), ...(partial as Record<string, unknown>) };
+      this._state = { ...this._state, [key]: { ...(current as Record<string, unknown>), ...(partial as Record<string, unknown>) } };
     } else {
-      this._state[key] = partial as AitDevtoolsState[K];
+      this._state = { ...this._state, [key]: partial as AitDevtoolsState[K] };
     }
     this._notify();
   }
@@ -281,6 +281,7 @@ class AitStateManager {
     const deviceId = this._state.deviceId;
     this._state = structuredClone(DEFAULT_STATE);
     this._state.deviceId = deviceId;
+    this._listeners.clear();
     this._notify();
   }
 

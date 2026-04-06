@@ -31,12 +31,14 @@ describe('Storage mock', () => {
     // ait storage 이외의 키는 유지되어야 함
     localStorage.setItem('other', 'kept');
 
-    await Storage.clearItems();
+    try {
+      await Storage.clearItems();
 
-    expect(await Storage.getItem('a')).toBeNull();
-    expect(await Storage.getItem('b')).toBeNull();
-    expect(localStorage.getItem('other')).toBe('kept');
-
-    localStorage.removeItem('other');
+      expect(await Storage.getItem('a')).toBeNull();
+      expect(await Storage.getItem('b')).toBeNull();
+      expect(localStorage.getItem('other')).toBe('kept');
+    } finally {
+      localStorage.removeItem('other');
+    }
   });
 });
