@@ -1,0 +1,68 @@
+{
+  "name": "ait-devtools",
+  "version": "0.1.0",
+  "description": "Development tools for Apps in Toss mini-apps — mock SDK, floating devtools panel, and universal bundler plugin",
+  "type": "module",
+  "main": "./dist/mock/index.js",
+  "types": "./dist/mock/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/mock/index.d.ts",
+      "import": "./dist/mock/index.js"
+    },
+    "./mock": {
+      "types": "./dist/mock/index.d.ts",
+      "import": "./dist/mock/index.js"
+    },
+    "./panel": {
+      "types": "./dist/panel/index.d.ts",
+      "import": "./dist/panel/index.js"
+    },
+    "./unplugin": {
+      "types": "./dist/unplugin/index.d.ts",
+      "import": "./dist/unplugin/index.js",
+      "require": "./dist/unplugin/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check-sdk-update": "tsx scripts/check-sdk-update.ts"
+  },
+  "peerDependencies": {
+    "@apps-in-toss/web-framework": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@apps-in-toss/web-framework": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "unplugin": "^2.3.2"
+  },
+  "devDependencies": {
+    "@apps-in-toss/web-framework": "^2.4.1",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.1",
+    "tsx": "^4.19.4"
+  },
+  "keywords": [
+    "apps-in-toss",
+    "toss",
+    "mini-app",
+    "devtools",
+    "mock",
+    "sdk"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/ait-devtools"
+  }
+}

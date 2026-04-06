@@ -1,0 +1,75 @@
+name: Check SDK Update
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # 매주 월요일 09:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check-update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Check for SDK update
+        id: check
+        continue-on-error: true
+        run: npm run check-sdk-update
+
+      - name: Update SDK and typecheck
+        if: steps.check.outcome == 'failure'
+        id: typecheck
+        continue-on-error: true
+        run: |
+          npm install @apps-in-toss/web-framework@latest
+          npm run typecheck 2>&1 | tee typecheck-output.txt
+
+      - name: Create issue if update available
+        if: steps.check.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let typecheckOutput = '';
+            try {
+              typecheckOutput = fs.readFileSync('typecheck-output.txt', 'utf8');
+            } catch {}
+
+            const hasTypeErrors = typecheckOutput.includes('error TS');
+            const title = `SDK Update Available: @apps-in-toss/web-framework`;
+            const body = [
+              `A new version of \`@apps-in-toss/web-framework\` is available.`,
+              '',
+              hasTypeErrors ? '**Type errors detected** — mock implementations need updating:' : 'No type errors detected — update should be straightforward.',
+              '',
+              hasTypeErrors ? '```\n' + typecheckOutput.slice(0, 3000) + '\n```' : '',
+              '',
+              '### Action Required',
+              '1. `npm install @apps-in-toss/web-framework@latest`',
+              '2. `npm run typecheck` — fix any type errors',
+              '3. Check for new exports that need mock implementations',
+            ].join('\n');
+
+            // Check if issue already exists
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'sdk-update',
+            });
+
+            if (issues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['sdk-update'],
+              });
+            }

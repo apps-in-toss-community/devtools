@@ -1,0 +1,80 @@
+/**
+ * ait-devtools unplugin
+ *
+ * 모든 주요 번들러를 지원하는 단일 플러그인.
+ * @apps-in-toss/web-framework → ait-devtools/mock 으로 alias 설정.
+ *
+ * Usage:
+ *   import aitDevtools from 'ait-devtools/unplugin';
+ *
+ *   // Vite
+ *   export default { plugins: [aitDevtools.vite()] };
+ *
+ *   // Webpack / Next.js
+ *   config.plugins.push(aitDevtools.webpack());
+ *
+ *   // Rspack
+ *   config.plugins.push(aitDevtools.rspack());
+ *
+ *   // esbuild
+ *   { plugins: [aitDevtools.esbuild()] }
+ *
+ *   // Rollup
+ *   { plugins: [aitDevtools.rollup()] }
+ */
+
+import { createUnplugin } from 'unplugin';
+
+export interface AitDevtoolsOptions {
+  /**
+   * 패널 자동 주입 여부 (default: true)
+   * true이면 진입점에 floating panel import를 자동 추가한다.
+   */
+  panel?: boolean;
+}
+
+const FRAMEWORK_ID = '@apps-in-toss/web-framework';
+const BRIDGE_ID = '@apps-in-toss/web-bridge';
+const ANALYTICS_ID = '@apps-in-toss/web-analytics';
+
+const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
+  const _panel = options?.panel ?? true;
+
+  return {
+    name: 'ait-devtools',
+    enforce: 'pre' as const,
+
+    resolveId(id: string) {
+      // @apps-in-toss/web-framework → ait-devtools/mock
+      if (id === FRAMEWORK_ID || id === BRIDGE_ID || id === ANALYTICS_ID) {
+        return 'ait-devtools/mock';
+      }
+      return null;
+    },
+
+    transformInclude(id: string) {
+      if (!_panel) return false;
+      // 진입점 파일에만 패널 import를 주입
+      return /\.(tsx?|jsx?)$/.test(id) && /main|index|entry|app/i.test(id);
+    },
+
+    transform(code: string, id: string) {
+      if (!_panel) return null;
+      // 이미 패널이 import 되어있으면 스킵
+      if (code.includes('ait-devtools/panel')) return null;
+      // 진입점에서 가장 처음으로 실행되도록 prepend
+      if (/main|index|entry/i.test(id) && !id.includes('node_modules')) {
+        return `import 'ait-devtools/panel';\n${code}`;
+      }
+      return null;
+    },
+  };
+});
+
+export const vite = aitDevtoolsPlugin.vite;
+export const webpack = aitDevtoolsPlugin.webpack;
+export const rollup = aitDevtoolsPlugin.rollup;
+export const esbuild = aitDevtoolsPlugin.esbuild;
+export const rspack = aitDevtoolsPlugin.rspack;
+
+export default aitDevtoolsPlugin;
