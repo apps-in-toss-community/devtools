@@ -5,6 +5,8 @@
 import { aitState } from '../state.js';
 import { createMockProxy } from '../proxy.js';
 
+// orderCounter는 모듈 레벨 상태로 reset()에 의해 초기화되지 않는다.
+// 테스트에서는 orderId를 stringContaining('mock-order-')로 검증하여 카운터 값에 의존하지 않는다.
 let orderCounter = 0;
 
 function generateOrderId(): string {
@@ -60,7 +62,7 @@ async function handlePurchase(
   processProductGrant: (params: { orderId: string; subscriptionId?: string }) => boolean | Promise<boolean>,
   onEvent: (event: { type: 'success'; data: IapOrderResult }) => void | Promise<void>,
   onError: (error: unknown) => void | Promise<void>,
-): Promise<() => void> {
+): Promise<void> {
   const nextResult = aitState.state.iap.nextResult;
 
   // 비동기 시뮬레이션 (실제로는 결제 UI가 뜨는 시간)
@@ -68,7 +70,7 @@ async function handlePurchase(
 
   if (nextResult !== 'success') {
     onError({ code: nextResult });
-    return () => {};
+    return;
   }
 
   const result = buildOrderResult(sku);
@@ -77,34 +79,36 @@ async function handlePurchase(
     const granted = await processProductGrant({ orderId: result.orderId });
     if (!granted) {
       onError({ code: 'PRODUCT_NOT_GRANTED_BY_PARTNER' });
-      return () => {};
+      return;
     }
   } catch (e) {
     onError(e);
-    return () => {};
+    return;
   }
 
   // 주문 완료 기록
-  aitState.state.iap.completedOrders.push({
-    orderId: result.orderId,
-    sku,
-    status: 'COMPLETED',
-    date: new Date().toISOString(),
+  aitState.patch('iap', {
+    completedOrders: [...aitState.state.iap.completedOrders, {
+      orderId: result.orderId,
+      sku,
+      status: 'COMPLETED' as const,
+      date: new Date().toISOString(),
+    }],
   });
 
   await onEvent({ type: 'success', data: result });
-  return () => {};
 }
 
 export const IAP = createMockProxy('IAP', {
+  // 반환되는 cancel 함수는 mock에서는 no-op이다 (실제 SDK는 결제 UI를 닫음)
   createOneTimePurchaseOrder(params: IapCreateOneTimePurchaseOrderOptions): () => void {
     const sku = params.options.sku ?? params.options.productId ?? '';
-    handlePurchase(sku, params.options.processProductGrant, params.onEvent, params.onError);
+    handlePurchase(sku, params.options.processProductGrant, params.onEvent, params.onError).catch(e => console.error('[ait-devtools] IAP unexpected error:', e));
     return () => {};
   },
 
   createSubscriptionPurchaseOrder(params: CreateSubscriptionPurchaseOrderOptions): () => void {
-    handlePurchase(params.options.sku, params.options.processProductGrant, params.onEvent, params.onError);
+    handlePurchase(params.options.sku, params.options.processProductGrant, params.onEvent, params.onError).catch(e => console.error('[ait-devtools] IAP unexpected error:', e));
     return () => {};
   },
 
@@ -137,13 +141,15 @@ export const IAP = createMockProxy('IAP', {
     // pending → completed 전이
     const idx = aitState.state.iap.pendingOrders.findIndex(o => o.orderId === args.params.orderId);
     if (idx !== -1) {
-      const [order] = aitState.state.iap.pendingOrders.splice(idx, 1);
-      aitState.state.iap.completedOrders.push({
+      const order = aitState.state.iap.pendingOrders[idx];
+      const pendingOrders = aitState.state.iap.pendingOrders.filter((_, i) => i !== idx);
+      const completedOrders = [...aitState.state.iap.completedOrders, {
         orderId: order.orderId,
         sku: order.sku,
-        status: 'COMPLETED',
+        status: 'COMPLETED' as const,
         date: new Date().toISOString(),
-      });
+      }];
+      aitState.patch('iap', { pendingOrders, completedOrders });
     }
     return true;
   },

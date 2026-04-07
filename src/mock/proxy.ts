@@ -5,6 +5,11 @@
 
 const WARNED = new Set<string>();
 
+/** 테스트에서 WARNED 캐시를 초기화할 때 사용 */
+export function resetWarned(): void {
+  WARNED.clear();
+}
+
 export function createMockProxy<T extends Record<string, unknown>>(
   moduleName: string,
   implementations: T,

@@ -227,7 +227,7 @@ class AitStateManager {
   private _listeners = new Set<Listener>();
 
   constructor() {
-    this._state = { ...DEFAULT_STATE };
+    this._state = structuredClone(DEFAULT_STATE);
     try {
       this._state.deviceId = generateDeviceId();
     } catch {
@@ -251,9 +251,9 @@ class AitStateManager {
   ) {
     const current = this._state[key];
     if (typeof current === 'object' && current !== null && !Array.isArray(current)) {
-      (this._state[key] as Record<string, unknown>) = { ...(current as Record<string, unknown>), ...(partial as Record<string, unknown>) };
+      this._state = { ...this._state, [key]: { ...(current as Record<string, unknown>), ...(partial as Record<string, unknown>) } };
     } else {
-      this._state[key] = partial as AitDevtoolsState[K];
+      this._state = { ...this._state, [key]: partial as AitDevtoolsState[K] };
     }
     this._notify();
   }
@@ -265,7 +265,10 @@ class AitStateManager {
 
   /** 분석 로그 추가 */
   logAnalytics(entry: Omit<AnalyticsLogEntry, 'timestamp'>) {
-    this._state.analyticsLog.push({ ...entry, timestamp: Date.now() });
+    this._state = {
+      ...this._state,
+      analyticsLog: [...this._state.analyticsLog, { ...entry, timestamp: Date.now() }],
+    };
     this._notify();
   }
 
@@ -276,7 +279,7 @@ class AitStateManager {
 
   reset() {
     const deviceId = this._state.deviceId;
-    this._state = { ...DEFAULT_STATE, deviceId };
+    this._state = { ...structuredClone(DEFAULT_STATE), deviceId };
     this._notify();
   }
 

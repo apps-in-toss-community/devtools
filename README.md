@@ -281,4 +281,4 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 
 ## 라이센스
 
-MIT
+BSD 3-Clause

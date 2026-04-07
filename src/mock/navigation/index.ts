@@ -201,6 +201,8 @@ type SafeAreaInsetsSubscribeHandler = { onEvent: (data: SafeAreaInsetsValue) => 
 
 export const SafeAreaInsets = {
   get: (): SafeAreaInsetsValue => ({ ...aitState.state.safeAreaInsets }),
+  // NOTE: aitState.subscribe에 위임하므로 safeAreaInsets 외 상태 변경에도 콜백이 호출된다.
+  // 실제 SDK는 insets 변경 시에만 호출되지만, mock에서는 간소화를 위해 필터링하지 않는다.
   subscribe: ({ onEvent }: SafeAreaInsetsSubscribeHandler): (() => void) => {
     return aitState.subscribe(() => onEvent({ ...aitState.state.safeAreaInsets }));
   },

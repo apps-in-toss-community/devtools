@@ -21,7 +21,9 @@ export function grantPromotionRewardForGame(params: {
 export function submitGameCenterLeaderBoardScore(params: {
   score: string;
 }): Promise<{ statusCode: 'SUCCESS' | 'LEADERBOARD_NOT_FOUND' | 'PROFILE_NOT_FOUND' | 'UNPARSABLE_SCORE' } | undefined> {
-  aitState.state.game.leaderboardScores.push({ score: params.score, timestamp: Date.now() });
+  aitState.patch('game', {
+    leaderboardScores: [...aitState.state.game.leaderboardScores, { score: params.score, timestamp: Date.now() }],
+  });
   return Promise.resolve({ statusCode: 'SUCCESS' });
 }
 
