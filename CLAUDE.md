@@ -79,3 +79,42 @@ src/
 | `ait-devtools` 또는 `ait-devtools/mock` | 번들러 alias 대상, 모든 mock export |
 | `ait-devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `ait-devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
+
+## Playwright MCP를 활용한 QA
+
+Claude Code의 Playwright MCP 플러그인을 사용하면 브라우저를 직접 제어하여 example 앱의 E2E QA를 수행할 수 있다.
+
+### 사전 준비
+
+1. Claude Code에 Playwright 플러그인이 설치되어 있어야 한다 (`.claude/settings.json`의 `enabledPlugins` 확인)
+2. 라이브러리를 먼저 빌드한다: `pnpm build`
+3. example 앱의 dev 서버를 띄운다: `cd examples/vite-react && pnpm install && pnpm dev`
+
+### QA 절차
+
+1. **페이지 로드**: `browser_navigate`로 `http://localhost:5173/` 접속
+2. **초기 렌더링 확인**: `browser_snapshot`으로 DOM 구조 확인, `browser_take_screenshot`으로 시각적 확인
+3. **각 기능 테스트**: `browser_click`으로 버튼 클릭 후 스냅샷/스크린샷으로 결과 검증
+   - Login → authorizationCode 반환 확인
+   - Storage → setItem 후 getItem으로 값 확인, `browser_evaluate`로 localStorage 직접 검증
+   - Environment → getPlatformOS, getOperationalEnvironment, getNetworkStatus 값 확인
+   - Location → getCurrentLocation 좌표 반환 확인
+   - Haptic → 버튼 클릭 시 에러 없음 확인
+   - IAP → getProductItemList mock 상품 목록 반환 확인
+   - Analytics → click 이벤트 에러 없음 확인
+4. **DevTools 패널 테스트**: AIT 버튼 클릭 → 7개 탭 (Environment, Permissions, Location, IAP, Events, Analytics, Storage) 전환 확인
+5. **이벤트 테스트**: Events 탭에서 Trigger Back/Home Event → 앱의 Granite Events 섹션에 수신 표시 확인
+6. **콘솔 에러 확인**: `browser_console_messages`로 예기치 않은 에러가 없는지 확인 (favicon.ico 404는 무시)
+
+### 주요 Playwright MCP 도구
+
+| 도구 | 용도 |
+|---|---|
+| `browser_navigate` | URL 이동 |
+| `browser_snapshot` | DOM 접근성 트리 (요소 ref 획득, 클릭 대상 식별) |
+| `browser_take_screenshot` | 시각적 확인용 스크린샷 |
+| `browser_click` | 버튼/요소 클릭 (ref 필요) |
+| `browser_evaluate` | JavaScript 실행 (예: localStorage 직접 확인) |
+| `browser_console_messages` | 콘솔 로그/에러 확인 |
+| `browser_fill_form` | 입력 필드 값 변경 |
+| `browser_close` | 브라우저 종료 |
