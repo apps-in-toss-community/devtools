@@ -137,7 +137,9 @@ describe('Navigation mock', () => {
   });
 
   it('requestReview: isSupported()가 true를 반환한다', () => {
-    expect((requestReview as unknown as { isSupported: () => boolean }).isSupported()).toBe(true);
+    // requestReview는 런타임에 isSupported가 부착되지만 타입 정의에는 없다
+    const fn = requestReview as unknown as { isSupported: () => boolean };
+    expect(fn.isSupported()).toBe(true);
   });
 
   it('share: 에러 없이 실행된다', async () => {
