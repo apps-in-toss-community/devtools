@@ -95,11 +95,13 @@ test.describe('Navigation', () => {
     await expect(page.getByTestId('nav-review-result')).toHaveText('done');
   });
 
-  test('closeView, openURL, share, swipeGesture, orientation should not throw', async ({ page }) => {
+  test('openURL, share, swipeGesture, orientation should not throw', async ({ page }) => {
     // These are fire-and-forget actions; verify no console errors
+    // Note: closeView calls history.back() which may navigate away, so it's excluded
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(e.message));
 
+    await page.getByTestId('nav-openurl-btn').click();
     await page.getByTestId('nav-swipe-btn').click();
     await page.getByTestId('nav-orientation-btn').click();
     await page.getByTestId('nav-share-btn').click();
@@ -119,11 +121,13 @@ test.describe('Environment', () => {
     await expect(page.getByTestId('env-app-version')).not.toBeEmpty();
     await expect(page.getByTestId('env-locale')).toHaveText('ko-KR');
     await expect(page.getByTestId('env-device-id')).not.toBeEmpty();
-    await expect(page.getByTestId('env-group-id')).not.toBeEmpty();
-    await expect(page.getByTestId('env-deployment-id')).not.toBeEmpty();
+    await expect(page.getByTestId('env-group-id')).toHaveText('mock-group-id');
+    await expect(page.getByTestId('env-deployment-id')).toHaveText('mock-deployment-id');
     await expect(page.getByTestId('env-brand-name')).toHaveText('Mock App');
     await expect(page.getByTestId('env-safe-area-top')).toHaveText('47');
+    await expect(page.getByTestId('env-safe-area-legacy')).toHaveText('47');
     await expect(page.getByTestId('env-min-version')).toHaveText('true');
+    await expect(page.getByTestId('env-scheme-uri')).not.toBeEmpty();
   });
 
   test('should reflect OS change from panel dropdown', async ({ page }) => {
@@ -135,11 +139,11 @@ test.describe('Environment', () => {
     const osRow = page.locator('.ait-panel .ait-row').filter({ has: page.locator('label', { hasText: /^OS$/ }) });
     await osRow.locator('select').selectOption('android');
 
-    await expect(page.getByTestId('env-platform')).toHaveText('android', { timeout: 3000 });
+    await expect(page.getByTestId('env-platform')).toHaveText('android', { timeout: 7000 });
   });
 
   test('getNetworkStatus should return valid status', async ({ page }) => {
-    await expect(page.getByTestId('env-network')).toHaveText('WIFI', { timeout: 3000 });
+    await expect(page.getByTestId('env-network')).toHaveText('WIFI', { timeout: 7000 });
   });
 
   test('getServerTime should return a number', async ({ page }) => {
@@ -207,10 +211,9 @@ test.describe('Storage', () => {
     await page.getByTestId('storage-remove-button').click();
     await expect(page.getByTestId('storage-remove-result')).toHaveText('done');
 
-    // After removal, getItem returns null which won't display the result element
+    // After removal, getItem returns null which displays as "(null)"
     await page.getByTestId('storage-get-button').click();
-    // storage-result won't be visible since null is stored in state and component doesn't render it
-    await expect(page.getByTestId('storage-result')).not.toBeVisible();
+    await expect(page.getByTestId('storage-result')).toHaveText('(null)');
   });
 
   test('clearItems should work', async ({ page }) => {
@@ -243,6 +246,18 @@ test.describe('Location', () => {
     await page.getByTestId('location-button').click();
     await expect(page.getByTestId('location-lat')).toContainText('37.5665');
     await expect(page.getByTestId('location-lng')).toContainText('126.978');
+  });
+
+  test('getCurrentLocation should fail when geolocation is denied', async ({ page }) => {
+    await openPanel(page);
+    await switchTab(page, 'permissions');
+
+    const geoSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'geolocation' }).locator('select');
+    await geoSelect.selectOption('denied');
+    await closePanel(page);
+
+    await page.getByTestId('location-button').click();
+    await expect(page.getByTestId('location-error')).toContainText('denied');
   });
 });
 
@@ -566,6 +581,23 @@ test.describe('Events', () => {
   test('onVisibilityChanged listener should register', async ({ page }) => {
     await page.getByTestId('events-visibility-btn').click();
     await expect(page.getByTestId('events-visibility-result')).toHaveText('listening');
+  });
+});
+
+// ====================================================================
+// LOCATION TAB (Panel)
+// ====================================================================
+
+test.describe('Location Tab', () => {
+  test('should display location inputs in panel', async ({ page }) => {
+    await openPanel(page);
+    await switchTab(page, 'location');
+
+    const latRow = page.locator('.ait-panel .ait-row').filter({ hasText: 'Latitude' });
+    await expect(latRow.locator('input')).toBeVisible();
+
+    const lngRow = page.locator('.ait-panel .ait-row').filter({ hasText: 'Longitude' });
+    await expect(lngRow.locator('input')).toBeVisible();
   });
 });
 

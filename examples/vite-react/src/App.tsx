@@ -266,7 +266,7 @@ function EnvironmentSection() {
       getNetworkStatus().then(setNetwork);
     };
     refresh();
-    const id = setInterval(refresh, 1000);
+    const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -303,6 +303,7 @@ function StorageSection() {
   const [key, setKey] = useState('demo-key');
   const [value, setValue] = useState('hello world');
   const [stored, setStored] = useState<string | null>(null);
+  const [hasQueried, setHasQueried] = useState(false);
   const [removed, setRemoved] = useState(false);
   const [cleared, setCleared] = useState(false);
 
@@ -313,12 +314,12 @@ function StorageSection() {
         <input style={inputStyle} placeholder="Key" value={key} onChange={e => setKey(e.target.value)} data-testid="storage-key-input" />
         <input style={inputStyle} placeholder="Value" value={value} onChange={e => setValue(e.target.value)} data-testid="storage-value-input" />
         <ButtonRow>
-          <button style={buttonStyle} onClick={async () => { await Storage.setItem(key, value); setStored(null); setRemoved(false); setCleared(false); }} data-testid="storage-set-button">setItem</button>
-          <button style={{ ...buttonStyle, background: colors.success }} onClick={async () => { const r = await Storage.getItem(key); setStored(r); }} data-testid="storage-get-button">getItem</button>
+          <button style={buttonStyle} onClick={async () => { await Storage.setItem(key, value); setStored(null); setHasQueried(false); setRemoved(false); setCleared(false); }} data-testid="storage-set-button">setItem</button>
+          <button style={{ ...buttonStyle, background: colors.success }} onClick={async () => { const r = await Storage.getItem(key); setStored(r); setHasQueried(true); }} data-testid="storage-get-button">getItem</button>
           <button style={{ ...smallButtonStyle, background: colors.error }} onClick={async () => { await Storage.removeItem(key); setRemoved(true); }} data-testid="storage-remove-button">removeItem</button>
           <button style={{ ...smallButtonStyle, background: '#666' }} onClick={async () => { await Storage.clearItems(); setCleared(true); }} data-testid="storage-clear-button">clearItems</button>
         </ButtonRow>
-        {stored !== null && <Result label="저장된 값" value={stored} testId="storage-result" />}
+        {hasQueried && <Result label="저장된 값" value={stored ?? '(null)'} testId="storage-result" />}
         {removed && <Result label="removeItem" value="done" testId="storage-remove-result" />}
         {cleared && <Result label="clearItems" value="done" testId="storage-clear-result" />}
       </div>
@@ -716,9 +717,6 @@ function AnalyticsSection() {
   const [screenDone, setScreenDone] = useState(false);
   const [impressionDone, setImpressionDone] = useState(false);
   const [eventLogDone, setEventLogDone] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   return (
     <div style={cardStyle} data-testid="analytics-section">
@@ -727,8 +725,6 @@ function AnalyticsSection() {
         <button style={smallButtonStyle} data-testid="analytics-click-btn" onClick={async () => {
           await Analytics.click({ component: 'demo_button', page: 'main' });
           setClickDone(true);
-          clearTimeout(timerRef.current);
-          timerRef.current = setTimeout(() => setClickDone(false), 3000);
         }}>Analytics.click()</button>
         <button style={smallButtonStyle} data-testid="analytics-screen-btn" onClick={async () => {
           await Analytics.screen({ page: 'main' });
@@ -782,15 +778,15 @@ function PartnerSection() {
 // EVENTS
 // =======================================================================
 
-let eventCounter = 0;
-
 function EventSection() {
   const [events, setEvents] = useState<{ id: number; text: string }[]>([]);
   const [tdsEventResult, setTdsEventResult] = useState<string | null>(null);
   const [visibilityResult, setVisibilityResult] = useState<string | null>(null);
+  const eventCounterRef = useRef(0);
 
   const addEvent = useCallback((name: string) => {
-    setEvents(prev => [{ id: ++eventCounter, text: `[${new Date().toLocaleTimeString()}] ${name}` }, ...prev].slice(0, 10));
+    const id = ++eventCounterRef.current;
+    setEvents(prev => [{ id, text: `[${new Date().toLocaleTimeString()}] ${name}` }, ...prev].slice(0, 10));
   }, []);
 
   useEffect(() => {
