@@ -28,7 +28,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "rm -rf dist && tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -64,6 +64,10 @@
   "license": "BSD-3-Clause",
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/ait-devtools"
+    "url": "git+https://github.com/DaveDev42/ait-devtools.git"
+  },
+  "homepage": "https://github.com/DaveDev42/ait-devtools#readme",
+  "bugs": {
+    "url": "https://github.com/DaveDev42/ait-devtools/issues"
   }
 }
