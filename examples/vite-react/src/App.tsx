@@ -246,7 +246,7 @@ function NavigationSection() {
 function EnvironmentSection() {
   const [platform, setPlatform] = useState(getPlatformOS());
   const [envVal, setEnvVal] = useState(getOperationalEnvironment());
-  const [network, setNetwork] = useState<NetworkStatus | ''>('');
+  const [network, setNetwork] = useState<NetworkStatus | null>(null);
   const [appVersion] = useState(getTossAppVersion());
   const [minVersion] = useState(isMinVersionSupported({ android: '5.0.0', ios: '5.0.0' }));
   const [schemeUri] = useState(getSchemeUri());
@@ -279,7 +279,7 @@ function EnvironmentSection() {
       <SectionTitle>Environment</SectionTitle>
       <Result label="getPlatformOS()" value={platform} testId="env-platform" />
       <Result label="getOperationalEnvironment()" value={envVal} testId="env-operational" />
-      <Result label="getNetworkStatus()" value={network || 'loading...'} testId="env-network" />
+      <Result label="getNetworkStatus()" value={network ?? 'loading...'} testId="env-network" />
       <Result label="getTossAppVersion()" value={appVersion} testId="env-app-version" />
       <Result label="isMinVersionSupported()" value={String(minVersion)} testId="env-min-version" />
       <Result label="getSchemeUri()" value={schemeUri} testId="env-scheme-uri" />
@@ -605,6 +605,7 @@ function AdsSection() {
           });
         }}>showAdMob</button>
         <button style={smallButtonStyle} data-testid="ads-admob-isloaded-btn" onClick={async () => {
+          setAdMobIsLoaded(null);
           const r = await GoogleAdMob.isAppsInTossAdMobLoaded({});
           setAdMobIsLoaded(String(r));
         }}>isAdMobLoaded</button>
@@ -783,6 +784,15 @@ function EventSection() {
   const [tdsEventResult, setTdsEventResult] = useState<string | null>(null);
   const [visibilityResult, setVisibilityResult] = useState<string | null>(null);
   const eventCounterRef = useRef(0);
+  const tdsUnsubRef = useRef<(() => void) | null>(null);
+  const visUnsubRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    return () => {
+      tdsUnsubRef.current?.();
+      visUnsubRef.current?.();
+    };
+  }, []);
 
   const addEvent = useCallback((name: string) => {
     const id = ++eventCounterRef.current;
@@ -810,23 +820,25 @@ function EventSection() {
 
       <SubTitle>tdsEvent</SubTitle>
       <button style={smallButtonStyle} data-testid="events-tds-btn" onClick={() => {
+        tdsUnsubRef.current?.();
         const unsub = tdsEvent.addEventListener('navigationAccessoryEvent', {
           onEvent: () => setTdsEventResult('received'),
         });
+        tdsUnsubRef.current = unsub;
         setTdsEventResult('listening');
-        setTimeout(() => unsub(), 5000);
       }}>Listen tdsEvent</button>
       {tdsEventResult && <Result label="tdsEvent" value={tdsEventResult} testId="events-tds-result" />}
 
       <SubTitle>Visibility</SubTitle>
       <button style={smallButtonStyle} data-testid="events-visibility-btn" onClick={() => {
+        visUnsubRef.current?.();
         const unsub = onVisibilityChangedByTransparentServiceWeb({
           options: { callbackId: 'test-vis' },
           onEvent: (isVisible) => setVisibilityResult(String(isVisible)),
           onError: () => setVisibilityResult('error'),
         });
+        visUnsubRef.current = unsub;
         setVisibilityResult('listening');
-        setTimeout(() => unsub(), 10000);
       }}>onVisibilityChanged</button>
       {visibilityResult && <Result label="visibility" value={visibilityResult} testId="events-visibility-result" />}
 

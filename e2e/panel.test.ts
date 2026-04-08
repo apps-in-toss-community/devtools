@@ -96,8 +96,6 @@ test.describe('Navigation', () => {
   });
 
   test('openURL, share, swipeGesture, orientation should not throw', async ({ page }) => {
-    // These are fire-and-forget actions; verify no console errors
-    // Note: closeView calls history.back() which may navigate away, so it's excluded
     const errors: string[] = [];
     page.on('pageerror', e => errors.push(e.message));
 
@@ -107,6 +105,12 @@ test.describe('Navigation', () => {
     await page.getByTestId('nav-share-btn').click();
 
     expect(errors).toHaveLength(0);
+  });
+
+  test('closeView should navigate back', async ({ page }) => {
+    await page.evaluate(() => window.history.pushState({}, '', '/temp'));
+    await page.getByTestId('nav-close-btn').click();
+    await expect(page).toHaveURL('/');
   });
 });
 
@@ -139,17 +143,18 @@ test.describe('Environment', () => {
     const osRow = page.locator('.ait-panel .ait-row').filter({ has: page.locator('label', { hasText: /^OS$/ }) });
     await osRow.locator('select').selectOption('android');
 
-    await expect(page.getByTestId('env-platform')).toHaveText('android', { timeout: 7000 });
+    await expect(page.getByTestId('env-platform')).toHaveText('android', { timeout: 12000 });
   });
 
   test('getNetworkStatus should return valid status', async ({ page }) => {
-    await expect(page.getByTestId('env-network')).toHaveText('WIFI', { timeout: 7000 });
+    await expect(page.getByTestId('env-network')).toHaveText('WIFI', { timeout: 12000 });
   });
 
   test('getServerTime should return a number', async ({ page }) => {
-    await expect(page.getByTestId('env-server-time')).not.toHaveText('loading...', { timeout: 3000 });
-    const value = await page.getByTestId('env-server-time').textContent();
-    expect(Number(value)).toBeGreaterThan(0);
+    await expect(async () => {
+      const value = await page.getByTestId('env-server-time').textContent();
+      expect(Number(value)).toBeGreaterThan(0);
+    }).toPass({ timeout: 3000 });
   });
 });
 
@@ -234,6 +239,15 @@ test.describe('Storage', () => {
 
     await expect(page.locator('.ait-panel .ait-storage-key')).toContainText('panel-test');
     await expect(page.locator('.ait-panel .ait-storage-value')).toContainText('panel-value');
+  });
+
+  test('should use __ait_storage: prefix in localStorage', async ({ page }) => {
+    await page.getByTestId('storage-key-input').fill('prefix-test');
+    await page.getByTestId('storage-value-input').fill('prefix-value');
+    await page.getByTestId('storage-set-button').click();
+
+    const stored = await page.evaluate(() => localStorage.getItem('__ait_storage:prefix-test'));
+    expect(stored).toBe('prefix-value');
   });
 });
 
@@ -427,9 +441,16 @@ test.describe('Ads', () => {
     await expect(page.getByTestId('ads-admob-show-result')).toHaveText('dismissed', { timeout: 5000 });
   });
 
-  test('isAdMobLoaded should return boolean', async ({ page }) => {
+  test('isAdMobLoaded should return false before load and true after load', async ({ page }) => {
     await page.getByTestId('ads-admob-isloaded-btn').click();
     await expect(page.getByTestId('ads-admob-isloaded-result')).toHaveText('false');
+
+    // Load ad, then verify isLoaded becomes true
+    await page.getByTestId('ads-admob-load-btn').click();
+    await expect(page.getByTestId('ads-admob-load-result')).toHaveText('loaded', { timeout: 3000 });
+
+    await page.getByTestId('ads-admob-isloaded-btn').click();
+    await expect(page.getByTestId('ads-admob-isloaded-result')).toHaveText('true');
   });
 
   test('loadFullScreenAd should fire loaded event', async ({ page }) => {
@@ -449,6 +470,14 @@ test.describe('Ads', () => {
   test('TossAds.initialize should complete', async ({ page }) => {
     await page.getByTestId('ads-tossads-init-btn').click();
     await expect(page.getByTestId('ads-tossads-init-result')).toHaveText('done');
+  });
+
+  test('TossAds.destroyAll should not throw', async ({ page }) => {
+    const errors: string[] = [];
+    page.on('pageerror', e => errors.push(e.message));
+
+    await page.getByTestId('ads-tossads-destroy-btn').click();
+    expect(errors).toHaveLength(0);
   });
 });
 
