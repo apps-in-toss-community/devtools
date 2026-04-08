@@ -356,6 +356,7 @@ function renderPromptBanner(): HTMLElement | null {
   const cancelBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger', style: 'margin-top:8px' }, 'Cancel');
   cancelBtn.addEventListener('click', () => {
     pendingPrompt = null;
+    window.dispatchEvent(new CustomEvent('__ait:prompt-cancel'));
     refreshPanel();
   });
   banner.appendChild(cancelBtn);
@@ -366,20 +367,17 @@ function renderPromptBanner(): HTMLElement | null {
 function renderDeviceTab(): HTMLElement {
   const s = aitState.state;
   const container = h('div');
-  const modes: DeviceApiMode[] = ['mock', 'web', 'prompt'];
-  const modesNoPrompt: DeviceApiMode[] = ['mock', 'web'];
-
   // Prompt banner (if active)
   const promptBanner = renderPromptBanner();
   if (promptBanner) container.appendChild(promptBanner);
 
   // Device API Mode selectors
-  const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: DeviceApiMode[] }> = [
-    { label: 'Camera', key: 'camera', options: modes },
-    { label: 'Photos', key: 'photos', options: modes },
-    { label: 'Location', key: 'location', options: modes },
-    { label: 'Network', key: 'network', options: modesNoPrompt },
-    { label: 'Clipboard', key: 'clipboard', options: modesNoPrompt },
+  const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: string[] }> = [
+    { label: 'Camera', key: 'camera', options: ['mock', 'web', 'prompt'] },
+    { label: 'Photos', key: 'photos', options: ['mock', 'web', 'prompt'] },
+    { label: 'Location', key: 'location', options: ['mock', 'web', 'prompt'] },
+    { label: 'Network', key: 'network', options: ['mock', 'web'] },
+    { label: 'Clipboard', key: 'clipboard', options: ['mock', 'web'] },
   ];
 
   container.append(
@@ -387,7 +385,7 @@ function renderDeviceTab(): HTMLElement {
       h('div', { className: 'ait-section-title' }, 'Device API Modes'),
       ...modeEntries.map(entry =>
         selectRow(entry.label, entry.options, s.deviceModes[entry.key], v => {
-          aitState.patch('deviceModes', { [entry.key]: v as DeviceApiMode });
+          aitState.patch('deviceModes', { [entry.key]: v } as Partial<typeof s.deviceModes>);
           refreshPanel();
         }),
       ),

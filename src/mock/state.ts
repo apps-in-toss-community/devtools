@@ -16,8 +16,8 @@ export interface DeviceModes {
   camera: DeviceApiMode;
   photos: DeviceApiMode;
   location: DeviceApiMode;
-  network: DeviceApiMode;
-  clipboard: DeviceApiMode;
+  network: 'mock' | 'web';
+  clipboard: 'mock' | 'web';
 }
 
 export interface MockData {

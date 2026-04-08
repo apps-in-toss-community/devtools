@@ -54,17 +54,31 @@ const PROMPT_TIMEOUT_MS = 30_000;
 function waitForPromptResponse<T>(type: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const eventName = '__ait:prompt-response:' + type;
-    const timer = setTimeout(() => {
+    const cancelName = '__ait:prompt-cancel';
+
+    function cleanup() {
+      clearTimeout(timer);
       window.removeEventListener(eventName, handler);
+      window.removeEventListener(cancelName, cancelHandler);
+    }
+
+    const timer = setTimeout(() => {
+      cleanup();
       reject(new Error(`[ait-devtools] Prompt timeout for "${type}" after ${PROMPT_TIMEOUT_MS / 1000}s. Is ait-devtools/panel imported?`));
     }, PROMPT_TIMEOUT_MS);
 
     const handler = (e: Event) => {
-      clearTimeout(timer);
-      window.removeEventListener(eventName, handler);
+      cleanup();
       resolve((e as CustomEvent).detail as T);
     };
+
+    const cancelHandler = () => {
+      cleanup();
+      reject(new Error(`[ait-devtools] Prompt cancelled for "${type}"`));
+    };
+
     window.addEventListener(eventName, handler);
+    window.addEventListener(cancelName, cancelHandler);
     window.dispatchEvent(new CustomEvent('__ait:prompt-request', { detail: { type } }));
   });
 }

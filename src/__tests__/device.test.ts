@@ -3,6 +3,7 @@ import { aitState } from '../mock/state.js';
 import {
   getCurrentLocation, generateHapticFeedback, saveBase64Data, Accuracy,
   getClipboardText, setClipboardText, getNetworkStatusByMode, getDefaultPlaceholderImages,
+  openCamera,
 } from '../mock/device/index.js';
 
 describe('Device mock', () => {
@@ -133,9 +134,6 @@ describe('Device mock', () => {
         aitState.patch('deviceModes', { camera: 'prompt' });
         aitState.patch('permissions', { camera: 'allowed' });
 
-        // openCamera internally calls waitForPromptResponse
-        // We import openCamera which wraps _openCamera with withPermission
-        const { openCamera } = await import('../mock/device/index.js');
         const promise = openCamera();
 
         vi.advanceTimersByTime(30_000);
