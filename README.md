@@ -221,7 +221,7 @@ unsubscribe(); // 구독 해제
 | API | Mock 동작 |
 |---|---|
 | `getPlatformOS` | state의 platform 반환 (기본: `'ios'`) |
-| `getOperationalEnvironment` | state의 environment 반환 (기본: `'toss'`) |
+| `getOperationalEnvironment` | state의 environment 반환 (기본: `'sandbox'`) |
 | `getTossAppVersion` | state의 appVersion 반환 (기본: `'5.240.0'`) |
 | `isMinVersionSupported` | 시맨틱 버전 비교 수행 |
 | `getSchemeUri` | state의 schemeUri 또는 `window.location.pathname` |
@@ -336,8 +336,8 @@ unsubscribe(); // 구독 해제
 vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다:
 
 ```ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import { appLogin, Storage, getCurrentLocation, IAP } from '@ait-co/devtools/mock';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { appLogin, Storage, getCurrentLocation, getNetworkStatus, openCamera, IAP } from '@ait-co/devtools/mock';
 import { aitState } from '@ait-co/devtools/mock';
 
 beforeEach(() => {
@@ -363,8 +363,9 @@ it('카메라 권한이 denied면 에러를 던진다', async () => {
   await expect(openCamera()).rejects.toThrow();
 });
 
-// IAP 실패 시나리오
+// IAP 실패 시나리오 (fake timers 필요)
 it('구매 취소 시 onError가 호출된다', async () => {
+  vi.useFakeTimers();
   aitState.patch('iap', { nextResult: 'USER_CANCELED' });
   const onError = vi.fn();
   IAP.createOneTimePurchaseOrder({
@@ -374,6 +375,7 @@ it('구매 취소 시 onError가 호출된다', async () => {
   });
   await vi.advanceTimersByTimeAsync(500);
   expect(onError).toHaveBeenCalledWith({ code: 'USER_CANCELED' });
+  vi.useRealTimers();
 });
 
 // Storage 테스트
@@ -443,7 +445,7 @@ pnpm test        # 전체 테스트 실행
   ```ts
   import '@ait-co/devtools/panel';
   ```
-- 플러그인은 `/main|index|entry|app/` 패턴의 진입점 파일만 자동 주입합니다
+- 플러그인은 `/main|index|entry/` 패턴의 진입점 파일만 자동 주입합니다
 
 ### Next.js Turbopack에서 설정하는 법
 
