@@ -7,7 +7,7 @@
 
 import { aitState } from '../mock/state.js';
 import type { PermissionName, PermissionStatus, NetworkStatus, PlatformOS, OperationalEnvironment, IapNextResult, DeviceApiMode } from '../mock/state.js';
-import { generatePlaceholderImage, getDefaultPlaceholderImages } from '../mock/device/index.js';
+import { getDefaultPlaceholderImages } from '../mock/device/index.js';
 import { PANEL_STYLES } from './styles.js';
 
 type TabId = 'env' | 'permissions' | 'location' | 'iap' | 'events' | 'analytics' | 'storage' | 'device';
@@ -304,7 +304,7 @@ function renderPromptBanner(): HTMLElement | null {
     banner.append(
       h('div', { className: 'ait-prompt-title' }, 'Photos Prompt — Select images'),
     );
-    const input = h('input', { type: 'file', accept: 'image/*', multiple: 'true', style: 'font-size:11px;color:#aaa' });
+    const input = h('input', { type: 'file', accept: 'image/*', multiple: '', style: 'font-size:11px;color:#aaa' });
     input.addEventListener('change', () => {
       const files = Array.from((input as HTMLInputElement).files ?? []);
       if (files.length === 0) return;
@@ -386,8 +386,7 @@ function renderDeviceTab(): HTMLElement {
   const imageGrid = h('div', { className: 'ait-image-grid' });
   images.forEach((dataUri, idx) => {
     const thumb = h('div', { className: 'ait-image-thumb' });
-    const img = h('img');
-    img.src = dataUri;
+    const img = h('img', { src: dataUri });
     const removeBtn = h('button', { className: 'ait-image-remove' }, 'x');
     removeBtn.addEventListener('click', () => {
       const newImages = [...aitState.state.mockData.images];

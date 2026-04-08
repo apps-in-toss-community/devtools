@@ -5,7 +5,7 @@
  * 각 API는 deviceModes 설정에 따라 mock/web/prompt 모드로 동작한다.
  */
 
-import { aitState, type MockLocation } from '../state.js';
+import { aitState, type MockLocation, type NetworkStatus } from '../state.js';
 import { createMockProxy } from '../proxy.js';
 import { withPermission, checkPermission } from '../permissions.js';
 
@@ -32,8 +32,13 @@ const DEFAULT_PLACEHOLDERS = [
   { text: 'Mock Photo 3', color: '#e67e22' },
 ];
 
+let cachedPlaceholders: string[] | null = null;
+
 export function getDefaultPlaceholderImages(): string[] {
-  return DEFAULT_PLACEHOLDERS.map(p => generatePlaceholderImage(320, 240, p.text, p.color));
+  if (!cachedPlaceholders) {
+    cachedPlaceholders = DEFAULT_PLACEHOLDERS.map(p => generatePlaceholderImage(320, 240, p.text, p.color));
+  }
+  return cachedPlaceholders;
 }
 
 function getMockImages(): string[] {
@@ -44,13 +49,22 @@ function getMockImages(): string[] {
 
 // --- Prompt Mode Helper ---
 
+const PROMPT_TIMEOUT_MS = 30_000;
+
 function waitForPromptResponse<T>(type: string): Promise<T> {
-  return new Promise(resolve => {
+  return new Promise((resolve, reject) => {
+    const eventName = '__ait:prompt-response:' + type;
+    const timer = setTimeout(() => {
+      window.removeEventListener(eventName, handler);
+      reject(new Error(`[ait-devtools] Prompt timeout for "${type}" after ${PROMPT_TIMEOUT_MS / 1000}s. Is ait-devtools/panel imported?`));
+    }, PROMPT_TIMEOUT_MS);
+
     const handler = (e: Event) => {
+      clearTimeout(timer);
+      window.removeEventListener(eventName, handler);
       resolve((e as CustomEvent).detail as T);
-      window.removeEventListener('__ait:prompt-response:' + type, handler);
     };
-    window.addEventListener('__ait:prompt-response:' + type, handler);
+    window.addEventListener(eventName, handler);
     window.dispatchEvent(new CustomEvent('__ait:prompt-request', { detail: { type } }));
   });
 }
@@ -211,38 +225,6 @@ async function openCameraMock(): Promise<{ id: string; dataUri: string }> {
 }
 
 async function openCameraWeb(): Promise<{ id: string; dataUri: string }> {
-  // Try getUserMedia first
-  if (navigator.mediaDevices?.getUserMedia) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      return new Promise((resolve) => {
-        const video = document.createElement('video');
-        video.srcObject = stream;
-        video.autoplay = true;
-        video.playsInline = true;
-
-        video.onloadedmetadata = () => {
-          // Wait a moment for camera to warm up
-          setTimeout(() => {
-            const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d')!;
-            ctx.drawImage(video, 0, 0);
-            stream.getTracks().forEach(t => t.stop());
-            resolve({
-              id: crypto.randomUUID(),
-              dataUri: canvas.toDataURL('image/png'),
-            });
-          }, 500);
-        };
-      });
-    } catch {
-      // Fall through to file input
-    }
-  }
-
-  // Fallback: file input
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -338,12 +320,10 @@ export const fetchContacts = withPermission(_fetchContacts, 'contacts');
 
 // --- Clipboard ---
 
-let clipboardMemory = '';
-
 const _getClipboardText = async (): Promise<string> => {
   checkPermission('clipboard', 'getClipboardText');
   const mode = aitState.state.deviceModes.clipboard;
-  if (mode === 'mock') return clipboardMemory;
+  if (mode === 'mock') return aitState.state.mockData.clipboardText;
   // web mode (default)
   try {
     return await navigator.clipboard.readText();
@@ -357,7 +337,7 @@ const _setClipboardText = async (text: string): Promise<void> => {
   checkPermission('clipboard', 'setClipboardText');
   const mode = aitState.state.deviceModes.clipboard;
   if (mode === 'mock') {
-    clipboardMemory = text;
+    aitState.patch('mockData', { clipboardText: text });
     return;
   }
   // web mode (default)
@@ -367,19 +347,17 @@ export const setClipboardText = withPermission(_setClipboardText, 'clipboard');
 
 // --- Network Status (mode-aware helper for navigation/index.ts) ---
 
-export function getNetworkStatusByMode(): { status: string; isOnline: boolean } | null {
+export function getNetworkStatusByMode(): NetworkStatus | null {
   const mode = aitState.state.deviceModes.network;
   if (mode === 'mock') return null; // use default state-based logic
   if (mode === 'web') {
+    if (!navigator.onLine) return 'OFFLINE';
     const conn = (navigator as unknown as Record<string, unknown>).connection as { effectiveType?: string } | undefined;
-    const isOnline = navigator.onLine;
-    let status = aitState.state.networkStatus;
     if (conn?.effectiveType) {
-      const mapping: Record<string, string> = { '4g': '4G', '3g': '3G', '2g': '2G', 'slow-2g': '2G' };
-      status = (mapping[conn.effectiveType] ?? 'UNKNOWN') as typeof status;
+      const mapping: Record<string, NetworkStatus> = { '4g': '4G', '3g': '3G', '2g': '2G', 'slow-2g': '2G' };
+      return mapping[conn.effectiveType] ?? 'UNKNOWN';
     }
-    if (!isOnline) status = 'OFFLINE';
-    return { status, isOnline };
+    return aitState.state.networkStatus;
   }
   // prompt mode: not supported for network, fall back to mock
   return null;

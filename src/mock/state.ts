@@ -22,6 +22,7 @@ export interface DeviceModes {
 
 export interface MockData {
   images: string[];
+  clipboardText: string;
 }
 
 export interface LocationCoords {
@@ -243,6 +244,7 @@ const DEFAULT_STATE: AitDevtoolsState = {
 
   mockData: {
     images: [],
+    clipboardText: '',
   },
 };
 

@@ -104,8 +104,8 @@ export function getGroupId(): string {
 }
 
 export function getNetworkStatus(): Promise<NetworkStatus> {
-  const webResult = getNetworkStatusByMode();
-  if (webResult) return Promise.resolve(webResult.status as NetworkStatus);
+  const modeResult = getNetworkStatusByMode();
+  if (modeResult) return Promise.resolve(modeResult);
   return Promise.resolve(aitState.state.networkStatus);
 }
 
