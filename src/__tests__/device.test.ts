@@ -121,10 +121,11 @@ describe('Device mock', () => {
         });
       });
 
-      it('동일한 참조를 반환한다 (캐시)', () => {
+      it('동일한 내용의 새 배열을 반환한다 (캐시된 데이터의 방어적 복사)', () => {
         const a = getDefaultPlaceholderImages();
         const b = getDefaultPlaceholderImages();
-        expect(a).toBe(b);
+        expect(a).not.toBe(b); // 서로 다른 참조
+        expect(a).toEqual(b); // 동일한 내용
       });
     });
 

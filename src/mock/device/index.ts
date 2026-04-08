@@ -38,13 +38,13 @@ export function getDefaultPlaceholderImages(): string[] {
   if (!cachedPlaceholders) {
     cachedPlaceholders = DEFAULT_PLACEHOLDERS.map(p => generatePlaceholderImage(320, 240, p.text, p.color));
   }
-  return cachedPlaceholders;
+  return [...cachedPlaceholders];
 }
 
 function getMockImages(): string[] {
   const images = aitState.state.mockData.images;
   if (images.length > 0) return images;
-  return [...getDefaultPlaceholderImages()];
+  return getDefaultPlaceholderImages();
 }
 
 // --- Prompt Mode Helper ---
@@ -251,6 +251,7 @@ async function openCameraWeb(): Promise<{ id: string; dataUri: string }> {
       if (!file) { reject(new Error('No file selected')); return; }
       const reader = new FileReader();
       reader.onload = () => resolve({ id: crypto.randomUUID(), dataUri: reader.result as string });
+      reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
     };
     // Detect file picker cancel via focus heuristic.
@@ -299,9 +300,10 @@ async function fetchAlbumPhotosWeb(maxCount: number): Promise<Array<{ id: string
       const files = Array.from(input.files ?? []).slice(0, maxCount);
       if (files.length === 0) { reject(new Error('No files selected')); return; }
       const results = await Promise.all(
-        files.map(file => new Promise<{ id: string; dataUri: string }>((res) => {
+        files.map(file => new Promise<{ id: string; dataUri: string }>((res, rej) => {
           const reader = new FileReader();
           reader.onload = () => res({ id: crypto.randomUUID(), dataUri: reader.result as string });
+          reader.onerror = () => rej(new Error('Failed to read file'));
           reader.readAsDataURL(file);
         })),
       );
