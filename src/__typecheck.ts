@@ -77,5 +77,72 @@ type _EnvGetDeploymentId = Assert<typeof Mock.env.getDeploymentId, typeof Origin
 type _PartnerAddBtn = Assert<typeof Mock.partner.addAccessoryButton, typeof Original.partner.addAccessoryButton>;
 type _PartnerRemoveBtn = Assert<typeof Mock.partner.removeAccessoryButton, typeof Original.partner.removeAccessoryButton>;
 
+// --- 디바이스: 카메라/앨범/연락처 (PermissionFunctionWithDialog) ---
+type _FetchAlbumPhotos = Assert<typeof Mock.fetchAlbumPhotos, typeof Original.fetchAlbumPhotos>;
+type _FetchContacts = Assert<typeof Mock.fetchContacts, typeof Original.fetchContacts>;
+type _OpenCamera = Assert<typeof Mock.openCamera, typeof Original.openCamera>;
+
+// --- 디바이스: 위치 ---
+type _GetCurrentLocation = Assert<typeof Mock.getCurrentLocation, typeof Original.getCurrentLocation>;
+type _StartUpdateLocation = Assert<typeof Mock.startUpdateLocation, typeof Original.startUpdateLocation>;
+
+// --- 디바이스: 클립보드 ---
+type _GetClipboardText = Assert<typeof Mock.getClipboardText, typeof Original.getClipboardText>;
+type _SetClipboardText = Assert<typeof Mock.setClipboardText, typeof Original.setClipboardText>;
+
+// --- 디바이스: 화면 제어 ---
+type _SetIosSwipeGestureEnabled = Assert<typeof Mock.setIosSwipeGestureEnabled, typeof Original.setIosSwipeGestureEnabled>;
+type _SetDeviceOrientation = Assert<typeof Mock.setDeviceOrientation, typeof Original.setDeviceOrientation>;
+
+// --- 인증 ---
+type _GetUserKeyForGame = Assert<typeof Mock.getUserKeyForGame, typeof Original.getUserKeyForGame>;
+type _AppsInTossSignTossCert = Assert<typeof Mock.appsInTossSignTossCert, typeof Original.appsInTossSignTossCert>;
+
+// --- 게임/프로모션 ---
+type _GrantPromotionReward = Assert<typeof Mock.grantPromotionReward, typeof Original.grantPromotionReward>;
+type _GrantPromotionRewardForGame = Assert<typeof Mock.grantPromotionRewardForGame, typeof Original.grantPromotionRewardForGame>;
+type _SubmitGameCenterLeaderBoardScore = Assert<typeof Mock.submitGameCenterLeaderBoardScore, typeof Original.submitGameCenterLeaderBoardScore>;
+type _GetGameCenterGameProfile = Assert<typeof Mock.getGameCenterGameProfile, typeof Original.getGameCenterGameProfile>;
+type _OpenGameCenterLeaderboard = Assert<typeof Mock.openGameCenterLeaderboard, typeof Original.openGameCenterLeaderboard>;
+type _ContactsViral = Assert<typeof Mock.contactsViral, typeof Original.contactsViral>;
+
+// --- 로깅 ---
+type _EventLog = Assert<typeof Mock.eventLog, typeof Original.eventLog>;
+
+// --- 환경 정보 (추가) ---
+type _GetGroupId = Assert<typeof Mock.getGroupId, typeof Original.getGroupId>;
+type _GetAppsInTossGlobals = Assert<typeof Mock.getAppsInTossGlobals, typeof Original.getAppsInTossGlobals>;
+
+// --- 이벤트 (추가) ---
+type _TdsEvent = Assert<typeof Mock.tdsEvent, typeof Original.tdsEvent>;
+type _AppsInTossEvent = Assert<typeof Mock.appsInTossEvent, typeof Original.appsInTossEvent>;
+type _OnVisibilityChanged = Assert<typeof Mock.onVisibilityChangedByTransparentServiceWeb, typeof Original.onVisibilityChangedByTransparentServiceWeb>;
+type _GetSafeAreaInsets = Assert<typeof Mock.getSafeAreaInsets, typeof Original.getSafeAreaInsets>;
+
+// --- 광고: TossAds ---
+type _TossAdsInit = Assert<typeof Mock.TossAds.initialize, typeof Original.TossAds.initialize>;
+type _TossAdsAttach = Assert<typeof Mock.TossAds.attach, typeof Original.TossAds.attach>;
+type _TossAdsAttachBanner = Assert<typeof Mock.TossAds.attachBanner, typeof Original.TossAds.attachBanner>;
+type _TossAdsDestroy = Assert<typeof Mock.TossAds.destroy, typeof Original.TossAds.destroy>;
+type _TossAdsDestroyAll = Assert<typeof Mock.TossAds.destroyAll, typeof Original.TossAds.destroyAll>;
+
+// --- 광고: GoogleAdMob (추가) ---
+type _GoogleAdMobIsLoaded = Assert<typeof Mock.GoogleAdMob.isAppsInTossAdMobLoaded, typeof Original.GoogleAdMob.isAppsInTossAdMobLoaded>;
+
+// --- IAP (추가) ---
+type _IAPCreateSubscription = Assert<typeof Mock.IAP.createSubscriptionPurchaseOrder, typeof Original.IAP.createSubscriptionPurchaseOrder>;
+type _IAPGetCompletedOrRefunded = Assert<typeof Mock.IAP.getCompletedOrRefundedOrders, typeof Original.IAP.getCompletedOrRefundedOrders>;
+type _IAPGetSubscriptionInfo = Assert<typeof Mock.IAP.getSubscriptionInfo, typeof Original.IAP.getSubscriptionInfo>;
+
+// --- Analytics (web-analytics) ---
+type _AnalyticsScreen = Assert<typeof Mock.Analytics.screen, typeof Original.Analytics.screen>;
+type _AnalyticsImpression = Assert<typeof Mock.Analytics.impression, typeof Original.Analytics.impression>;
+type _AnalyticsClick = Assert<typeof Mock.Analytics.click, typeof Original.Analytics.click>;
+
+// --- 권한 ---
+type _GetPermission = Assert<typeof Mock.getPermission, typeof Original.getPermission>;
+type _OpenPermissionDialog = Assert<typeof Mock.openPermissionDialog, typeof Original.openPermissionDialog>;
+type _RequestPermission = Assert<typeof Mock.requestPermission, typeof Original.requestPermission>;
+
 // --- 이 파일은 import되지 않으며, tsc --noEmit으로만 검증된다 ---
 export {};
