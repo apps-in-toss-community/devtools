@@ -498,7 +498,7 @@ function mount() {
 
   const header = h('div', { className: 'ait-panel-header' },
     h('span', {}, 'AIT DevTools'),
-    h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${aitState.state.appVersion}`),
+    h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
   );
 
   tabsEl = h('div', { className: 'ait-panel-tabs' });
