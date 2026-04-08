@@ -1,11 +1,59 @@
 /**
  * 디바이스 기능 mock
  * Storage, Location, Camera, Photos, Contacts, Clipboard, Haptic
+ *
+ * 각 API는 deviceModes 설정에 따라 mock/web/prompt 모드로 동작한다.
  */
 
 import { aitState, type MockLocation } from '../state.js';
 import { createMockProxy } from '../proxy.js';
 import { withPermission, checkPermission } from '../permissions.js';
+
+// --- Placeholder Image Generator ---
+
+export function generatePlaceholderImage(width: number, height: number, text: string, color: string): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = 'white';
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, width / 2, height / 2);
+  return canvas.toDataURL('image/png');
+}
+
+const DEFAULT_PLACEHOLDERS = [
+  { text: 'Mock Photo 1', color: '#3182F6' },
+  { text: 'Mock Photo 2', color: '#27ae60' },
+  { text: 'Mock Photo 3', color: '#e67e22' },
+];
+
+export function getDefaultPlaceholderImages(): string[] {
+  return DEFAULT_PLACEHOLDERS.map(p => generatePlaceholderImage(320, 240, p.text, p.color));
+}
+
+function getMockImages(): string[] {
+  const images = aitState.state.mockData.images;
+  if (images.length > 0) return images;
+  return getDefaultPlaceholderImages();
+}
+
+// --- Prompt Mode Helper ---
+
+function waitForPromptResponse<T>(type: string): Promise<T> {
+  return new Promise(resolve => {
+    const handler = (e: Event) => {
+      resolve((e as CustomEvent).detail as T);
+      window.removeEventListener('__ait:prompt-response:' + type, handler);
+    };
+    window.addEventListener('__ait:prompt-response:' + type, handler);
+    window.dispatchEvent(new CustomEvent('__ait:prompt-request', { detail: { type } }));
+  });
+}
 
 // --- Storage ---
 
@@ -38,11 +86,56 @@ function buildLocation(): MockLocation {
   };
 }
 
+// -- getCurrentLocation --
+
+async function getCurrentLocationMock(): Promise<MockLocation> {
+  return buildLocation();
+}
+
+async function getCurrentLocationWeb(): Promise<MockLocation> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      console.warn('[ait-devtools] Geolocation API not available, falling back to mock');
+      resolve(buildLocation());
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        resolve({
+          coords: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            altitude: pos.coords.altitude ?? 0,
+            accuracy: pos.coords.accuracy,
+            altitudeAccuracy: pos.coords.altitudeAccuracy ?? 0,
+            heading: pos.coords.heading ?? 0,
+          },
+          timestamp: pos.timestamp,
+          accessLocation: 'FINE',
+        });
+      },
+      () => {
+        console.warn('[ait-devtools] Geolocation failed, falling back to mock');
+        resolve(buildLocation());
+      },
+    );
+  });
+}
+
+async function getCurrentLocationPrompt(): Promise<MockLocation> {
+  return waitForPromptResponse<MockLocation>('location');
+}
+
 const _getCurrentLocation = async (_options?: { accuracy: Accuracy }): Promise<MockLocation> => {
   checkPermission('geolocation', 'getCurrentLocation');
-  return buildLocation();
+  const mode = aitState.state.deviceModes.location;
+  if (mode === 'web') return getCurrentLocationWeb();
+  if (mode === 'prompt') return getCurrentLocationPrompt();
+  return getCurrentLocationMock();
 };
 export const getCurrentLocation = withPermission(_getCurrentLocation, 'geolocation');
+
+// -- startUpdateLocation --
 
 interface StartUpdateLocationEventParams {
   onEvent: (response: MockLocation) => void;
@@ -50,17 +143,59 @@ interface StartUpdateLocationEventParams {
   options: { accuracy: Accuracy; timeInterval: number; distanceInterval: number };
 }
 
-function _startUpdateLocation(eventParams: StartUpdateLocationEventParams): () => void {
+function startUpdateLocationMock(eventParams: StartUpdateLocationEventParams): () => void {
   const { onEvent, options } = eventParams;
   const interval = Math.max(options.timeInterval, 500);
   const id = setInterval(() => {
-    // 약간의 jitter를 추가해서 현실감 있게
     const loc = buildLocation();
     loc.coords.latitude += (Math.random() - 0.5) * 0.0001;
     loc.coords.longitude += (Math.random() - 0.5) * 0.0001;
     onEvent(loc);
   }, interval);
   return () => clearInterval(id);
+}
+
+function startUpdateLocationWeb(eventParams: StartUpdateLocationEventParams): () => void {
+  const { onEvent, onError } = eventParams;
+  if (!navigator.geolocation) {
+    console.warn('[ait-devtools] Geolocation API not available, falling back to mock');
+    return startUpdateLocationMock(eventParams);
+  }
+  const watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      onEvent({
+        coords: {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          altitude: pos.coords.altitude ?? 0,
+          accuracy: pos.coords.accuracy,
+          altitudeAccuracy: pos.coords.altitudeAccuracy ?? 0,
+          heading: pos.coords.heading ?? 0,
+        },
+        timestamp: pos.timestamp,
+        accessLocation: 'FINE',
+      });
+    },
+    (err) => onError(err),
+  );
+  return () => navigator.geolocation.clearWatch(watchId);
+}
+
+function startUpdateLocationPrompt(eventParams: StartUpdateLocationEventParams): () => void {
+  const { onEvent } = eventParams;
+  const handler = (e: Event) => {
+    onEvent((e as CustomEvent).detail as MockLocation);
+  };
+  window.addEventListener('__ait:prompt-response:location-update', handler);
+  window.dispatchEvent(new CustomEvent('__ait:prompt-request', { detail: { type: 'location-update' } }));
+  return () => window.removeEventListener('__ait:prompt-response:location-update', handler);
+}
+
+function _startUpdateLocation(eventParams: StartUpdateLocationEventParams): () => void {
+  const mode = aitState.state.deviceModes.location;
+  if (mode === 'web') return startUpdateLocationWeb(eventParams);
+  if (mode === 'prompt') return startUpdateLocationPrompt(eventParams);
+  return startUpdateLocationMock(eventParams);
 }
 
 export const startUpdateLocation = Object.assign(_startUpdateLocation, {
@@ -70,9 +205,44 @@ export const startUpdateLocation = Object.assign(_startUpdateLocation, {
 
 // --- Camera ---
 
-const _openCamera = async (options?: { base64?: boolean; maxWidth?: number }): Promise<{ id: string; dataUri: string }> => {
-  checkPermission('camera', 'openCamera');
+async function openCameraMock(): Promise<{ id: string; dataUri: string }> {
+  const images = getMockImages();
+  return { id: crypto.randomUUID(), dataUri: images[0] };
+}
 
+async function openCameraWeb(): Promise<{ id: string; dataUri: string }> {
+  // Try getUserMedia first
+  if (navigator.mediaDevices?.getUserMedia) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        video.autoplay = true;
+        video.playsInline = true;
+
+        video.onloadedmetadata = () => {
+          // Wait a moment for camera to warm up
+          setTimeout(() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d')!;
+            ctx.drawImage(video, 0, 0);
+            stream.getTracks().forEach(t => t.stop());
+            resolve({
+              id: crypto.randomUUID(),
+              dataUri: canvas.toDataURL('image/png'),
+            });
+          }, 500);
+        };
+      });
+    } catch {
+      // Fall through to file input
+    }
+  }
+
+  // Fallback: file input
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -82,25 +252,35 @@ const _openCamera = async (options?: { base64?: boolean; maxWidth?: number }): P
       const file = input.files?.[0];
       if (!file) { reject(new Error('No file selected')); return; }
       const reader = new FileReader();
-      reader.onload = () => {
-        resolve({
-          id: crypto.randomUUID(),
-          dataUri: reader.result as string,
-        });
-      };
+      reader.onload = () => resolve({ id: crypto.randomUUID(), dataUri: reader.result as string });
       reader.readAsDataURL(file);
     };
     input.click();
   });
+}
+
+async function openCameraPrompt(): Promise<{ id: string; dataUri: string }> {
+  const dataUri = await waitForPromptResponse<string>('camera');
+  return { id: crypto.randomUUID(), dataUri };
+}
+
+const _openCamera = async (_options?: { base64?: boolean; maxWidth?: number }): Promise<{ id: string; dataUri: string }> => {
+  checkPermission('camera', 'openCamera');
+  const mode = aitState.state.deviceModes.camera;
+  if (mode === 'web') return openCameraWeb();
+  if (mode === 'prompt') return openCameraPrompt();
+  return openCameraMock();
 };
 export const openCamera = withPermission(_openCamera, 'camera');
 
 // --- Album Photos ---
 
-const _fetchAlbumPhotos = async (options?: { maxCount?: number; maxWidth?: number; base64?: boolean }): Promise<Array<{ id: string; dataUri: string }>> => {
-  checkPermission('photos', 'fetchAlbumPhotos');
-  const maxCount = options?.maxCount ?? 10;
+async function fetchAlbumPhotosMock(maxCount: number): Promise<Array<{ id: string; dataUri: string }>> {
+  const images = getMockImages();
+  return images.slice(0, maxCount).map(dataUri => ({ id: crypto.randomUUID(), dataUri }));
+}
 
+async function fetchAlbumPhotosWeb(maxCount: number): Promise<Array<{ id: string; dataUri: string }>> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -120,6 +300,20 @@ const _fetchAlbumPhotos = async (options?: { maxCount?: number; maxWidth?: numbe
     };
     input.click();
   });
+}
+
+async function fetchAlbumPhotosPrompt(maxCount: number): Promise<Array<{ id: string; dataUri: string }>> {
+  const dataUris = await waitForPromptResponse<string[]>('photos');
+  return dataUris.slice(0, maxCount).map(dataUri => ({ id: crypto.randomUUID(), dataUri }));
+}
+
+const _fetchAlbumPhotos = async (options?: { maxCount?: number; maxWidth?: number; base64?: boolean }): Promise<Array<{ id: string; dataUri: string }>> => {
+  checkPermission('photos', 'fetchAlbumPhotos');
+  const maxCount = options?.maxCount ?? 10;
+  const mode = aitState.state.deviceModes.photos;
+  if (mode === 'web') return fetchAlbumPhotosWeb(maxCount);
+  if (mode === 'prompt') return fetchAlbumPhotosPrompt(maxCount);
+  return fetchAlbumPhotosMock(maxCount);
 };
 export const fetchAlbumPhotos = withPermission(_fetchAlbumPhotos, 'photos');
 
@@ -144,8 +338,13 @@ export const fetchContacts = withPermission(_fetchContacts, 'contacts');
 
 // --- Clipboard ---
 
+let clipboardMemory = '';
+
 const _getClipboardText = async (): Promise<string> => {
   checkPermission('clipboard', 'getClipboardText');
+  const mode = aitState.state.deviceModes.clipboard;
+  if (mode === 'mock') return clipboardMemory;
+  // web mode (default)
   try {
     return await navigator.clipboard.readText();
   } catch {
@@ -156,9 +355,35 @@ export const getClipboardText = withPermission(_getClipboardText, 'clipboard');
 
 const _setClipboardText = async (text: string): Promise<void> => {
   checkPermission('clipboard', 'setClipboardText');
+  const mode = aitState.state.deviceModes.clipboard;
+  if (mode === 'mock') {
+    clipboardMemory = text;
+    return;
+  }
+  // web mode (default)
   await navigator.clipboard.writeText(text);
 };
 export const setClipboardText = withPermission(_setClipboardText, 'clipboard');
+
+// --- Network Status (mode-aware helper for navigation/index.ts) ---
+
+export function getNetworkStatusByMode(): { status: string; isOnline: boolean } | null {
+  const mode = aitState.state.deviceModes.network;
+  if (mode === 'mock') return null; // use default state-based logic
+  if (mode === 'web') {
+    const conn = (navigator as unknown as Record<string, unknown>).connection as { effectiveType?: string } | undefined;
+    const isOnline = navigator.onLine;
+    let status = aitState.state.networkStatus;
+    if (conn?.effectiveType) {
+      const mapping: Record<string, string> = { '4g': '4G', '3g': '3G', '2g': '2G', 'slow-2g': '2G' };
+      status = (mapping[conn.effectiveType] ?? 'UNKNOWN') as typeof status;
+    }
+    if (!isOnline) status = 'OFFLINE';
+    return { status, isOnline };
+  }
+  // prompt mode: not supported for network, fall back to mock
+  return null;
+}
 
 // --- Haptic Feedback ---
 

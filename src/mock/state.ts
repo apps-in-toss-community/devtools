@@ -10,6 +10,20 @@ export type PermissionStatus = 'notDetermined' | 'denied' | 'allowed';
 export type PermissionName = 'clipboard' | 'contacts' | 'photos' | 'geolocation' | 'camera' | 'microphone';
 export type HapticFeedbackType = 'tickWeak' | 'tap' | 'tickMedium' | 'softMedium' | 'basicWeak' | 'basicMedium' | 'success' | 'error' | 'wiggle' | 'confetti';
 
+export type DeviceApiMode = 'mock' | 'web' | 'prompt';
+
+export interface DeviceModes {
+  camera: DeviceApiMode;
+  photos: DeviceApiMode;
+  location: DeviceApiMode;
+  network: DeviceApiMode;
+  clipboard: DeviceApiMode;
+}
+
+export interface MockData {
+  images: string[];
+}
+
 export interface LocationCoords {
   latitude: number;
   longitude: number;
@@ -125,6 +139,12 @@ export interface AitDevtoolsState {
 
   // 분석 로그
   analyticsLog: AnalyticsLogEntry[];
+
+  // 디바이스 API 모드
+  deviceModes: DeviceModes;
+
+  // mock 모드용 더미 데이터
+  mockData: MockData;
 }
 
 const DEFAULT_STATE: AitDevtoolsState = {
@@ -212,6 +232,18 @@ const DEFAULT_STATE: AitDevtoolsState = {
   },
 
   analyticsLog: [],
+
+  deviceModes: {
+    camera: 'mock',
+    photos: 'mock',
+    location: 'mock',
+    network: 'mock',
+    clipboard: 'web',
+  },
+
+  mockData: {
+    images: [],
+  },
 };
 
 function generateDeviceId(): string {

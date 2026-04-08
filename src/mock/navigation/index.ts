@@ -3,6 +3,7 @@
  */
 
 import { aitState } from '../state.js';
+import { getNetworkStatusByMode } from '../device/index.js';
 
 export function closeView(): Promise<void> {
   console.log('[ait-devtools] closeView called');
@@ -103,6 +104,8 @@ export function getGroupId(): string {
 }
 
 export function getNetworkStatus(): Promise<NetworkStatus> {
+  const webResult = getNetworkStatusByMode();
+  if (webResult) return Promise.resolve(webResult.status as NetworkStatus);
   return Promise.resolve(aitState.state.networkStatus);
 }
 

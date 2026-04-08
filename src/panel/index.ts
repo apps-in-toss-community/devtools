@@ -6,15 +6,17 @@
  */
 
 import { aitState } from '../mock/state.js';
-import type { PermissionName, PermissionStatus, NetworkStatus, PlatformOS, OperationalEnvironment, IapNextResult } from '../mock/state.js';
+import type { PermissionName, PermissionStatus, NetworkStatus, PlatformOS, OperationalEnvironment, IapNextResult, DeviceApiMode } from '../mock/state.js';
+import { generatePlaceholderImage, getDefaultPlaceholderImages } from '../mock/device/index.js';
 import { PANEL_STYLES } from './styles.js';
 
-type TabId = 'env' | 'permissions' | 'location' | 'iap' | 'events' | 'analytics' | 'storage';
+type TabId = 'env' | 'permissions' | 'location' | 'iap' | 'events' | 'analytics' | 'storage' | 'device';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'env', label: 'Environment' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'location', label: 'Location' },
+  { id: 'device', label: 'Device' },
   { id: 'iap', label: 'IAP' },
   { id: 'events', label: 'Events' },
   { id: 'analytics', label: 'Analytics' },
@@ -254,10 +256,197 @@ function renderStorageTab(): HTMLElement {
   return container;
 }
 
+// --- Prompt mode state ---
+interface PendingPrompt {
+  type: string;
+}
+let pendingPrompt: PendingPrompt | null = null;
+
+// Listen for prompt requests from device APIs
+if (typeof window !== 'undefined') {
+  window.addEventListener('__ait:prompt-request', (e: Event) => {
+    const detail = (e as CustomEvent).detail as { type: string };
+    pendingPrompt = { type: detail.type };
+    // Auto-switch to device tab and open panel
+    currentTab = 'device';
+    if (panelEl && !panelEl.classList.contains('open')) {
+      panelEl.classList.add('open');
+    }
+    refreshPanel();
+  });
+}
+
+function resolvePrompt(type: string, data: unknown) {
+  window.dispatchEvent(new CustomEvent('__ait:prompt-response:' + type, { detail: data }));
+  pendingPrompt = null;
+  refreshPanel();
+}
+
+function renderPromptBanner(): HTMLElement | null {
+  if (!pendingPrompt) return null;
+
+  const banner = h('div', { className: 'ait-prompt-banner' });
+
+  if (pendingPrompt.type === 'camera') {
+    banner.append(
+      h('div', { className: 'ait-prompt-title' }, 'Camera Prompt — Select an image'),
+    );
+    const input = h('input', { type: 'file', accept: 'image/*', style: 'font-size:11px;color:#aaa' });
+    input.addEventListener('change', () => {
+      const file = (input as HTMLInputElement).files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => resolvePrompt('camera', reader.result as string);
+      reader.readAsDataURL(file);
+    });
+    banner.appendChild(input);
+  } else if (pendingPrompt.type === 'photos') {
+    banner.append(
+      h('div', { className: 'ait-prompt-title' }, 'Photos Prompt — Select images'),
+    );
+    const input = h('input', { type: 'file', accept: 'image/*', multiple: 'true', style: 'font-size:11px;color:#aaa' });
+    input.addEventListener('change', () => {
+      const files = Array.from((input as HTMLInputElement).files ?? []);
+      if (files.length === 0) return;
+      Promise.all(files.map(file => new Promise<string>((res) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result as string);
+        reader.readAsDataURL(file);
+      }))).then(dataUris => resolvePrompt('photos', dataUris));
+    });
+    banner.appendChild(input);
+  } else if (pendingPrompt.type === 'location' || pendingPrompt.type === 'location-update') {
+    banner.append(
+      h('div', { className: 'ait-prompt-title' },
+        pendingPrompt.type === 'location' ? 'Location Prompt — Enter coordinates' : 'Location Update — Send coordinates'),
+    );
+    const latInput = h('input', { className: 'ait-input', value: String(aitState.state.location.coords.latitude), style: 'width:80px' });
+    const lngInput = h('input', { className: 'ait-input', value: String(aitState.state.location.coords.longitude), style: 'width:80px' });
+    const sendBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Send');
+    sendBtn.addEventListener('click', () => {
+      const loc = {
+        coords: {
+          latitude: Number((latInput as HTMLInputElement).value),
+          longitude: Number((lngInput as HTMLInputElement).value),
+          altitude: 0,
+          accuracy: 10,
+          altitudeAccuracy: 0,
+          heading: 0,
+        },
+        timestamp: Date.now(),
+        accessLocation: 'FINE' as const,
+      };
+      resolvePrompt(pendingPrompt!.type, loc);
+    });
+    banner.append(
+      h('div', { className: 'ait-prompt-input-row' },
+        h('label', {}, 'Lat'), latInput,
+        h('label', {}, 'Lng'), lngInput,
+        sendBtn,
+      ),
+    );
+  }
+
+  return banner;
+}
+
+function renderDeviceTab(): HTMLElement {
+  const s = aitState.state;
+  const container = h('div');
+  const modes: DeviceApiMode[] = ['mock', 'web', 'prompt'];
+  const modesNoPrompt: DeviceApiMode[] = ['mock', 'web'];
+
+  // Prompt banner (if active)
+  const promptBanner = renderPromptBanner();
+  if (promptBanner) container.appendChild(promptBanner);
+
+  // Device API Mode selectors
+  const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: DeviceApiMode[] }> = [
+    { label: 'Camera', key: 'camera', options: modes },
+    { label: 'Photos', key: 'photos', options: modes },
+    { label: 'Location', key: 'location', options: modes },
+    { label: 'Network', key: 'network', options: modesNoPrompt },
+    { label: 'Clipboard', key: 'clipboard', options: modesNoPrompt },
+  ];
+
+  container.append(
+    h('div', { className: 'ait-section' },
+      h('div', { className: 'ait-section-title' }, 'Device API Modes'),
+      ...modeEntries.map(entry =>
+        selectRow(entry.label, entry.options, s.deviceModes[entry.key], v => {
+          aitState.patch('deviceModes', { [entry.key]: v as DeviceApiMode });
+          refreshPanel();
+        }),
+      ),
+    ),
+  );
+
+  // Mock Images management
+  const images = s.mockData.images;
+  const imageGrid = h('div', { className: 'ait-image-grid' });
+  images.forEach((dataUri, idx) => {
+    const thumb = h('div', { className: 'ait-image-thumb' });
+    const img = h('img');
+    img.src = dataUri;
+    const removeBtn = h('button', { className: 'ait-image-remove' }, 'x');
+    removeBtn.addEventListener('click', () => {
+      const newImages = [...aitState.state.mockData.images];
+      newImages.splice(idx, 1);
+      aitState.patch('mockData', { images: newImages });
+      refreshPanel();
+    });
+    thumb.append(img, removeBtn);
+    imageGrid.appendChild(thumb);
+  });
+
+  const addBtn = h('button', { className: 'ait-btn-secondary' }, '+ Add');
+  addBtn.addEventListener('click', () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.onchange = () => {
+      const files = Array.from(input.files ?? []);
+      Promise.all(files.map(file => new Promise<string>((res) => {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result as string);
+        reader.readAsDataURL(file);
+      }))).then(dataUris => {
+        aitState.patch('mockData', { images: [...aitState.state.mockData.images, ...dataUris] });
+        refreshPanel();
+      });
+    };
+    input.click();
+  });
+
+  const defaultsBtn = h('button', { className: 'ait-btn-secondary' }, 'Use defaults');
+  defaultsBtn.addEventListener('click', () => {
+    aitState.patch('mockData', { images: getDefaultPlaceholderImages() });
+    refreshPanel();
+  });
+
+  const clearImagesBtn = h('button', { className: 'ait-btn-secondary' }, 'Clear');
+  clearImagesBtn.addEventListener('click', () => {
+    aitState.patch('mockData', { images: [] });
+    refreshPanel();
+  });
+
+  container.append(
+    h('div', { className: 'ait-section' },
+      h('div', { className: 'ait-section-title' }, `Mock Images (${images.length})`),
+      imageGrid,
+      h('div', { className: 'ait-btn-row' }, addBtn, defaultsBtn, clearImagesBtn),
+    ),
+  );
+
+  return container;
+}
+
 const TAB_RENDERERS: Record<TabId, () => HTMLElement> = {
   env: renderEnvTab,
   permissions: renderPermissionsTab,
   location: renderLocationTab,
+  device: renderDeviceTab,
   iap: renderIapTab,
   events: renderEventsTab,
   analytics: renderAnalyticsTab,
@@ -325,7 +514,7 @@ function mount() {
 
   // 상태 변경 시 자동 갱신 (analytics, storage 탭)
   aitState.subscribe(() => {
-    if (isOpen && (currentTab === 'analytics' || currentTab === 'storage')) {
+    if (isOpen && (currentTab === 'analytics' || currentTab === 'storage' || currentTab === 'device')) {
       refreshPanel();
     }
   });

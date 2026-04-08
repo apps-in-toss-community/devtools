@@ -202,4 +202,95 @@ export const PANEL_STYLES = /* css */ `
     flex: 1;
     word-break: break-all;
   }
+
+  /* Device tab */
+  .ait-image-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .ait-image-thumb {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #3a3a5a;
+  }
+  .ait-image-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .ait-image-thumb .ait-image-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(231,76,60,0.9);
+    color: white;
+    border: none;
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 18px;
+    text-align: center;
+    padding: 0;
+  }
+  .ait-btn-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .ait-btn-secondary {
+    background: #2a2a4a;
+    color: #e0e0e0;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .ait-btn-secondary:hover {
+    background: #3a3a5a;
+  }
+
+  /* Prompt notification */
+  .ait-prompt-banner {
+    background: #2d1b69;
+    border: 1px solid #6c3bd5;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  .ait-prompt-banner .ait-prompt-title {
+    color: #b388ff;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .ait-prompt-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 6px;
+  }
+  .ait-prompt-input-row input {
+    background: #2a2a4a;
+    color: #e0e0e0;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    width: 80px;
+    font-family: inherit;
+  }
+  .ait-prompt-input-row label {
+    color: #aaa;
+    font-size: 11px;
+    min-width: 30px;
+  }
 `;
