@@ -1,5 +1,7 @@
 import { defineConfig } from 'tsup';
+import pkg from './package.json' with { type: 'json' };
 
+// __VERSION__ is defined in all entries so any source file can reference it
 export default defineConfig([
   {
     entry: {
@@ -11,6 +13,9 @@ export default defineConfig([
     sourcemap: true,
     clean: false,
     target: 'es2022',
+    define: {
+      __VERSION__: JSON.stringify(pkg.version),
+    },
   },
   {
     entry: {
@@ -21,5 +26,8 @@ export default defineConfig([
     sourcemap: true,
     clean: false,
     target: 'es2022',
+    define: {
+      __VERSION__: JSON.stringify(pkg.version),
+    },
   },
 ]);
