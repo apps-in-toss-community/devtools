@@ -333,7 +333,14 @@ unsubscribe(); // 구독 해제
 
 ## 테스트에서의 활용
 
-vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다:
+vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다.
+
+> mock 함수들이 `window`, `document`, `localStorage` 등 브라우저 API를 사용하므로 **jsdom 환경**이 필요합니다.
+>
+> ```ts
+> // vitest.config.ts
+> export default { test: { environment: 'jsdom' } }
+> ```
 
 ```ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -446,6 +453,10 @@ pnpm test        # 전체 테스트 실행
   import '@ait-co/devtools/panel';
   ```
 - 플러그인은 `/main|index|entry/` 패턴의 진입점 파일만 자동 주입합니다
+
+### 서브패스 import는 mock되지 않음
+
+`@apps-in-toss/web-framework/some-subpath` 형태의 서브패스 import는 alias가 적용되지 않습니다. SDK의 메인 엔트리(`@apps-in-toss/web-framework`)만 mock됩니다.
 
 ### Next.js Turbopack에서 설정하는 법
 
