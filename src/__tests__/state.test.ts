@@ -102,4 +102,19 @@ describe('AitStateManager', () => {
     expect(aitState.state.iap.completedOrders).toHaveLength(0);
     expect(aitState.state.auth.isLoggedIn).toBe(true);
   });
+
+  it('mockEnabled: 기본값은 true이다', () => {
+    expect(aitState.state.mockEnabled).toBe(true);
+  });
+
+  it('mockEnabled: update로 토글할 수 있다', () => {
+    aitState.update({ mockEnabled: false });
+    expect(aitState.state.mockEnabled).toBe(false);
+  });
+
+  it('mockEnabled: reset 시 기본값으로 복원된다', () => {
+    aitState.update({ mockEnabled: false });
+    aitState.reset();
+    expect(aitState.state.mockEnabled).toBe(true);
+  });
 });

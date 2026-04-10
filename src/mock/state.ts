@@ -146,6 +146,9 @@ export interface AitDevtoolsState {
 
   // mock 모드용 더미 데이터
   mockData: MockData;
+
+  // mock 활성화 상태
+  mockEnabled: boolean;
 }
 
 const DEFAULT_STATE: AitDevtoolsState = {
@@ -246,6 +249,8 @@ const DEFAULT_STATE: AitDevtoolsState = {
     images: [],
     clipboardText: '',
   },
+
+  mockEnabled: true,
 };
 
 function generateDeviceId(): string {
