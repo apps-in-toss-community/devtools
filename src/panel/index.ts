@@ -180,7 +180,12 @@ function refreshPanel() {
   if (!bodyEl || !tabsEl) return;
   if (!tabRenderers) tabRenderers = createTabRenderers(refreshPanel);
   bodyEl.innerHTML = '';
-  bodyEl.appendChild(tabRenderers[currentTab]());
+  try {
+    bodyEl.appendChild(tabRenderers[currentTab]());
+  } catch (err) {
+    console.error(`[@ait-co/devtools] Error rendering tab "${currentTab}":`, err);
+    bodyEl.appendChild(h('div', { style: 'padding:12px;color:#e53e3e' }, `Error rendering "${currentTab}" tab.`));
+  }
 
   tabsEl.querySelectorAll('.ait-panel-tab').forEach(el => {
     el.classList.toggle('active', el.getAttribute('data-tab') === currentTab);
@@ -289,8 +294,12 @@ function mount() {
 
   // 상태 변경 시 자동 갱신 (analytics, storage 탭)
   aitState.subscribe(() => {
-    if (isOpen && (currentTab === 'analytics' || currentTab === 'storage' || currentTab === 'device')) {
-      refreshPanel();
+    try {
+      if (isOpen && (currentTab === 'analytics' || currentTab === 'storage' || currentTab === 'device')) {
+        refreshPanel();
+      }
+    } catch (err) {
+      console.error('[@ait-co/devtools] Error in subscribe callback:', err);
     }
   });
 
@@ -299,10 +308,17 @@ function mount() {
 
 // DOM ready 시 마운트
 if (typeof document !== 'undefined') {
+  const safeMount = () => {
+    try {
+      mount();
+    } catch (err) {
+      console.error('[@ait-co/devtools] Failed to mount panel:', err);
+    }
+  };
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount);
+    document.addEventListener('DOMContentLoaded', safeMount);
   } else {
-    mount();
+    safeMount();
   }
 }
 
