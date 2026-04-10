@@ -58,6 +58,8 @@ jobs:
 
       - run: pnpm test
 
+      # Trusted publishing requires npm >= 11.5.1 (Node 22 ships npm 10.x)
+      - run: npm install -g npm@latest
+
       # pnpm publish does not support OIDC trusted publishing yet (pnpm/pnpm#9812)
-      # Use npm publish directly instead
       - run: npm publish --provenance --access public
