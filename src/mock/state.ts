@@ -261,7 +261,7 @@ function generateDeviceId(): string {
   return id;
 }
 
-class AitStateManager {
+export class AitStateManager {
   private _state: AitDevtoolsState;
   private _listeners = new Set<Listener>();
 
@@ -333,5 +333,5 @@ export const aitState = new AitStateManager();
 
 // 브라우저 콘솔에서 접근 가능하도록
 if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).__ait = aitState;
+  window.__ait = aitState;
 }

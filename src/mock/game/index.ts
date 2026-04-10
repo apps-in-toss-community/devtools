@@ -4,46 +4,45 @@
 
 import { aitState } from '../state.js';
 
-export function grantPromotionReward(params: {
+export async function grantPromotionReward(params: {
   params: { promotionCode: string; amount: number };
 }): Promise<{ key: string } | { errorCode: string; message: string } | 'ERROR' | undefined> {
-  console.log('[ait-devtools] grantPromotionReward:', params.params);
-  return Promise.resolve({ key: `mock-reward-${Date.now()}` });
+  console.log('[@ait-co/devtools] grantPromotionReward:', params.params);
+  return { key: `mock-reward-${Date.now()}` };
 }
 
-export function grantPromotionRewardForGame(params: {
+export async function grantPromotionRewardForGame(params: {
   params: { promotionCode: string; amount: number };
 }): Promise<{ key: string } | { errorCode: string; message: string } | 'ERROR' | undefined> {
-  console.log('[ait-devtools] grantPromotionRewardForGame:', params.params);
-  return Promise.resolve({ key: `mock-reward-${Date.now()}` });
+  console.log('[@ait-co/devtools] grantPromotionRewardForGame:', params.params);
+  return { key: `mock-reward-${Date.now()}` };
 }
 
-export function submitGameCenterLeaderBoardScore(params: {
+export async function submitGameCenterLeaderBoardScore(params: {
   score: string;
 }): Promise<{ statusCode: 'SUCCESS' | 'LEADERBOARD_NOT_FOUND' | 'PROFILE_NOT_FOUND' | 'UNPARSABLE_SCORE' } | undefined> {
   aitState.patch('game', {
     leaderboardScores: [...aitState.state.game.leaderboardScores, { score: params.score, timestamp: Date.now() }],
   });
-  return Promise.resolve({ statusCode: 'SUCCESS' });
+  return { statusCode: 'SUCCESS' };
 }
 
-export function getGameCenterGameProfile(): Promise<
+export async function getGameCenterGameProfile(): Promise<
   { statusCode: 'SUCCESS'; nickname: string; profileImageUri: string } |
   { statusCode: 'PROFILE_NOT_FOUND' } |
   undefined
 > {
   const profile = aitState.state.game.profile;
-  if (!profile) return Promise.resolve({ statusCode: 'PROFILE_NOT_FOUND' });
-  return Promise.resolve({
+  if (!profile) return { statusCode: 'PROFILE_NOT_FOUND' };
+  return {
     statusCode: 'SUCCESS',
     nickname: profile.nickname,
     profileImageUri: profile.profileImageUri,
-  });
+  };
 }
 
-export function openGameCenterLeaderboard(): Promise<void> {
-  console.log('[ait-devtools] openGameCenterLeaderboard (no-op in browser)');
-  return Promise.resolve();
+export async function openGameCenterLeaderboard(): Promise<void> {
+  console.log('[@ait-co/devtools] openGameCenterLeaderboard (no-op in browser)');
 }
 
 interface ContactsViralEvent {

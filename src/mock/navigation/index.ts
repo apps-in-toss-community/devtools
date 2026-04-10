@@ -5,53 +5,48 @@
 import { aitState, type NetworkStatus } from '../state.js';
 import { getNetworkStatusByMode } from '../device/index.js';
 
-export function closeView(): Promise<void> {
-  console.log('[ait-devtools] closeView called');
+export async function closeView(): Promise<void> {
+  console.log('[@ait-co/devtools] closeView called');
   window.history.back();
-  return Promise.resolve();
 }
 
-export function openURL(url: string): Promise<void> {
-  console.log('[ait-devtools] openURL:', url);
+export async function openURL(url: string): Promise<void> {
+  console.log('[@ait-co/devtools] openURL:', url);
   window.open(url, '_blank');
-  return Promise.resolve();
 }
 
-export function share(message: { message: string }): Promise<void> {
+export async function share(message: { message: string }): Promise<void> {
   if (navigator.share) {
-    return navigator.share({ text: message.message }).then(() => {});
+    await navigator.share({ text: message.message });
+    return;
   }
-  console.log('[ait-devtools] share:', message.message);
-  return Promise.resolve();
+  console.log('[@ait-co/devtools] share:', message.message);
 }
 
-export function getTossShareLink(path: string, _ogImageUrl?: string): Promise<string> {
-  return Promise.resolve(`https://toss.im/share/mock${path}`);
+export async function getTossShareLink(path: string, _ogImageUrl?: string): Promise<string> {
+  return `https://toss.im/share/mock${path}`;
 }
 
-export function setIosSwipeGestureEnabled(_options: { isEnabled: boolean }): Promise<void> {
-  console.log('[ait-devtools] setIosSwipeGestureEnabled:', _options.isEnabled);
-  return Promise.resolve();
+export async function setIosSwipeGestureEnabled(_options: { isEnabled: boolean }): Promise<void> {
+  console.log('[@ait-co/devtools] setIosSwipeGestureEnabled:', _options.isEnabled);
 }
 
-export function setDeviceOrientation(_options: { type: 'portrait' | 'landscape' }): Promise<void> {
-  console.log('[ait-devtools] setDeviceOrientation:', _options.type);
-  return Promise.resolve();
+export async function setDeviceOrientation(_options: { type: 'portrait' | 'landscape' }): Promise<void> {
+  console.log('[@ait-co/devtools] setDeviceOrientation:', _options.type);
 }
 
-export function setScreenAwakeMode(options: { enabled: boolean }): Promise<{ enabled: boolean }> {
-  console.log('[ait-devtools] setScreenAwakeMode:', options.enabled);
-  return Promise.resolve({ enabled: options.enabled });
+export async function setScreenAwakeMode(options: { enabled: boolean }): Promise<{ enabled: boolean }> {
+  console.log('[@ait-co/devtools] setScreenAwakeMode:', options.enabled);
+  return { enabled: options.enabled };
 }
 
-export function setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }> {
-  console.log('[ait-devtools] setSecureScreen:', options.enabled);
-  return Promise.resolve({ enabled: options.enabled });
+export async function setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }> {
+  console.log('[@ait-co/devtools] setSecureScreen:', options.enabled);
+  return { enabled: options.enabled };
 }
 
-export function requestReview(): Promise<void> {
-  console.log('[ait-devtools] requestReview called');
-  return Promise.resolve();
+export async function requestReview(): Promise<void> {
+  console.log('[@ait-co/devtools] requestReview called');
 }
 (requestReview as unknown as { isSupported: () => boolean }).isSupported = () => true;
 
@@ -103,14 +98,14 @@ export function getGroupId(): string {
   return aitState.state.groupId;
 }
 
-export function getNetworkStatus(): Promise<NetworkStatus> {
+export async function getNetworkStatus(): Promise<NetworkStatus> {
   const modeResult = getNetworkStatusByMode();
-  if (modeResult) return Promise.resolve(modeResult);
-  return Promise.resolve(aitState.state.networkStatus);
+  if (modeResult) return modeResult;
+  return aitState.state.networkStatus;
 }
 
-export function getServerTime(): Promise<number | undefined> {
-  return Promise.resolve(Date.now());
+export async function getServerTime(): Promise<number | undefined> {
+  return Date.now();
 }
 (getServerTime as unknown as { isSupported: () => boolean }).isSupported = () => true;
 

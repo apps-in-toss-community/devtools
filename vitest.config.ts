@@ -6,7 +6,7 @@ export default defineConfig({
     restoreMocks: true,
     exclude: ['e2e/**', 'examples/**', 'node_modules/**'],
     onConsoleLog(log: string) {
-      if (log.includes('[ait-devtools]')) return false;
+      if (log.includes('[@ait-co/devtools]')) return false;
     },
   },
 });

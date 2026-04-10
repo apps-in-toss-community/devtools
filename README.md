@@ -1,5 +1,7 @@
 # @ait-co/devtools
 
+> **데모: https://apps-in-toss-community.github.io/devtools/**
+
 `@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
 
 앱인토스(Apps in Toss) 미니앱을 **일반 브라우저**에서 개발하고 테스트할 수 있게 해줍니다. 토스 앱 없이도 SDK의 모든 기능을 시뮬레이션하여 빠른 개발 사이클을 지원합니다.
@@ -333,7 +335,15 @@ unsubscribe(); // 구독 해제
 
 ## 테스트에서의 활용
 
-vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다:
+vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다.
+
+> mock 함수들이 `window`, `document`, `localStorage` 등 브라우저 API를 사용하므로 **jsdom 환경**이 필요합니다.
+>
+> ```ts
+> // vitest.config.ts
+> import { defineConfig } from 'vitest/config';
+> export default defineConfig({ test: { environment: 'jsdom' } });
+> ```
 
 ```ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -405,7 +415,7 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 `createMockProxy()`가 미구현 API 접근 시 에러 대신 경고 로그 + no-op 함수를 반환합니다. 새 SDK API가 추가되어도 앱이 크래시하지 않습니다.
 
 ```
-[ait-devtools] IAP.newMethod is not mocked yet. Returning no-op.
+[@ait-co/devtools] IAP.newMethod is not mocked yet. Returning no-op.
 ```
 
 ### 3. GitHub Actions 주간 CI
@@ -434,7 +444,7 @@ pnpm test        # 전체 테스트 실행
 
 ## Troubleshooting
 
-### `[ait-devtools] XXX.method is not mocked yet` 경고가 뜰 때
+### `[@ait-co/devtools] XXX.method is not mocked yet` 경고가 뜰 때
 
 사용 중인 SDK API가 아직 mock으로 구현되지 않았습니다. Proxy fallback이 no-op을 반환하므로 앱은 정상 동작하지만, 해당 API의 실제 동작은 시뮬레이션되지 않습니다. [이슈를 등록](https://github.com/apps-in-toss-community/devtools/issues)하거나 직접 mock을 추가해 주세요.
 
@@ -446,6 +456,10 @@ pnpm test        # 전체 테스트 실행
   import '@ait-co/devtools/panel';
   ```
 - 플러그인은 `/main|index|entry/` 패턴의 진입점 파일만 자동 주입합니다
+
+### 서브패스 import는 mock되지 않음
+
+`@apps-in-toss/web-framework/some-subpath` 형태의 서브패스 import는 alias가 적용되지 않습니다. SDK의 메인 엔트리(`@apps-in-toss/web-framework`)만 mock됩니다. 특정 서브패스도 mock이 필요하다면 번들러의 `resolve.alias`에 해당 서브패스를 수동으로 추가하세요.
 
 ### Next.js Turbopack에서 설정하는 법
 

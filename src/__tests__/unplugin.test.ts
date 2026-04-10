@@ -7,7 +7,7 @@ const MOCK_ID = '@ait-co/devtools/mock';
 type RawHooks = {
   resolveId: (id: string) => string | null | undefined;
   transformInclude: (id: string) => boolean;
-  transform: (code: string, id: string) => string | null | undefined;
+  transform: (code: string) => string | null | undefined;
 };
 
 function getRawHooks(options?: Parameters<typeof aitDevtoolsPlugin.raw>[0]): RawHooks {
@@ -153,11 +153,25 @@ describe('unplugin: resolveId', () => {
   });
 });
 
-describe('unplugin: transform', () => {
-  it('진입점 파일에 패널 import를 prepend한다', () => {
+describe('unplugin: transformInclude - 추가 케이스', () => {
+  it('node_modules 내 파일은 제외한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
-    const result = hooks.transform('console.log("hello");', 'src/main.tsx');
+    expect(hooks.transformInclude('node_modules/some-lib/main.js')).toBeFalsy();
+  });
+
+  it('app 패턴이 포함된 파일도 포함한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    expect(hooks.transformInclude('src/App.tsx')).toBeTruthy();
+  });
+});
+
+describe('unplugin: transform', () => {
+  it('패널 import를 prepend한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    const result = hooks.transform('console.log("hello");');
     expect(result).toBe("import '@ait-co/devtools/panel';\nconsole.log(\"hello\");");
   });
 
@@ -165,28 +179,14 @@ describe('unplugin: transform', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
     const code = "import '@ait-co/devtools/panel';\nconsole.log('hello');";
-    const result = hooks.transform(code, 'src/main.tsx');
+    const result = hooks.transform(code);
     expect(result).toBeNull();
   });
 
   it('shouldPanel이 false이면 null을 반환한다', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const hooks = getRawHooks();
-    const result = hooks.transform('console.log("hello");', 'src/main.tsx');
+    const result = hooks.transform('console.log("hello");');
     expect(result).toBeNull();
-  });
-
-  it('node_modules 내 파일은 스킵한다', () => {
-    vi.stubEnv('NODE_ENV', 'development');
-    const hooks = getRawHooks();
-    const result = hooks.transform('console.log("hello");', 'node_modules/some-lib/main.js');
-    expect(result).toBeNull();
-  });
-
-  it('app 패턴이 포함된 파일도 패널을 주입한다', () => {
-    vi.stubEnv('NODE_ENV', 'development');
-    const hooks = getRawHooks();
-    const result = hooks.transform('console.log("hello");', 'src/App.tsx');
-    expect(result).toBe("import '@ait-co/devtools/panel';\nconsole.log(\"hello\");");
   });
 });

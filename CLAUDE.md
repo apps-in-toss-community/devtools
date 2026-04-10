@@ -46,6 +46,19 @@ src/
 │   └── styles.ts      # CSS 문자열
 ├── unplugin/          # unplugin 기반 번들러 플러그인
 │   └── index.ts       # Vite/Webpack/Rspack/esbuild/Rollup export
+├── __tests__/         # vitest 테스트 파일
+│   ├── ads.test.ts
+│   ├── analytics.test.ts
+│   ├── auth.test.ts
+│   ├── device.test.ts
+│   ├── game.test.ts
+│   ├── iap.test.ts
+│   ├── navigation.test.ts
+│   ├── partner.test.ts
+│   ├── permissions.test.ts
+│   ├── proxy.test.ts
+│   ├── state.test.ts
+│   └── storage.test.ts
 └── __typecheck.ts     # 원본 SDK 대비 타입 호환성 검증 (빌드에 포함 안 됨)
 ```
 
