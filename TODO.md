@@ -1,31 +1,19 @@
 # TODO
 
-## 완료됨
+## High Priority
+- [ ] Split `src/mock/device/index.ts` (427 lines) into per-domain files — Storage, Location, Camera, Clipboard, Haptic, Contacts, Network이 한 파일에 혼재. auth/, navigation/ 등 다른 모듈의 디렉토리 분리 패턴과 비일관적.
+- [ ] Add tests for Camera/Photos/Contacts — `openCamera()`, `fetchAlbumPhotos()`, `fetchContacts()` 등 withPermission + mode dispatch를 사용하는 함수들에 테스트 없음.
 
-- [x] mock/panel 분리 — production에서 devtools 활성화 지원 (#24, #25)
-- [x] production 빌드 관련 문서화 (#26)
-- [x] Turbopack 설정 보강 (#26)
-- [x] 수동 Alias 섹션에 Panel 직접 import 안내 (#26)
-- [x] Next.js Webpack 모드 설정 안내 (#26)
-- [x] README의 transformInclude 패턴 설명 수정 (#26)
-- [x] 예제 프로젝트 로컬 링크 workaround 안내 (#26)
-- [x] `transformInclude`와 `transform`의 패턴 불일치 수정 (#23)
-- [x] console.log prefix `[@ait-co/devtools]`로 통일 (#23)
-- [x] Promise 반환 패턴 통일 (#23)
-- [x] `window.__ait` TypeScript 타입 선언 (#23)
-- [x] CLAUDE.md 구조 트리에 `__tests__/` 디렉토리 추가 (#21)
-- [x] 테스트 섹션에 jsdom 환경 필요 안내 (#21)
-- [x] 서브패스 import 제한 문서화 (#21)
-- [x] GitHub Pages 예제 앱 배포 (#22)
-- [x] Panel 고정 높이 + 모바일 전체화면 + 드래그 이동 (#27)
-- [x] v0.0.2 npm publish — trusted publishing (OIDC) (#29-#35)
-- [x] engines.node >= 20 추가 (#36)
+## Medium Priority
+- [ ] Fix `startUpdateLocation` permission pattern — `getCurrentLocation`은 `withPermission()` 래퍼를 사용하는데 `startUpdateLocation`은 `Object.assign()`으로 수동 부착. 패턴 통일 필요.
+- [ ] Split `src/panel/index.ts` (~700 lines) into tab renderers — 8개 탭 렌더러 + 마운트 + 드래그 로직이 단일 파일. 탭별 분리 고려 (예: `panel/tabs/environment.ts`).
+- [ ] Add error boundary to Panel mount — `aitState.subscribe()` 콜백에서 에러 시 패널이 조용히 죽음. try/catch 필요.
+- [ ] E2E 테스트 보강 — mock/panel 분리, 드래그, 모바일 전체화면 등 새 기능에 대한 테스트.
 
-## 남은 작업
+## Low Priority
+- [ ] Move shared types to `types.ts` — `PermissionName`, `PermissionStatus`, `DeviceMode` 등이 `state.ts`에 집중. `types.ts`로 옮기면 순환 의존 위험 감소.
+- [ ] Improve prompt mode timeout message — 30초 타임아웃 시 패널 존재 여부와 무관하게 "Is panel imported?" 메시지 표시. 패널 유무에 따라 분기 필요.
+- [ ] Delete `publish-manual.yml` — `release.yml`에 workflow_dispatch 추가되어 불필요.
 
-- [ ] **E2E 테스트 보강** — mock/panel 분리, 드래그, 모바일 전체화면 등 새 기능에 대한 테스트
-- [ ] **publish-manual.yml 정리** — release.yml에 workflow_dispatch 추가되어 불필요
-
-## 지원하지 않는 것
-
+## Out of Scope
 - **React Native** — 이 프로젝트는 WebView 미니앱 전용. RN은 지원 범위 밖.
