@@ -10,8 +10,7 @@ export function renderAnalyticsTab(refreshPanel: () => void): HTMLElement {
   const clearBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger' }, 'Clear');
   if (disabled) clearBtn.disabled = true;
   clearBtn.addEventListener('click', () => {
-    aitState.state.analyticsLog.length = 0;
-    refreshPanel();
+    aitState.update({ analyticsLog: [] });
   });
 
   container.append(
