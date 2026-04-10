@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { aitState } from '../mock/state.js';
-import { openCamera, fetchAlbumPhotos } from '../mock/device/camera.js';
-import { getDefaultPlaceholderImages } from '../mock/device/_helpers.js';
+import { openCamera, fetchAlbumPhotos, getDefaultPlaceholderImages } from '../mock/device/index.js';
 
 describe('Camera & Album Photos mock', () => {
   beforeEach(() => {
@@ -27,6 +26,13 @@ describe('Camera & Album Photos mock', () => {
       aitState.update({ mockData: { ...aitState.state.mockData, images: [customImage] } });
       const result = await openCamera();
       expect(result.dataUri).toBe(customImage);
+    });
+
+    it('mockData.images가 비어있으면 기본 placeholder로 fallback한다', async () => {
+      aitState.update({ mockData: { ...aitState.state.mockData, images: [] } });
+      const placeholders = getDefaultPlaceholderImages();
+      const result = await openCamera();
+      expect(result.dataUri).toBe(placeholders[0]);
     });
 
     it('camera 권한이 denied이면 에러를 throw한다', async () => {

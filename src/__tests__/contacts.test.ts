@@ -11,8 +11,8 @@ describe('Contacts mock', () => {
     it('mock 모드에서 state.contacts를 반환한다', async () => {
       const result = await fetchContacts({ size: 10, offset: 0 });
       expect(result.result).toHaveLength(2);
-      expect(result.result[0].name).toBe('홍길동');
-      expect(result.result[1].name).toBe('김토스');
+      expect(result.result[0]).toEqual({ name: '홍길동', phoneNumber: '010-1234-5678' });
+      expect(result.result[1]).toEqual({ name: '김토스', phoneNumber: '010-9876-5432' });
     });
 
     it('contacts 권한이 denied이면 에러를 throw한다', async () => {
