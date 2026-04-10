@@ -373,4 +373,8 @@ export const PANEL_STYLES = /* css */ `
       display: block;
     }
   }
+  .ait-panel-tab-error {
+    padding: 12px;
+    color: #e53e3e;
+  }
 `;

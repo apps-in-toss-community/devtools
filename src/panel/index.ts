@@ -184,7 +184,7 @@ function refreshPanel() {
     bodyEl.appendChild(tabRenderers[currentTab]());
   } catch (err) {
     console.error(`[@ait-co/devtools] Error rendering tab "${currentTab}":`, err);
-    bodyEl.appendChild(h('div', { style: 'padding:12px;color:#e53e3e' }, `Error rendering "${currentTab}" tab.`));
+    bodyEl.appendChild(h('div', { className: 'ait-panel-tab-error' }, `Error rendering "${currentTab}" tab.`));
   }
 
   tabsEl.querySelectorAll('.ait-panel-tab').forEach(el => {
