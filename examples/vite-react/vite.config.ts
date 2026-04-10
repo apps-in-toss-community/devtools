@@ -8,6 +8,7 @@ const mockEntry = resolve(aitRoot, 'dist/mock/index.js');
 const panelEntry = resolve(aitRoot, 'dist/panel/index.js');
 
 export default defineConfig({
+  base: process.env.GITHUB_ACTIONS ? '/devtools/' : '/',
   plugins: [
     // Override the unplugin's resolveId: in file:-linked packages, bare
     // specifiers like '@ait-co/devtools/mock' fail to resolve. This plugin maps
