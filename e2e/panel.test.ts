@@ -686,6 +686,10 @@ test.describe('Device Tab', () => {
 // ====================================================================
 // DRAGGABLE TOGGLE BUTTON
 // ====================================================================
+// Source constants referenced in these tests:
+//   SNAP_MARGIN = 16px        (panel/index.ts snapToEdge)
+//   DRAG_THRESHOLD = 3px      (panel/index.ts makeDraggable, per axis)
+//   MOBILE_BREAKPOINT = 480px (panel/styles.ts @media query)
 
 test.describe('Draggable Toggle Button', () => {
   test('dragging should change button Y position', async ({ page }) => {
