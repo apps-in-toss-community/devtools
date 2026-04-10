@@ -31,6 +31,14 @@ export interface AitDevtoolsOptions {
    * true이면 진입점에 floating panel import를 자동 추가한다.
    */
   panel?: boolean;
+  /**
+   * production 환경에서도 devtools를 강제로 활성화 (default: false)
+   */
+  forceEnable?: boolean;
+  /**
+   * mock alias 활성화 여부. default: true (development), false (production + forceEnable)
+   */
+  mock?: boolean;
 }
 
 const FRAMEWORK_ID = '@apps-in-toss/web-framework';
@@ -38,13 +46,17 @@ const BRIDGE_ID = '@apps-in-toss/web-bridge';
 const ANALYTICS_ID = '@apps-in-toss/web-analytics';
 
 const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
-  const _panel = options?.panel ?? true;
+  const isDev = process.env.NODE_ENV !== 'production';
+  const shouldEnable = isDev || (options?.forceEnable ?? false);
+  const shouldMock = shouldEnable && (options?.mock ?? isDev);
+  const shouldPanel = shouldEnable && (options?.panel ?? true);
 
   return {
     name: 'ait-co-devtools',
     enforce: 'pre' as const,
 
     resolveId(id: string) {
+      if (!shouldMock) return null;
       // @apps-in-toss/web-framework → @ait-co/devtools/mock
       if (id === FRAMEWORK_ID || id === BRIDGE_ID || id === ANALYTICS_ID) {
         return '@ait-co/devtools/mock';
@@ -53,13 +65,13 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
     },
 
     transformInclude(id: string) {
-      if (!_panel) return false;
+      if (!shouldPanel) return false;
       // 진입점 파일에만 패널 import를 주입
       return /\.(tsx?|jsx?)$/.test(id) && /main|index|entry|app/i.test(id);
     },
 
     transform(code: string, id: string) {
-      if (!_panel) return null;
+      if (!shouldPanel) return null;
       // 이미 패널이 import 되어있으면 스킵
       if (code.includes('@ait-co/devtools/panel')) return null;
       // 진입점에서 가장 처음으로 실행되도록 prepend
