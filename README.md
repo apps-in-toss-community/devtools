@@ -415,7 +415,7 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 `createMockProxy()`가 미구현 API 접근 시 에러 대신 경고 로그 + no-op 함수를 반환합니다. 새 SDK API가 추가되어도 앱이 크래시하지 않습니다.
 
 ```
-[ait-devtools] IAP.newMethod is not mocked yet. Returning no-op.
+[@ait-co/devtools] IAP.newMethod is not mocked yet. Returning no-op.
 ```
 
 ### 3. GitHub Actions 주간 CI
@@ -444,7 +444,7 @@ pnpm test        # 전체 테스트 실행
 
 ## Troubleshooting
 
-### `[ait-devtools] XXX.method is not mocked yet` 경고가 뜰 때
+### `[@ait-co/devtools] XXX.method is not mocked yet` 경고가 뜰 때
 
 사용 중인 SDK API가 아직 mock으로 구현되지 않았습니다. Proxy fallback이 no-op을 반환하므로 앱은 정상 동작하지만, 해당 API의 실제 동작은 시뮬레이션되지 않습니다. [이슈를 등록](https://github.com/apps-in-toss-community/devtools/issues)하거나 직접 mock을 추가해 주세요.
 

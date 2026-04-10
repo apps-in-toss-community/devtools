@@ -5,20 +5,20 @@
 
 import { aitState, type PermissionName, type PermissionStatus } from './state.js';
 
-export function getPermission(name: PermissionName): Promise<PermissionStatus> {
-  return Promise.resolve(aitState.state.permissions[name]);
+export async function getPermission(name: PermissionName): Promise<PermissionStatus> {
+  return aitState.state.permissions[name];
 }
 
-export function openPermissionDialog(name: PermissionName): Promise<'allowed' | 'denied'> {
+export async function openPermissionDialog(name: PermissionName): Promise<'allowed' | 'denied'> {
   const current = aitState.state.permissions[name];
-  if (current === 'allowed') return Promise.resolve('allowed');
+  if (current === 'allowed') return 'allowed';
   // notDetermined나 denied일 때 — Panel에서 설정된 값을 사용
   // 기본적으로는 allowed로 전환
   aitState.patch('permissions', { [name]: 'allowed' });
-  return Promise.resolve('allowed');
+  return 'allowed';
 }
 
-export function requestPermission(permission: { name: PermissionName; access: string }): Promise<'allowed' | 'denied'> {
+export async function requestPermission(permission: { name: PermissionName; access: string }): Promise<'allowed' | 'denied'> {
   return openPermissionDialog(permission.name);
 }
 
@@ -40,6 +40,6 @@ export function withPermission<T extends (...args: never[]) => unknown>(
 export function checkPermission(name: PermissionName, fnName: string): void {
   const status = aitState.state.permissions[name];
   if (status === 'denied') {
-    throw new Error(`[ait-devtools] ${fnName}: Permission "${name}" is denied. Change it in the DevTools panel.`);
+    throw new Error(`[@ait-co/devtools] ${fnName}: Permission "${name}" is denied. Change it in the DevTools panel.`);
   }
 }

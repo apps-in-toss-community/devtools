@@ -56,14 +56,14 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
 
 export const TossAds = createMockProxy('TossAds', {
   initialize: withIsSupported((_options: unknown) => {
-    console.log('[ait-devtools] TossAds.initialize (mock)');
+    console.log('[@ait-co/devtools] TossAds.initialize (mock)');
   }),
   attach: withIsSupported((_adGroupId: string, target: string | HTMLElement, _options?: unknown) => {
     const el = typeof target === 'string' ? document.querySelector(target) : target;
     if (el) {
       const placeholder = document.createElement('div');
       placeholder.style.cssText = 'background:#f0f0f0;border:1px dashed #999;padding:16px;text-align:center;color:#666;font-size:14px;';
-      placeholder.textContent = '[ait-devtools] TossAds Placeholder';
+      placeholder.textContent = '[@ait-co/devtools] TossAds Placeholder';
       el.appendChild(placeholder);
     }
   }),
@@ -72,7 +72,7 @@ export const TossAds = createMockProxy('TossAds', {
     if (el) {
       const placeholder = document.createElement('div');
       placeholder.style.cssText = 'background:#f0f0f0;border:1px dashed #999;padding:12px;text-align:center;color:#666;font-size:12px;';
-      placeholder.textContent = '[ait-devtools] Banner Ad Placeholder';
+      placeholder.textContent = '[@ait-co/devtools] Banner Ad Placeholder';
       el.appendChild(placeholder);
     }
     return { destroy: () => {} };

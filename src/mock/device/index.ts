@@ -69,7 +69,7 @@ function waitForPromptResponse<T>(type: string): Promise<T> {
 
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error(`[ait-devtools] Prompt timeout for "${type}" after ${PROMPT_TIMEOUT_MS / 1000}s. Is ait-devtools/panel imported?`));
+      reject(new Error(`[@ait-co/devtools] Prompt timeout for "${type}" after ${PROMPT_TIMEOUT_MS / 1000}s. Is ait-devtools/panel imported?`));
     }, PROMPT_TIMEOUT_MS);
 
     const handler = (e: Event) => {
@@ -79,7 +79,7 @@ function waitForPromptResponse<T>(type: string): Promise<T> {
 
     const cancelHandler = () => {
       cleanup();
-      reject(new Error(`[ait-devtools] Prompt cancelled for "${type}"`));
+      reject(new Error(`[@ait-co/devtools] Prompt cancelled for "${type}"`));
     };
 
     window.addEventListener(eventName, handler);
@@ -128,7 +128,7 @@ async function getCurrentLocationMock(): Promise<MockLocation> {
 async function getCurrentLocationWeb(): Promise<MockLocation> {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
-      console.warn('[ait-devtools] Geolocation API not available, falling back to mock');
+      console.warn('[@ait-co/devtools] Geolocation API not available, falling back to mock');
       resolve(buildLocation());
       return;
     }
@@ -148,7 +148,7 @@ async function getCurrentLocationWeb(): Promise<MockLocation> {
         });
       },
       () => {
-        console.warn('[ait-devtools] Geolocation failed, falling back to mock');
+        console.warn('[@ait-co/devtools] Geolocation failed, falling back to mock');
         resolve(buildLocation());
       },
     );
@@ -191,7 +191,7 @@ function startUpdateLocationMock(eventParams: StartUpdateLocationEventParams): (
 function startUpdateLocationWeb(eventParams: StartUpdateLocationEventParams): () => void {
   const { onEvent, onError } = eventParams;
   if (!navigator.geolocation) {
-    console.warn('[ait-devtools] Geolocation API not available, falling back to mock');
+    console.warn('[@ait-co/devtools] Geolocation API not available, falling back to mock');
     return startUpdateLocationMock(eventParams);
   }
   const watchId = navigator.geolocation.watchPosition(
@@ -411,18 +411,16 @@ export function getNetworkStatusByMode(): NetworkStatus | null {
 
 // --- Haptic Feedback ---
 
-export function generateHapticFeedback(options: { type: string }): Promise<void> {
-  console.log(`[ait-devtools] haptic: ${options.type}`);
+export async function generateHapticFeedback(options: { type: string }): Promise<void> {
+  console.log(`[@ait-co/devtools] haptic: ${options.type}`);
   aitState.logAnalytics({ type: 'haptic', params: { hapticType: options.type } });
-  return Promise.resolve();
 }
 
 // --- Save Base64 ---
 
-export function saveBase64Data(params: { data: string; fileName: string; mimeType: string }): Promise<void> {
+export async function saveBase64Data(params: { data: string; fileName: string; mimeType: string }): Promise<void> {
   const a = document.createElement('a');
   a.href = `data:${params.mimeType};base64,${params.data}`;
   a.download = params.fileName;
   a.click();
-  return Promise.resolve();
 }

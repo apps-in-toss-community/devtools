@@ -10,9 +10,9 @@ interface AddAccessoryButtonOptions {
 
 export const partner = {
   async addAccessoryButton(options: AddAccessoryButtonOptions): Promise<void> {
-    console.log('[ait-devtools] partner.addAccessoryButton:', options);
+    console.log('[@ait-co/devtools] partner.addAccessoryButton:', options);
   },
   async removeAccessoryButton(): Promise<void> {
-    console.log('[ait-devtools] partner.removeAccessoryButton');
+    console.log('[@ait-co/devtools] partner.removeAccessoryButton');
   },
 };
