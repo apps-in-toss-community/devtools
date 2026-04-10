@@ -58,6 +58,6 @@ jobs:
 
       - run: pnpm test
 
-      - run: pnpm publish --no-git-checks --provenance
-        env:
-          NPM_CONFIG_PROVENANCE: true
+      # pnpm publish does not support OIDC trusted publishing yet (pnpm/pnpm#9812)
+      # Use npm publish directly instead
+      - run: npm publish --provenance --access public
