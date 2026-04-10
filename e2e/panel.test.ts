@@ -686,10 +686,10 @@ test.describe('Device Tab', () => {
 // ====================================================================
 // DRAGGABLE TOGGLE BUTTON
 // ====================================================================
-// Source constants referenced in these tests:
-//   SNAP_MARGIN = 16px        (panel/index.ts snapToEdge)
-//   DRAG_THRESHOLD = 3px      (panel/index.ts makeDraggable, per axis)
-//   MOBILE_BREAKPOINT = 480px (panel/styles.ts @media query)
+// Source inline values referenced in these tests:
+//   margin = 16          (panel/index.ts snapToEdge, local const)
+//   drag threshold = 3   (panel/index.ts makeDraggable, inline literal, per axis)
+//   breakpoint = 480px   (panel/styles.ts @media query)
 
 test.describe('Draggable Toggle Button', () => {
   test('dragging should change button Y position', async ({ page }) => {
@@ -735,12 +735,13 @@ test.describe('Draggable Toggle Button', () => {
     const toggle = page.locator('button.ait-panel-toggle');
     const vw = await page.evaluate(() => window.innerWidth);
 
-    // Drag to the left side of the screen
+    // Default position is right: 16px (Playwright contexts are isolated per test)
     const box = await toggle.boundingBox();
     expect(box).not.toBeNull();
     const startX = box!.x + box!.width / 2;
     const startY = box!.y + box!.height / 2;
 
+    // Drag to the left side of the screen
     await page.mouse.move(startX, startY);
     await page.mouse.down();
     await page.mouse.move(100, startY, { steps: 10 });
@@ -828,8 +829,8 @@ test.describe('Panel Position Persistence', () => {
     // Verify position was saved to localStorage
     const saved = await page.evaluate(() => localStorage.getItem('__ait_btn_pos'));
     expect(saved).not.toBeNull();
-    const pos = JSON.parse(saved!);
-    expect(pos.left).toBe('16px'); // snapped to left edge
+    const pos = JSON.parse(saved!) as Record<string, string>;
+    expect(pos).toHaveProperty('left', '16px'); // snapped to left edge
 
     // Reload the page
     await page.reload();
