@@ -536,8 +536,9 @@ function mount() {
     className: `ait-mock-badge ${aitState.state.mockEnabled ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`,
   }, aitState.state.mockEnabled ? 'MOCK ON' : 'MOCK OFF');
 
-  const mockToggle = h('button', { className: 'ait-mock-toggle' }, 'Toggle');
-  mockToggle.addEventListener('click', () => {
+  mockBadge.style.cursor = 'pointer';
+  mockBadge.title = 'Click to toggle mock mode';
+  mockBadge.addEventListener('click', () => {
     aitState.update({ mockEnabled: !aitState.state.mockEnabled });
     mockBadge.className = `ait-mock-badge ${aitState.state.mockEnabled ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`;
     mockBadge.textContent = aitState.state.mockEnabled ? 'MOCK ON' : 'MOCK OFF';
@@ -546,7 +547,6 @@ function mount() {
 
   const headerRight = h('span', { style: 'display:flex;align-items:center;gap:6px' },
     mockBadge,
-    mockToggle,
     h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
   );
 

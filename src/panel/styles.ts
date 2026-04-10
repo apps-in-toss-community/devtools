@@ -300,7 +300,8 @@ export const PANEL_STYLES = /* css */ `
     opacity: 0.5;
     cursor: not-allowed;
   }
-  .ait-btn:disabled {
+  .ait-btn:disabled,
+  .ait-btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -321,23 +322,6 @@ export const PANEL_STYLES = /* css */ `
   .ait-mock-badge-off {
     background: #4a1a1a;
     color: #f87171;
-  }
-
-  /* Mock toggle button in header */
-  .ait-mock-toggle {
-    background: none;
-    border: 1px solid #3a3a5a;
-    border-radius: 4px;
-    color: #aaa;
-    font-size: 10px;
-    padding: 2px 6px;
-    cursor: pointer;
-    font-family: inherit;
-    margin-left: 6px;
-  }
-  .ait-mock-toggle:hover {
-    border-color: #5a5a7a;
-    color: #e0e0e0;
   }
 
   /* Monitoring-only notice */
