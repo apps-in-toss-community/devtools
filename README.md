@@ -151,14 +151,27 @@ module.exports = {
 | 옵션 | 타입 | 기본값 | 설명 |
 |---|---|---|---|
 | `panel` | `boolean` | `true` | DevTools Panel 자동 주입 여부 |
+| `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
+| `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
+aitDevtools.vite({ forceEnable: true }); // production에서도 활성화 (mock 기본 OFF, panel ON)
+aitDevtools.vite({ forceEnable: true, mock: true }); // production에서 mock도 활성화
 ```
 
 ## Production 빌드
 
-devtools 플러그인은 개발 전용이므로, **production 빌드에서는 플러그인을 제외**하는 것을 권장합니다. 번들러 설정에서 조건부로 적용하세요:
+기본적으로 devtools 플러그인은 **production 빌드에서 자동 비활성화**됩니다 (`NODE_ENV === 'production'`이면 alias 변환과 Panel 주입이 모두 스킵). 별도의 조건부 설정 없이도 안전합니다.
+
+스테이징 환경 등에서 production 빌드에서도 devtools를 사용하려면 `forceEnable` 옵션을 사용하세요:
+
+```ts
+aitDevtools.vite({ forceEnable: true }); // panel ON, mock OFF (모니터링 전용)
+aitDevtools.vite({ forceEnable: true, mock: true }); // panel + mock 모두 ON
+```
+
+번들러 설정에서 플러그인 자체를 조건부로 제외할 수도 있습니다:
 
 ```ts
 // vite.config.ts
