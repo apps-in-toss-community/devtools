@@ -13,7 +13,6 @@
 ## Low Priority
 - [ ] Move shared types to `types.ts` — `PermissionName`, `PermissionStatus`, `DeviceMode` 등이 `state.ts`에 집중. `types.ts`로 옮기면 순환 의존 위험 감소.
 - [ ] Improve prompt mode timeout message — 30초 타임아웃 시 패널 존재 여부와 무관하게 "Is panel imported?" 메시지 표시. 패널 유무에 따라 분기 필요.
-- [ ] Delete `publish-manual.yml` — `release.yml`에 workflow_dispatch 추가되어 불필요.
 
 ## Out of Scope
 - **React Native** — 이 프로젝트는 WebView 미니앱 전용. RN은 지원 범위 밖.
