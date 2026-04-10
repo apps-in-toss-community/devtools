@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { aitState } from '../mock/state.js';
-import { fetchContacts } from '../mock/device/contacts.js';
+import { fetchContacts } from '../mock/device/index.js';
 
 describe('Contacts mock', () => {
   beforeEach(() => {
