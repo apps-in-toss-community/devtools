@@ -304,7 +304,6 @@ export const PANEL_STYLES = /* css */ `
   .ait-btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    pointer-events: none;
   }
 
   /* Mock status badge */
@@ -315,6 +314,7 @@ export const PANEL_STYLES = /* css */ `
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.3px;
+    cursor: pointer;
   }
   .ait-mock-badge-on {
     background: #1a4731;

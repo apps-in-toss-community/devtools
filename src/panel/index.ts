@@ -538,14 +538,13 @@ function mount() {
 
   const mockBadge = h('span', {
     className: `ait-mock-badge ${aitState.state.mockEnabled ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`,
-  }, aitState.state.mockEnabled ? 'MOCK ON' : 'MOCK OFF');
+    title: 'Toggle panel edit mode',
+  }, aitState.state.mockEnabled ? 'EDIT' : 'READ-ONLY');
 
-  mockBadge.style.cursor = 'pointer';
-  mockBadge.title = 'Click to toggle mock mode';
   mockBadge.addEventListener('click', () => {
     aitState.update({ mockEnabled: !aitState.state.mockEnabled });
     mockBadge.className = `ait-mock-badge ${aitState.state.mockEnabled ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`;
-    mockBadge.textContent = aitState.state.mockEnabled ? 'MOCK ON' : 'MOCK OFF';
+    mockBadge.textContent = aitState.state.mockEnabled ? 'EDIT' : 'READ-ONLY';
     refreshPanel();
   });
 

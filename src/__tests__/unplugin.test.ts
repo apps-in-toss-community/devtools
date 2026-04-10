@@ -125,11 +125,31 @@ describe('unplugin: production + forceEnable:true + mock:true + panel:false', ()
   });
 });
 
-describe('unplugin: resolveId - 다른 패키지는 null 반환', () => {
+describe('unplugin: dev mode + mock:true (explicit)', () => {
+  it('mock alias가 활성화되어야 한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ mock: true });
+    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+  });
+});
+
+describe('unplugin: resolveId', () => {
   it('관련 없는 패키지는 null을 반환한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
     expect(hooks.resolveId('some-other-package')).toBeNull();
+  });
+
+  it('@apps-in-toss/web-bridge도 mock으로 alias된다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    expect(hooks.resolveId('@apps-in-toss/web-bridge')).toBe(MOCK_ID);
+  });
+
+  it('@apps-in-toss/web-analytics도 mock으로 alias된다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    expect(hooks.resolveId('@apps-in-toss/web-analytics')).toBe(MOCK_ID);
   });
 });
 
