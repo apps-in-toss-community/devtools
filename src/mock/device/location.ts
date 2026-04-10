@@ -3,7 +3,8 @@
  * mock/web/prompt 모드 지원
  */
 
-import { aitState, type MockLocation } from '../state.js';
+import { aitState } from '../state.js';
+import type { MockLocation } from '../types.js';
 import { withPermission, checkPermission } from '../permissions.js';
 import { waitForPromptResponse } from './_helpers.js';
 

@@ -2,7 +2,8 @@
  * 화면/네비게이션/이벤트 mock
  */
 
-import { aitState, type NetworkStatus } from '../state.js';
+import { aitState } from '../state.js';
+import type { NetworkStatus } from '../types.js';
 import { getNetworkStatusByMode } from '../device/index.js';
 
 export async function closeView(): Promise<void> {
