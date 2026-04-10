@@ -4,6 +4,8 @@ import type { TabId } from '../panel/tabs/index.js';
 
 // We mock createTabRenderers to control which tabs throw.
 // This lets us test the real production error boundary code in panel/index.ts.
+// Note: mount() appends DOM elements and is guarded by `.ait-panel-toggle` existence check.
+// The module is cached across tests, so mount runs once and DOM is shared — this is intentional.
 
 const tabSpies: Record<TabId, Mock<() => HTMLElement>> = {
   env: vi.fn(() => document.createElement('div')),
@@ -63,7 +65,7 @@ describe('Panel error boundary', () => {
     expect(panelBody!.children.length).toBeGreaterThan(0);
   });
 
-  it('subscribe 콜백에서 refreshPanel 에러가 전파되지 않는다', async () => {
+  it('subscribe 콜백에서 탭 렌더링 에러가 전파되지 않는다', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     // Panel is already mounted (module cached). Switch to storage tab and open panel.
