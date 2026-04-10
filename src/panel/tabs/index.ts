@@ -22,8 +22,9 @@ export const TABS: Array<{ id: TabId; label: string }> = [
 
 // storage tab receives refreshPanel because its clear button modifies localStorage
 // directly (not aitState), so it must trigger a re-render explicitly.
-// device tab uses setDeviceRefreshPanel() for its module-level async listeners.
-// All other tabs modify aitState, which triggers re-render via subscription.
+// device tab uses setDeviceRefreshPanel() for prompt-related local state (pendingPrompt);
+// its aitState mutations are auto-refreshed via the subscription in index.ts.
+// Other tabs only modify aitState or use input controls that reflect changes immediately.
 export function createTabRenderers(refreshPanel: () => void): Record<TabId, () => HTMLElement> {
   return {
     env: renderEnvironmentTab,

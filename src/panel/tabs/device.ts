@@ -140,7 +140,6 @@ export function renderDeviceTab(): HTMLElement {
       ...modeEntries.map(entry =>
         selectRow(entry.label, entry.options, s.deviceModes[entry.key], v => {
           aitState.patch('deviceModes', { [entry.key]: v } as Partial<typeof s.deviceModes>);
-          refreshPanel();
         }, disabled),
       ),
     ),
@@ -157,7 +156,6 @@ export function renderDeviceTab(): HTMLElement {
       const newImages = [...aitState.state.mockData.images];
       newImages.splice(idx, 1);
       aitState.patch('mockData', { images: newImages });
-      refreshPanel();
     });
     if (disabled) removeBtn.disabled = true;
     thumb.append(img, removeBtn);
@@ -178,7 +176,6 @@ export function renderDeviceTab(): HTMLElement {
         reader.readAsDataURL(file);
       }))).then(dataUris => {
         aitState.patch('mockData', { images: [...aitState.state.mockData.images, ...dataUris] });
-        refreshPanel();
       });
     };
     input.click();
@@ -188,14 +185,12 @@ export function renderDeviceTab(): HTMLElement {
   const defaultsBtn = h('button', { className: 'ait-btn-secondary' }, 'Use defaults');
   defaultsBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [...getDefaultPlaceholderImages()] });
-    refreshPanel();
   });
   if (disabled) defaultsBtn.disabled = true;
 
   const clearImagesBtn = h('button', { className: 'ait-btn-secondary' }, 'Clear');
   clearImagesBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [] });
-    refreshPanel();
   });
   if (disabled) clearImagesBtn.disabled = true;
 
