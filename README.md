@@ -132,9 +132,7 @@ aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
 
 ## Production 빌드
 
-기본적으로 devtools 플러그인은 **production 빌드에서 자동 비활성화**됩니다. `NODE_ENV`가 `'production'`이면 alias 변환과 Panel 주입이 모두 스킵됩니다.
-
-개발 환경에서만 플러그인을 조건부로 적용하려면:
+devtools 플러그인은 개발 전용이므로, **production 빌드에서는 플러그인을 제외**하는 것을 권장합니다. 번들러 설정에서 조건부로 적용하세요:
 
 ```ts
 // vite.config.ts
@@ -145,7 +143,13 @@ export default {
 };
 ```
 
-> **참고**: 향후 `forceEnable` 옵션이 추가되면, production 빌드에서도 devtools를 강제로 활성화할 수 있습니다. 스테이징 환경 등에서 유용합니다.
+```js
+// webpack.config.js
+const plugins = [];
+if (process.env.NODE_ENV !== 'production') {
+  plugins.push(aitDevtools.webpack());
+}
+```
 
 ## Device API 모드 시스템
 
