@@ -487,7 +487,10 @@ function makeDraggable(el: HTMLElement, onClickOnly: () => void) {
     if (!isDragging) return;
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      hasMoved = true;
+      el.classList.add('dragging');
+    }
     if (!hasMoved) return;
 
     el.style.left = (startLeft + dx) + 'px';
@@ -499,6 +502,7 @@ function makeDraggable(el: HTMLElement, onClickOnly: () => void) {
   el.addEventListener('pointerup', (e) => {
     if (!isDragging) return;
     isDragging = false;
+    el.classList.remove('dragging');
     el.releasePointerCapture(e.pointerId);
 
     if (hasMoved) {
@@ -507,6 +511,16 @@ function makeDraggable(el: HTMLElement, onClickOnly: () => void) {
       saveButtonPosition(el);
     } else {
       onClickOnly();
+    }
+  });
+
+  el.addEventListener('pointercancel', (e) => {
+    isDragging = false;
+    el.classList.remove('dragging');
+    el.releasePointerCapture(e.pointerId);
+    if (hasMoved) {
+      snapToEdge(el);
+      saveButtonPosition(el);
     }
   });
 }
@@ -536,21 +550,31 @@ function updatePanelPosition(toggleEl: HTMLElement) {
   const rect = toggleEl.getBoundingClientRect();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  const panelWidth = 360;
+  const panelHeight = 480;
+  const margin = 16;
 
+  // Horizontal: prefer aligning with button side, but clamp to viewport
   if (rect.left < vw / 2) {
-    panelEl.style.left = '16px';
+    const left = Math.min(margin, vw - panelWidth - margin);
+    panelEl.style.left = Math.max(margin, left) + 'px';
     panelEl.style.right = 'auto';
   } else {
+    const right = Math.min(margin, vw - panelWidth - margin);
     panelEl.style.left = 'auto';
-    panelEl.style.right = '16px';
+    panelEl.style.right = Math.max(margin, right) + 'px';
   }
 
+  // Vertical: place below button if it's in top half, above if bottom half
+  // Clamp so panel stays within viewport
   if (rect.top < vh / 2) {
-    panelEl.style.top = (rect.bottom + 8) + 'px';
+    const top = Math.min(rect.bottom + 8, vh - panelHeight - margin);
+    panelEl.style.top = Math.max(margin, top) + 'px';
     panelEl.style.bottom = 'auto';
   } else {
+    const bottom = Math.min(vh - rect.top + 8, vh - panelHeight - margin);
     panelEl.style.top = 'auto';
-    panelEl.style.bottom = (vh - rect.top + 8) + 'px';
+    panelEl.style.bottom = Math.max(margin, bottom) + 'px';
   }
 }
 
@@ -563,12 +587,16 @@ function saveButtonPosition(el: HTMLElement) {
   }));
 }
 
+// Uses __ait_btn_pos (not __ait_storage: prefix) — panel-internal state, not mock storage
 function restoreButtonPosition(el: HTMLElement) {
   const saved = localStorage.getItem('__ait_btn_pos');
   if (saved) {
     try {
       const pos = JSON.parse(saved);
-      Object.assign(el.style, pos);
+      if (pos.left) el.style.left = pos.left;
+      if (pos.top) el.style.top = pos.top;
+      if (pos.right) el.style.right = pos.right;
+      if (pos.bottom) el.style.bottom = pos.bottom;
     } catch { /* ignore */ }
   } else {
     el.style.bottom = '16px';
@@ -610,9 +638,19 @@ function mount() {
   // Panel
   panelEl = h('div', { className: 'ait-panel' });
 
+  const closeBtn = h('button', { className: 'ait-panel-close', title: 'Close' }, '\u00d7');
+  closeBtn.addEventListener('click', () => {
+    isOpen = false;
+    panelEl!.classList.remove('open');
+  });
+
+  const headerRight = h('span', { style: 'display:flex;align-items:center;gap:8px' },
+    h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
+    closeBtn,
+  );
   const header = h('div', { className: 'ait-panel-header' },
     h('span', {}, 'AIT DevTools'),
-    h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
+    headerRight,
   );
 
   tabsEl = h('div', { className: 'ait-panel-tabs' });

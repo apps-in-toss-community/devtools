@@ -23,7 +23,7 @@ export const PANEL_STYLES = /* css */ `
     touch-action: none;
     user-select: none;
   }
-  .ait-panel-toggle:hover {
+  .ait-panel-toggle:hover:not(.dragging) {
     transform: scale(1.1);
   }
 
@@ -292,6 +292,20 @@ export const PANEL_STYLES = /* css */ `
     min-width: 30px;
   }
 
+  .ait-panel-close {
+    display: none;
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    font-family: inherit;
+  }
+  .ait-panel-close:hover {
+    color: #e0e0e0;
+  }
+
   @media (max-width: 480px) {
     .ait-panel.open {
       position: fixed;
@@ -306,6 +320,9 @@ export const PANEL_STYLES = /* css */ `
     }
     .ait-panel-toggle {
       z-index: 100000;
+    }
+    .ait-panel-close {
+      display: block;
     }
   }
 `;
