@@ -293,4 +293,61 @@ export const PANEL_STYLES = /* css */ `
     font-size: 11px;
     min-width: 30px;
   }
+
+  /* Disabled state for monitoring-only mode */
+  .ait-select:disabled,
+  .ait-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .ait-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Mock status badge */
+  .ait-mock-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .ait-mock-badge-on {
+    background: #1a4731;
+    color: #4ade80;
+  }
+  .ait-mock-badge-off {
+    background: #4a1a1a;
+    color: #f87171;
+  }
+
+  /* Mock toggle button in header */
+  .ait-mock-toggle {
+    background: none;
+    border: 1px solid #3a3a5a;
+    border-radius: 4px;
+    color: #aaa;
+    font-size: 10px;
+    padding: 2px 6px;
+    cursor: pointer;
+    font-family: inherit;
+    margin-left: 6px;
+  }
+  .ait-mock-toggle:hover {
+    border-color: #5a5a7a;
+    color: #e0e0e0;
+  }
+
+  /* Monitoring-only notice */
+  .ait-monitoring-notice {
+    background: #2a1a00;
+    border: 1px solid #6b4c00;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 12px;
+    font-size: 11px;
+    color: #fbbf24;
+  }
 `;
