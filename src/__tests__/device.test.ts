@@ -149,12 +149,14 @@ describe('Device mock', () => {
         aitState.patch('deviceModes', { camera: 'prompt' });
         aitState.patch('permissions', { camera: 'allowed' });
 
-        const promise = openCamera();
+        try {
+          const promise = openCamera();
 
-        vi.advanceTimersByTime(30_000);
-        await expect(promise).rejects.toThrow('Is @ait-co/devtools/panel imported?');
-
-        vi.useRealTimers();
+          vi.advanceTimersByTime(30_000);
+          await expect(promise).rejects.toThrow('Is @ait-co/devtools/panel imported?');
+        } finally {
+          vi.useRealTimers();
+        }
       });
 
       it('패널이 있으면 사용자 액션 안내 메시지를 표시한다', async () => {
