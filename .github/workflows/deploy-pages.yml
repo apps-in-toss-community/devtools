@@ -6,10 +6,12 @@ on:
     paths:
       - 'examples/**'
       - 'src/**'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
 permissions:
+  contents: read
   pages: write
   id-token: write
 
@@ -39,6 +41,8 @@ jobs:
       - name: Build library
         run: pnpm build
 
+      # examples/vite-react은 file:../../ 링크로 라이브러리를 참조하므로
+      # 반드시 라이브러리 빌드 후 example을 설치해야 함
       - name: Build example app
         run: |
           cd examples/vite-react
