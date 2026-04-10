@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { aitState } from '../mock/state.js';
 import {
-  getCurrentLocation, generateHapticFeedback, saveBase64Data, Accuracy,
+  getCurrentLocation, startUpdateLocation, generateHapticFeedback, saveBase64Data, Accuracy,
   getClipboardText, setClipboardText, getNetworkStatusByMode, getDefaultPlaceholderImages,
   openCamera,
 } from '../mock/device/index.js';
@@ -31,6 +31,20 @@ describe('Device mock', () => {
     it('geolocation 권한이 denied이면 에러를 throw한다', async () => {
       aitState.patch('permissions', { geolocation: 'denied' });
       await expect(getCurrentLocation({ accuracy: Accuracy.High })).rejects.toThrow('denied');
+    });
+  });
+
+  describe('startUpdateLocation', () => {
+    it('getPermission이 부착되어 있다', async () => {
+      expect(typeof startUpdateLocation.getPermission).toBe('function');
+      const status = await startUpdateLocation.getPermission();
+      expect(status).toBe('allowed');
+    });
+
+    it('openPermissionDialog가 부착되어 있다', async () => {
+      expect(typeof startUpdateLocation.openPermissionDialog).toBe('function');
+      const result = await startUpdateLocation.openPermissionDialog();
+      expect(result).toBe('allowed');
     });
   });
 
