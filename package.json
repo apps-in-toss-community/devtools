@@ -1,6 +1,6 @@
 {
   "name": "@ait-co/devtools",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Development tools for Apps in Toss mini-apps — mock SDK, floating devtools panel, and universal bundler plugin",
   "type": "module",
   "main": "./dist/mock/index.js",
