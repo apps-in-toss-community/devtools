@@ -11,7 +11,7 @@ type RawHooks = {
 };
 
 function getRawHooks(options?: Parameters<typeof aitDevtoolsPlugin.raw>[0]): RawHooks {
-  const plugin = aitDevtoolsPlugin.raw(options, { framework: 'vite' }) as RawHooks;
+  const plugin = aitDevtoolsPlugin.raw(options, { framework: 'vite' }) as unknown as RawHooks;
   return plugin;
 }
 
