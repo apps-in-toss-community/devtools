@@ -102,4 +102,19 @@ describe('AitStateManager', () => {
     expect(aitState.state.iap.completedOrders).toHaveLength(0);
     expect(aitState.state.auth.isLoggedIn).toBe(true);
   });
+
+  it('panelEditable: 기본값은 true이다', () => {
+    expect(aitState.state.panelEditable).toBe(true);
+  });
+
+  it('panelEditable: update로 토글할 수 있다', () => {
+    aitState.update({ panelEditable: false });
+    expect(aitState.state.panelEditable).toBe(false);
+  });
+
+  it('panelEditable: reset 시 기본값으로 복원된다', () => {
+    aitState.update({ panelEditable: false });
+    aitState.reset();
+    expect(aitState.state.panelEditable).toBe(true);
+  });
 });

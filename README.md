@@ -1,5 +1,7 @@
 # @ait-co/devtools
 
+> **데모: https://apps-in-toss-community.github.io/devtools/**
+
 `@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
 
 앱인토스(Apps in Toss) 미니앱을 **일반 브라우저**에서 개발하고 테스트할 수 있게 해줍니다. 토스 앱 없이도 SDK의 모든 기능을 시뮬레이션하여 빠른 개발 사이클을 지원합니다.
@@ -24,7 +26,7 @@ pnpm add -D @ait-co/devtools
 ### Vite
 
 ```ts
-// vite.config.ts
+// vite.config.ts (개발 전용)
 import aitDevtools from '@ait-co/devtools/unplugin';
 
 export default {
@@ -32,10 +34,12 @@ export default {
 };
 ```
 
+> 개발 전용 설정입니다. Production 빌드에서 제외하려면 아래 [Production 빌드](#production-빌드) 섹션을 참고하세요.
+
 ### Webpack / Rspack
 
 ```js
-// webpack.config.js (ESM)
+// webpack.config.js (ESM, 개발 환경에서만 사용 권장)
 import aitDevtools from '@ait-co/devtools/unplugin';
 config.plugins.push(aitDevtools.webpack());
 
@@ -46,7 +50,10 @@ config.plugins.push(aitDevtools.webpack());
 
 ### Next.js (Turbopack)
 
-Turbopack은 플러그인 시스템을 지원하지 않으므로 `resolveAlias`를 사용합니다:
+Turbopack은 플러그인 시스템을 지원하지 않으므로 `resolveAlias`를 사용합니다.
+
+- `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 함께 alias해야 합니다.
+- Turbopack은 일반적으로 `next dev`에서만 사용되므로 별도의 production 가드가 필요하지 않습니다.
 
 ```js
 // next.config.js (Next.js 15+)
@@ -54,18 +61,50 @@ module.exports = {
   turbo: {
     resolveAlias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
+      '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
+      '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
     },
   },
 };
+```
 
-// Next.js 14 이하
+Next.js 14 이하에서는 `experimental.turbo`를 사용합니다:
+
+```js
+// next.config.js (Next.js 14 이하)
 module.exports = {
   experimental: {
     turbo: {
       resolveAlias: {
         '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
+        '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
+        '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
       },
     },
+  },
+};
+```
+
+> **Panel 주입**: Turbopack은 unplugin을 지원하지 않으므로 Panel이 자동 주입되지 않습니다. 진입점에서 직접 import하세요:
+> ```ts
+> // app/layout.tsx 또는 pages/_app.tsx
+> import '@ait-co/devtools/panel';
+> ```
+
+### Next.js (Webpack)
+
+Next.js에서 Webpack 모드(`next dev` without `--turbo`, 또는 `next build`)를 사용하는 경우:
+
+```js
+// next.config.js (Webpack 모드)
+const aitDevtools = require('@ait-co/devtools/unplugin'); // CJS entrypoint 제공
+
+module.exports = {
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.plugins.push(aitDevtools.webpack());
+    }
+    return config;
   },
 };
 ```
@@ -74,9 +113,11 @@ module.exports = {
 
 번들러의 `resolve.alias` 설정으로 직접 지정할 수도 있습니다:
 
-```js
-// vite.config.ts 또는 webpack.config.js
-{
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+
+export default defineConfig({
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
@@ -84,18 +125,76 @@ module.exports = {
       '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
     },
   },
-}
+});
 ```
+
+```js
+// webpack.config.js (Webpack은 절대 경로 필요)
+module.exports = {
+  resolve: {
+    alias: {
+      '@apps-in-toss/web-framework': require.resolve('@ait-co/devtools/mock'),
+      '@apps-in-toss/web-bridge': require.resolve('@ait-co/devtools/mock'),
+      '@apps-in-toss/web-analytics': require.resolve('@ait-co/devtools/mock'),
+    },
+  },
+};
+```
+
+> **주의**: 수동 alias만 사용하면 DevTools Panel이 자동 주입되지 않습니다. 진입점 파일에 직접 import를 추가하세요:
+> ```ts
+> import '@ait-co/devtools/panel'; // 진입점에 추가
+> ```
 
 ### 플러그인 옵션
 
 | 옵션 | 타입 | 기본값 | 설명 |
 |---|---|---|---|
 | `panel` | `boolean` | `true` | DevTools Panel 자동 주입 여부 |
+| `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
+| `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
+aitDevtools.vite({ forceEnable: true }); // production에서도 활성화 (mock 기본 OFF, panel ON)
+aitDevtools.vite({ forceEnable: true, mock: true }); // production에서 mock도 활성화
 ```
+
+## Production 빌드
+
+기본적으로 devtools 플러그인은 **production 빌드에서 자동 비활성화**됩니다 (`NODE_ENV === 'production'`이면 alias 변환과 Panel 주입이 모두 스킵). 별도의 조건부 설정 없이도 안전합니다.
+
+스테이징 환경 등에서 production 빌드에서도 devtools를 사용하려면 `forceEnable` 옵션을 사용하세요:
+
+```ts
+aitDevtools.vite({ forceEnable: true }); // panel ON, mock OFF (모니터링 전용)
+aitDevtools.vite({ forceEnable: true, mock: true }); // panel + mock 모두 ON
+```
+
+번들러 설정에서 플러그인 자체를 조건부로 제외할 수도 있습니다:
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import aitDevtools from '@ait-co/devtools/unplugin';
+
+export default defineConfig(({ command }) => ({
+  plugins: [
+    ...(command === 'serve' ? [aitDevtools.vite()] : []),
+  ],
+}));
+```
+
+```js
+// webpack.config.js (Rspack도 동일)
+const aitDevtools = require('@ait-co/devtools/unplugin');
+const plugins = [];
+if (process.env.NODE_ENV !== 'production') {
+  plugins.push(aitDevtools.webpack());
+}
+```
+
+> Next.js 설정은 위의 [Next.js (Webpack)](#nextjs-webpack) 및 [Next.js (Turbopack)](#nextjs-turbopack) 섹션을 참고하세요.
 
 ## Device API 모드 시스템
 
@@ -333,7 +432,15 @@ unsubscribe(); // 구독 해제
 
 ## 테스트에서의 활용
 
-vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다:
+vitest/jest에서 mock 라이브러리를 직접 import하여 테스트할 수 있습니다.
+
+> mock 함수들이 `window`, `document`, `localStorage` 등 브라우저 API를 사용하므로 **jsdom 환경**이 필요합니다.
+>
+> ```ts
+> // vitest.config.ts
+> import { defineConfig } from 'vitest/config';
+> export default defineConfig({ test: { environment: 'jsdom' } });
+> ```
 
 ```ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -405,7 +512,7 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 `createMockProxy()`가 미구현 API 접근 시 에러 대신 경고 로그 + no-op 함수를 반환합니다. 새 SDK API가 추가되어도 앱이 크래시하지 않습니다.
 
 ```
-[ait-devtools] IAP.newMethod is not mocked yet. Returning no-op.
+[@ait-co/devtools] IAP.newMethod is not mocked yet. Returning no-op.
 ```
 
 ### 3. GitHub Actions 주간 CI
@@ -434,7 +541,7 @@ pnpm test        # 전체 테스트 실행
 
 ## Troubleshooting
 
-### `[ait-devtools] XXX.method is not mocked yet` 경고가 뜰 때
+### `[@ait-co/devtools] XXX.method is not mocked yet` 경고가 뜰 때
 
 사용 중인 SDK API가 아직 mock으로 구현되지 않았습니다. Proxy fallback이 no-op을 반환하므로 앱은 정상 동작하지만, 해당 API의 실제 동작은 시뮬레이션되지 않습니다. [이슈를 등록](https://github.com/apps-in-toss-community/devtools/issues)하거나 직접 mock을 추가해 주세요.
 
@@ -445,7 +552,11 @@ pnpm test        # 전체 테스트 실행
   ```ts
   import '@ait-co/devtools/panel';
   ```
-- 플러그인은 `/main|index|entry/` 패턴의 진입점 파일만 자동 주입합니다
+- 플러그인은 파일명이 `main`, `index`, `entry`, `app` 중 하나인 진입점에만 자동 주입합니다 (대소문자 무시). 파일명이 이 패턴에 맞지 않으면 수동으로 `import '@ait-co/devtools/panel'`을 추가하세요.
+
+### 서브패스 import는 mock되지 않음
+
+`@apps-in-toss/web-framework/some-subpath` 형태의 서브패스 import는 alias가 적용되지 않습니다. SDK의 메인 엔트리(`@apps-in-toss/web-framework`)만 mock됩니다. 특정 서브패스도 mock이 필요하다면 번들러의 `resolve.alias`에 해당 서브패스를 수동으로 추가하세요.
 
 ### Next.js Turbopack에서 설정하는 법
 

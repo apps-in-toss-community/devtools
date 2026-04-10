@@ -23,4 +23,6 @@ pnpm dev
 | 애널리틱스 | `Analytics.click()` |
 | 이벤트 | `graniteEvent.addEventListener('backEvent')` |
 
+> **참고**: 이 예제는 로컬 `file:` 링크를 사용하므로 `vite.config.ts`에 추가 resolve 설정이 있습니다. npm에서 설치한 경우 README.md의 기본 설정만으로 충분합니다.
+
 브라우저에서 실행하면 화면 우측 하단에 **@ait-co/devtools 패널**이 자동으로 표시됩니다. 패널의 8개 탭 (Environment, Permissions, Location, Device, IAP, Events, Analytics, Storage)에서 mock 상태를 변경하며 테스트할 수 있습니다. Device 탭에서는 카메라/위치/네트워크 등의 API 모드를 mock/web/prompt로 전환하고, 더미 이미지를 관리할 수 있습니다.
