@@ -709,7 +709,7 @@ test.describe('Draggable Toggle Button', () => {
     expect(Math.abs(newBox!.y - box!.y)).toBeGreaterThan(10);
   });
 
-  test('short click (< 3px movement) should toggle panel instead of dragging', async ({ page }) => {
+  test('short click (<= 3px per axis) should toggle panel instead of dragging', async ({ page }) => {
     const toggle = page.locator('button.ait-panel-toggle');
     const box = await toggle.boundingBox();
     expect(box).not.toBeNull();
@@ -758,7 +758,9 @@ test.describe('Draggable Toggle Button', () => {
 
     const rightBox = await toggle.boundingBox();
     expect(rightBox).not.toBeNull();
-    // Should snap to right edge (right: 16px → left = vw - 16 - width)
+    // Should snap to right edge (right: 16px → left = vw - 16 - width).
+    // Uses tolerance < 1px because right-edge position is computed from style.right,
+    // which can produce sub-pixel rounding vs the left-edge's direct style.left = '16px'.
     expect(Math.abs(rightBox!.x - (vw - 16 - rightBox!.width))).toBeLessThan(1);
   });
 });
@@ -777,10 +779,11 @@ test.describe('Mobile Fullscreen', () => {
     const panel = page.locator('.ait-panel.open');
     const box = await panel.boundingBox();
     expect(box).not.toBeNull();
+    const viewport = page.viewportSize()!;
     expect(box!.x).toBe(0);
     expect(box!.y).toBe(0);
-    expect(box!.width).toBe(375);
-    expect(box!.height).toBe(667);
+    expect(box!.width).toBe(viewport.width);
+    expect(box!.height).toBe(viewport.height);
   });
 
   test('close button should be visible in fullscreen mode', async ({ page }) => {
