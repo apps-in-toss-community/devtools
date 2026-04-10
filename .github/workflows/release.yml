@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
@@ -58,8 +58,6 @@ jobs:
 
       - run: pnpm test
 
-      # Trusted publishing requires npm >= 11.5.1 (Node 22 ships npm 10.x)
-      - run: npm install -g npm@latest
-
       # pnpm publish does not support OIDC trusted publishing yet (pnpm/pnpm#9812)
+      # Node 24 ships npm >= 11.x which supports trusted publishing
       - run: npm publish --provenance --access public
