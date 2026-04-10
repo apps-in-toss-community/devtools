@@ -194,6 +194,7 @@ if (typeof window !== 'undefined') {
     if (panelEl && !panelEl.classList.contains('open')) {
       panelEl.classList.add('open');
     }
+    refreshPanel();
   });
 }
 

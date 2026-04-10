@@ -20,12 +20,16 @@ export const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'storage', label: 'Storage' },
 ];
 
+// analytics/storage tabs receive refreshPanel because they have UI actions
+// (clear buttons) that mutate state and need to re-render the panel immediately.
+// device tab uses setDeviceRefreshPanel() for its module-level async listeners.
+// Other tabs only modify aitState, which triggers re-render via subscription.
 export function createTabRenderers(refreshPanel: () => void): Record<TabId, () => HTMLElement> {
   return {
     env: renderEnvTab,
     permissions: renderPermissionsTab,
     location: renderLocationTab,
-    device: () => renderDeviceTab(refreshPanel),
+    device: renderDeviceTab,
     iap: renderIapTab,
     events: renderEventsTab,
     analytics: () => renderAnalyticsTab(refreshPanel),

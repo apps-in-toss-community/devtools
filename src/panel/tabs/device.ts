@@ -19,9 +19,8 @@ if (typeof window !== 'undefined') {
   window.addEventListener('__ait:prompt-request', (e: Event) => {
     const detail = (e as CustomEvent).detail as { type: string };
     pendingPrompt = { type: detail.type };
-    // Auto-switch to device tab and open panel — dispatched as event for mount.ts to handle
+    // Auto-switch to device tab and open panel — handled by index.ts listener which also calls refreshPanel
     window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'device' } }));
-    refreshPanel();
   });
 }
 
@@ -113,7 +112,7 @@ function renderPromptBanner(): HTMLElement | null {
   return banner;
 }
 
-export function renderDeviceTab(refreshPanelFn: () => void): HTMLElement {
+export function renderDeviceTab(): HTMLElement {
   const s = aitState.state;
   const disabled = !s.panelEditable;
   const container = h('div');
@@ -141,7 +140,7 @@ export function renderDeviceTab(refreshPanelFn: () => void): HTMLElement {
       ...modeEntries.map(entry =>
         selectRow(entry.label, entry.options, s.deviceModes[entry.key], v => {
           aitState.patch('deviceModes', { [entry.key]: v } as Partial<typeof s.deviceModes>);
-          refreshPanelFn();
+          refreshPanel();
         }, disabled),
       ),
     ),
@@ -158,7 +157,7 @@ export function renderDeviceTab(refreshPanelFn: () => void): HTMLElement {
       const newImages = [...aitState.state.mockData.images];
       newImages.splice(idx, 1);
       aitState.patch('mockData', { images: newImages });
-      refreshPanelFn();
+      refreshPanel();
     });
     if (disabled) removeBtn.disabled = true;
     thumb.append(img, removeBtn);
@@ -179,7 +178,7 @@ export function renderDeviceTab(refreshPanelFn: () => void): HTMLElement {
         reader.readAsDataURL(file);
       }))).then(dataUris => {
         aitState.patch('mockData', { images: [...aitState.state.mockData.images, ...dataUris] });
-        refreshPanelFn();
+        refreshPanel();
       });
     };
     input.click();
@@ -189,14 +188,14 @@ export function renderDeviceTab(refreshPanelFn: () => void): HTMLElement {
   const defaultsBtn = h('button', { className: 'ait-btn-secondary' }, 'Use defaults');
   defaultsBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [...getDefaultPlaceholderImages()] });
-    refreshPanelFn();
+    refreshPanel();
   });
   if (disabled) defaultsBtn.disabled = true;
 
   const clearImagesBtn = h('button', { className: 'ait-btn-secondary' }, 'Clear');
   clearImagesBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [] });
-    refreshPanelFn();
+    refreshPanel();
   });
   if (disabled) clearImagesBtn.disabled = true;
 
