@@ -1,5 +1,5 @@
 import { aitState } from '../../mock/state.js';
-import type { PlatformOS, OperationalEnvironment, NetworkStatus } from '../../mock/state.js';
+import type { PlatformOS, OperationalEnvironment, NetworkStatus } from '../../mock/types.js';
 import { h, selectRow, inputRow, monitoringNotice } from '../helpers.js';
 
 export function renderEnvironmentTab(): HTMLElement {

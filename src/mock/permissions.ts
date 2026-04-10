@@ -3,7 +3,8 @@
  * 각 디바이스 API (.getPermission, .openPermissionDialog)에 부착된다.
  */
 
-import { aitState, type PermissionName, type PermissionStatus } from './state.js';
+import { aitState } from './state.js';
+import type { PermissionName, PermissionStatus } from './types.js';
 
 export async function getPermission(name: PermissionName): Promise<PermissionStatus> {
   return aitState.state.permissions[name];

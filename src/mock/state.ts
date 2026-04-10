@@ -3,72 +3,41 @@
  * DevTools Panel과 mock 구현체가 이 상태를 공유한다.
  */
 
-export type PlatformOS = 'ios' | 'android';
-export type OperationalEnvironment = 'toss' | 'sandbox';
-export type NetworkStatus = 'OFFLINE' | 'WIFI' | '2G' | '3G' | '4G' | '5G' | 'WWAN' | 'UNKNOWN';
-export type PermissionStatus = 'notDetermined' | 'denied' | 'allowed';
-export type PermissionName = 'clipboard' | 'contacts' | 'photos' | 'geolocation' | 'camera' | 'microphone';
-export type HapticFeedbackType = 'tickWeak' | 'tap' | 'tickMedium' | 'softMedium' | 'basicWeak' | 'basicMedium' | 'success' | 'error' | 'wiggle' | 'confetti';
+import type {
+  PlatformOS,
+  OperationalEnvironment,
+  NetworkStatus,
+  PermissionStatus,
+  PermissionName,
+  DeviceApiMode,
+  DeviceModes,
+  MockData,
+  MockLocation,
+  MockContact,
+  MockIapProduct,
+  IapNextResult,
+  AnalyticsLogEntry,
+  SafeAreaInsets,
+} from './types.js';
 
-export type DeviceApiMode = 'mock' | 'web' | 'prompt';
-
-export interface DeviceModes {
-  camera: DeviceApiMode;
-  photos: DeviceApiMode;
-  location: DeviceApiMode;
-  network: 'mock' | 'web';
-  clipboard: 'mock' | 'web';
-}
-
-export interface MockData {
-  images: string[];
-  clipboardText: string;
-}
-
-export interface LocationCoords {
-  latitude: number;
-  longitude: number;
-  altitude: number;
-  accuracy: number;
-  altitudeAccuracy: number;
-  heading: number;
-}
-
-export interface MockLocation {
-  coords: LocationCoords;
-  timestamp: number;
-  accessLocation?: 'FINE' | 'COARSE';
-}
-
-export interface MockContact {
-  name: string;
-  phoneNumber: string;
-}
-
-export interface MockIapProduct {
-  sku: string;
-  type: 'CONSUMABLE' | 'NON_CONSUMABLE' | 'SUBSCRIPTION';
-  displayName: string;
-  displayAmount: string;
-  iconUrl: string;
-  description: string;
-  renewalCycle?: 'WEEKLY' | 'MONTHLY' | 'YEARLY';
-}
-
-export type IapNextResult = 'success' | 'USER_CANCELED' | 'INVALID_PRODUCT_ID' | 'PAYMENT_PENDING' | 'NETWORK_ERROR' | 'ITEM_ALREADY_OWNED' | 'INTERNAL_ERROR';
-
-export interface AnalyticsLogEntry {
-  timestamp: number;
-  type: string;
-  params: Record<string, unknown>;
-}
-
-export interface SafeAreaInsets {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-}
+export type {
+  PlatformOS,
+  OperationalEnvironment,
+  NetworkStatus,
+  PermissionStatus,
+  PermissionName,
+  HapticFeedbackType,
+  DeviceApiMode,
+  DeviceModes,
+  MockData,
+  LocationCoords,
+  MockLocation,
+  MockContact,
+  MockIapProduct,
+  IapNextResult,
+  AnalyticsLogEntry,
+  SafeAreaInsets,
+} from './types.js';
 
 type Listener = () => void;
 

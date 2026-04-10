@@ -1,5 +1,5 @@
 import { aitState } from '../../mock/state.js';
-import type { PermissionName, PermissionStatus } from '../../mock/state.js';
+import type { PermissionName, PermissionStatus } from '../../mock/types.js';
 import { h, selectRow, monitoringNotice } from '../helpers.js';
 
 export function renderPermissionsTab(): HTMLElement {

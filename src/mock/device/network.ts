@@ -3,7 +3,8 @@
  * navigation 모듈에서 사용. circular dep 방지를 위해 device에 위치.
  */
 
-import { aitState, type NetworkStatus } from '../state.js';
+import { aitState } from '../state.js';
+import type { NetworkStatus } from '../types.js';
 
 /**
  * Web mode: uses navigator.connection.effectiveType (4g/3g/2g) and navigator.onLine.

@@ -7,8 +7,8 @@
 
 // --- 상태 관리 (내부 + 외부 접근용) ---
 export { aitState } from './state.js';
+export type { AitDevtoolsState } from './state.js';
 export type {
-  AitDevtoolsState,
   PlatformOS,
   OperationalEnvironment,
   NetworkStatus,
@@ -25,7 +25,7 @@ export type {
   DeviceApiMode,
   DeviceModes,
   MockData,
-} from './state.js';
+} from './types.js';
 
 // --- 인증/로그인 ---
 export { appLogin, getIsTossLoginIntegratedService, getUserKeyForGame, appsInTossSignTossCert } from './auth/index.js';
