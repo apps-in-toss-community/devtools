@@ -167,13 +167,15 @@ describe('Device mock', () => {
         panel.className = 'ait-panel';
         document.body.appendChild(panel);
 
-        const promise = openCamera();
+        try {
+          const promise = openCamera();
 
-        vi.advanceTimersByTime(30_000);
-        await expect(promise).rejects.toThrow('Please provide input via the DevTools panel.');
-
-        panel.remove();
-        vi.useRealTimers();
+          vi.advanceTimersByTime(30_000);
+          await expect(promise).rejects.toThrow('Please provide input via the DevTools panel.');
+        } finally {
+          panel.remove();
+          vi.useRealTimers();
+        }
       });
     });
   });
