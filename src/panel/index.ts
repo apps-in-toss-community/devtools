@@ -46,8 +46,10 @@ function selectRow(
   options: string[],
   value: string,
   onChange: (v: string) => void,
+  disabled = false,
 ): HTMLElement {
   const select = h('select', { className: 'ait-select' });
+  if (disabled) select.disabled = true;
   for (const opt of options) {
     const option = h('option', { value: opt }, opt);
     if (opt === value) option.selected = true;
@@ -57,32 +59,36 @@ function selectRow(
   return h('div', { className: 'ait-row' }, h('label', {}, label), select);
 }
 
-function inputRow(label: string, value: string, onChange: (v: string) => void): HTMLElement {
+function inputRow(label: string, value: string, onChange: (v: string) => void, disabled = false): HTMLElement {
   const input = h('input', { className: 'ait-input', value });
+  if (disabled) input.disabled = true;
   input.addEventListener('change', () => onChange(input.value));
   return h('div', { className: 'ait-row' }, h('label', {}, label), input);
 }
 
 function renderEnvTab(): HTMLElement {
   const s = aitState.state;
+  const disabled = !s.mockEnabled;
   const container = h('div');
+
+  if (disabled) container.appendChild(monitoringNotice());
 
   container.append(
     h('div', { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'Platform'),
-      selectRow('OS', ['ios', 'android'], s.platform, v => aitState.update({ platform: v as PlatformOS })),
-      inputRow('App Version', s.appVersion, v => aitState.update({ appVersion: v })),
-      selectRow('Environment', ['toss', 'sandbox'], s.environment, v => aitState.update({ environment: v as OperationalEnvironment })),
-      inputRow('Locale', s.locale, v => aitState.update({ locale: v })),
+      selectRow('OS', ['ios', 'android'], s.platform, v => aitState.update({ platform: v as PlatformOS }), disabled),
+      inputRow('App Version', s.appVersion, v => aitState.update({ appVersion: v }), disabled),
+      selectRow('Environment', ['toss', 'sandbox'], s.environment, v => aitState.update({ environment: v as OperationalEnvironment }), disabled),
+      inputRow('Locale', s.locale, v => aitState.update({ locale: v }), disabled),
     ),
     h('div', { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'Network'),
-      selectRow('Status', ['WIFI', '4G', '5G', '3G', '2G', 'OFFLINE', 'WWAN', 'UNKNOWN'], s.networkStatus, v => aitState.update({ networkStatus: v as NetworkStatus })),
+      selectRow('Status', ['WIFI', '4G', '5G', '3G', '2G', 'OFFLINE', 'WWAN', 'UNKNOWN'], s.networkStatus, v => aitState.update({ networkStatus: v as NetworkStatus }), disabled),
     ),
     h('div', { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'Safe Area Insets'),
-      inputRow('Top', String(s.safeAreaInsets.top), v => aitState.patch('safeAreaInsets', { top: Number(v) })),
-      inputRow('Bottom', String(s.safeAreaInsets.bottom), v => aitState.patch('safeAreaInsets', { bottom: Number(v) })),
+      inputRow('Top', String(s.safeAreaInsets.top), v => aitState.patch('safeAreaInsets', { top: Number(v) }), disabled),
+      inputRow('Bottom', String(s.safeAreaInsets.bottom), v => aitState.patch('safeAreaInsets', { bottom: Number(v) }), disabled),
     ),
   );
   return container;
@@ -90,9 +96,12 @@ function renderEnvTab(): HTMLElement {
 
 function renderPermissionsTab(): HTMLElement {
   const s = aitState.state;
+  const disabled = !s.mockEnabled;
   const container = h('div');
   const names: PermissionName[] = ['camera', 'photos', 'geolocation', 'clipboard', 'contacts', 'microphone'];
   const statuses: PermissionStatus[] = ['allowed', 'denied', 'notDetermined'];
+
+  if (disabled) container.appendChild(monitoringNotice());
 
   container.append(
     h('div', { className: 'ait-section' },
@@ -100,7 +109,7 @@ function renderPermissionsTab(): HTMLElement {
       ...names.map(name =>
         selectRow(name, statuses, s.permissions[name], v => {
           aitState.patch('permissions', { [name]: v as PermissionStatus });
-        }),
+        }, disabled),
       ),
     ),
   );
@@ -109,7 +118,10 @@ function renderPermissionsTab(): HTMLElement {
 
 function renderLocationTab(): HTMLElement {
   const s = aitState.state;
+  const disabled = !s.mockEnabled;
   const container = h('div');
+
+  if (disabled) container.appendChild(monitoringNotice());
 
   container.append(
     h('div', { className: 'ait-section' },
@@ -117,15 +129,15 @@ function renderLocationTab(): HTMLElement {
       inputRow('Latitude', String(s.location.coords.latitude), v => {
         const coords = { ...s.location.coords, latitude: Number(v) };
         aitState.patch('location', { coords } as Partial<typeof s.location>);
-      }),
+      }, disabled),
       inputRow('Longitude', String(s.location.coords.longitude), v => {
         const coords = { ...s.location.coords, longitude: Number(v) };
         aitState.patch('location', { coords } as Partial<typeof s.location>);
-      }),
+      }, disabled),
       inputRow('Accuracy', String(s.location.coords.accuracy), v => {
         const coords = { ...s.location.coords, accuracy: Number(v) };
         aitState.patch('location', { coords } as Partial<typeof s.location>);
-      }),
+      }, disabled),
     ),
   );
   return container;
@@ -133,21 +145,24 @@ function renderLocationTab(): HTMLElement {
 
 function renderIapTab(): HTMLElement {
   const s = aitState.state;
+  const disabled = !s.mockEnabled;
   const container = h('div');
   const results: IapNextResult[] = ['success', 'USER_CANCELED', 'INVALID_PRODUCT_ID', 'PAYMENT_PENDING', 'NETWORK_ERROR', 'ITEM_ALREADY_OWNED', 'INTERNAL_ERROR'];
+
+  if (disabled) container.appendChild(monitoringNotice());
 
   container.append(
     h('div', { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'IAP Simulator'),
       selectRow('Next Purchase Result', results, s.iap.nextResult, v => {
         aitState.patch('iap', { nextResult: v as IapNextResult });
-      }),
+      }, disabled),
     ),
     h('div', { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'TossPay'),
       selectRow('Next Payment Result', ['success', 'fail'], s.payment.nextResult, v => {
         aitState.patch('payment', { nextResult: v as 'success' | 'fail' });
-      }),
+      }, disabled),
     ),
     h('div', { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, `Completed Orders (${s.iap.completedOrders.length})`),
@@ -163,13 +178,18 @@ function renderIapTab(): HTMLElement {
 }
 
 function renderEventsTab(): HTMLElement {
+  const disabled = !aitState.state.mockEnabled;
   const container = h('div');
+
+  if (disabled) container.appendChild(monitoringNotice());
 
   const backBtn = h('button', { className: 'ait-btn' }, 'Trigger Back Event');
   backBtn.addEventListener('click', () => aitState.trigger('backEvent'));
+  if (disabled) backBtn.disabled = true;
 
   const homeBtn = h('button', { className: 'ait-btn' }, 'Trigger Home Event');
   homeBtn.addEventListener('click', () => aitState.trigger('homeEvent'));
+  if (disabled) homeBtn.disabled = true;
 
   container.append(
     h('div', { className: 'ait-section' },
@@ -180,10 +200,10 @@ function renderEventsTab(): HTMLElement {
       h('div', { className: 'ait-section-title' }, 'Login'),
       selectRow('Logged In', ['true', 'false'], String(aitState.state.auth.isLoggedIn), v => {
         aitState.patch('auth', { isLoggedIn: v === 'true' });
-      }),
+      }, disabled),
       selectRow('Toss Login Integrated', ['true', 'false'], String(aitState.state.auth.isTossLoginIntegrated), v => {
         aitState.patch('auth', { isTossLoginIntegrated: v === 'true' });
-      }),
+      }, disabled),
     ),
   );
   return container;
@@ -366,10 +386,16 @@ function renderPromptBanner(): HTMLElement | null {
 
 function renderDeviceTab(): HTMLElement {
   const s = aitState.state;
+  const disabled = !s.mockEnabled;
   const container = h('div');
-  // Prompt banner (if active)
-  const promptBanner = renderPromptBanner();
-  if (promptBanner) container.appendChild(promptBanner);
+
+  if (disabled) container.appendChild(monitoringNotice());
+
+  // Prompt banner (if active, only when mockEnabled)
+  if (s.mockEnabled) {
+    const promptBanner = renderPromptBanner();
+    if (promptBanner) container.appendChild(promptBanner);
+  }
 
   // Device API Mode selectors
   const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: string[] }> = [
@@ -387,7 +413,7 @@ function renderDeviceTab(): HTMLElement {
         selectRow(entry.label, entry.options, s.deviceModes[entry.key], v => {
           aitState.patch('deviceModes', { [entry.key]: v } as Partial<typeof s.deviceModes>);
           refreshPanel();
-        }),
+        }, disabled),
       ),
     ),
   );
@@ -405,6 +431,7 @@ function renderDeviceTab(): HTMLElement {
       aitState.patch('mockData', { images: newImages });
       refreshPanel();
     });
+    if (disabled) removeBtn.disabled = true;
     thumb.append(img, removeBtn);
     imageGrid.appendChild(thumb);
   });
@@ -428,18 +455,21 @@ function renderDeviceTab(): HTMLElement {
     };
     input.click();
   });
+  if (disabled) addBtn.disabled = true;
 
   const defaultsBtn = h('button', { className: 'ait-btn-secondary' }, 'Use defaults');
   defaultsBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [...getDefaultPlaceholderImages()] });
     refreshPanel();
   });
+  if (disabled) defaultsBtn.disabled = true;
 
   const clearImagesBtn = h('button', { className: 'ait-btn-secondary' }, 'Clear');
   clearImagesBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [] });
     refreshPanel();
   });
+  if (disabled) clearImagesBtn.disabled = true;
 
   container.append(
     h('div', { className: 'ait-section' },
@@ -450,6 +480,12 @@ function renderDeviceTab(): HTMLElement {
   );
 
   return container;
+}
+
+function monitoringNotice(): HTMLElement {
+  return h('div', { className: 'ait-monitoring-notice' },
+    'Monitoring only — mock is disabled. Settings are read-only.',
+  );
 }
 
 const TAB_RENDERERS: Record<TabId, () => HTMLElement> = {
@@ -496,9 +532,27 @@ function mount() {
   // Panel
   panelEl = h('div', { className: 'ait-panel' });
 
+  const mockBadge = h('span', {
+    className: `ait-mock-badge ${aitState.state.mockEnabled ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`,
+  }, aitState.state.mockEnabled ? 'MOCK ON' : 'MOCK OFF');
+
+  const mockToggle = h('button', { className: 'ait-mock-toggle' }, 'Toggle');
+  mockToggle.addEventListener('click', () => {
+    aitState.update({ mockEnabled: !aitState.state.mockEnabled });
+    mockBadge.className = `ait-mock-badge ${aitState.state.mockEnabled ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`;
+    mockBadge.textContent = aitState.state.mockEnabled ? 'MOCK ON' : 'MOCK OFF';
+    refreshPanel();
+  });
+
+  const headerRight = h('span', { style: 'display:flex;align-items:center;gap:6px' },
+    mockBadge,
+    mockToggle,
+    h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
+  );
+
   const header = h('div', { className: 'ait-panel-header' },
     h('span', {}, 'AIT DevTools'),
-    h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
+    headerRight,
   );
 
   tabsEl = h('div', { className: 'ait-panel-tabs' });
