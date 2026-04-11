@@ -36,8 +36,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "check-sdk-update": "tsx scripts/check-sdk-update.ts",
-    "example": "pnpm build && pnpm --dir examples/vite-react dev"
+    "check-sdk-update": "tsx scripts/check-sdk-update.ts"
   },
   "peerDependencies": {
     "@apps-in-toss/web-framework": "^2.0.0"

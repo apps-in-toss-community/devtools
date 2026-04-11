@@ -5,17 +5,15 @@ export default defineConfig({
   timeout: 30_000,
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
-  use: {
-    baseURL: 'http://localhost:4173',
-  },
-  projects: [
-    {
-      name: 'chromium',
-      use: { browserName: 'chromium' },
-    },
-  ],
+  baseURL: 'http://localhost:4173',
+  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
   webServer: {
-    command: 'pnpm build && pnpm --dir examples/vite-react run build && pnpm --dir examples/vite-react run preview --port 4173',
+    command: [
+      'pnpm build',
+      'rm -rf .tmp/sdk-example',
+      'git clone --depth 1 https://github.com/apps-in-toss-community/sdk-example.git .tmp/sdk-example',
+      'cd .tmp/sdk-example && pnpm install && pnpm build && pnpm preview --port 4173',
+    ].join(' && '),
     port: 4173,
     reuseExistingServer: !process.env.CI,
   },
