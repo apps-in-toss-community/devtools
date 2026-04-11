@@ -31,10 +31,19 @@ src/
 │   ├── state.ts       # 중앙 상태 관리 (AitStateManager), window.__ait 노출
 │   ├── proxy.ts       # 미구현 API용 Proxy fallback
 │   ├── permissions.ts # 권한 시스템 (withPermission, checkPermission)
-│   ├── types.ts       # 공유 타입
+│   ├── types.ts       # 공유 타입 (PermissionName, PermissionStatus, DeviceMode 등)
 │   ├── auth/          # appLogin, getUserKeyForGame 등
 │   ├── navigation/    # closeView, openURL, graniteEvent, 환경정보, SafeAreaInsets
-│   ├── device/        # Storage, Location, Camera, Clipboard, Haptic (mock/web/prompt 모드 지원)
+│   ├── device/        # 도메인별 파일로 분리 (mock/web/prompt 모드 지원)
+│   │   ├── index.ts       # re-export
+│   │   ├── storage.ts     # Storage (localStorage 기반)
+│   │   ├── location.ts    # Location (getCurrentLocation, startUpdateLocation)
+│   │   ├── camera.ts      # Camera, Photos (openCamera, fetchAlbumPhotos)
+│   │   ├── clipboard.ts   # Clipboard (get/setClipboardText)
+│   │   ├── contacts.ts    # Contacts (fetchContacts)
+│   │   ├── haptic.ts      # Haptic, saveBase64Data
+│   │   ├── network.ts     # Network status
+│   │   └── _helpers.ts    # 공유 유틸 (placeholder 이미지, prompt 헬퍼)
 │   ├── iap/           # IAP, checkoutPayment (TossPay)
 │   ├── ads/           # GoogleAdMob, TossAds, FullScreenAd
 │   ├── game/          # 게임센터, 프로모션, contactsViral
@@ -42,23 +51,38 @@ src/
 │   ├── partner/       # partner, tdsEvent
 │   └── index.ts       # 통합 re-export (이 파일이 번들러 alias 대상)
 ├── panel/             # Floating DevTools Panel (vanilla DOM, 프레임워크 없음)
-│   ├── index.ts       # 마운트 로직, 8개 탭 렌더러
-│   └── styles.ts      # CSS 문자열
+│   ├── index.ts       # 마운트 로직, 드래그, 패널 셸
+│   ├── helpers.ts     # DOM 헬퍼 (h, selectRow, inputRow 등)
+│   ├── styles.ts      # CSS 문자열
+│   └── tabs/          # 탭별 렌더러
+│       ├── index.ts       # 탭 registry
+│       ├── environment.ts
+│       ├── permissions.ts
+│       ├── location.ts
+│       ├── device.ts
+│       ├── iap.ts
+│       ├── events.ts
+│       ├── analytics.ts
+│       └── storage.ts
 ├── unplugin/          # unplugin 기반 번들러 플러그인
 │   └── index.ts       # Vite/Webpack/Rspack/esbuild/Rollup export
 ├── __tests__/         # vitest 테스트 파일
 │   ├── ads.test.ts
 │   ├── analytics.test.ts
 │   ├── auth.test.ts
+│   ├── camera.test.ts
+│   ├── contacts.test.ts
 │   ├── device.test.ts
 │   ├── game.test.ts
 │   ├── iap.test.ts
 │   ├── navigation.test.ts
+│   ├── panel.test.ts
 │   ├── partner.test.ts
 │   ├── permissions.test.ts
 │   ├── proxy.test.ts
 │   ├── state.test.ts
-│   └── storage.test.ts
+│   ├── storage.test.ts
+│   └── unplugin.test.ts
 └── __typecheck.ts     # 원본 SDK 대비 타입 호환성 검증 (빌드에 포함 안 됨)
 ```
 
