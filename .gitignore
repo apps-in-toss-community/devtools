@@ -7,4 +7,7 @@ dist/
 test-results/
 playwright-report/
 .tmp/
+# Claude Code
+.claude/settings.local.json
 .claude/*.lock
+.claude.lock
