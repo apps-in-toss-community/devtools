@@ -4,7 +4,7 @@
   "description": "Development tools for Apps in Toss mini-apps — mock SDK, floating devtools panel, and universal bundler plugin",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "main": "./dist/mock/index.js",
   "types": "./dist/mock/index.d.ts",
@@ -47,16 +47,16 @@
     }
   },
   "dependencies": {
-    "unplugin": "^2.3.2"
+    "unplugin": "^3.0.0"
   },
   "devDependencies": {
-    "@apps-in-toss/web-framework": "^2.4.1",
+    "@apps-in-toss/web-framework": "^2.4.5",
     "@playwright/test": "^1.59.1",
     "jsdom": "^29.0.2",
-    "tsup": "^8.4.0",
-    "tsx": "^4.19.4",
-    "typescript": "^5.8.3",
-    "vitest": "^3.1.1"
+    "tsup": "^8.5.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4"
   },
   "keywords": [
     "apps-in-toss",
