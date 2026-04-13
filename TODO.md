@@ -3,7 +3,7 @@
 ## High Priority
 - [ ] Verify E2E tests pass against the cloned `sdk-example` repo — `playwright.config.ts` was changed to git-clone and build sdk-example before running E2E; run the full suite end-to-end in CI to confirm the migration works
   - [ ] Audit `e2e/panel.test.ts` selectors against the current sdk-example markup; selectors from the old `examples/vite-react` UI will fail
-  - [ ] Document the new E2E dev loop in `CLAUDE.md`
+  - [x] Document the new E2E dev loop in `CLAUDE.md`
   - [ ] Wire the E2E suite into PR CI (currently only `build-and-test` runs on PRs; E2E is not gating)
 
 ## Medium Priority
