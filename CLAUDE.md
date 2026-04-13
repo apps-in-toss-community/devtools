@@ -129,15 +129,29 @@ src/
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
 
-## Playwright MCP를 활용한 QA
+## E2E 테스트 플로우
 
-Claude Code의 Playwright MCP 플러그인을 사용하면 브라우저를 직접 제어하여 example 앱의 E2E QA를 수행할 수 있다.
+E2E는 `sdk-example` 레포를 reference consumer로 사용한다. `playwright.config.ts`의 `webServer`가 자동으로 다음을 수행한다:
+
+1. `pnpm build` — devtools 빌드
+2. `.tmp/sdk-example`을 정리 후 `git clone --depth 1` (main 브랜치)
+3. clone된 sdk-example 안에서 `pnpm install && pnpm build && pnpm preview --port 4173`
+
+즉 로컬에서 `pnpm test:e2e`만 실행하면 sdk-example을 따로 clone/띄울 필요가 없다. `.tmp/sdk-example`은 `.gitignore`에 포함되어 있다.
+
+주의:
+- 현재는 sdk-example의 `main`을 clone하므로 sdk-example UI가 바뀌면 devtools E2E가 깨질 수 있다 (TODO: 태그 또는 commit SHA로 pin).
+- sdk-example의 markup 변경이 있으면 `e2e/panel.test.ts`의 selector도 함께 갱신해야 한다.
+
+## Playwright MCP를 활용한 수동 QA
+
+Claude Code의 Playwright MCP 플러그인을 사용하면 브라우저를 직접 제어하여 수동 QA를 수행할 수 있다.
 
 ### 사전 준비
 
 1. Claude Code에 Playwright 플러그인이 설치되어 있어야 한다 (`.claude/settings.json`의 `enabledPlugins` 확인)
 2. 라이브러리를 먼저 빌드한다: `pnpm build`
-3. sdk-example 레포를 별도로 clone하여 dev 서버를 띄운다: `cd ../sdk-example && pnpm install && pnpm dev`
+3. sdk-example을 로컬에 clone해두었다면 `cd ../sdk-example && pnpm install && pnpm dev`로 기동 (없으면 `git clone git@github.com:apps-in-toss-community/sdk-example.git` 후 진행)
 
 ### QA 절차
 
