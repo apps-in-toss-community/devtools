@@ -2,15 +2,12 @@
 
 ## 프로젝트 성격 (중요)
 
-**`apps-in-toss-community`는 비공식(unofficial) 오픈소스 커뮤니티다.** 토스(Toss) 또는 앱인토스(Apps in Toss) 팀과 제휴 관계가 아니며, 공식 프로젝트가 아니다.
+**`apps-in-toss-community`는 비공식(unofficial) 오픈소스 커뮤니티다.** 토스 팀과 제휴 없음. 사용자에게 보이는 산출물에서 "공식/official/토스가 제공하는/powered by Toss" 등 제휴·후원·인증 암시 표현을 **쓰지 않는다**. 대신 "커뮤니티/오픈소스/비공식"을 사용한다. 의심스러우면 빼라.
 
-사용자에게 보여지는 모든 산출물(README, 패키지 설명, 커밋 메시지, PR 설명, 이슈 템플릿, 코드 주석 등)에서 다음 표현을 **절대 사용하지 말 것**:
+## 짝 repo
 
-- "공식(official)", "공식 플러그인", "공식 도구", "official plugin/tool/SDK"
-- "토스가 제공하는", "앱인토스에서 만든", "powered by Toss"
-- 토스와의 제휴/후원/인증을 암시하는 모든 표현
-
-대신 "커뮤니티(community)", "오픈소스", "비공식(unofficial)" 같은 표현을 사용한다. 의심스러우면 빼라.
+- **`polyfill`** — devtools가 SDK mock이라면 polyfill은 표준 Web API shim. devtools unplugin이 polyfill을 주입하는 옵션을 추후 지원 고려.
+- **`sdk-example`** — devtools의 reference consumer. E2E에서 git clone해서 사용.
 
 ## 프로젝트 개요
 
