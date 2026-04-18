@@ -1,5 +1,5 @@
 import { aitState } from '../../mock/state.js';
-import { h, selectRow, monitoringNotice } from '../helpers.js';
+import { h, monitoringNotice, selectRow } from '../helpers.js';
 
 export function renderEventsTab(): HTMLElement {
   const disabled = !aitState.state.panelEditable;
@@ -16,18 +16,34 @@ export function renderEventsTab(): HTMLElement {
   if (disabled) homeBtn.disabled = true;
 
   container.append(
-    h('div', { className: 'ait-section' },
+    h(
+      'div',
+      { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'Navigation Events'),
       h('div', { className: 'ait-row' }, backBtn, homeBtn),
     ),
-    h('div', { className: 'ait-section' },
+    h(
+      'div',
+      { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'Login'),
-      selectRow('Logged In', ['true', 'false'], String(aitState.state.auth.isLoggedIn), v => {
-        aitState.patch('auth', { isLoggedIn: v === 'true' });
-      }, disabled),
-      selectRow('Toss Login Integrated', ['true', 'false'], String(aitState.state.auth.isTossLoginIntegrated), v => {
-        aitState.patch('auth', { isTossLoginIntegrated: v === 'true' });
-      }, disabled),
+      selectRow(
+        'Logged In',
+        ['true', 'false'],
+        String(aitState.state.auth.isLoggedIn),
+        (v) => {
+          aitState.patch('auth', { isLoggedIn: v === 'true' });
+        },
+        disabled,
+      ),
+      selectRow(
+        'Toss Login Integrated',
+        ['true', 'false'],
+        String(aitState.state.auth.isTossLoginIntegrated),
+        (v) => {
+          aitState.patch('auth', { isTossLoginIntegrated: v === 'true' });
+        },
+        disabled,
+      ),
     ),
   );
   return container;

@@ -2,8 +2,8 @@
  * IAP (인앱결제) mock
  */
 
-import { aitState } from '../state.js';
 import { createMockProxy } from '../proxy.js';
+import { aitState } from '../state.js';
 
 // orderCounter는 모듈 레벨 상태로 reset()에 의해 초기화되지 않는다.
 // 테스트에서는 orderId를 stringContaining('mock-order-')로 검증하여 카운터 값에 의존하지 않는다.
@@ -27,7 +27,10 @@ interface CreateSubscriptionPurchaseOrderOptions {
   options: {
     sku: string;
     offerId?: string | null;
-    processProductGrant: (params: { orderId: string; subscriptionId?: string }) => boolean | Promise<boolean>;
+    processProductGrant: (params: {
+      orderId: string;
+      subscriptionId?: string;
+    }) => boolean | Promise<boolean>;
   };
   onEvent: (event: { type: 'success'; data: IapOrderResult }) => void | Promise<void>;
   onError: (error: unknown) => void | Promise<void>;
@@ -44,7 +47,7 @@ interface IapOrderResult {
 }
 
 function buildOrderResult(sku: string): IapOrderResult {
-  const product = aitState.state.iap.products.find(p => p.sku === sku);
+  const product = aitState.state.iap.products.find((p) => p.sku === sku);
   const amountStr = product?.displayAmount?.replace(/[^0-9]/g, '') ?? '1000';
   return {
     orderId: generateOrderId(),
@@ -59,14 +62,17 @@ function buildOrderResult(sku: string): IapOrderResult {
 
 async function handlePurchase(
   sku: string,
-  processProductGrant: (params: { orderId: string; subscriptionId?: string }) => boolean | Promise<boolean>,
+  processProductGrant: (params: {
+    orderId: string;
+    subscriptionId?: string;
+  }) => boolean | Promise<boolean>,
   onEvent: (event: { type: 'success'; data: IapOrderResult }) => void | Promise<void>,
   onError: (error: unknown) => void | Promise<void>,
 ): Promise<void> {
   const nextResult = aitState.state.iap.nextResult;
 
   // 비동기 시뮬레이션 (실제로는 결제 UI가 뜨는 시간)
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise((r) => setTimeout(r, 300));
 
   if (nextResult !== 'success') {
     onError({ code: nextResult });
@@ -88,12 +94,15 @@ async function handlePurchase(
 
   // 주문 완료 기록
   aitState.patch('iap', {
-    completedOrders: [...aitState.state.iap.completedOrders, {
-      orderId: result.orderId,
-      sku,
-      status: 'COMPLETED' as const,
-      date: new Date().toISOString(),
-    }],
+    completedOrders: [
+      ...aitState.state.iap.completedOrders,
+      {
+        orderId: result.orderId,
+        sku,
+        status: 'COMPLETED' as const,
+        date: new Date().toISOString(),
+      },
+    ],
   });
 
   await onEvent({ type: 'success', data: result });
@@ -103,25 +112,34 @@ export const IAP = createMockProxy('IAP', {
   // 반환되는 cancel 함수는 mock에서는 no-op이다 (실제 SDK는 결제 UI를 닫음)
   createOneTimePurchaseOrder(params: IapCreateOneTimePurchaseOrderOptions): () => void {
     const sku = params.options.sku ?? params.options.productId ?? '';
-    handlePurchase(sku, params.options.processProductGrant, params.onEvent, params.onError).catch(e => console.error('[@ait-co/devtools] IAP unexpected error:', e));
+    handlePurchase(sku, params.options.processProductGrant, params.onEvent, params.onError).catch(
+      (e) => console.error('[@ait-co/devtools] IAP unexpected error:', e),
+    );
     return () => {};
   },
 
   createSubscriptionPurchaseOrder(params: CreateSubscriptionPurchaseOrderOptions): () => void {
-    handlePurchase(params.options.sku, params.options.processProductGrant, params.onEvent, params.onError).catch(e => console.error('[@ait-co/devtools] IAP unexpected error:', e));
+    handlePurchase(
+      params.options.sku,
+      params.options.processProductGrant,
+      params.onEvent,
+      params.onError,
+    ).catch((e) => console.error('[@ait-co/devtools] IAP unexpected error:', e));
     return () => {};
   },
 
   async getProductItemList(): Promise<{ products: unknown[] }> {
     return {
-      products: aitState.state.iap.products.map(p => ({
+      products: aitState.state.iap.products.map((p) => ({
         ...p,
         ...(p.type === 'SUBSCRIPTION' ? { renewalCycle: p.renewalCycle ?? 'MONTHLY' } : {}),
       })),
     };
   },
 
-  async getPendingOrders(): Promise<{ orders: Array<{ orderId: string; sku: string; paymentCompletedDate: string }> }> {
+  async getPendingOrders(): Promise<{
+    orders: Array<{ orderId: string; sku: string; paymentCompletedDate: string }>;
+  }> {
     return { orders: [...aitState.state.iap.pendingOrders] };
   },
 
@@ -139,16 +157,21 @@ export const IAP = createMockProxy('IAP', {
 
   async completeProductGrant(args: { params: { orderId: string } }): Promise<boolean> {
     // pending → completed 전이
-    const idx = aitState.state.iap.pendingOrders.findIndex(o => o.orderId === args.params.orderId);
+    const idx = aitState.state.iap.pendingOrders.findIndex(
+      (o) => o.orderId === args.params.orderId,
+    );
     if (idx !== -1) {
       const order = aitState.state.iap.pendingOrders[idx];
       const pendingOrders = aitState.state.iap.pendingOrders.filter((_, i) => i !== idx);
-      const completedOrders = [...aitState.state.iap.completedOrders, {
-        orderId: order.orderId,
-        sku: order.sku,
-        status: 'COMPLETED' as const,
-        date: new Date().toISOString(),
-      }];
+      const completedOrders = [
+        ...aitState.state.iap.completedOrders,
+        {
+          orderId: order.orderId,
+          sku: order.sku,
+          status: 'COMPLETED' as const,
+          date: new Date().toISOString(),
+        },
+      ];
       aitState.patch('iap', { pendingOrders, completedOrders });
     }
     return true;
@@ -170,11 +193,13 @@ export const IAP = createMockProxy('IAP', {
 
 // --- TossPay ---
 
-export async function checkoutPayment(options: { params: { payToken: string } }): Promise<{ success: boolean; reason?: string }> {
+export async function checkoutPayment(options: {
+  params: { payToken: string };
+}): Promise<{ success: boolean; reason?: string }> {
   const { nextResult, failReason } = aitState.state.payment;
   console.log('[@ait-co/devtools] checkoutPayment:', options.params.payToken);
 
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise((r) => setTimeout(r, 300));
 
   if (nextResult === 'success') {
     return { success: true };

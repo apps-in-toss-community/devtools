@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import aitDevtoolsPlugin from '../unplugin/index.js';
 
 const FRAMEWORK_ID = '@apps-in-toss/web-framework';
@@ -172,7 +172,7 @@ describe('unplugin: transform', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
     const result = hooks.transform('console.log("hello");');
-    expect(result).toBe("import '@ait-co/devtools/panel';\nconsole.log(\"hello\");");
+    expect(result).toBe('import \'@ait-co/devtools/panel\';\nconsole.log("hello");');
   });
 
   it('이미 패널 import가 있으면 스킵한다', () => {

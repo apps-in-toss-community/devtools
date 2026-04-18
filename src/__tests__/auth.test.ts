@@ -1,6 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  appLogin,
+  appsInTossSignTossCert,
+  getIsTossLoginIntegratedService,
+  getUserKeyForGame,
+} from '../mock/auth/index.js';
 import { aitState } from '../mock/state.js';
-import { appLogin, getIsTossLoginIntegratedService, getUserKeyForGame, appsInTossSignTossCert } from '../mock/auth/index.js';
 
 describe('Auth mock', () => {
   beforeEach(() => {

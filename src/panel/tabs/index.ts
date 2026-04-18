@@ -1,13 +1,21 @@
-import { renderEnvironmentTab } from './environment.js';
-import { renderPermissionsTab } from './permissions.js';
-import { renderLocationTab } from './location.js';
-import { renderDeviceTab } from './device.js';
-import { renderIapTab } from './iap.js';
-import { renderEventsTab } from './events.js';
 import { renderAnalyticsTab } from './analytics.js';
+import { renderDeviceTab } from './device.js';
+import { renderEnvironmentTab } from './environment.js';
+import { renderEventsTab } from './events.js';
+import { renderIapTab } from './iap.js';
+import { renderLocationTab } from './location.js';
+import { renderPermissionsTab } from './permissions.js';
 import { renderStorageTab } from './storage.js';
 
-export type TabId = 'env' | 'permissions' | 'location' | 'iap' | 'events' | 'analytics' | 'storage' | 'device';
+export type TabId =
+  | 'env'
+  | 'permissions'
+  | 'location'
+  | 'iap'
+  | 'events'
+  | 'analytics'
+  | 'storage'
+  | 'device';
 
 export const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'env', label: 'Environment' },

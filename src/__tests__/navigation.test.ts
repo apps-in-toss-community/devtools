@@ -1,32 +1,32 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { aitState } from '../mock/state.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  getPlatformOS,
-  getOperationalEnvironment,
-  isMinVersionSupported,
-  getNetworkStatus,
-  getServerTime,
-  graniteEvent,
-  getTossAppVersion,
-  getSchemeUri,
-  getLocale,
-  getDeviceId,
-  getGroupId,
-  SafeAreaInsets,
+  closeView,
   env,
   getAppsInTossGlobals,
-  closeView,
-  openURL,
-  getTossShareLink,
-  setScreenAwakeMode,
-  requestReview,
-  tdsEvent,
-  share,
-  setIosSwipeGestureEnabled,
-  setDeviceOrientation,
-  setSecureScreen,
+  getDeviceId,
+  getGroupId,
+  getLocale,
+  getNetworkStatus,
+  getOperationalEnvironment,
+  getPlatformOS,
   getSafeAreaInsets,
+  getSchemeUri,
+  getServerTime,
+  getTossAppVersion,
+  getTossShareLink,
+  graniteEvent,
+  isMinVersionSupported,
+  openURL,
+  requestReview,
+  SafeAreaInsets,
+  setDeviceOrientation,
+  setIosSwipeGestureEnabled,
+  setScreenAwakeMode,
+  setSecureScreen,
+  share,
+  tdsEvent,
 } from '../mock/navigation/index.js';
+import { aitState } from '../mock/state.js';
 
 describe('Navigation mock', () => {
   beforeEach(() => {
@@ -216,7 +216,9 @@ describe('Navigation mock', () => {
       const handler = vi.fn();
       const unsub = tdsEvent.addEventListener('navigationAccessoryEvent', { onEvent: handler });
 
-      window.dispatchEvent(new CustomEvent('__ait:navigationAccessoryEvent', { detail: { id: 'btn1' } }));
+      window.dispatchEvent(
+        new CustomEvent('__ait:navigationAccessoryEvent', { detail: { id: 'btn1' } }),
+      );
       expect(handler).toHaveBeenCalledWith({ id: 'btn1' });
 
       unsub();

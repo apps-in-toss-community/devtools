@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { createMockProxy } from '../mock/proxy.js';
 
 describe('createMockProxy', () => {
@@ -12,15 +12,13 @@ describe('createMockProxy', () => {
   it('미구현 프로퍼티 접근 시 throw한다', () => {
     const ref = createMockProxy('TestModule', { existing: () => 42 }) as Record<string, unknown>;
 
-    expect(() => ref['unknownMethod']).toThrow(
-      /TestModule\.unknownMethod is not mocked/,
-    );
+    expect(() => ref.unknownMethod).toThrow(/TestModule\.unknownMethod is not mocked/);
   });
 
   it('throw되는 에러 메시지는 고정된 prefix와 이슈 URL을 포함한다', () => {
     const ref = createMockProxy('Ads', {}) as Record<string, unknown>;
 
-    expect(() => ref['someNewApi']).toThrow(
+    expect(() => ref.someNewApi).toThrow(
       /Ads\.someNewApi is not mocked\..*github\.com\/apps-in-toss-community\/devtools\/issues/,
     );
   });

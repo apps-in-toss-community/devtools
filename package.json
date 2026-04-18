@@ -36,6 +36,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
     "check-sdk-update": "tsx scripts/check-sdk-update.ts"
   },
   "peerDependencies": {
@@ -51,6 +54,7 @@
   },
   "devDependencies": {
     "@apps-in-toss/web-framework": "2.4.7",
+    "@biomejs/biome": "2.4.12",
     "@changesets/cli": "^2.31.0",
     "@playwright/test": "^1.59.1",
     "jsdom": "^29.0.2",

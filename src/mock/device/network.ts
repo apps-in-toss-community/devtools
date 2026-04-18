@@ -16,9 +16,16 @@ export function getNetworkStatusByMode(): NetworkStatus | null {
   if (mode === 'mock') return null; // use default state-based logic
   if (mode === 'web') {
     if (!navigator.onLine) return 'OFFLINE';
-    const conn = (navigator as unknown as Record<string, unknown>).connection as { effectiveType?: string } | undefined;
+    const conn = (navigator as unknown as Record<string, unknown>).connection as
+      | { effectiveType?: string }
+      | undefined;
     if (conn?.effectiveType) {
-      const mapping: Record<string, NetworkStatus> = { '4g': '4G', '3g': '3G', '2g': '2G', 'slow-2g': '2G' };
+      const mapping: Record<string, NetworkStatus> = {
+        '4g': '4G',
+        '3g': '3G',
+        '2g': '2G',
+        'slow-2g': '2G',
+      };
       return mapping[conn.effectiveType] ?? 'UNKNOWN';
     }
     return aitState.state.networkStatus;

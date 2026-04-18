@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { aitState } from '../mock/state.js';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  getGameCenterGameProfile,
   grantPromotionReward,
   grantPromotionRewardForGame,
-  getGameCenterGameProfile,
-  submitGameCenterLeaderBoardScore,
   openGameCenterLeaderboard,
+  submitGameCenterLeaderBoardScore,
 } from '../mock/game/index.js';
+import { aitState } from '../mock/state.js';
 
 describe('Game mock', () => {
   beforeEach(() => {

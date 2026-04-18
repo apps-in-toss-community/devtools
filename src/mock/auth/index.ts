@@ -4,7 +4,10 @@
 
 import { aitState } from '../state.js';
 
-export async function appLogin(): Promise<{ authorizationCode: string; referrer: 'DEFAULT' | 'SANDBOX' }> {
+export async function appLogin(): Promise<{
+  authorizationCode: string;
+  referrer: 'DEFAULT' | 'SANDBOX';
+}> {
   return {
     authorizationCode: `mock-auth-${crypto.randomUUID()}`,
     referrer: aitState.state.environment === 'toss' ? 'DEFAULT' : 'SANDBOX',
@@ -15,7 +18,9 @@ export async function getIsTossLoginIntegratedService(): Promise<boolean | undef
   return aitState.state.auth.isTossLoginIntegrated;
 }
 
-export async function getUserKeyForGame(): Promise<{ hash: string; type: 'HASH' } | 'INVALID_CATEGORY' | 'ERROR' | undefined> {
+export async function getUserKeyForGame(): Promise<
+  { hash: string; type: 'HASH' } | 'INVALID_CATEGORY' | 'ERROR' | undefined
+> {
   if (!aitState.state.auth.userKeyHash) return undefined;
   return { hash: aitState.state.auth.userKeyHash, type: 'HASH' };
 }

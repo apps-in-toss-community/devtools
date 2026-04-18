@@ -29,5 +29,8 @@ export async function eventLog(params: {
   log_type: 'debug' | 'info' | 'warn' | 'error' | 'event' | 'screen' | 'impression' | 'click';
   params: Record<string, Primitive>;
 }): Promise<void> {
-  aitState.logAnalytics({ type: params.log_type, params: { log_name: params.log_name, ...params.params } });
+  aitState.logAnalytics({
+    type: params.log_type,
+    params: { log_name: params.log_name, ...params.params },
+  });
 }

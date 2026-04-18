@@ -16,7 +16,9 @@ export const Storage = createMockProxy('Storage', {
     localStorage.removeItem(`__ait_storage:${key}`);
   },
   clearItems: async (): Promise<void> => {
-    const keys = Object.keys(localStorage).filter(k => k.startsWith('__ait_storage:'));
-    keys.forEach(k => localStorage.removeItem(k));
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith('__ait_storage:'));
+    for (const k of keys) {
+      localStorage.removeItem(k);
+    }
   },
 });

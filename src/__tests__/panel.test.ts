@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeAll, afterEach, type Mock } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 import { aitState } from '../mock/state.js';
 import type { TabId } from '../panel/tabs/index.js';
 
@@ -45,7 +45,9 @@ describe('Panel error boundary', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     // Make env tab (default tab) throw and trigger re-render
-    tabSpies.env.mockImplementation(() => { throw new Error('env tab exploded'); });
+    tabSpies.env.mockImplementation(() => {
+      throw new Error('env tab exploded');
+    });
     window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
 
     const panelBody = document.querySelector('.ait-panel-body');
@@ -61,7 +63,9 @@ describe('Panel error boundary', () => {
     );
 
     // Switch to a non-broken tab — it should render fine
-    window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'permissions' } }));
+    window.dispatchEvent(
+      new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'permissions' } }),
+    );
     expect(panelBody!.querySelector('.ait-panel-tab-error')).toBeNull();
     expect(panelBody!.children.length).toBeGreaterThan(0);
   });
@@ -73,7 +77,9 @@ describe('Panel error boundary', () => {
     window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'storage' } }));
 
     // Now make the storage renderer throw
-    tabSpies.storage.mockImplementation(() => { throw new Error('storage exploded'); });
+    tabSpies.storage.mockImplementation(() => {
+      throw new Error('storage exploded');
+    });
 
     // aitState.update triggers subscribe → refreshPanel (storage tab) → throws → caught
     expect(() => aitState.update({ platform: 'android' })).not.toThrow();

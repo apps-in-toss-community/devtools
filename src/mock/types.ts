@@ -4,8 +4,24 @@ export type PlatformOS = 'ios' | 'android';
 export type OperationalEnvironment = 'toss' | 'sandbox';
 export type NetworkStatus = 'OFFLINE' | 'WIFI' | '2G' | '3G' | '4G' | '5G' | 'WWAN' | 'UNKNOWN';
 export type PermissionStatus = 'notDetermined' | 'denied' | 'allowed';
-export type PermissionName = 'clipboard' | 'contacts' | 'photos' | 'geolocation' | 'camera' | 'microphone';
-export type HapticFeedbackType = 'tickWeak' | 'tap' | 'tickMedium' | 'softMedium' | 'basicWeak' | 'basicMedium' | 'success' | 'error' | 'wiggle' | 'confetti';
+export type PermissionName =
+  | 'clipboard'
+  | 'contacts'
+  | 'photos'
+  | 'geolocation'
+  | 'camera'
+  | 'microphone';
+export type HapticFeedbackType =
+  | 'tickWeak'
+  | 'tap'
+  | 'tickMedium'
+  | 'softMedium'
+  | 'basicWeak'
+  | 'basicMedium'
+  | 'success'
+  | 'error'
+  | 'wiggle'
+  | 'confetti';
 
 export type DeviceApiMode = 'mock' | 'web' | 'prompt';
 
@@ -52,7 +68,14 @@ export interface MockIapProduct {
   renewalCycle?: 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 }
 
-export type IapNextResult = 'success' | 'USER_CANCELED' | 'INVALID_PRODUCT_ID' | 'PAYMENT_PENDING' | 'NETWORK_ERROR' | 'ITEM_ALREADY_OWNED' | 'INTERNAL_ERROR';
+export type IapNextResult =
+  | 'success'
+  | 'USER_CANCELED'
+  | 'INVALID_PRODUCT_ID'
+  | 'PAYMENT_PENDING'
+  | 'NETWORK_ERROR'
+  | 'ITEM_ALREADY_OWNED'
+  | 'INTERNAL_ERROR';
 
 export interface AnalyticsLogEntry {
   timestamp: number;

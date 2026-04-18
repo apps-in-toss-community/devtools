@@ -38,7 +38,12 @@ export function selectRow(
   return h('div', { className: 'ait-row' }, h('label', {}, label), select);
 }
 
-export function inputRow(label: string, value: string, onChange: (v: string) => void, disabled = false): HTMLElement {
+export function inputRow(
+  label: string,
+  value: string,
+  onChange: (v: string) => void,
+  disabled = false,
+): HTMLElement {
   const input = h('input', { className: 'ait-input', value });
   if (disabled) input.disabled = true;
   input.addEventListener('change', () => onChange(input.value));
@@ -46,7 +51,9 @@ export function inputRow(label: string, value: string, onChange: (v: string) => 
 }
 
 export function monitoringNotice(): HTMLElement {
-  return h('div', { className: 'ait-monitoring-notice' },
+  return h(
+    'div',
+    { className: 'ait-monitoring-notice' },
     'Read-only — mock responses are controlled at build time.',
   );
 }

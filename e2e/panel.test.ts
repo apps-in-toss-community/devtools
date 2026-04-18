@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 // Helper: open the AIT DevTools panel
 async function openPanel(page: Page) {
@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => {
 test.describe('Smoke', () => {
   test('page should load without console errors', async ({ page }) => {
     const errors: string[] = [];
-    page.on('pageerror', e => errors.push(e.message));
+    page.on('pageerror', (e) => errors.push(e.message));
 
     // Wait for all sections to be rendered
     await expect(page.getByTestId('events-section')).toBeVisible();
@@ -114,7 +114,7 @@ test.describe('Navigation', () => {
 
   test('openURL, share, swipeGesture, orientation should not throw', async ({ page }) => {
     const errors: string[] = [];
-    page.on('pageerror', e => errors.push(e.message));
+    page.on('pageerror', (e) => errors.push(e.message));
 
     await page.getByTestId('nav-openurl-btn').click();
     await page.getByTestId('nav-swipe-btn').click();
@@ -158,7 +158,9 @@ test.describe('Environment', () => {
     await openPanel(page);
     await switchTab(page, 'env');
 
-    const osRow = page.locator('.ait-panel .ait-row').filter({ has: page.locator('label', { hasText: /^OS$/ }) });
+    const osRow = page
+      .locator('.ait-panel .ait-row')
+      .filter({ has: page.locator('label', { hasText: /^OS$/ }) });
     await osRow.locator('select').selectOption('android');
 
     await expect(page.getByTestId('env-platform')).toHaveText('android', { timeout: 12000 });
@@ -200,7 +202,11 @@ test.describe('Permissions', () => {
     await openPanel(page);
     await switchTab(page, 'permissions');
 
-    const cameraSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'camera' }).locator('select').first();
+    const cameraSelect = page
+      .locator('.ait-panel .ait-row')
+      .filter({ hasText: 'camera' })
+      .locator('select')
+      .first();
     await cameraSelect.selectOption('denied');
     await closePanel(page);
 
@@ -284,7 +290,10 @@ test.describe('Location', () => {
     await openPanel(page);
     await switchTab(page, 'permissions');
 
-    const geoSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'geolocation' }).locator('select');
+    const geoSelect = page
+      .locator('.ait-panel .ait-row')
+      .filter({ hasText: 'geolocation' })
+      .locator('select');
     await geoSelect.selectOption('denied');
     await closePanel(page);
 
@@ -331,7 +340,10 @@ test.describe('Clipboard', () => {
     // Default clipboard mode is 'web'; switch to 'mock' for deterministic testing
     await openPanel(page);
     await switchTab(page, 'device');
-    const clipboardSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'Clipboard' }).locator('select');
+    const clipboardSelect = page
+      .locator('.ait-panel .ait-row')
+      .filter({ hasText: 'Clipboard' })
+      .locator('select');
     await clipboardSelect.selectOption('mock');
     await closePanel(page);
 
@@ -351,7 +363,7 @@ test.describe('Clipboard', () => {
 test.describe('Haptic & File', () => {
   test('haptic buttons should not throw errors', async ({ page }) => {
     const errors: string[] = [];
-    page.on('pageerror', e => errors.push(e.message));
+    page.on('pageerror', (e) => errors.push(e.message));
 
     await page.getByTestId('haptic-tickWeak').click();
     await page.getByTestId('haptic-tap').click();
@@ -382,7 +394,9 @@ test.describe('IAP & Payment', () => {
 
   test('one-time purchase should succeed with default settings', async ({ page }) => {
     await page.getByTestId('iap-purchase-button').click();
-    await expect(page.getByTestId('iap-purchase-result')).toContainText('success:', { timeout: 3000 });
+    await expect(page.getByTestId('iap-purchase-result')).toContainText('success:', {
+      timeout: 3000,
+    });
   });
 
   test('subscription purchase should succeed', async ({ page }) => {
@@ -394,12 +408,17 @@ test.describe('IAP & Payment', () => {
     await openPanel(page);
     await switchTab(page, 'iap');
 
-    const nextResultSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'Next Purchase Result' }).locator('select');
+    const nextResultSelect = page
+      .locator('.ait-panel .ait-row')
+      .filter({ hasText: 'Next Purchase Result' })
+      .locator('select');
     await nextResultSelect.selectOption('USER_CANCELED');
     await closePanel(page);
 
     await page.getByTestId('iap-purchase-button').click();
-    await expect(page.getByTestId('iap-purchase-result')).toContainText('error:USER_CANCELED', { timeout: 3000 });
+    await expect(page.getByTestId('iap-purchase-result')).toContainText('error:USER_CANCELED', {
+      timeout: 3000,
+    });
   });
 
   test('getPendingOrders should return orders array', async ({ page }) => {
@@ -410,7 +429,9 @@ test.describe('IAP & Payment', () => {
   test('getCompletedOrRefundedOrders should return after purchase', async ({ page }) => {
     // Do a purchase first
     await page.getByTestId('iap-purchase-button').click();
-    await expect(page.getByTestId('iap-purchase-result')).toContainText('success:', { timeout: 3000 });
+    await expect(page.getByTestId('iap-purchase-result')).toContainText('success:', {
+      timeout: 3000,
+    });
 
     await page.getByTestId('iap-completed-btn').click();
     await expect(page.getByTestId('iap-completed-result')).toContainText('COMPLETED');
@@ -430,7 +451,10 @@ test.describe('IAP & Payment', () => {
     await openPanel(page);
     await switchTab(page, 'iap');
 
-    const paymentSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'Next Payment Result' }).locator('select');
+    const paymentSelect = page
+      .locator('.ait-panel .ait-row')
+      .filter({ hasText: 'Next Payment Result' })
+      .locator('select');
     await paymentSelect.selectOption('fail');
     await closePanel(page);
 
@@ -457,7 +481,9 @@ test.describe('Ads', () => {
     // Show
     await page.getByTestId('ads-admob-show-btn').click();
     // Should eventually fire 'dismissed' as the last event
-    await expect(page.getByTestId('ads-admob-show-result')).toHaveText('dismissed', { timeout: 5000 });
+    await expect(page.getByTestId('ads-admob-show-result')).toHaveText('dismissed', {
+      timeout: 5000,
+    });
   });
 
   test('isAdMobLoaded should return false before load and true after load', async ({ page }) => {
@@ -474,16 +500,22 @@ test.describe('Ads', () => {
 
   test('loadFullScreenAd should fire loaded event', async ({ page }) => {
     await page.getByTestId('ads-fullscreen-load-btn').click();
-    await expect(page.getByTestId('ads-fullscreen-load-result')).toHaveText('loaded', { timeout: 3000 });
+    await expect(page.getByTestId('ads-fullscreen-load-result')).toHaveText('loaded', {
+      timeout: 3000,
+    });
   });
 
   test('showFullScreenAd should fire dismissed after load', async ({ page }) => {
     // Load first
     await page.getByTestId('ads-fullscreen-load-btn').click();
-    await expect(page.getByTestId('ads-fullscreen-load-result')).toHaveText('loaded', { timeout: 3000 });
+    await expect(page.getByTestId('ads-fullscreen-load-result')).toHaveText('loaded', {
+      timeout: 3000,
+    });
 
     await page.getByTestId('ads-fullscreen-show-btn').click();
-    await expect(page.getByTestId('ads-fullscreen-show-result')).toHaveText('dismissed', { timeout: 5000 });
+    await expect(page.getByTestId('ads-fullscreen-show-result')).toHaveText('dismissed', {
+      timeout: 5000,
+    });
   });
 
   test('TossAds.initialize should complete', async ({ page }) => {
@@ -493,7 +525,7 @@ test.describe('Ads', () => {
 
   test('TossAds.destroyAll should not throw', async ({ page }) => {
     const errors: string[] = [];
-    page.on('pageerror', e => errors.push(e.message));
+    page.on('pageerror', (e) => errors.push(e.message));
 
     await page.getByTestId('ads-tossads-destroy-btn').click();
     await page.waitForTimeout(100);
@@ -659,7 +691,10 @@ test.describe('Device Tab', () => {
     await openPanel(page);
     await switchTab(page, 'device');
 
-    const cameraModeSelect = page.locator('.ait-panel .ait-row').filter({ hasText: 'Camera' }).locator('select');
+    const cameraModeSelect = page
+      .locator('.ait-panel .ait-row')
+      .filter({ hasText: 'Camera' })
+      .locator('select');
     await expect(cameraModeSelect).toHaveValue('mock');
 
     await cameraModeSelect.selectOption('web');
@@ -713,7 +748,9 @@ test.describe('Draggable Toggle Button', () => {
     expect(Math.abs(newBox!.y - box!.y)).toBeGreaterThan(10);
   });
 
-  test('short click (<= 3px per axis) should toggle panel instead of dragging', async ({ page }) => {
+  test('short click (<= 3px per axis) should toggle panel instead of dragging', async ({
+    page,
+  }) => {
     const toggle = page.locator('button.ait-panel-toggle');
     const box = await toggle.boundingBox();
     expect(box).not.toBeNull();

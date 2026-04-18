@@ -6,7 +6,12 @@ import { aitState } from '../state.js';
 
 // --- Placeholder Image Generator ---
 
-function generatePlaceholderImage(width: number, height: number, text: string, color: string): string {
+function generatePlaceholderImage(
+  width: number,
+  height: number,
+  text: string,
+  color: string,
+): string {
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -14,7 +19,7 @@ function generatePlaceholderImage(width: number, height: number, text: string, c
   if (!ctx) {
     // jsdom 등 Canvas API 미지원 환경에서는 간단한 SVG data URI 반환
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect fill="${color}" width="${width}" height="${height}"/><text x="50%" y="50%" fill="white" font-size="16" text-anchor="middle" dominant-baseline="middle">${text}</text></svg>`;
-    return 'data:image/svg+xml;base64,' + btoa(svg);
+    return `data:image/svg+xml;base64,${btoa(svg)}`;
   }
   ctx.fillStyle = color;
   ctx.fillRect(0, 0, width, height);
@@ -36,7 +41,9 @@ let cachedPlaceholders: string[] | null = null;
 
 export function getDefaultPlaceholderImages(): string[] {
   if (!cachedPlaceholders) {
-    cachedPlaceholders = DEFAULT_PLACEHOLDERS.map(p => generatePlaceholderImage(320, 240, p.text, p.color));
+    cachedPlaceholders = DEFAULT_PLACEHOLDERS.map((p) =>
+      generatePlaceholderImage(320, 240, p.text, p.color),
+    );
   }
   return [...cachedPlaceholders];
 }
@@ -55,7 +62,7 @@ const PROMPT_TIMEOUT_MS = 30_000;
 /** @internal device 모듈 내부 전용 */
 export function waitForPromptResponse<T>(type: string): Promise<T> {
   return new Promise((resolve, reject) => {
-    const eventName = '__ait:prompt-response:' + type;
+    const eventName = `__ait:prompt-response:${type}`;
     const cancelName = '__ait:prompt-cancel';
 
     function cleanup() {
@@ -70,7 +77,11 @@ export function waitForPromptResponse<T>(type: string): Promise<T> {
       const hint = panelMounted
         ? 'Please provide input via the DevTools panel.'
         : 'Is @ait-co/devtools/panel imported?';
-      reject(new Error(`[@ait-co/devtools] Prompt timeout for "${type}" after ${PROMPT_TIMEOUT_MS / 1000}s. ${hint}`));
+      reject(
+        new Error(
+          `[@ait-co/devtools] Prompt timeout for "${type}" after ${PROMPT_TIMEOUT_MS / 1000}s. ${hint}`,
+        ),
+      );
     }, PROMPT_TIMEOUT_MS);
 
     const handler = (e: Event) => {

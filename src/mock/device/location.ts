@@ -3,12 +3,20 @@
  * mock/web/prompt 모드 지원
  */
 
+import { checkPermission, withPermission } from '../permissions.js';
 import { aitState } from '../state.js';
 import type { MockLocation } from '../types.js';
-import { withPermission, checkPermission } from '../permissions.js';
 import { waitForPromptResponse } from './_helpers.js';
 
-enum Accuracy { Lowest = 1, Low = 2, Balanced = 3, High = 4, Highest = 5, BestForNavigation = 6 }
+enum Accuracy {
+  Lowest = 1,
+  Low = 2,
+  Balanced = 3,
+  High = 4,
+  Highest = 5,
+  BestForNavigation = 6,
+}
+
 export { Accuracy };
 
 function buildLocation(): MockLocation {
@@ -120,11 +128,13 @@ function startUpdateLocationPrompt(eventParams: StartUpdateLocationEventParams):
     onEvent((e as CustomEvent).detail as MockLocation);
   };
   window.addEventListener('__ait:prompt-response:location-update', handler);
-  window.dispatchEvent(new CustomEvent('__ait:prompt-request', { detail: { type: 'location-update' } }));
+  window.dispatchEvent(
+    new CustomEvent('__ait:prompt-request', { detail: { type: 'location-update' } }),
+  );
   return () => window.removeEventListener('__ait:prompt-response:location-update', handler);
 }
 
-const _startUpdateLocation = (eventParams: StartUpdateLocationEventParams): () => void => {
+const _startUpdateLocation = (eventParams: StartUpdateLocationEventParams): (() => void) => {
   const mode = aitState.state.deviceModes.location;
   if (mode === 'web') return startUpdateLocationWeb(eventParams);
   if (mode === 'prompt') return startUpdateLocationPrompt(eventParams);

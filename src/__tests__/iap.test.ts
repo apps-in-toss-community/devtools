@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { checkoutPayment, IAP } from '../mock/iap/index.js';
 import { aitState } from '../mock/state.js';
-import { IAP, checkoutPayment } from '../mock/iap/index.js';
 
 describe('IAP mock', () => {
   beforeEach(() => {
@@ -81,7 +81,9 @@ describe('IAP mock', () => {
 
   it('completeProductGrant: pending 주문을 completed로 이동한다', async () => {
     aitState.patch('iap', {
-      pendingOrders: [{ orderId: 'order-1', sku: 'mock-gem-100', paymentCompletedDate: new Date().toISOString() }],
+      pendingOrders: [
+        { orderId: 'order-1', sku: 'mock-gem-100', paymentCompletedDate: new Date().toISOString() },
+      ],
     });
 
     const result = await IAP.completeProductGrant({ params: { orderId: 'order-1' } });

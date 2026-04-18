@@ -1,5 +1,5 @@
-import { h, monitoringNotice } from '../helpers.js';
 import { aitState } from '../../mock/state.js';
+import { h, monitoringNotice } from '../helpers.js';
 
 export function renderStorageTab(refreshPanel: () => void): HTMLElement {
   const disabled = !aitState.state.panelEditable;
@@ -17,23 +17,37 @@ export function renderStorageTab(refreshPanel: () => void): HTMLElement {
   const clearBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger' }, 'Clear All');
   if (disabled) clearBtn.disabled = true;
   clearBtn.addEventListener('click', () => {
-    entries.forEach(([key]) => localStorage.removeItem(prefix + key));
+    for (const [key] of entries) {
+      localStorage.removeItem(prefix + key);
+    }
     refreshPanel();
   });
 
   container.append(
-    h('div', { className: 'ait-section' },
-      h('div', { className: 'ait-row' },
+    h(
+      'div',
+      { className: 'ait-section' },
+      h(
+        'div',
+        { className: 'ait-row' },
         h('div', { className: 'ait-section-title' }, `Storage (${entries.length} items)`),
         clearBtn,
       ),
       entries.length === 0
         ? h('div', { style: 'color:#555;font-size:12px' }, 'No items in storage')
-        : h('div', {},
+        : h(
+            'div',
+            {},
             ...entries.map(([key, value]) =>
-              h('div', { className: 'ait-storage-row' },
+              h(
+                'div',
+                { className: 'ait-storage-row' },
                 h('span', { className: 'ait-storage-key' }, key),
-                h('span', { className: 'ait-storage-value' }, value.length > 100 ? value.slice(0, 100) + '...' : value),
+                h(
+                  'span',
+                  { className: 'ait-storage-value' },
+                  value.length > 100 ? `${value.slice(0, 100)}...` : value,
+                ),
               ),
             ),
           ),

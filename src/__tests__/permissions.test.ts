@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  checkPermission,
+  getPermission,
+  openPermissionDialog,
+  requestPermission,
+  withPermission,
+} from '../mock/permissions.js';
 import { aitState } from '../mock/state.js';
-import { getPermission, openPermissionDialog, checkPermission, withPermission, requestPermission } from '../mock/permissions.js';
 
 describe('Permissions mock', () => {
   beforeEach(() => {

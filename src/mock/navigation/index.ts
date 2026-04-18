@@ -2,9 +2,9 @@
  * 화면/네비게이션/이벤트 mock
  */
 
+import { getNetworkStatusByMode } from '../device/index.js';
 import { aitState } from '../state.js';
 import type { NetworkStatus } from '../types.js';
-import { getNetworkStatusByMode } from '../device/index.js';
 
 export async function closeView(): Promise<void> {
   console.log('[@ait-co/devtools] closeView called');
@@ -32,16 +32,22 @@ export async function setIosSwipeGestureEnabled(_options: { isEnabled: boolean }
   console.log('[@ait-co/devtools] setIosSwipeGestureEnabled:', _options.isEnabled);
 }
 
-export async function setDeviceOrientation(_options: { type: 'portrait' | 'landscape' }): Promise<void> {
+export async function setDeviceOrientation(_options: {
+  type: 'portrait' | 'landscape';
+}): Promise<void> {
   console.log('[@ait-co/devtools] setDeviceOrientation:', _options.type);
 }
 
-export async function setScreenAwakeMode(options: { enabled: boolean }): Promise<{ enabled: boolean }> {
+export async function setScreenAwakeMode(options: {
+  enabled: boolean;
+}): Promise<{ enabled: boolean }> {
   console.log('[@ait-co/devtools] setScreenAwakeMode:', options.enabled);
   return { enabled: options.enabled };
 }
 
-export async function setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }> {
+export async function setSecureScreen(options: {
+  enabled: boolean;
+}): Promise<{ enabled: boolean }> {
   console.log('[@ait-co/devtools] setSecureScreen:', options.enabled);
   return { enabled: options.enabled };
 }
@@ -65,10 +71,7 @@ export function getTossAppVersion(): string {
   return aitState.state.appVersion;
 }
 
-export function isMinVersionSupported(minVersions: {
-  android: string;
-  ios: string;
-}): boolean {
+export function isMinVersionSupported(minVersions: { android: string; ios: string }): boolean {
   const platform = aitState.state.platform;
   const required = platform === 'ios' ? minVersions.ios : minVersions.android;
   if (required === 'always') return true;
@@ -113,22 +116,28 @@ export async function getServerTime(): Promise<number | undefined> {
 // --- 이벤트 시스템 ---
 
 interface GraniteEventMap {
-  backEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: void };
-  homeEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: void };
+  backEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: undefined };
+  homeEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: undefined };
 }
 
 export const graniteEvent = {
   addEventListener<K extends keyof GraniteEventMap>(
     event: K,
-    { onEvent, onError }: {
+    {
+      onEvent,
+      onError,
+    }: {
       onEvent: GraniteEventMap[K]['onEvent'];
       onError?: GraniteEventMap[K]['onError'];
       options?: GraniteEventMap[K]['options'];
     },
   ): () => void {
     const handler = () => {
-      try { onEvent(); }
-      catch (e) { onError?.(e instanceof Error ? e : new Error(String(e))); }
+      try {
+        onEvent();
+      } catch (e) {
+        onError?.(e instanceof Error ? e : new Error(String(e)));
+      }
     };
     window.addEventListener(`__ait:${event}`, handler);
     return () => window.removeEventListener(`__ait:${event}`, handler);
@@ -138,20 +147,30 @@ export const graniteEvent = {
 export const appsInTossEvent = {
   addEventListener<K extends string>(
     _event: K,
-    _handlers: { onEvent: (...args: unknown[]) => void; onError?: (error: Error) => void; options?: unknown },
+    _handlers: {
+      onEvent: (...args: unknown[]) => void;
+      onError?: (error: Error) => void;
+      options?: unknown;
+    },
   ): () => void {
     return () => {};
   },
 };
 
 interface TdsEventMap {
-  navigationAccessoryEvent: { onEvent: (data: { id: string }) => void; onError?: (error: Error) => void; options: undefined };
+  navigationAccessoryEvent: {
+    onEvent: (data: { id: string }) => void;
+    onError?: (error: Error) => void;
+    options: undefined;
+  };
 }
 
 export const tdsEvent = {
   addEventListener<K extends keyof TdsEventMap>(
     event: K,
-    { onEvent }: {
+    {
+      onEvent,
+    }: {
       onEvent: TdsEventMap[K]['onEvent'];
       onError?: TdsEventMap[K]['onError'];
       options?: TdsEventMap[K]['options'];

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { aitState } from '../mock/state.js';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { fetchContacts } from '../mock/device/index.js';
+import { aitState } from '../mock/state.js';
 
 describe('Contacts mock', () => {
   beforeEach(() => {
@@ -98,7 +98,11 @@ describe('Contacts mock', () => {
       expect(page1.result[0].name).toBe('이토스');
       expect(page1.done).toBe(false);
 
-      const page2 = await fetchContacts({ size: 1, offset: page1.nextOffset!, query: { contains: '토스' } });
+      const page2 = await fetchContacts({
+        size: 1,
+        offset: page1.nextOffset!,
+        query: { contains: '토스' },
+      });
       expect(page2.result).toHaveLength(1);
       expect(page2.result[0].name).toBe('박토스');
       expect(page2.done).toBe(true);

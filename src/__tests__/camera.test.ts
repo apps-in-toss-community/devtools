@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { fetchAlbumPhotos, getDefaultPlaceholderImages, openCamera } from '../mock/device/index.js';
 import { aitState } from '../mock/state.js';
-import { openCamera, fetchAlbumPhotos, getDefaultPlaceholderImages } from '../mock/device/index.js';
 
 describe('Camera & Album Photos mock', () => {
   beforeEach(() => {
@@ -71,7 +71,7 @@ describe('Camera & Album Photos mock', () => {
       const result = await fetchAlbumPhotos();
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeGreaterThan(0);
-      result.forEach(item => {
+      result.forEach((item) => {
         expect(item).toHaveProperty('id');
         expect(item).toHaveProperty('dataUri');
         expect(item.dataUri).toMatch(/^data:image\/(png|svg\+xml);base64,/);
@@ -114,7 +114,7 @@ describe('Camera & Album Photos mock', () => {
 
     it('각 항목의 id가 고유하다', async () => {
       const result = await fetchAlbumPhotos({ maxCount: 3 });
-      const ids = result.map(r => r.id);
+      const ids = result.map((r) => r.id);
       expect(new Set(ids).size).toBe(ids.length);
     });
 

@@ -1,10 +1,17 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { aitState } from '../mock/state.js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  getCurrentLocation, startUpdateLocation, generateHapticFeedback, saveBase64Data, Accuracy,
-  getClipboardText, setClipboardText, getNetworkStatusByMode, getDefaultPlaceholderImages,
+  Accuracy,
+  generateHapticFeedback,
+  getClipboardText,
+  getCurrentLocation,
+  getDefaultPlaceholderImages,
+  getNetworkStatusByMode,
   openCamera,
+  saveBase64Data,
+  setClipboardText,
+  startUpdateLocation,
 } from '../mock/device/index.js';
+import { aitState } from '../mock/state.js';
 
 describe('Device mock', () => {
   beforeEach(() => {
@@ -130,7 +137,7 @@ describe('Device mock', () => {
       it('3개의 data URI를 반환한다', () => {
         const images = getDefaultPlaceholderImages();
         expect(images).toHaveLength(3);
-        images.forEach(img => {
+        images.forEach((img) => {
           expect(img).toMatch(/^data:image\/(png|svg\+xml);base64,/);
         });
       });

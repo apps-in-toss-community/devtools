@@ -21,6 +21,7 @@
 - **vitest** — 테스트 (jsdom 환경)
 - **unplugin** — 모든 번들러 지원 (유일한 runtime dependency)
 - **pnpm** — 패키지 매니저
+- **Biome** — lint + formatter (조직 표준, `biome.json` 참고)
 
 ## 명령어
 
@@ -29,6 +30,9 @@ pnpm build          # tsup으로 dist/ 빌드
 pnpm dev            # watch 모드
 pnpm typecheck      # tsc --noEmit (원본 SDK 대비 타입 호환성 검증 포함)
 pnpm test           # vitest 실행
+pnpm lint           # biome check .
+pnpm lint:fix       # biome check --write .
+pnpm format         # biome format --write .
 pnpm check-sdk-update  # SDK 새 버전 감지
 ```
 

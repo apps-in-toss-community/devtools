@@ -3,8 +3,8 @@
  * mock/web/prompt 모드 지원
  */
 
+import { checkPermission, withPermission } from '../permissions.js';
 import { aitState } from '../state.js';
-import { withPermission, checkPermission } from '../permissions.js';
 import { getMockImages, waitForPromptResponse } from './_helpers.js';
 
 // --- Camera ---
@@ -24,7 +24,10 @@ async function openCameraWeb(): Promise<{ id: string; dataUri: string }> {
     input.onchange = () => {
       settled = true;
       const file = input.files?.[0];
-      if (!file) { reject(new Error('No file selected')); return; }
+      if (!file) {
+        reject(new Error('No file selected'));
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => resolve({ id: crypto.randomUUID(), dataUri: reader.result as string });
       reader.onerror = () => reject(new Error('Failed to read file'));
@@ -48,7 +51,10 @@ async function openCameraPrompt(): Promise<{ id: string; dataUri: string }> {
   return { id: crypto.randomUUID(), dataUri };
 }
 
-const _openCamera = async (_options?: { base64?: boolean; maxWidth?: number }): Promise<{ id: string; dataUri: string }> => {
+const _openCamera = async (_options?: {
+  base64?: boolean;
+  maxWidth?: number;
+}): Promise<{ id: string; dataUri: string }> => {
   checkPermission('camera', 'openCamera');
   const mode = aitState.state.deviceModes.camera;
   if (mode === 'web') return openCameraWeb();
@@ -59,12 +65,16 @@ export const openCamera = withPermission(_openCamera, 'camera');
 
 // --- Album Photos ---
 
-async function fetchAlbumPhotosMock(maxCount: number): Promise<Array<{ id: string; dataUri: string }>> {
+async function fetchAlbumPhotosMock(
+  maxCount: number,
+): Promise<Array<{ id: string; dataUri: string }>> {
   const images = getMockImages();
-  return images.slice(0, maxCount).map(dataUri => ({ id: crypto.randomUUID(), dataUri }));
+  return images.slice(0, maxCount).map((dataUri) => ({ id: crypto.randomUUID(), dataUri }));
 }
 
-async function fetchAlbumPhotosWeb(maxCount: number): Promise<Array<{ id: string; dataUri: string }>> {
+async function fetchAlbumPhotosWeb(
+  maxCount: number,
+): Promise<Array<{ id: string; dataUri: string }>> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -74,14 +84,21 @@ async function fetchAlbumPhotosWeb(maxCount: number): Promise<Array<{ id: string
     input.onchange = async () => {
       settled = true;
       const files = Array.from(input.files ?? []).slice(0, maxCount);
-      if (files.length === 0) { reject(new Error('No files selected')); return; }
+      if (files.length === 0) {
+        reject(new Error('No files selected'));
+        return;
+      }
       const results = await Promise.all(
-        files.map(file => new Promise<{ id: string; dataUri: string }>((res, rej) => {
-          const reader = new FileReader();
-          reader.onload = () => res({ id: crypto.randomUUID(), dataUri: reader.result as string });
-          reader.onerror = () => rej(new Error('Failed to read file'));
-          reader.readAsDataURL(file);
-        })),
+        files.map(
+          (file) =>
+            new Promise<{ id: string; dataUri: string }>((res, rej) => {
+              const reader = new FileReader();
+              reader.onload = () =>
+                res({ id: crypto.randomUUID(), dataUri: reader.result as string });
+              reader.onerror = () => rej(new Error('Failed to read file'));
+              reader.readAsDataURL(file);
+            }),
+        ),
       );
       resolve(results);
     };
@@ -96,12 +113,18 @@ async function fetchAlbumPhotosWeb(maxCount: number): Promise<Array<{ id: string
   });
 }
 
-async function fetchAlbumPhotosPrompt(maxCount: number): Promise<Array<{ id: string; dataUri: string }>> {
+async function fetchAlbumPhotosPrompt(
+  maxCount: number,
+): Promise<Array<{ id: string; dataUri: string }>> {
   const dataUris = await waitForPromptResponse<string[]>('photos');
-  return dataUris.slice(0, maxCount).map(dataUri => ({ id: crypto.randomUUID(), dataUri }));
+  return dataUris.slice(0, maxCount).map((dataUri) => ({ id: crypto.randomUUID(), dataUri }));
 }
 
-const _fetchAlbumPhotos = async (options?: { maxCount?: number; maxWidth?: number; base64?: boolean }): Promise<Array<{ id: string; dataUri: string }>> => {
+const _fetchAlbumPhotos = async (options?: {
+  maxCount?: number;
+  maxWidth?: number;
+  base64?: boolean;
+}): Promise<Array<{ id: string; dataUri: string }>> => {
   checkPermission('photos', 'fetchAlbumPhotos');
   const maxCount = options?.maxCount ?? 10;
   const mode = aitState.state.deviceModes.photos;

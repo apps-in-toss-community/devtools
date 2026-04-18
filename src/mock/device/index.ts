@@ -6,10 +6,10 @@
  */
 
 export { getDefaultPlaceholderImages } from './_helpers.js';
-export { Storage } from './storage.js';
-export { Accuracy, getCurrentLocation, startUpdateLocation } from './location.js';
-export { openCamera, fetchAlbumPhotos } from './camera.js';
+export { fetchAlbumPhotos, openCamera } from './camera.js';
 export { getClipboardText, setClipboardText } from './clipboard.js';
 export { fetchContacts } from './contacts.js';
 export { generateHapticFeedback, saveBase64Data } from './haptic.js';
+export { Accuracy, getCurrentLocation, startUpdateLocation } from './location.js';
 export { getNetworkStatusByMode } from './network.js';
+export { Storage } from './storage.js';

@@ -20,17 +20,23 @@ export async function grantPromotionRewardForGame(params: {
 
 export async function submitGameCenterLeaderBoardScore(params: {
   score: string;
-}): Promise<{ statusCode: 'SUCCESS' | 'LEADERBOARD_NOT_FOUND' | 'PROFILE_NOT_FOUND' | 'UNPARSABLE_SCORE' } | undefined> {
+}): Promise<
+  | { statusCode: 'SUCCESS' | 'LEADERBOARD_NOT_FOUND' | 'PROFILE_NOT_FOUND' | 'UNPARSABLE_SCORE' }
+  | undefined
+> {
   aitState.patch('game', {
-    leaderboardScores: [...aitState.state.game.leaderboardScores, { score: params.score, timestamp: Date.now() }],
+    leaderboardScores: [
+      ...aitState.state.game.leaderboardScores,
+      { score: params.score, timestamp: Date.now() },
+    ],
   });
   return { statusCode: 'SUCCESS' };
 }
 
 export async function getGameCenterGameProfile(): Promise<
-  { statusCode: 'SUCCESS'; nickname: string; profileImageUri: string } |
-  { statusCode: 'PROFILE_NOT_FOUND' } |
-  undefined
+  | { statusCode: 'SUCCESS'; nickname: string; profileImageUri: string }
+  | { statusCode: 'PROFILE_NOT_FOUND' }
+  | undefined
 > {
   const profile = aitState.state.game.profile;
   if (!profile) return { statusCode: 'PROFILE_NOT_FOUND' };

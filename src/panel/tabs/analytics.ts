@@ -14,19 +14,28 @@ export function renderAnalyticsTab(): HTMLElement {
   });
 
   container.append(
-    h('div', { className: 'ait-section' },
-      h('div', { className: 'ait-row' },
+    h(
+      'div',
+      { className: 'ait-section' },
+      h(
+        'div',
+        { className: 'ait-row' },
         h('div', { className: 'ait-section-title' }, `Analytics Log (${logs.length})`),
         clearBtn,
       ),
-      ...logs.slice(-30).reverse().map(entry => {
-        const time = new Date(entry.timestamp).toLocaleTimeString('ko-KR', { hour12: false });
-        return h('div', { className: 'ait-log-entry' },
-          h('span', { className: 'ait-log-time' }, time),
-          h('span', { className: 'ait-log-type' }, entry.type),
-          JSON.stringify(entry.params),
-        );
-      }),
+      ...logs
+        .slice(-30)
+        .reverse()
+        .map((entry) => {
+          const time = new Date(entry.timestamp).toLocaleTimeString('ko-KR', { hour12: false });
+          return h(
+            'div',
+            { className: 'ait-log-entry' },
+            h('span', { className: 'ait-log-time' }, time),
+            h('span', { className: 'ait-log-type' }, entry.type),
+            JSON.stringify(entry.params),
+          );
+        }),
     ),
   );
   return container;

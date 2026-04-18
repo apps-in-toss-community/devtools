@@ -4,38 +4,37 @@
  */
 
 import type {
-  PlatformOS,
-  OperationalEnvironment,
-  NetworkStatus,
-  PermissionStatus,
-  PermissionName,
-  DeviceApiMode,
-  DeviceModes,
-  MockData,
-  MockLocation,
-  MockContact,
-  MockIapProduct,
-  IapNextResult,
   AnalyticsLogEntry,
+  DeviceModes,
+  IapNextResult,
+  MockContact,
+  MockData,
+  MockIapProduct,
+  MockLocation,
+  NetworkStatus,
+  OperationalEnvironment,
+  PermissionName,
+  PermissionStatus,
+  PlatformOS,
   SafeAreaInsets,
 } from './types.js';
 
 export type {
-  PlatformOS,
-  OperationalEnvironment,
-  NetworkStatus,
-  PermissionStatus,
-  PermissionName,
-  HapticFeedbackType,
+  AnalyticsLogEntry,
   DeviceApiMode,
   DeviceModes,
-  MockData,
-  LocationCoords,
-  MockLocation,
-  MockContact,
-  MockIapProduct,
+  HapticFeedbackType,
   IapNextResult,
-  AnalyticsLogEntry,
+  LocationCoords,
+  MockContact,
+  MockData,
+  MockIapProduct,
+  MockLocation,
+  NetworkStatus,
+  OperationalEnvironment,
+  PermissionName,
+  PermissionStatus,
+  PlatformOS,
   SafeAreaInsets,
 } from './types.js';
 
@@ -79,7 +78,12 @@ export interface AitDevtoolsState {
     products: MockIapProduct[];
     nextResult: IapNextResult;
     pendingOrders: Array<{ orderId: string; sku: string; paymentCompletedDate: string }>;
-    completedOrders: Array<{ orderId: string; sku: string; status: 'COMPLETED' | 'REFUNDED'; date: string }>;
+    completedOrders: Array<{
+      orderId: string;
+      sku: string;
+      status: 'COMPLETED' | 'REFUNDED';
+      date: string;
+    }>;
   };
 
   // 결제 (TossPay)
@@ -98,7 +102,13 @@ export interface AitDevtoolsState {
   // 광고
   ads: {
     isLoaded: boolean;
-    nextEvent: 'loaded' | 'clicked' | 'dismissed' | 'failedToShow' | 'impression' | 'userEarnedReward';
+    nextEvent:
+      | 'loaded'
+      | 'clicked'
+      | 'dismissed'
+      | 'failedToShow'
+      | 'impression'
+      | 'userEarnedReward';
   };
 
   // 게임
@@ -239,7 +249,7 @@ export class AitStateManager {
     try {
       this._state.deviceId = generateDeviceId();
     } catch {
-      this._state.deviceId = 'mock-device-' + Math.random().toString(36).slice(2);
+      this._state.deviceId = `mock-device-${Math.random().toString(36).slice(2)}`;
     }
   }
 
@@ -253,13 +263,13 @@ export class AitStateManager {
   }
 
   /** 중첩 객체 업데이트용 */
-  patch<K extends keyof AitDevtoolsState>(
-    key: K,
-    partial: Partial<AitDevtoolsState[K]>,
-  ) {
+  patch<K extends keyof AitDevtoolsState>(key: K, partial: Partial<AitDevtoolsState[K]>) {
     const current = this._state[key];
     if (typeof current === 'object' && current !== null && !Array.isArray(current)) {
-      this._state = { ...this._state, [key]: { ...(current as Record<string, unknown>), ...(partial as Record<string, unknown>) } };
+      this._state = {
+        ...this._state,
+        [key]: { ...(current as Record<string, unknown>), ...(partial as Record<string, unknown>) },
+      };
     } else {
       this._state = { ...this._state, [key]: partial as AitDevtoolsState[K] };
     }

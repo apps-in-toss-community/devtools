@@ -6,17 +6,19 @@
  */
 
 import { aitState } from '../mock/state.js';
-import { PANEL_STYLES, PANEL_WIDTH, PANEL_HEIGHT } from './styles.js';
 import { h } from './helpers.js';
-import { type TabId, TABS, createTabRenderers } from './tabs/index.js';
+import { PANEL_HEIGHT, PANEL_STYLES, PANEL_WIDTH } from './styles.js';
 import { setDeviceRefreshPanel } from './tabs/device.js';
+import { createTabRenderers, TABS, type TabId } from './tabs/index.js';
 
 // --- Draggable toggle button ---
 
 function makeDraggable(el: HTMLElement, onClickOnly: () => void) {
   let isDragging = false;
-  let startX = 0, startY = 0;
-  let startLeft = 0, startTop = 0;
+  let startX = 0,
+    startY = 0;
+  let startLeft = 0,
+    startTop = 0;
   let hasMoved = false;
 
   el.addEventListener('pointerdown', (e) => {
@@ -41,8 +43,8 @@ function makeDraggable(el: HTMLElement, onClickOnly: () => void) {
     }
     if (!hasMoved) return;
 
-    el.style.left = (startLeft + dx) + 'px';
-    el.style.top = (startTop + dy) + 'px';
+    el.style.left = `${startLeft + dx}px`;
+    el.style.top = `${startTop + dy}px`;
     el.style.right = 'auto';
     el.style.bottom = 'auto';
   });
@@ -82,15 +84,15 @@ function snapToEdge(el: HTMLElement) {
   const margin = 16;
 
   if (cx < vw / 2) {
-    el.style.left = margin + 'px';
+    el.style.left = `${margin}px`;
     el.style.right = 'auto';
   } else {
     el.style.left = 'auto';
-    el.style.right = margin + 'px';
+    el.style.right = `${margin}px`;
   }
 
   const top = Math.max(margin, Math.min(vh - rect.height - margin, rect.top));
-  el.style.top = top + 'px';
+  el.style.top = `${top}px`;
   el.style.bottom = 'auto';
 }
 
@@ -109,39 +111,42 @@ function updatePanelPosition(toggleEl: HTMLElement) {
   }
 
   const rect = toggleEl.getBoundingClientRect();
-  const panelWidth = PANEL_WIDTH;
+  const _panelWidth = PANEL_WIDTH;
   const panelHeight = PANEL_HEIGHT;
   const margin = 16;
 
   // Horizontal: place panel on the same side as the toggle button
   if (rect.left < vw / 2) {
-    panelEl.style.left = margin + 'px';
+    panelEl.style.left = `${margin}px`;
     panelEl.style.right = 'auto';
   } else {
     panelEl.style.left = 'auto';
-    panelEl.style.right = margin + 'px';
+    panelEl.style.right = `${margin}px`;
   }
 
   // Vertical: place below button if it's in top half, above if bottom half
   // Clamp so panel stays within viewport
   if (rect.top < vh / 2) {
     const top = Math.min(rect.bottom + 8, vh - panelHeight - margin);
-    panelEl.style.top = Math.max(margin, top) + 'px';
+    panelEl.style.top = `${Math.max(margin, top)}px`;
     panelEl.style.bottom = 'auto';
   } else {
     const bottom = Math.min(vh - rect.top + 8, vh - panelHeight - margin);
     panelEl.style.top = 'auto';
-    panelEl.style.bottom = Math.max(margin, bottom) + 'px';
+    panelEl.style.bottom = `${Math.max(margin, bottom)}px`;
   }
 }
 
 function saveButtonPosition(el: HTMLElement) {
-  localStorage.setItem('__ait_btn_pos', JSON.stringify({
-    left: el.style.left,
-    top: el.style.top,
-    right: el.style.right,
-    bottom: el.style.bottom,
-  }));
+  localStorage.setItem(
+    '__ait_btn_pos',
+    JSON.stringify({
+      left: el.style.left,
+      top: el.style.top,
+      right: el.style.right,
+      bottom: el.style.bottom,
+    }),
+  );
 }
 
 // Uses __ait_btn_pos (not __ait_storage: prefix) — panel-internal state, not mock storage
@@ -158,7 +163,9 @@ function restoreButtonPosition(el: HTMLElement) {
           el.style[key] = pos[key];
         }
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   } else {
     el.style.bottom = '16px';
     el.style.right = '16px';
@@ -184,10 +191,12 @@ function refreshPanel() {
     bodyEl.appendChild(tabRenderers[currentTab]());
   } catch (err) {
     console.error(`[@ait-co/devtools] Error rendering tab "${currentTab}":`, err);
-    bodyEl.appendChild(h('div', { className: 'ait-panel-tab-error' }, `Error rendering "${currentTab}" tab.`));
+    bodyEl.appendChild(
+      h('div', { className: 'ait-panel-tab-error' }, `Error rendering "${currentTab}" tab.`),
+    );
   }
 
-  tabsEl.querySelectorAll('.ait-panel-tab').forEach(el => {
+  tabsEl.querySelectorAll('.ait-panel-tab').forEach((el) => {
     el.classList.toggle('active', el.getAttribute('data-tab') === currentTab);
   });
 }
@@ -230,10 +239,14 @@ function mount() {
     panelEl!.classList.remove('open');
   });
 
-  const mockBadge = h('span', {
-    className: `ait-mock-badge ${aitState.state.panelEditable ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`,
-    title: 'Toggle panel edit mode',
-  }, aitState.state.panelEditable ? 'EDIT' : 'READ-ONLY');
+  const mockBadge = h(
+    'span',
+    {
+      className: `ait-mock-badge ${aitState.state.panelEditable ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`,
+      title: 'Toggle panel edit mode',
+    },
+    aitState.state.panelEditable ? 'EDIT' : 'READ-ONLY',
+  );
 
   mockBadge.addEventListener('click', () => {
     aitState.update({ panelEditable: !aitState.state.panelEditable });
@@ -242,12 +255,16 @@ function mount() {
     refreshPanel();
   });
 
-  const headerRight = h('span', { style: 'display:flex;align-items:center;gap:6px' },
+  const headerRight = h(
+    'span',
+    { style: 'display:flex;align-items:center;gap:6px' },
     mockBadge,
     h('span', { style: 'font-size:11px;color:#666;font-weight:400' }, `v${__VERSION__}`),
     closeBtn,
   );
-  const header = h('div', { className: 'ait-panel-header' },
+  const header = h(
+    'div',
+    { className: 'ait-panel-header' },
     h('span', {}, 'AIT DevTools'),
     headerRight,
   );
@@ -296,7 +313,10 @@ function mount() {
   // Defense-in-depth: outer catch complements refreshPanel's inner tab-rendering catch.
   aitState.subscribe(() => {
     try {
-      if (isOpen && (currentTab === 'analytics' || currentTab === 'storage' || currentTab === 'device')) {
+      if (
+        isOpen &&
+        (currentTab === 'analytics' || currentTab === 'storage' || currentTab === 'device')
+      ) {
         refreshPanel();
       }
     } catch (err) {

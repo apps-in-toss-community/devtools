@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
+import { GoogleAdMob, loadFullScreenAd, showFullScreenAd, TossAds } from '../mock/ads/index.js';
 import { aitState } from '../mock/state.js';
-import { GoogleAdMob, TossAds, loadFullScreenAd, showFullScreenAd } from '../mock/ads/index.js';
 
 function extractEventTypes(spy: Mock) {
-  return spy.mock.calls.map(c => (c[0] as { type: string }).type);
+  return spy.mock.calls.map((c) => (c[0] as { type: string }).type);
 }
 
 describe('Ads mock', () => {
@@ -51,7 +51,13 @@ describe('Ads mock', () => {
       await vi.advanceTimersByTimeAsync(1500);
 
       const eventTypes = extractEventTypes(showEvent);
-      expect(eventTypes).toEqual(['requested', 'show', 'impression', 'userEarnedReward', 'dismissed']);
+      expect(eventTypes).toEqual([
+        'requested',
+        'show',
+        'impression',
+        'userEarnedReward',
+        'dismissed',
+      ]);
       expect(aitState.state.ads.isLoaded).toBe(false);
     });
 

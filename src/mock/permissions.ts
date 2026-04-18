@@ -19,7 +19,10 @@ export async function openPermissionDialog(name: PermissionName): Promise<'allow
   return 'allowed';
 }
 
-export async function requestPermission(permission: { name: PermissionName; access: string }): Promise<'allowed' | 'denied'> {
+export async function requestPermission(permission: {
+  name: PermissionName;
+  access: string;
+}): Promise<'allowed' | 'denied'> {
   return openPermissionDialog(permission.name);
 }
 
@@ -27,7 +30,10 @@ export async function requestPermission(permission: { name: PermissionName; acce
 export function withPermission<T extends (...args: never[]) => unknown>(
   fn: T,
   permissionName: PermissionName,
-): T & { getPermission: () => Promise<PermissionStatus>; openPermissionDialog: () => Promise<'allowed' | 'denied'> } {
+): T & {
+  getPermission: () => Promise<PermissionStatus>;
+  openPermissionDialog: () => Promise<'allowed' | 'denied'>;
+} {
   const enhanced = fn as T & {
     getPermission: () => Promise<PermissionStatus>;
     openPermissionDialog: () => Promise<'allowed' | 'denied'>;
@@ -41,6 +47,8 @@ export function withPermission<T extends (...args: never[]) => unknown>(
 export function checkPermission(name: PermissionName, fnName: string): void {
   const status = aitState.state.permissions[name];
   if (status === 'denied') {
-    throw new Error(`[@ait-co/devtools] ${fnName}: Permission "${name}" is denied. Change it in the DevTools panel.`);
+    throw new Error(
+      `[@ait-co/devtools] ${fnName}: Permission "${name}" is denied. Change it in the DevTools panel.`,
+    );
   }
 }

@@ -1,6 +1,6 @@
-import { aitState } from '../../mock/state.js';
 import { getDefaultPlaceholderImages } from '../../mock/device/index.js';
-import { h, selectRow, monitoringNotice } from '../helpers.js';
+import { aitState } from '../../mock/state.js';
+import { h, monitoringNotice, selectRow } from '../helpers.js';
 
 // --- Prompt mode state ---
 interface PendingPrompt {
@@ -25,7 +25,7 @@ if (typeof window !== 'undefined') {
 }
 
 function resolvePrompt(type: string, data: unknown) {
-  window.dispatchEvent(new CustomEvent('__ait:prompt-response:' + type, { detail: data }));
+  window.dispatchEvent(new CustomEvent(`__ait:prompt-response:${type}`, { detail: data }));
   pendingPrompt = null;
   refreshPanel();
 }
@@ -36,10 +36,12 @@ function renderPromptBanner(): HTMLElement | null {
   const banner = h('div', { className: 'ait-prompt-banner' });
 
   if (pendingPrompt.type === 'camera') {
-    banner.append(
-      h('div', { className: 'ait-prompt-title' }, 'Camera Prompt — Select an image'),
-    );
-    const input = h('input', { type: 'file', accept: 'image/*', style: 'font-size:11px;color:#aaa' });
+    banner.append(h('div', { className: 'ait-prompt-title' }, 'Camera Prompt — Select an image'));
+    const input = h('input', {
+      type: 'file',
+      accept: 'image/*',
+      style: 'font-size:11px;color:#aaa',
+    });
     input.addEventListener('change', () => {
       const file = (input as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -49,27 +51,48 @@ function renderPromptBanner(): HTMLElement | null {
     });
     banner.appendChild(input);
   } else if (pendingPrompt.type === 'photos') {
-    banner.append(
-      h('div', { className: 'ait-prompt-title' }, 'Photos Prompt — Select images'),
-    );
-    const input = h('input', { type: 'file', accept: 'image/*', multiple: '', style: 'font-size:11px;color:#aaa' });
+    banner.append(h('div', { className: 'ait-prompt-title' }, 'Photos Prompt — Select images'));
+    const input = h('input', {
+      type: 'file',
+      accept: 'image/*',
+      multiple: '',
+      style: 'font-size:11px;color:#aaa',
+    });
     input.addEventListener('change', () => {
       const files = Array.from((input as HTMLInputElement).files ?? []);
       if (files.length === 0) return;
-      Promise.all(files.map(file => new Promise<string>((res) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result as string);
-        reader.readAsDataURL(file);
-      }))).then(dataUris => resolvePrompt('photos', dataUris));
+      Promise.all(
+        files.map(
+          (file) =>
+            new Promise<string>((res) => {
+              const reader = new FileReader();
+              reader.onload = () => res(reader.result as string);
+              reader.readAsDataURL(file);
+            }),
+        ),
+      ).then((dataUris) => resolvePrompt('photos', dataUris));
     });
     banner.appendChild(input);
   } else if (pendingPrompt.type === 'location' || pendingPrompt.type === 'location-update') {
     banner.append(
-      h('div', { className: 'ait-prompt-title' },
-        pendingPrompt.type === 'location' ? 'Location Prompt — Enter coordinates' : 'Location Update — Send coordinates'),
+      h(
+        'div',
+        { className: 'ait-prompt-title' },
+        pendingPrompt.type === 'location'
+          ? 'Location Prompt — Enter coordinates'
+          : 'Location Update — Send coordinates',
+      ),
     );
-    const latInput = h('input', { className: 'ait-input', value: String(aitState.state.location.coords.latitude), style: 'width:80px' });
-    const lngInput = h('input', { className: 'ait-input', value: String(aitState.state.location.coords.longitude), style: 'width:80px' });
+    const latInput = h('input', {
+      className: 'ait-input',
+      value: String(aitState.state.location.coords.latitude),
+      style: 'width:80px',
+    });
+    const lngInput = h('input', {
+      className: 'ait-input',
+      value: String(aitState.state.location.coords.longitude),
+      style: 'width:80px',
+    });
     const sendBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Send');
     sendBtn.addEventListener('click', () => {
       const loc = {
@@ -87,21 +110,27 @@ function renderPromptBanner(): HTMLElement | null {
       resolvePrompt(pendingPrompt!.type, loc);
     });
     banner.append(
-      h('div', { className: 'ait-prompt-input-row' },
-        h('label', {}, 'Lat'), latInput,
-        h('label', {}, 'Lng'), lngInput,
+      h(
+        'div',
+        { className: 'ait-prompt-input-row' },
+        h('label', {}, 'Lat'),
+        latInput,
+        h('label', {}, 'Lng'),
+        lngInput,
         sendBtn,
       ),
     );
   } else {
     // Fallback for unknown prompt types
-    banner.append(
-      h('div', { className: 'ait-prompt-title' }, `Prompt: ${pendingPrompt.type}`),
-    );
+    banner.append(h('div', { className: 'ait-prompt-title' }, `Prompt: ${pendingPrompt.type}`));
   }
 
   // Cancel button for all prompt types
-  const cancelBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger', style: 'margin-top:8px' }, 'Cancel');
+  const cancelBtn = h(
+    'button',
+    { className: 'ait-btn ait-btn-sm ait-btn-danger', style: 'margin-top:8px' },
+    'Cancel',
+  );
   cancelBtn.addEventListener('click', () => {
     pendingPrompt = null;
     window.dispatchEvent(new CustomEvent('__ait:prompt-cancel'));
@@ -126,21 +155,30 @@ export function renderDeviceTab(): HTMLElement {
   }
 
   // Device API Mode selectors
-  const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: string[] }> = [
-    { label: 'Camera', key: 'camera', options: ['mock', 'web', 'prompt'] },
-    { label: 'Photos', key: 'photos', options: ['mock', 'web', 'prompt'] },
-    { label: 'Location', key: 'location', options: ['mock', 'web', 'prompt'] },
-    { label: 'Network', key: 'network', options: ['mock', 'web'] },
-    { label: 'Clipboard', key: 'clipboard', options: ['mock', 'web'] },
-  ];
+  const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: string[] }> =
+    [
+      { label: 'Camera', key: 'camera', options: ['mock', 'web', 'prompt'] },
+      { label: 'Photos', key: 'photos', options: ['mock', 'web', 'prompt'] },
+      { label: 'Location', key: 'location', options: ['mock', 'web', 'prompt'] },
+      { label: 'Network', key: 'network', options: ['mock', 'web'] },
+      { label: 'Clipboard', key: 'clipboard', options: ['mock', 'web'] },
+    ];
 
   container.append(
-    h('div', { className: 'ait-section' },
+    h(
+      'div',
+      { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, 'Device API Modes'),
-      ...modeEntries.map(entry =>
-        selectRow(entry.label, entry.options, s.deviceModes[entry.key], v => {
-          aitState.patch('deviceModes', { [entry.key]: v } as Partial<typeof s.deviceModes>);
-        }, disabled),
+      ...modeEntries.map((entry) =>
+        selectRow(
+          entry.label,
+          entry.options,
+          s.deviceModes[entry.key],
+          (v) => {
+            aitState.patch('deviceModes', { [entry.key]: v } as Partial<typeof s.deviceModes>);
+          },
+          disabled,
+        ),
       ),
     ),
   );
@@ -170,11 +208,16 @@ export function renderDeviceTab(): HTMLElement {
     input.multiple = true;
     input.onchange = () => {
       const files = Array.from(input.files ?? []);
-      Promise.all(files.map(file => new Promise<string>((res) => {
-        const reader = new FileReader();
-        reader.onload = () => res(reader.result as string);
-        reader.readAsDataURL(file);
-      }))).then(dataUris => {
+      Promise.all(
+        files.map(
+          (file) =>
+            new Promise<string>((res) => {
+              const reader = new FileReader();
+              reader.onload = () => res(reader.result as string);
+              reader.readAsDataURL(file);
+            }),
+        ),
+      ).then((dataUris) => {
         aitState.patch('mockData', { images: [...aitState.state.mockData.images, ...dataUris] });
       });
     };
@@ -195,7 +238,9 @@ export function renderDeviceTab(): HTMLElement {
   if (disabled) clearImagesBtn.disabled = true;
 
   container.append(
-    h('div', { className: 'ait-section' },
+    h(
+      'div',
+      { className: 'ait-section' },
       h('div', { className: 'ait-section-title' }, `Mock Images (${images.length})`),
       imageGrid,
       h('div', { className: 'ait-btn-row' }, addBtn, defaultsBtn, clearImagesBtn),

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { aitState } from '../mock/state.js';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { Analytics, eventLog } from '../mock/analytics/index.js';
+import { aitState } from '../mock/state.js';
 
 describe('Analytics mock', () => {
   beforeEach(() => {
@@ -48,6 +48,6 @@ describe('Analytics mock', () => {
     await eventLog({ log_name: 'custom', log_type: 'info', params: {} });
 
     expect(aitState.state.analyticsLog).toHaveLength(3);
-    expect(aitState.state.analyticsLog.map(l => l.type)).toEqual(['screen', 'click', 'info']);
+    expect(aitState.state.analyticsLog.map((l) => l.type)).toEqual(['screen', 'click', 'info']);
   });
 });

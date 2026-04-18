@@ -3,8 +3,8 @@
  * mock/web 모드 지원
  */
 
+import { checkPermission, withPermission } from '../permissions.js';
 import { aitState } from '../state.js';
-import { withPermission, checkPermission } from '../permissions.js';
 
 const _getClipboardText = async (): Promise<string> => {
   checkPermission('clipboard', 'getClipboardText');
