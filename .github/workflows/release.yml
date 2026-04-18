@@ -4,12 +4,6 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      publish_only:
-        description: 'Skip release-please and publish directly'
-        type: boolean
-        default: false
 
 concurrency:
   group: release
@@ -21,26 +15,12 @@ permissions:
   id-token: write
 
 jobs:
-  release-please:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-    steps:
-      - uses: google-github-actions/release-please-action@v4
-        id: release
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
-
-  publish:
-    runs-on: ubuntu-latest
-    needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' || inputs.publish_only == true }}
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
 
@@ -58,6 +38,13 @@ jobs:
 
       - run: pnpm test
 
-      # pnpm publish does not support OIDC trusted publishing yet (pnpm/pnpm#9812)
-      # Node 24 ships npm >= 11.x which supports trusted publishing
-      - run: npm publish --provenance --access public
+      - uses: changesets/action@v1
+        with:
+          # Build is already done above; publish step will run `npm publish`.
+          # pnpm publish does not support OIDC trusted publishing yet (pnpm/pnpm#9812),
+          # so we use npm publish with provenance. Node 24 ships npm >= 11.x.
+          publish: npm publish --provenance --access public
+          version: pnpm changeset version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_PROVENANCE: true
