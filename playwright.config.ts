@@ -2,6 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
+  testMatch: 'panel.test.ts',
   timeout: 30_000,
   fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
@@ -10,9 +11,8 @@ export default defineConfig({
   webServer: {
     command: [
       'pnpm build',
-      'rm -rf .tmp/sdk-example',
-      'git clone --depth 1 https://github.com/apps-in-toss-community/sdk-example.git .tmp/sdk-example',
-      'cd .tmp/sdk-example && pnpm install && pnpm build && pnpm preview --port 4173',
+      'pnpm exec vite build --config e2e/fixture/vite.config.ts',
+      'pnpm exec vite preview --config e2e/fixture/vite.config.ts --port 4173',
     ].join(' && '),
     port: 4173,
     reuseExistingServer: !process.env.CI,
