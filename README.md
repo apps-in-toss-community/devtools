@@ -19,7 +19,13 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> `@apps-in-toss/web-framework ^2.0.0`이 peerDependency로 설정되어 있습니다 (optional).
+> **지원 SDK 버전**: `@apps-in-toss/web-framework >=2.4.0 <2.4.8` (peer, required).
+>
+> devtools는 위 범위의 SDK 버전에서만 동작이 검증됩니다. 범위 밖 SDK를 설치하면
+> 패키지 매니저가 install-time에 peer 경고를 표시합니다. 또한 devtools가 아직 mock하지
+> 않은 API를 호출하면 런타임에 에러가 발생합니다 — "devtools에서는 잘 되는데 실제 SDK에서는
+> 안 되는" 상황을 방지하기 위한 의도적 동작입니다. 누락된 API는
+> [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
 
 ## 번들러 설정
 
@@ -507,12 +513,14 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 // 40+ 타입 호환성 assertion
 ```
 
-### 2. Proxy Fallback (런타임 안전망)
+### 2. Proxy 트립와이어 (런타임 차단)
 
-`createMockProxy()`가 미구현 API 접근 시 에러 대신 경고 로그 + no-op 함수를 반환합니다. 새 SDK API가 추가되어도 앱이 크래시하지 않습니다.
+`createMockProxy()`는 미구현 API 접근 시 즉시 `Error`를 throw합니다. mock에 없는 API가 실 SDK에는 있을 수 있어 "devtools에서는 잘 되는데 실제 SDK에서는 안 되는" 배포 사고를 원천 차단하기 위한 의도적 동작입니다. 누락된 API는 [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 제보하거나 직접 mock을 추가해 주세요.
 
 ```
-[@ait-co/devtools] IAP.newMethod is not mocked yet. Returning no-op.
+[@ait-co/devtools] IAP.newMethod is not mocked. This API may exist in
+@apps-in-toss/web-framework, but devtools' mock does not cover it yet.
+Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 ```
 
 ### 3. GitHub Actions 주간 CI
@@ -541,9 +549,9 @@ pnpm test        # 전체 테스트 실행
 
 ## Troubleshooting
 
-### `[@ait-co/devtools] XXX.method is not mocked yet` 경고가 뜰 때
+### `[@ait-co/devtools] XXX.method is not mocked` 에러가 날 때
 
-사용 중인 SDK API가 아직 mock으로 구현되지 않았습니다. Proxy fallback이 no-op을 반환하므로 앱은 정상 동작하지만, 해당 API의 실제 동작은 시뮬레이션되지 않습니다. [이슈를 등록](https://github.com/apps-in-toss-community/devtools/issues)하거나 직접 mock을 추가해 주세요.
+사용 중인 SDK API가 아직 mock으로 구현되지 않았습니다. devtools는 "잘 되는 척" 배포를 막기 위해 미구현 API 접근 시 throw합니다. [이슈를 등록](https://github.com/apps-in-toss-community/devtools/issues)하거나 직접 mock을 추가한 뒤 다시 실행하세요.
 
 ### DevTools Panel이 안 보일 때
 
