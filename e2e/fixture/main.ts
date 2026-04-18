@@ -1,9 +1,10 @@
 // E2E fixture consumer app for @ait-co/devtools.
 //
 // Imports @apps-in-toss/web-framework — at build time the devtools unplugin
-// aliases that to @ait-co/devtools/mock, so every call below hits the mock.
-// The unplugin also auto-injects `import '@ait-co/devtools/panel'` into this
-// entry, so the floating panel appears without an explicit import.
+// aliases that to @ait-co/devtools/mock via vite.config.ts resolve.alias.
+// Panel is imported explicitly here (unplugin transform unreliable under
+// rolldown/Vite 8 production build).
+import '@ait-co/devtools/panel';
 
 import {
   // auth
