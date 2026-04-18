@@ -7,7 +7,9 @@ export default defineConfig({
   resolve: {
     alias: {
       // Bypass rolldown resolveId limitation: alias directly to built mock file.
-      // The unplugin handles panel injection; we handle the mock swap here.
+      // (Panel is imported explicitly in main.ts; unplugin panel injection is
+      // disabled below because unplugin transform is unreliable under Vite 8
+      // production build with rolldown.)
       '@apps-in-toss/web-framework': path.resolve(__dirname, '../../dist/mock/index.js'),
     },
   },

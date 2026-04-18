@@ -28,7 +28,11 @@ async function enableEditMode(page: Page) {
   }
 }
 
-/** Click a fixture API button and wait for its result to be non-empty. */
+/**
+ * Click a fixture API button and wait for its result to be non-empty.
+ * Note: does not clear a previous result first — only call once per button per
+ * test, or fill the input fields to differentiate expected outputs.
+ */
 async function apiClick(page: Page, id: string): Promise<string> {
   await page.getByTestId(`${id}-btn`).click();
   const loc = page.getByTestId(`${id}-result`);
@@ -192,12 +196,13 @@ test.describe('Layer C: Panel-App bridge', () => {
     await expect(page.locator('.ait-panel.open')).toContainText('bridge-k', { timeout: 3000 });
   });
 
-  test('environment tab shows platform value', async ({ page }) => {
+  test('environment tab shows platform value matching the fixture app', async ({ page }) => {
+    // Fixture app shows the platform in env-platform-value
+    const appPlatform = await page.getByTestId('env-platform-value').textContent();
     await openPanel(page);
     await switchTab(page, 'env');
-    const text = await page.locator('.ait-panel-body').textContent();
-    expect(text).toBeTruthy();
-    expect(text!.length).toBeGreaterThan(0);
+    // Panel env tab must display the same platform value (e.g. 'ios')
+    await expect(page.locator('.ait-panel-body')).toContainText(appPlatform ?? 'ios', { timeout: 3000 });
   });
 
   test('events tab: Trigger Back Event fires and fixture subscriber receives it', async ({ page }) => {
