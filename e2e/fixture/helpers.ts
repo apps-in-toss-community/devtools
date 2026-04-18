@@ -61,6 +61,8 @@ export function apiButton<T = unknown>(
         result.textContent = opts.formatResult(value);
       } else if (value === undefined || value === null) {
         result.textContent = 'done';
+      } else if (value === '') {
+        result.textContent = '(empty)'; // avoids not.toBeEmpty() false-timeout on empty string
       } else if (typeof value === 'object') {
         result.textContent = JSON.stringify(value);
       } else {

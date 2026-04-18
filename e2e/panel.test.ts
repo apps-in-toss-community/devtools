@@ -15,8 +15,9 @@ async function openPanel(page: Page) {
   await expect(page.locator('.ait-panel.open')).toBeVisible({ timeout: 3000 });
 }
 
+/** Switch panel to the given tab. Requires the panel to be open first (openPanel). */
 async function switchTab(page: Page, tabId: string) {
-  // Playwright's click() auto-waits for actionability (visible + stable), no explicit guard needed
+  // Playwright's click() auto-waits for actionability (visible + stable)
   await page.locator(`.ait-panel-tab[data-tab="${tabId}"]`).click();
 }
 
@@ -68,6 +69,12 @@ test.describe('Smoke', () => {
 // ============================================================================
 // Layer A — Domain smoke (one representative button per domain)
 // ============================================================================
+// Coverage: auth, navigation, environment, permissions, storage, location,
+// iap, analytics, haptic, game (10 domains, 12 tests including 2 auth variants).
+// Excluded domains (camera, contacts, clipboard, ads, partner) have buttons in
+// the fixture but are omitted here because their mocks are adequately covered
+// by the jsdom unit test suite (src/__tests__/). Layer A focuses on domains
+// whose mock return values are most likely to break across SDK updates.
 
 test.describe('Layer A: Domain smoke', () => {
   test.beforeEach(async ({ page }) => {
@@ -150,6 +157,14 @@ test.describe('Layer A: Domain smoke', () => {
 // ============================================================================
 // Layer B — Panel UX
 // ============================================================================
+// Tests: open/close toggle, tab count, tab active-class switching.
+// Intentionally excluded from this layer (may be added in follow-up PRs):
+//   - Drag repositioning: requires mouse drag simulation; layout-sensitive and
+//     flaky on CI headless environments.
+//   - Mobile fullscreen (375×667): viewport resize + CSS media query; adds
+//     complexity without covering mock API contract.
+//   - Position persistence across reload: low-risk feature covered by unit
+//     tests on the localStorage serialisation path.
 
 test.describe('Layer B: Panel UX', () => {
   test.beforeEach(async ({ page }) => {
@@ -186,6 +201,19 @@ test.describe('Layer B: Panel UX', () => {
 // ============================================================================
 // Layer C — Panel ↔ App bridge
 // ============================================================================
+// Tests bidirectional flow between the fixture app and the DevTools panel.
+// Coverage:
+//   - App → Panel: fixture app writes storage; panel storage tab reflects it.
+//   - App → Panel: fixture app reads env platform; panel env tab shows same value.
+//   - Panel → App: panel triggers backEvent; fixture subscriber receives it.
+//   - Panel → App: permissions tab renders the camera entry (state sync check).
+//
+// Intentionally omitted (may be added in follow-up PRs):
+//   - Panel OS dropdown → android → env-platform-value changes: requires panel
+//     to be in EDIT mode and a select interaction; deferred because aitState
+//     mutation through the panel UI is already tested by the events bridge test.
+//   - Camera denied → openCamera error: requires permission state manipulation
+//     via the panel which is complex to automate reliably without flakiness.
 
 test.describe('Layer C: Panel-App bridge', () => {
   test.beforeEach(async ({ page }) => {

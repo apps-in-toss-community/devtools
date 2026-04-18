@@ -4,6 +4,9 @@
 // aliases that to @ait-co/devtools/mock via vite.config.ts resolve.alias.
 // Panel is imported explicitly here (unplugin transform unreliable under
 // rolldown/Vite 8 production build).
+// NOTE: this import must remain before the SDK imports — panel mounts and
+// initialises aitState before any mock API call runs at module evaluation time.
+// Do NOT let a linter's organizeImports reorder it below the SDK block.
 import '@ait-co/devtools/panel';
 
 import {
