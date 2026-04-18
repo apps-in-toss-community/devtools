@@ -345,6 +345,7 @@ if (!app) throw new Error('#app not found');
           options: { adGroupId: 'mock-ad' },
           onEvent: (event) => {
             if (event.type === 'loaded') resolve();
+            else reject(new Error(`unexpected event: ${event.type}`));
           },
           onError: (error) => reject(error),
         });
@@ -359,6 +360,7 @@ if (!app) throw new Error('#app not found');
           options: { adGroupId: 'mock-ad' },
           onEvent: (event) => {
             if (event.type === 'dismissed') resolve();
+            else reject(new Error(`unexpected event: ${event.type}`));
           },
           onError: (error) => reject(error),
         });
@@ -376,6 +378,7 @@ if (!app) throw new Error('#app not found');
           options: { adGroupId: 'mock-full' },
           onEvent: (event) => {
             if (event.type === 'loaded') resolve();
+            else reject(new Error(`unexpected event: ${event.type}`));
           },
           onError: (error) => reject(error),
         });
@@ -390,6 +393,7 @@ if (!app) throw new Error('#app not found');
           options: { adGroupId: 'mock-full' },
           onEvent: (event) => {
             if (event.type === 'dismissed') resolve();
+            else reject(new Error(`unexpected event: ${event.type}`));
           },
           onError: (error) => reject(error),
         });
@@ -429,6 +433,7 @@ if (!app) throw new Error('#app not found');
           options: { moduleId: 'mock-module' },
           onEvent: (event) => {
             if (event.type === 'close') resolve('close');
+            else reject(new Error(`unexpected event: ${event.type}`));
           },
           onError: (error) => reject(error),
         });

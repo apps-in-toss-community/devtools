@@ -23,6 +23,7 @@ async function switchTab(page: Page, tabId: string) {
 /** Enable edit mode so panel buttons are clickable. */
 async function enableEditMode(page: Page) {
   const badge = page.locator('.ait-mock-badge');
+  await expect(badge).toBeVisible(); // ensure DOM is fully rendered before reading text
   if ((await badge.textContent()) !== 'EDIT') {
     await badge.click();
     await expect(badge).toHaveText('EDIT', { timeout: 2000 });
@@ -31,9 +32,11 @@ async function enableEditMode(page: Page) {
 
 /**
  * Click a fixture API button and wait for its result to be non-empty.
- * Safe because each test starts with a fresh page (page.goto('/') in beforeEach).
- * Do NOT call twice for the same button within one test — the second await may
- * resolve with the first call's stale result.
+ * Safe because each test starts with a fresh page (page.goto('/') in beforeEach),
+ * so result elements start empty and the not.toBeEmpty() guard is unambiguous.
+ * Do NOT call twice for the same button within one test: the result element is not
+ * cleared between calls, so not.toBeEmpty() would resolve immediately with the
+ * first call's stale value on the second invocation.
  */
 async function apiClick(page: Page, id: string): Promise<string> {
   await page.getByTestId(`${id}-btn`).click();
@@ -49,8 +52,8 @@ async function apiClick(page: Page, id: string): Promise<string> {
 test.describe('Smoke', () => {
   test('fixture renders all 16 sections with panel toggle button', async ({ page }) => {
     const errors: string[] = [];
+    // Register listener before goto so early page errors are captured
     page.on('pageerror', (e) => errors.push(e.message));
-
     await page.goto('/');
 
     for (const id of SECTION_IDS) {
@@ -109,7 +112,7 @@ test.describe('Layer A: Domain smoke', () => {
     const setResult = await apiClick(page, 'storage-set');
     expect(setResult).not.toMatch(/^error:/); // precondition: setItem must succeed
 
-    await page.getByTestId('storage-key-input').fill('e2e-k');
+    // key input still holds 'e2e-k' from the fill above; withInputs reads it at click time
     const r = await apiClick(page, 'storage-get');
     expect(r).toBe('e2e-v');
   });
