@@ -59,7 +59,7 @@ export function apiButton<T = unknown>(
       const value = await run(values);
       if (opts.formatResult) {
         result.textContent = opts.formatResult(value);
-      } else if (value === undefined) {
+      } else if (value === undefined || value === null) {
         result.textContent = 'done';
       } else if (typeof value === 'object') {
         result.textContent = JSON.stringify(value);
@@ -140,7 +140,7 @@ export function apiSubscriber(
     'click',
     () => {
       subscribe((payload) => {
-        empty.remove();
+        if (empty.isConnected) empty.remove(); // idempotent: subsequent events are no-ops
         const entry = document.createElement('div');
         entry.textContent = payload === undefined ? '(event)' : JSON.stringify(payload);
         log.appendChild(entry);

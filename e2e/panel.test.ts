@@ -16,6 +16,7 @@ async function openPanel(page: Page) {
 }
 
 async function switchTab(page: Page, tabId: string) {
+  // Playwright's click() auto-waits for actionability (visible + stable), no explicit guard needed
   await page.locator(`.ait-panel-tab[data-tab="${tabId}"]`).click();
 }
 
@@ -105,7 +106,8 @@ test.describe('Layer A: Domain smoke', () => {
   test('storage: setItem + getItem round-trip', async ({ page }) => {
     await page.getByTestId('storage-key-input').fill('e2e-k');
     await page.getByTestId('storage-value-input').fill('e2e-v');
-    await apiClick(page, 'storage-set');
+    const setResult = await apiClick(page, 'storage-set');
+    expect(setResult).not.toMatch(/^error:/); // precondition: setItem must succeed
 
     await page.getByTestId('storage-key-input').fill('e2e-k');
     const r = await apiClick(page, 'storage-get');
@@ -201,7 +203,7 @@ test.describe('Layer C: Panel-App bridge', () => {
     // Wait for refreshEnv() to populate env-platform-value before reading it
     const loc = page.getByTestId('env-platform-value');
     await expect(loc).not.toBeEmpty({ timeout: 3000 });
-    const appPlatform = (await loc.textContent()) ?? 'ios';
+    const appPlatform = await loc.textContent() as string; // not.toBeEmpty above guarantees non-empty
 
     await openPanel(page);
     await switchTab(page, 'env');
