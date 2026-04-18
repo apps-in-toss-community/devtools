@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.0](https://github.com/apps-in-toss-community/devtools/compare/v0.0.2...v0.1.0) (2026-04-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* createMockProxy로 감싼 모듈의 미구현 속성 접근은 이제 Error를 throw한다. resetWarned export도 제거.
+
+### Features
+
+* lock SDK peer range and throw on unmocked API ([#59](https://github.com/apps-in-toss-community/devtools/issues/59)) ([ff7a5d9](https://github.com/apps-in-toss-community/devtools/commit/ff7a5d9747457126f5419e1f96c2cad621878a22))
+
+
+### Bug Fixes
+
+* add error boundary to panel mount logic ([#43](https://github.com/apps-in-toss-community/devtools/issues/43)) ([2b3db41](https://github.com/apps-in-toss-community/devtools/commit/2b3db41fa61acf0461f6fc4e4258be44a74b8f55))
+* prompt 타임아웃 시 패널 존재 여부에 따라 메시지 분기 ([#44](https://github.com/apps-in-toss-community/devtools/issues/44)) ([c638304](https://github.com/apps-in-toss-community/devtools/commit/c638304b71e2a3d95021c66d80371f21c7530912))
+
 ## [0.0.2](https://github.com/apps-in-toss-community/devtools/compare/v0.0.1...v0.0.2) (2026-04-10)
 
 
