@@ -518,8 +518,8 @@ type _AppLogin = Assert<typeof Mock.appLogin, typeof Original.appLogin>;
 `createMockProxy()`는 미구현 API 접근 시 즉시 `Error`를 throw합니다. mock에 없는 API가 실 SDK에는 있을 수 있어 "devtools에서는 잘 되는데 실제 SDK에서는 안 되는" 배포 사고를 원천 차단하기 위한 의도적 동작입니다. 누락된 API는 [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 제보하거나 직접 mock을 추가해 주세요.
 
 ```
-[@ait-co/devtools] IAP.newMethod is not mocked. This API may exist in the real
-@apps-in-toss/web-framework SDK, but devtools does not support it yet.
+[@ait-co/devtools] IAP.newMethod is not mocked. This API may exist in
+@apps-in-toss/web-framework, but devtools' mock does not cover it yet.
 Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 ```
 

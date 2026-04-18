@@ -23,8 +23,8 @@ export function createMockProxy<T extends Record<string, unknown>>(
 
       throw new Error(
         `[@ait-co/devtools] ${moduleName}.${prop} is not mocked. ` +
-        `This API may exist in the real @apps-in-toss/web-framework SDK, ` +
-        `but devtools does not support it yet. ` +
+        `This API may exist in @apps-in-toss/web-framework, ` +
+        `but devtools' mock does not cover it yet. ` +
         `Please file an issue: ${ISSUES_URL}`,
       );
     },
