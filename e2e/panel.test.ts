@@ -247,7 +247,8 @@ test.describe('Layer C: Panel-App bridge', () => {
   test('events tab: Trigger Back Event fires and fixture subscriber receives it', async ({ page }) => {
     // Subscribe to back events in the fixture app first
     await page.getByTestId('events-back-btn').click();
-    await expect(page.getByTestId('events-back-empty')).toBeVisible();
+    // Confirm subscription ran: button disables itself after the first click (once: true listener)
+    await expect(page.getByTestId('events-back-btn')).toBeDisabled({ timeout: 2000 });
 
     // Open panel → events tab → enable edit mode → trigger back event
     await openPanel(page);

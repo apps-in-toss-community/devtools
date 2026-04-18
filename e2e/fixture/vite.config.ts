@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite';
 import aitDevtools from '@ait-co/devtools/unplugin';
 import path from 'path';
+import fs from 'fs';
+
+const mockDist = path.resolve(__dirname, '../../dist/mock/index.js');
+if (!fs.existsSync(mockDist)) {
+  throw new Error(`dist/mock/index.js not found — run 'pnpm build' first (expected: ${mockDist})`);
+}
 
 export default defineConfig({
   root: __dirname,
@@ -10,7 +16,7 @@ export default defineConfig({
       // (Panel is imported explicitly in main.ts; unplugin panel injection is
       // disabled below because unplugin transform is unreliable under Vite 8
       // production build with rolldown.)
-      '@apps-in-toss/web-framework': path.resolve(__dirname, '../../dist/mock/index.js'),
+      '@apps-in-toss/web-framework': mockDist,
     },
   },
   // Both mock and panel are disabled so the unplugin does NO active work here:
