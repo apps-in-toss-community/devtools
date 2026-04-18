@@ -19,7 +19,13 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> `@apps-in-toss/web-framework ^2.0.0`이 peerDependency로 설정되어 있습니다 (optional).
+> **지원 SDK 버전**: `@apps-in-toss/web-framework >=2.4.0 <2.4.8` (peer, required).
+>
+> devtools는 위 범위의 SDK 버전에서만 동작이 검증됩니다. 범위 밖 SDK를 설치하면
+> 패키지 매니저가 install-time에 peer 경고를 표시합니다. 또한 devtools가 아직 mock하지
+> 않은 API를 호출하면 런타임에 에러가 발생합니다 — "devtools에서는 잘 되는데 실제 SDK에서는
+> 안 되는" 상황을 방지하기 위한 의도적 동작입니다. 누락된 API는
+> [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
 
 ## 번들러 설정
 
