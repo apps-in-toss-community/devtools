@@ -23,7 +23,26 @@
  *   { plugins: [aitDevtools.rollup()] }
  */
 
+import { fileURLToPath } from 'node:url';
 import { createUnplugin } from 'unplugin';
+
+/**
+ * Resolve `@ait-co/devtools/mock` to its real file path at plugin-load time.
+ *
+ * Returning the bare specifier from `resolveId` would stop the bundler from
+ * walking node_modules for it — Vite 8+ treats such a non-null string as the
+ * final resolved id and serves it via the virtual `/@id/` prefix, which 404s
+ * because we don't provide a `load` hook. Resolving to an absolute path here
+ * lets every supported bundler load the file the normal way.
+ */
+const MOCK_PATH = (() => {
+  try {
+    return fileURLToPath(import.meta.resolve('@ait-co/devtools/mock'));
+  } catch {
+    // Fallback for runtimes where `import.meta.resolve` is unavailable.
+    return '@ait-co/devtools/mock';
+  }
+})();
 
 export interface AitDevtoolsOptions {
   /**
@@ -57,9 +76,9 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
 
     resolveId(id: string) {
       if (!shouldMock) return null;
-      // @apps-in-toss/web-framework → @ait-co/devtools/mock
+      // @apps-in-toss/web-framework → @ait-co/devtools/mock (absolute path)
       if (id === FRAMEWORK_ID || id === BRIDGE_ID || id === ANALYTICS_ID) {
-        return '@ait-co/devtools/mock';
+        return MOCK_PATH;
       }
       return null;
     },

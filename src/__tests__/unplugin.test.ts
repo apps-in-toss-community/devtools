@@ -2,7 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import aitDevtoolsPlugin from '../unplugin/index.js';
 
 const FRAMEWORK_ID = '@apps-in-toss/web-framework';
-const MOCK_ID = '@ait-co/devtools/mock';
+// `resolveId` now returns the absolute file path of `@ait-co/devtools/mock` so
+// bundlers can load it directly; when `import.meta.resolve` fails (e.g. in a
+// test environment where the subpath isn't yet published as a dist file) the
+// implementation falls back to the bare specifier.
+function isMockTarget(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    (value === '@ait-co/devtools/mock' || /\/mock\/index\.(m?js)$/.test(value))
+  );
+}
 
 type RawHooks = {
   resolveId: (id: string) => string | null | undefined;
@@ -23,7 +32,7 @@ describe('unplugin: dev mode (default)', () => {
   it('mock alias가 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
-    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 
   it('패널 주입이 활성화되어야 한다', () => {
@@ -51,7 +60,7 @@ describe('unplugin: dev mode + forceEnable:true', () => {
   it('mock alias가 여전히 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks({ forceEnable: true });
-    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 });
 
@@ -59,7 +68,7 @@ describe('unplugin: dev mode + panel:false', () => {
   it('mock alias는 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks({ panel: false });
-    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 
   it('패널 주입이 비활성화되어야 한다', () => {
@@ -101,7 +110,7 @@ describe('unplugin: production + forceEnable:true + mock:true', () => {
   it('mock alias가 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const hooks = getRawHooks({ forceEnable: true, mock: true });
-    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 
   it('패널 주입이 활성화되어야 한다', () => {
@@ -115,7 +124,7 @@ describe('unplugin: production + forceEnable:true + mock:true + panel:false', ()
   it('mock alias가 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const hooks = getRawHooks({ forceEnable: true, mock: true, panel: false });
-    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 
   it('패널 주입이 비활성화되어야 한다', () => {
@@ -129,7 +138,7 @@ describe('unplugin: dev mode + mock:true (explicit)', () => {
   it('mock alias가 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks({ mock: true });
-    expect(hooks.resolveId(FRAMEWORK_ID)).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 });
 
@@ -143,13 +152,13 @@ describe('unplugin: resolveId', () => {
   it('@apps-in-toss/web-bridge도 mock으로 alias된다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
-    expect(hooks.resolveId('@apps-in-toss/web-bridge')).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId('@apps-in-toss/web-bridge'))).toBe(true);
   });
 
   it('@apps-in-toss/web-analytics도 mock으로 alias된다', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
-    expect(hooks.resolveId('@apps-in-toss/web-analytics')).toBe(MOCK_ID);
+    expect(isMockTarget(hooks.resolveId('@apps-in-toss/web-analytics'))).toBe(true);
   });
 });
 
