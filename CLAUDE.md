@@ -14,6 +14,10 @@
 **@ait-co/devtools** — `@apps-in-toss/web-framework` SDK의 mock 라이브러리.
 앱인토스 미니앱을 토스 앱 없이 일반 크롬 브라우저에서 개발/테스트할 수 있게 해준다.
 
+### Out of scope
+
+- **React Native** — 이 프로젝트는 WebView 미니앱 전용. RN은 지원 범위 밖.
+
 ## 기술 스택
 
 - **TypeScript** (ESM only, `"type": "module"`)

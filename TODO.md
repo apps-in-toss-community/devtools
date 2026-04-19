@@ -18,21 +18,14 @@
 - [ ] Enrich existing panel tabs to catch up with sdk-example's interactive surface — e.g. IAP pending-orders / completed-orders viewer, Ads event simulator for load/show lifecycle
 - [ ] Add a `devtools`-provided mock state preset library — save/load common scenarios (e.g. "permission denied", "offline", "subscription expired") for faster QA
 
-## Future: Debugging MCP Server
+## Performance
+(None)
 
-devtools가 제공하는 **live 브라우저 상태**(mock 상태, SDK intercept 기록, 콘솔/네트워크 로그)를 AI 코딩 에이전트가 직접 읽고 조작할 수 있도록 MCP server 레이어를 추가하는 방향. Playwright MCP / Chrome DevTools MCP와 같은 계열이지만, **앱인토스 SDK mock 상태까지 노출**하는 것이 차별점.
-
-에이전트가 `Bash`만으로는 절대 접근할 수 없는 영역이라 MCP가 결정적 가치를 가짐 (단순 CLI wrapping과는 성격이 다름 — 자세한 판별 기준은 umbrella `../CLAUDE.md`의 MCP 전략 섹션 참고 예정).
-
-스케치:
-
-- [ ] Tool 후보: `devtools_get_mock_state`, `devtools_set_mock_value`, `devtools_get_console_logs`, `devtools_get_network_requests`, `devtools_get_sdk_call_history`
-- [ ] 전송: local **stdio** MCP (브라우저-dev server 사이의 기존 채널 재사용)
-- [ ] unplugin 옵션으로 MCP 서버를 dev server에 붙일지 선택 가능 (`mcp: true`)
-- [ ] `agent-plugin`의 `/ait debug` skill이 이 MCP가 붙어 있으면 활용, 없으면 수동 디버깅 가이드로 graceful degrade
-- [ ] 참고: [Playwright MCP](https://github.com/microsoft/playwright-mcp), [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp)
-
-우선순위: 코어 devtools 안정화 이후. 실사용자 디버깅 pain이 확인된 뒤 착수.
-
-## Out of Scope
-- **React Native** — 이 프로젝트는 WebView 미니앱 전용. RN은 지원 범위 밖.
+## Backlog
+- [ ] **Debugging MCP Server** — devtools가 제공하는 live 브라우저 상태(mock 상태, SDK intercept 기록, 콘솔/네트워크 로그)를 AI 코딩 에이전트가 직접 읽고 조작할 수 있도록 MCP server 레이어 추가. Playwright MCP / Chrome DevTools MCP 계열이지만 **앱인토스 SDK mock 상태까지 노출**하는 것이 차별점. 에이전트가 `Bash`만으로는 절대 접근할 수 없는 영역이라 MCP가 결정적 가치를 가짐 (판별 기준은 umbrella `../CLAUDE.md`의 MCP 전략 참고).
+  - Tool 후보: `devtools_get_mock_state`, `devtools_set_mock_value`, `devtools_get_console_logs`, `devtools_get_network_requests`, `devtools_get_sdk_call_history`
+  - 전송: local **stdio** MCP (브라우저-dev server 사이의 기존 채널 재사용)
+  - unplugin 옵션으로 MCP 서버를 dev server에 붙일지 선택 가능 (`mcp: true`)
+  - `agent-plugin`의 `/ait debug` skill이 이 MCP가 붙어 있으면 활용, 없으면 수동 디버깅 가이드로 graceful degrade
+  - 참고: [Playwright MCP](https://github.com/microsoft/playwright-mcp), [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp)
+  - 착수 조건: 코어 devtools 안정화 이후, 실사용자 디버깅 pain이 확인된 뒤
