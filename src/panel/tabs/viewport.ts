@@ -1,7 +1,13 @@
 import { aitState } from '../../mock/state.js';
 import type { ViewportOrientation, ViewportPresetId } from '../../mock/types.js';
 import { h, monitoringNotice } from '../helpers.js';
-import { getPreset, resolveViewportSize, VIEWPORT_PRESETS } from '../viewport.js';
+import {
+  AIT_NAV_BAR_HEIGHT,
+  computeSafeAreaInsets,
+  getPreset,
+  resolveViewportSize,
+  VIEWPORT_PRESETS,
+} from '../viewport.js';
 
 export function renderViewportTab(): HTMLElement {
   const s = aitState.state;
@@ -99,12 +105,80 @@ export function renderViewportTab(): HTMLElement {
     aitState.patch('viewport', { aitNavBar: navBarCheckbox.checked });
   });
 
-  // --- Status line: applied size ---
+  // --- Status panel: applied size + HiDPI + safe area ---
   const size = resolveViewportSize(vp);
-  const statusText =
-    vp.preset === 'none' || size.width === 0
-      ? 'No viewport constraint — body fills the window.'
-      : `Applied: ${size.width}×${size.height}px (${vp.orientation})`;
+  const statusEl = h('div', { className: 'ait-section' });
+
+  if (vp.preset === 'none' || size.width === 0) {
+    statusEl.appendChild(
+      h(
+        'div',
+        { style: 'color:#888;font-size:11px' },
+        'No viewport constraint — body fills the window.',
+      ),
+    );
+  } else {
+    const preset = vp.preset === 'custom' ? null : getPreset(vp.preset);
+    const landscape = vp.orientation === 'landscape';
+    const rows: Array<HTMLElement> = [];
+
+    // Viewport: CSS × DPR = physical
+    const dpr = preset?.dpr ?? 1;
+    const physW = Math.round(size.width * dpr);
+    const physH = Math.round(size.height * dpr);
+    const orientationLabel = landscape
+      ? 'landscape'
+      : vp.orientation === 'auto'
+        ? 'portrait (auto)'
+        : 'portrait';
+    rows.push(
+      h(
+        'div',
+        { className: 'ait-status-row' },
+        h('span', {}, 'Viewport'),
+        h(
+          'span',
+          { className: 'ait-status-value' },
+          `${size.width}×${size.height} @${dpr}x → ${physW}×${physH} ${orientationLabel}`,
+        ),
+      ),
+    );
+
+    // Safe area
+    if (preset) {
+      const insets = computeSafeAreaInsets(preset, landscape);
+      rows.push(
+        h(
+          'div',
+          { className: 'ait-status-row' },
+          h('span', {}, 'Safe area'),
+          h(
+            'span',
+            { className: 'ait-status-value' },
+            `T${insets.top} R${insets.right} B${insets.bottom} L${insets.left}`,
+          ),
+        ),
+      );
+    }
+
+    // Apps in Toss nav bar
+    if (vp.aitNavBar && !landscape) {
+      rows.push(
+        h(
+          'div',
+          { className: 'ait-status-row' },
+          h('span', {}, 'Apps in Toss nav bar'),
+          h(
+            'span',
+            { className: 'ait-status-value' },
+            `${AIT_NAV_BAR_HEIGHT}px (not in SafeAreaInsets)`,
+          ),
+        ),
+      );
+    }
+
+    for (const row of rows) statusEl.appendChild(row);
+  }
 
   container.append(
     h(
@@ -127,11 +201,7 @@ export function renderViewportTab(): HTMLElement {
         navBarCheckbox,
       ),
     ),
-    h(
-      'div',
-      { className: 'ait-section' },
-      h('div', { style: 'color:#888;font-size:11px' }, statusText),
-    ),
+    statusEl,
   );
 
   return container;

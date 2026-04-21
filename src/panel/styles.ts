@@ -360,6 +360,26 @@ export const PANEL_STYLES = /* css */ `
     color: #e53e3e; /* readable on both light (#fff) and dark (#1a1a2e) panel backgrounds */
   }
 
+  /* Viewport tab status rows */
+  .ait-status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 11px;
+    color: #888;
+    padding: 3px 0;
+    border-bottom: 1px dashed #2a2a4a;
+    gap: 8px;
+  }
+  .ait-status-row:last-child { border-bottom: none; }
+  .ait-status-row .ait-status-value {
+    font-family: 'SF Mono', 'Menlo', monospace;
+    color: #95e6cb;
+    font-size: 11px;
+    text-align: right;
+    word-break: break-word;
+  }
+
   @media (max-width: ${PANEL_FULLSCREEN_BREAKPOINT}px) {
     .ait-panel.open {
       position: fixed;
