@@ -18,6 +18,11 @@
 - [ ] Enrich existing panel tabs to catch up with sdk-example's interactive surface — e.g. IAP pending-orders / completed-orders viewer, Ads event simulator for load/show lifecycle
 - [ ] Add a `devtools`-provided mock state preset library — save/load common scenarios (e.g. "permission denied", "offline", "subscription expired") for faster QA
 
+## Viewport / device simulation follow-ups
+- [ ] **Apps in Toss nav bar: `game` variant** — Viewport 탭은 현재 `partner` 타입(흰 배경, 앱 아이콘 + 이름 + ⋯ + ×)만 렌더한다. `game` 타입(투명 배경, ⋯ + × 만, 로고/이름 없음)을 토글로 추가. Config docs의 `webViewProps.type: 'game' | 'partner'` 값을 참고.
+- [ ] **Galaxy S26 스펙 갱신** — S26 / S26+ / S26 Ultra는 미출시. 현재 S25 기반 값을 사용 중. 출시 후 공식 수치로 갱신.
+- [ ] **Landscape nav bar 처리** — 현재 landscape에선 AIT nav bar 오버레이를 숨긴다. 실제 Toss 호스트가 landscape에서 nav bar를 어떻게 처리하는지 공식 docs에 명시되어 있지 않아 안전하게 숨기고 있다. 확인되면 반영.
+
 ## Performance
 (None)
 
