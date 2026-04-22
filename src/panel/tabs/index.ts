@@ -21,10 +21,10 @@ export type TabId =
 
 export const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'env', label: 'Environment' },
+  { id: 'viewport', label: 'Viewport' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'location', label: 'Location' },
   { id: 'device', label: 'Device' },
-  { id: 'viewport', label: 'Viewport' },
   { id: 'iap', label: 'IAP' },
   { id: 'events', label: 'Events' },
   { id: 'analytics', label: 'Analytics' },

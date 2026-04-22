@@ -6,6 +6,15 @@ export const PANEL_WIDTH = 360;
 export const PANEL_HEIGHT = 480;
 export const PANEL_FULLSCREEN_BREAKPOINT = 720;
 
+// Viewport simulation frame styling
+export const VIEWPORT_FRAME_BORDER_RADIUS = 36;
+export const VIEWPORT_FRAME_BEZEL_INNER = 10; // first ring (outer device shell)
+export const VIEWPORT_FRAME_BEZEL_OUTER = 12; // second ring (chrome highlight)
+export const VIEWPORT_FRAME_BEZEL_COLOR_INNER = '#1a1a2e';
+export const VIEWPORT_FRAME_BEZEL_COLOR_OUTER = '#3a3a5a';
+export const VIEWPORT_BG_COLOR = '#0a0a14';
+export const VIEWPORT_BODY_MARGIN = 24;
+
 export const PANEL_STYLES = /* css */ `
   .ait-panel-toggle {
     position: fixed;
@@ -379,6 +388,123 @@ export const PANEL_STYLES = /* css */ `
     text-align: right;
     word-break: break-word;
   }
+
+  /* === Viewport simulation === */
+  /* Static rules. Dynamic per-preset values (width/height, navbar top offset)
+     are still injected via a separate <style id="__ait-viewport-style">. */
+  html.ait-viewport-active {
+    background: ${VIEWPORT_BG_COLOR};
+    min-height: 100dvh;
+  }
+  html.ait-viewport-active body {
+    position: relative;
+    /* isolation: isolate creates a stacking context so notch/navbar z-index
+       cannot escape body and paint over the floating Panel toggle. */
+    isolation: isolate;
+    margin: ${VIEWPORT_BODY_MARGIN}px auto;
+    overflow: auto;
+    background: #fff;
+    box-sizing: border-box;
+  }
+  html.ait-viewport-framed body {
+    border-radius: ${VIEWPORT_FRAME_BORDER_RADIUS}px;
+    box-shadow:
+      0 0 0 ${VIEWPORT_FRAME_BEZEL_INNER}px ${VIEWPORT_FRAME_BEZEL_COLOR_INNER},
+      0 0 0 ${VIEWPORT_FRAME_BEZEL_OUTER}px ${VIEWPORT_FRAME_BEZEL_COLOR_OUTER},
+      0 24px 48px rgba(0,0,0,0.5);
+  }
+
+  /* Notch / Dynamic Island / punch-hole overlay (top of body) */
+  .ait-notch {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #000;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .ait-notch-dynamic-island { top: 11px; width: 126px; height: 37px; border-radius: 20px; }
+  .ait-notch-pill {
+    width: 160px; height: 30px;
+    border-bottom-left-radius: 20px; border-bottom-right-radius: 20px;
+  }
+  .ait-notch-punch-hole { top: 10px; width: 12px; height: 12px; border-radius: 50%; }
+
+  /* Home indicator pill (bottom of body, iPhones with safe-area bottom > 0) */
+  .ait-home-indicator {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 134px;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  /* Apps in Toss host nav bar — sits directly below the OS status bar */
+  .ait-navbar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 48px; /* AIT_NAV_BAR_HEIGHT */
+    background: rgba(255, 255, 255, 0.92);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 12px;
+    box-sizing: border-box;
+    font: 500 15px -apple-system, BlinkMacSystemFont, 'Pretendard', sans-serif;
+    color: #1a1a1a;
+    z-index: 10;
+  }
+  .ait-navbar-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    margin-left: 4px;
+    overflow: hidden;
+  }
+  .ait-navbar-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #3182f6, #7c3aed);
+    flex-shrink: 0;
+  }
+  .ait-navbar-name {
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ait-navbar-actions {
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 999px;
+    padding: 4px 8px;
+    gap: 4px;
+  }
+  .ait-navbar-btn {
+    background: none;
+    border: none;
+    padding: 2px 8px;
+    font: inherit;
+    font-size: 18px;
+    color: inherit;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .ait-navbar-btn:hover { color: #3182f6; }
+  .ait-navbar-back { padding: 0 8px; font-size: 24px; }
+  .ait-navbar-divider { width: 1px; height: 16px; background: rgba(0, 0, 0, 0.15); }
 
   @media (max-width: ${PANEL_FULLSCREEN_BREAKPOINT}px) {
     .ait-panel.open {
