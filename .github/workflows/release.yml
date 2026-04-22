@@ -48,11 +48,14 @@ jobs:
 
       - uses: changesets/action@v1
         with:
-          # Build is already done above; publish step will run `npm publish`.
-          # pnpm publish does not support OIDC trusted publishing yet (pnpm/pnpm#9812),
-          # so we use npm publish with provenance. Node 24 ships npm >= 11.x.
-          publish: npm publish --provenance --access public
+          # `changesets/action` creates GitHub Releases by parsing `New tag:`
+          # lines from the publish command's stdout. Only `@changesets/cli publish`
+          # emits those lines — raw `npm publish` does not, which silently skips
+          # Release creation. So we go through `changeset publish`, which itself
+          # shells out to npm publish under the hood.
+          publish: pnpm exec changeset publish
           version: pnpm changeset version
+          createGithubReleases: true
         env:
           # App token (not GITHUB_TOKEN) so the release/tag chain triggers
           # downstream workflows. GitHub does not fire `release.published`
