@@ -1,9 +1,11 @@
 import { aitState } from '../../mock/state.js';
-import type { ViewportOrientation, ViewportPresetId } from '../../mock/types.js';
+import type { LandscapeSide, ViewportOrientation, ViewportPresetId } from '../../mock/types.js';
 import { h, monitoringNotice } from '../helpers.js';
 import {
   AIT_NAV_BAR_HEIGHT,
+  clampCustomDimension,
   computeSafeAreaInsets,
+  effectiveOrientation,
   getPreset,
   resolveViewportSize,
   VIEWPORT_PRESETS,
@@ -55,6 +57,18 @@ export function renderViewportTab(): HTMLElement {
     });
   });
 
+  // --- Landscape side (only meaningful when landscape) ---
+  const landscapeSideSelect = h('select', { className: 'ait-select' });
+  if (disabled) landscapeSideSelect.disabled = true;
+  for (const opt of ['left', 'right'] as LandscapeSide[]) {
+    const option = h('option', { value: opt }, opt);
+    if (opt === vp.landscapeSide) option.selected = true;
+    landscapeSideSelect.appendChild(option);
+  }
+  landscapeSideSelect.addEventListener('change', () => {
+    aitState.patch('viewport', { landscapeSide: landscapeSideSelect.value as LandscapeSide });
+  });
+
   // --- Custom width/height inputs (custom 모드에서만 활성화) ---
   const customRow = h('div', { className: 'ait-section' });
   if (vp.preset === 'custom') {
@@ -75,12 +89,18 @@ export function renderViewportTab(): HTMLElement {
       heightInput.disabled = true;
     }
     widthInput.addEventListener('change', () => {
-      const n = Number(widthInput.value);
-      if (Number.isFinite(n) && n > 0) aitState.patch('viewport', { customWidth: n });
+      const clamped = clampCustomDimension(Number(widthInput.value));
+      if (clamped !== null) {
+        aitState.patch('viewport', { customWidth: clamped });
+        widthInput.value = String(clamped);
+      }
     });
     heightInput.addEventListener('change', () => {
-      const n = Number(heightInput.value);
-      if (Number.isFinite(n) && n > 0) aitState.patch('viewport', { customHeight: n });
+      const clamped = clampCustomDimension(Number(heightInput.value));
+      if (clamped !== null) {
+        aitState.patch('viewport', { customHeight: clamped });
+        heightInput.value = String(clamped);
+      }
     });
     customRow.append(
       h('div', { className: 'ait-section-title' }, 'Custom size'),
@@ -119,34 +139,30 @@ export function renderViewportTab(): HTMLElement {
     );
   } else {
     const preset = vp.preset === 'custom' ? null : getPreset(vp.preset);
-    const landscape = vp.orientation === 'landscape';
+    const effOrient = effectiveOrientation(vp);
+    const landscape = effOrient === 'landscape';
     const rows: Array<HTMLElement> = [];
 
-    // Viewport: CSS × DPR = physical
+    // Viewport: CSS @DPR | physical
     const dpr = preset?.dpr ?? 1;
     const physW = Math.round(size.width * dpr);
     const physH = Math.round(size.height * dpr);
-    const orientationLabel = landscape
-      ? 'landscape'
-      : vp.orientation === 'auto'
-        ? 'portrait (auto)'
-        : 'portrait';
+    const orientDisplay = vp.orientation === 'auto' ? `${effOrient} (auto)` : effOrient;
     rows.push(
       h(
         'div',
         { className: 'ait-status-row' },
-        h('span', {}, 'Viewport'),
+        h('span', {}, 'CSS / physical'),
         h(
           'span',
           { className: 'ait-status-value' },
-          `${size.width}×${size.height} @${dpr}x → ${physW}×${physH} ${orientationLabel}`,
+          `${size.width}×${size.height}@${dpr}x | ${physW}×${physH} ${orientDisplay}`,
         ),
       ),
     );
 
-    // Safe area
     if (preset) {
-      const insets = computeSafeAreaInsets(preset, landscape);
+      const insets = computeSafeAreaInsets(preset, landscape, vp.landscapeSide);
       rows.push(
         h(
           'div',
@@ -161,18 +177,13 @@ export function renderViewportTab(): HTMLElement {
       );
     }
 
-    // Apps in Toss nav bar
     if (vp.aitNavBar && !landscape) {
       rows.push(
         h(
           'div',
           { className: 'ait-status-row' },
-          h('span', {}, 'Apps in Toss nav bar'),
-          h(
-            'span',
-            { className: 'ait-status-value' },
-            `${AIT_NAV_BAR_HEIGHT}px (not in SafeAreaInsets)`,
-          ),
+          h('span', {}, 'AIT nav bar'),
+          h('span', { className: 'ait-status-value' }, `${AIT_NAV_BAR_HEIGHT}px (excl. SafeArea)`),
         ),
       );
     }
@@ -180,14 +191,28 @@ export function renderViewportTab(): HTMLElement {
     for (const row of rows) statusEl.appendChild(row);
   }
 
+  // --- Compose ---
+  const deviceSection = h(
+    'div',
+    { className: 'ait-section' },
+    h('div', { className: 'ait-section-title' }, 'Device'),
+    h('div', { className: 'ait-row' }, h('label', {}, 'Preset'), presetSelect),
+    h('div', { className: 'ait-row' }, h('label', {}, 'Orientation'), orientationSelect),
+  );
+
+  // Landscape side row only shown when effective orientation is landscape and
+  // the device has a notch (otherwise the value has no visible effect).
+  if (effectiveOrientation(vp) === 'landscape' && vp.preset !== 'none' && vp.preset !== 'custom') {
+    const notch = getPreset(vp.preset).notch;
+    if (notch === 'notch' || notch === 'dynamic-island') {
+      deviceSection.appendChild(
+        h('div', { className: 'ait-row' }, h('label', {}, 'Notch side'), landscapeSideSelect),
+      );
+    }
+  }
+
   container.append(
-    h(
-      'div',
-      { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Device'),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Preset'), presetSelect),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Orientation'), orientationSelect),
-    ),
+    deviceSection,
     customRow,
     h(
       'div',

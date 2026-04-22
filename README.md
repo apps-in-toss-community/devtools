@@ -8,7 +8,7 @@
 
 - **60+ SDK API mock** — 인증, 결제, IAP, 위치, 카메라, 스토리지 등
 - **Device API 모드 시스템** — mock / web / prompt 세 가지 모드로 디바이스 API 동작 전환
-- **Device simulation** — iPhone/Galaxy/Pixel/iPad 프리셋 + orientation 토글로 데스크탑 브라우저에서 모바일 뷰포트 시뮬레이션
+- **Device simulation** — iPhone/Galaxy 프리셋 + orientation 토글로 데스크탑 브라우저에서 모바일 뷰포트 시뮬레이션
 - **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (9개 탭)
 - **모든 번들러 지원** — [unplugin](https://github.com/unjs/unplugin) 기반 Vite, Webpack, Rspack, esbuild, Rollup 통합
 
@@ -250,10 +250,10 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 | 탭 | 설명 |
 |---|---|
 | **Environment** | 플랫폼 OS (ios/android), 앱 버전, 환경 (toss/sandbox), 로케일, 네트워크 상태, Safe Area Insets |
+| **Viewport** | 디바이스 프리셋(iPhone/Galaxy) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **Permissions** | camera, photos, geolocation, clipboard, contacts, microphone 권한 상태 제어 (allowed/denied/notDetermined) |
 | **Location** | 위도, 경도, 정확도 설정 |
 | **Device** | API 모드 전환 (mock/web/prompt), 더미 이미지 관리 (추가/제거/기본값/초기화) |
-| **Viewport** | 디바이스 프리셋(iPhone/Galaxy/Pixel/iPad) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **IAP** | 다음 구매 결과 선택 (success/취소/에러 등), TossPay 결제 결과, 완료된 주문 내역 (최근 5건) |
 | **Events** | Back/Home 네비게이션 이벤트 트리거, 로그인 상태 토글 |
 | **Analytics** | 기록된 분석 이벤트 실시간 로그 뷰어 (최근 30건, 타임스탬프/타입/파라미터) |
@@ -263,7 +263,7 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 ## Device simulation (Viewport 탭)
 
-데스크탑 브라우저에서 모바일 미니앱을 개발할 때, 실제 디바이스 해상도/safe area/노치/앱인토스 nav bar를 반영해 레이아웃을 검증할 수 있습니다.
+데스크탑 브라우저에서 모바일 미니앱을 개발할 때, 실제 디바이스 해상도/safe area/노치/홈 인디케이터/앱인토스 nav bar를 반영해 레이아웃을 검증할 수 있습니다.
 
 ### 프리셋 (2026)
 
@@ -283,19 +283,22 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 ### Orientation
 
-- **auto** (기본) — Panel이 강제하지 않음. 앱이 `setDeviceOrientation`을 호출하면 그 값이 반영됩니다.
+- **auto** (기본) — Panel이 강제하지 않음. 앱의 `setDeviceOrientation` 호출이 별도 필드(`appOrientation`)에 기록되어 effective orientation 결정에 쓰입니다. 같은 앱이 여러 번 호출해도 매번 정상 반영됩니다.
 - **portrait / landscape** — Panel이 override. 앱의 `setDeviceOrientation` 호출은 무시되고 `console.warn`으로 알림.
 
 Landscape로 전환하면:
 - CSS viewport width/height가 swap됩니다.
-- iPhone(notch/Dynamic Island) 프리셋은 safe area의 top이 0이 되고 left/right에 기존 top 값이 들어갑니다 (양쪽 다).
+- iPhone(notch/Dynamic Island) 프리셋은 safe area의 top이 0이 되고, **Notch side** 토글(left/right, default left)에 따라 한쪽 변에만 인셋이 생깁니다 (실 기기 동작과 일치).
 - Android(punch-hole) 프리셋은 status bar가 top에 유지됩니다.
 
-### Frame + 노치 + 앱인토스 nav bar
+### Frame + 노치 + 홈 인디케이터 + 앱인토스 nav bar
 
 **Show frame** 토글을 켜면:
 - 디바이스 베젤을 모사하는 border-radius + box-shadow
 - Notch / Dynamic Island / punch-hole 오버레이 (body 상단에 절대 배치)
+- 홈 인디케이터 pill (iPhone 등 `safeAreaBottom > 0` 디바이스에 한정, body 하단에 배치)
+- 앱 이름은 `aitState.brand.displayName`을 사용 (Environment 탭에서 변경 가능, 자동 갱신)
+- 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출 — 실제 SDK 이벤트 플러밍을 패널에서 직접 검증할 수 있습니다.
 
 **Show Apps in Toss nav bar** 토글(기본 on)을 켜면:
 - 토스 호스트의 상단 nav bar(뒤로가기 / 앱 아이콘·이름 / ⋯ / ×)를 48px 높이로 오버레이
@@ -311,7 +314,10 @@ __ait.patch('viewport', { preset: 'iphone-17-pro', orientation: 'auto', frame: t
 // Landscape 강제 (앱의 setDeviceOrientation 호출은 무시됨)
 __ait.patch('viewport', { orientation: 'landscape' });
 
-// Custom 크기
+// Landscape 시 노치 위치 (iOS 기본 'left')
+__ait.patch('viewport', { landscapeSide: 'right' });
+
+// Custom 크기 (1 ≤ value ≤ 4096으로 자동 클램프)
 __ait.patch('viewport', { preset: 'custom', customWidth: 360, customHeight: 740 });
 
 // 앱인토스 nav bar 숨기기 (순수 뷰포트만 보고 싶을 때)
@@ -324,16 +330,23 @@ __ait.patch('viewport', { preset: 'none' });
 ### Status 패널
 
 Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
-- **Viewport**: `402×874 @3x → 1206×2622 portrait (auto)`
+- **CSS / physical**: `402×874@3x | 1206×2622 portrait (auto)`
 - **Safe area**: `T59 R0 B34 L0`
-- **Apps in Toss nav bar**: `48px (not in SafeAreaInsets)`
+- **AIT nav bar**: `48px (excl. SafeArea)`
 
 ### 영속성 + 기술 세부
 
 - 상태는 sessionStorage(`__ait_viewport`)에 저장되어 페이지 reload 시 복원됩니다.
 - 프리셋 선택 시 `aitState.safeAreaInsets`도 자동 업데이트 → SDK의 `SafeAreaInsets.get()` / `.subscribe()`가 따라갑니다.
 - 뷰포트는 `document.body`에 `max-width`/`max-height` + `margin:auto`로 적용됩니다. iframe을 쓰지 않으므로 앱 JS/CSS가 그대로 실행되고, 콘솔·DevTools도 정상 접근 가능합니다.
+- body에 `isolation: isolate`를 적용해 노치/nav bar/홈 인디케이터의 z-index가 stacking context 밖으로 새지 않습니다 (DevTools 패널이 그 위에 떠 있음).
+- 패널을 동적으로 제거하고 싶다면 `disposeViewport()`를 export로 제공합니다.
 - User-Agent spoofing / touch event emulation / network throttling은 하지 않습니다 (Chrome DevTools가 이미 제공).
+
+### Known limitations
+
+- **Body가 스크롤 컨테이너가 됩니다** — 뷰포트 활성화 중에는 스크롤이 `window`가 아닌 `document.body`에서 발생합니다. `window.addEventListener('scroll', ...)`나 root에 붙은 `IntersectionObserver`는 실 디바이스와 다른 동작을 보일 수 있습니다. 미니앱 코드에서 스크롤을 다룬다면 `body`도 함께 검증하세요.
+- **추정 프리셋(`(est)` 라벨)** — iPhone Air, Galaxy S26 시리즈는 미출시 또는 공식 스펙 미공개. 출시 후 갱신 예정. QA 시 절대값으로 신뢰하지 마세요.
 
 ## `window.__ait` 콘솔 API
 

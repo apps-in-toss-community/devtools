@@ -154,12 +154,34 @@ describe('Navigation mock', () => {
     await expect(setDeviceOrientation({ type: 'landscape' })).resolves.toBeUndefined();
   });
 
-  it('setDeviceOrientation: orientation이 auto면 호출 값을 viewport에 반영한다', async () => {
+  it('setDeviceOrientation: auto 모드에서 호출 값을 appOrientation에 기록한다', async () => {
     const { aitState } = await import('../mock/state.js');
     aitState.reset();
     expect(aitState.state.viewport.orientation).toBe('auto');
+    expect(aitState.state.viewport.appOrientation).toBeNull();
+
     await setDeviceOrientation({ type: 'landscape' });
-    expect(aitState.state.viewport.orientation).toBe('landscape');
+
+    // 사용자 의도(orientation)는 auto 그대로, SDK 요청만 별도 기록
+    expect(aitState.state.viewport.orientation).toBe('auto');
+    expect(aitState.state.viewport.appOrientation).toBe('landscape');
+  });
+
+  it('setDeviceOrientation: auto 모드에서 여러 번 호출해도 매번 반영된다', async () => {
+    const { aitState } = await import('../mock/state.js');
+    aitState.reset();
+
+    await setDeviceOrientation({ type: 'landscape' });
+    expect(aitState.state.viewport.appOrientation).toBe('landscape');
+    expect(aitState.state.viewport.orientation).toBe('auto');
+
+    await setDeviceOrientation({ type: 'portrait' });
+    expect(aitState.state.viewport.appOrientation).toBe('portrait');
+    expect(aitState.state.viewport.orientation).toBe('auto');
+
+    await setDeviceOrientation({ type: 'landscape' });
+    expect(aitState.state.viewport.appOrientation).toBe('landscape');
+    expect(aitState.state.viewport.orientation).toBe('auto');
   });
 
   it('setDeviceOrientation: Panel이 override 중이면 요청을 무시하고 경고를 낸다', async () => {
@@ -169,7 +191,9 @@ describe('Navigation mock', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     await setDeviceOrientation({ type: 'landscape' });
-    expect(aitState.state.viewport.orientation).toBe('portrait'); // 유지
+    // orientation도 appOrientation도 변경되지 않아야 함
+    expect(aitState.state.viewport.orientation).toBe('portrait');
+    expect(aitState.state.viewport.appOrientation).toBeNull();
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('setDeviceOrientation(landscape) ignored'),
     );

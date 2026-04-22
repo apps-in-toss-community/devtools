@@ -38,7 +38,10 @@ export async function setDeviceOrientation(options: {
   const current = aitState.state.viewport.orientation;
   if (current === 'auto') {
     console.log('[@ait-co/devtools] setDeviceOrientation:', options.type);
-    aitState.patch('viewport', { orientation: options.type });
+    // appOrientation은 Panel이 'auto'일 때 effective orientation을 결정하는 별도 필드.
+    // viewport.orientation은 사용자 의도이므로 SDK가 임의로 덮어쓰지 않는다 — 그래야
+    // 앱이 같은 방향으로 여러 번 호출해도 매번 정상 반영된다.
+    aitState.patch('viewport', { appOrientation: options.type });
     return;
   }
   console.warn(

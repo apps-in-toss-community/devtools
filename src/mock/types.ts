@@ -108,10 +108,21 @@ export type ViewportPresetId =
 
 /**
  * Panel의 orientation 선택.
- * - `auto` — Panel이 강제하지 않음. 앱이 SDK `setDeviceOrientation`을 호출하면 값이 반영됨.
+ * - `auto` — Panel이 강제하지 않음. 앱의 SDK `setDeviceOrientation` 호출을 그대로 따름.
+ *   호출 값은 별도로 `viewport.appOrientation`에 기록되며, `viewport.orientation`은
+ *   계속 `auto`로 유지된다 — 같은 앱이 여러 번 호출해도 매번 정상 반영됨.
  * - `portrait` / `landscape` — Panel이 강제. SDK 호출은 무시됨 (로그만 남김).
  */
 export type ViewportOrientation = 'auto' | 'portrait' | 'landscape';
+
+/**
+ * `setDeviceOrientation`이 한 번도 호출되지 않은 초기 상태는 `null`.
+ * SDK가 받을 수 있는 값과 일치하므로 portrait/landscape만 허용.
+ */
+export type AppOrientation = 'portrait' | 'landscape' | null;
+
+/** Landscape 시 노치/Dynamic Island가 어느 쪽으로 가는지. iOS 기본은 landscape-left. */
+export type LandscapeSide = 'left' | 'right';
 
 export type NotchType = 'none' | 'notch' | 'dynamic-island' | 'punch-hole-center';
 
@@ -133,7 +144,15 @@ export interface ViewportPreset {
 
 export interface ViewportState {
   preset: ViewportPresetId;
+  /** User-controlled orientation. `auto`이면 `appOrientation`을 따른다. */
   orientation: ViewportOrientation;
+  /**
+   * SDK가 마지막으로 요청한 orientation. `setDeviceOrientation` 호출 시 갱신.
+   * `orientation === 'auto'`일 때 실제 화면 방향 결정에 쓰인다. 초기값 `null`.
+   */
+  appOrientation: AppOrientation;
+  /** Landscape 시 노치/Dynamic Island가 어느 쪽으로 갈지. */
+  landscapeSide: LandscapeSide;
   customWidth: number;
   customHeight: number;
   frame: boolean;
