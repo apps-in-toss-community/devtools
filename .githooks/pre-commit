@@ -5,20 +5,27 @@
 # Runs biome on staged files. Fails the commit if lint/format issues exist.
 # CI runs the same `pnpm lint` as the actual enforcement layer; this hook
 # is a fast feedback mechanism so issues are caught before push.
+#
+# NOTE: biome reads from the working tree, not the index. If you stage one
+# version and edit the worktree before commit, the hook checks the worktree
+# version. CI lint catches discrepancies.
 
 set -e
 
-# Collect staged files matching biome's targets (TS/JS/JSON/etc.)
-staged=$(git diff --cached --name-only --diff-filter=ACMR \
-  | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc)$' || true)
+# Detect whether any staged file matches biome's targets (TS/JS/JSON/etc.).
+# Null-delimited so paths with spaces/newlines survive; works with both
+# GNU and BSD xargs (macOS).
+has_match=$(git diff --cached --name-only --diff-filter=ACMR -z \
+  | grep -z -E '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc)$' \
+  | tr -d '\0' || true)
 
-if [ -z "$staged" ]; then
+if [ -z "$has_match" ]; then
   exit 0
 fi
 
-# Run biome check on staged files. `--no-errors-on-unmatched` so files
-# excluded by biome.json `files.includes` (e.g., dist/, node_modules/)
-# don't fail the hook. We use `tr '\n' '\0' | xargs -0` (instead of
-# `echo | xargs`) so paths containing spaces are passed as a single
-# argument — both POSIX and macOS bsd-xargs handle `-0`.
-printf '%s\n' "$staged" | tr '\n' '\0' | xargs -0 pnpm exec biome check --no-errors-on-unmatched
+# Re-stream with NULs preserved for xargs -0. `--no-errors-on-unmatched`
+# lets biome skip files excluded by biome.json `files.includes`
+# (e.g., dist/, node_modules/) without failing the hook.
+git diff --cached --name-only --diff-filter=ACMR -z \
+  | grep -z -E '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc)$' \
+  | xargs -0 pnpm exec biome check --no-errors-on-unmatched
