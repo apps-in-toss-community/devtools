@@ -190,6 +190,21 @@ testid 규약 (`e2e/fixture/helpers.ts` 참고):
 
 **원칙:** 단위 테스트(`vitest`)는 **`mock` 모드 + `prompt` 모드** 경로만 커버한다. `web` 모드의 브라우저 API 분기는 **`e2e/fixture/` Playwright 실행으로만 의미 있는 검증**이 된다. 이 경계를 흐리면 "테스트는 녹색인데 실제 브라우저에서는 깨진다"가 재발한다.
 
+## UI 변경 시 Playwright MCP로 검증
+
+이 repo의 시각적 산출물(Floating DevTools Panel, fixture 앱, viewport 시뮬레이션 등)을 변경한 후에는 **반드시 Playwright MCP로 브라우저에서 동작 확인**한다. 단순 prop 변경이라도 렌더 깨짐 가능성 있음.
+
+워크플로:
+
+1. dev server 띄우기 — devtools는 unplugin이라 fixture 앱을 사용한다: `pnpm build && pnpm exec vite build --config e2e/fixture/vite.config.ts && pnpm exec vite preview --config e2e/fixture/vite.config.ts --port 4173`
+2. `browser_navigate`로 변경 페이지 이동 (`http://localhost:4173/`)
+3. `browser_snapshot`으로 DOM tree 확인 (텍스트/구조 회귀)
+4. `browser_take_screenshot`으로 시각 확인 (필요 시 변경 전후 비교)
+5. `browser_console_messages`로 런타임 에러/경고 체크
+6. 인터랙션이 있으면 `browser_click` / `browser_fill_form` 등으로 시뮬레이션
+
+타입 체크와 테스트 통과만으로는 UI 회귀를 못 잡는다. 시각 검증을 건너뛴 채 "완료" 보고 금지. 상세 절차와 도구 목록은 아래 "Playwright MCP를 활용한 수동 QA" 섹션 참고.
+
 ## Playwright MCP를 활용한 수동 QA
 
 Claude Code의 Playwright MCP 플러그인을 사용하면 브라우저를 직접 제어하여 수동 QA를 수행할 수 있다.

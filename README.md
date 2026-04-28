@@ -636,6 +636,16 @@ pnpm typecheck   # 타입 호환성 검증
 pnpm test        # 전체 테스트 실행
 ```
 
+### Pre-commit hook (선택)
+
+Optional이지만 권장합니다. clone 후 아래 명령으로 표준 pre-commit hook을 활성화하면 staged 파일에 대해 `biome check`가 자동 실행됩니다.
+
+```sh
+git config core.hooksPath .githooks
+```
+
+이 hook은 push 전에 빠르게 lint 이슈를 잡기 위한 개발자 편의 장치입니다. 실제 강제 계층은 CI의 `pnpm lint` job이므로, hook을 활성화하지 않은 contributor도 PR 단계에서 lint 실패를 보게 됩니다.
+
 ## Troubleshooting
 
 ### `[@ait-co/devtools] XXX.method is not mocked` 에러가 날 때
