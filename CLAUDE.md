@@ -21,7 +21,7 @@
 ## 기술 스택
 
 - **TypeScript** (ESM only, `"type": "module"`)
-- **tsup** — 빌드 (ESM + CJS for unplugin)
+- **tsdown** — 빌드 (ESM + CJS for unplugin)
 - **vitest** — 테스트 (jsdom 환경)
 - **unplugin** — 모든 번들러 지원 (유일한 runtime dependency)
 - **pnpm** — 패키지 매니저
@@ -30,7 +30,7 @@
 ## 명령어
 
 ```bash
-pnpm build          # tsup으로 dist/ 빌드
+pnpm build          # tsdown으로 dist/ 빌드
 pnpm dev            # watch 모드
 pnpm typecheck      # tsc --noEmit (원본 SDK 대비 타입 호환성 검증 포함)
 pnpm test           # vitest 실행
