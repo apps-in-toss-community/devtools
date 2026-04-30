@@ -1,16 +1,15 @@
 # TODO
 
 ## High Priority
-- [ ] Verify E2E tests pass against the cloned `sdk-example` repo — `playwright.config.ts` was changed to git-clone and build sdk-example before running E2E; run the full suite end-to-end in CI to confirm the migration works
-  - [ ] Audit `e2e/panel.test.ts` selectors against the current sdk-example markup; selectors from the old `examples/vite-react` UI will fail
-  - [x] Document the new E2E dev loop in `CLAUDE.md`
-  - [ ] Wire the E2E suite into PR CI (currently only `build-and-test` runs on PRs; E2E is not gating)
+- [x] E2E suite runs against the self-contained `e2e/fixture/` Vite app (PR #63 superseded the proposed sdk-example clone approach — fixture is faster to iterate on and removes the cross-repo coupling).
+  - [x] `e2e/panel.test.ts` selectors match the fixture's testid convention (`section-<id>`, `<id>-btn`, `<id>-result`, etc.); enforced by `e2e/fixture/helpers.ts`.
+  - [x] Document the E2E dev loop in `CLAUDE.md`.
+  - [x] Wire the E2E suite into PR CI as a required `e2e` job in `.github/workflows/ci.yml`.
 
 ## Medium Priority
-- [ ] Consider a stable sdk-example ref for E2E — currently clones `main` which can break E2E when sdk-example ships UI changes. Pin to a tag or commit SHA, bump deliberately.
-- [ ] Cut a 0.1.0 release documenting the sdk-example migration — verify the release workflow, write release notes
+- [ ] Cut a 0.1.0 release once the API surface stabilises — verify the release workflow, write release notes.
 - [ ] Document the relationship with `sdk-example` in README
-  - [ ] Explain that sdk-example is the reference consumer
+  - [ ] Explain that sdk-example is the reference consumer (separate from the E2E fixture, which is purely an internal test harness).
   - [ ] Link to the deployed web demo (https://apps-in-toss-community.github.io/sdk-example/)
   - [ ] Note the bidirectional SDK update flow (devtools tracks `@apps-in-toss/web-framework`; sdk-example tracks both)
 

@@ -35,3 +35,48 @@ jobs:
       - run: pnpm typecheck
 
       - run: pnpm test
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Cache Playwright browsers keyed on the resolved @playwright/test version
+      # so version bumps invalidate the cache automatically.
+      - id: playwright-version
+        run: |
+          version=$(node -e 'const j=JSON.parse(require("child_process").execSync("pnpm list @playwright/test --depth=0 --json").toString());console.log(j[0].devDependencies["@playwright/test"].version)')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      # webServer in playwright.config.ts builds devtools (`pnpm build`) and
+      # the e2e/fixture/ Vite app, then serves the preview on :4173.
+      - run: pnpm test:e2e
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
