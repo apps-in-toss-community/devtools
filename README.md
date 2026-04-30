@@ -1,7 +1,5 @@
 # @ait-co/devtools
 
-> **데모: https://apps-in-toss-community.github.io/devtools/**
-
 `@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
 
 앱인토스(Apps in Toss) 미니앱을 **일반 브라우저**에서 개발하고 테스트할 수 있게 해줍니다. 토스 앱 없이도 SDK의 모든 기능을 시뮬레이션하여 빠른 개발 사이클을 지원합니다.
