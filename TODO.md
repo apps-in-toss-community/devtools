@@ -17,6 +17,14 @@
 ## Low Priority
 - [ ] Enrich existing panel tabs to catch up with sdk-example's interactive surface — e.g. IAP pending-orders / completed-orders viewer, Ads event simulator for load/show lifecycle
 - [ ] Add a `devtools`-provided mock state preset library — save/load common scenarios (e.g. "permission denied", "offline", "subscription expired") for faster QA
+- [ ] Migrate the devtools demo to `devtools.aitc.dev` custom domain (cross-repo decision; see umbrella `CLAUDE.md` § 운영 도메인 정책).
+  - **Current state**: `devtools` has no Pages workflow in this repo. The previous `.github/workflows/deploy-pages.yml` was removed in #50 (`refactor: migrate from examples/vite-react to sdk-example repo`). The URL `https://apps-in-toss-community.github.io/devtools/` still serves a stale leftover deployment, and `README.md:3` still links to it. A real demo today lives only via the sdk-example app.
+  - **Decision needed first**: what does `devtools.aitc.dev` actually host? Two reasonable options — (a) re-add a tiny Pages deploy of `e2e/fixture/` so `devtools.aitc.dev` is a self-contained "open this URL to see the panel" demo, or (b) drop the demo URL idea entirely and update `README.md` to point at `sdk-example.aitc.dev` (which already exercises devtools end-to-end). Pick before doing anything below.
+  - If (a): add `.github/workflows/deploy-pages.yml` that builds devtools + `e2e/fixture/`, write the fixture's built assets plus a `CNAME` file (`devtools.aitc.dev`) into the Pages artifact. Set Vite `base: '/'` in `e2e/fixture/vite.config.ts` (currently relies on relative paths via `vite preview`; verify).
+  - If (b): no Pages work; just update `README.md:3` to point at `https://sdk-example.aitc.dev/` and (optionally) request GitHub support to disable the stale `apps-in-toss-community.github.io/devtools/` deployment.
+  - Either way: update `package.json#homepage` if/when set, and add Cloudflare DNS `CNAME devtools apps-in-toss-community.github.io.` only when option (a) is chosen.
+  - GitHub Settings → Pages → Custom domain: `devtools.aitc.dev`, Enforce HTTPS (option (a) only).
+  - Verify `https://devtools.aitc.dev/` serves whatever was decided, and the README link no longer points to a stale page.
 
 ## Viewport / device simulation follow-ups
 - [ ] **Apps in Toss nav bar: `game` variant** — Viewport 탭은 현재 `partner` 타입(흰 배경, 앱 아이콘 + 이름 + ⋯ + ×)만 렌더한다. `game` 타입(투명 배경, ⋯ + × 만, 로고/이름 없음)을 토글로 추가. Config docs의 `webViewProps.type: 'game' | 'partner'` 값을 참고.
