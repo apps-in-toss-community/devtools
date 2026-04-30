@@ -1,0 +1,20 @@
+{
+  "hooks": {
+    "worktree.post_create": [
+      {
+        "id": "setup-worktree",
+        "command": "./scripts/setup-worktree.sh",
+        "description": "Install pnpm deps in new worktree",
+        "enabled": true
+      }
+    ],
+    "worktree.pre_delete": [
+      {
+        "id": "kill-processes",
+        "command": "./scripts/cleanup-worktree-processes.sh",
+        "description": "Kill dev/test/server processes running in this worktree",
+        "enabled": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+# .cwshare - Files to copy to new worktrees.
+#
+# Listed paths are copied from the source worktree to the new one when you
+# run `cw new`. Useful for local-only configs that aren't tracked in git.
+#
+# Format:
+#   - One file/directory path per line (relative to repo root)
+#   - Lines starting with # are comments
+#   - Empty lines are ignored
+#
+# This repo currently has no untracked local config files to share.
