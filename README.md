@@ -10,6 +10,10 @@
 - **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (9개 탭)
 - **모든 번들러 지원** — [unplugin](https://github.com/unjs/unplugin) 기반 Vite, Webpack, Rspack, esbuild, Rollup 통합
 
+## Reference consumer
+
+[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example)이 devtools의 reference consumer다. 모든 SDK API를 인터랙티브하게 실행해볼 수 있는 카탈로그 앱으로, 웹 데모는 <https://sdk-example.aitc.dev/>에서 바로 확인할 수 있다. 새 mock을 추가하면 sdk-example의 카드에서 그대로 동작하는 게 1차 sanity check. 단, 이 repo의 E2E suite는 sdk-example을 clone하지 않고 **내부 자기완결 fixture(`e2e/fixture/`)** 로 운영한다 — sdk-example이 깨져도 devtools CI는 영향받지 않는다.
+
 ## 설치
 
 ```bash
@@ -587,6 +591,8 @@ it('Storage에 값을 저장하고 읽을 수 있다', async () => {
 ```
 
 ## SDK 업데이트 대응
+
+devtools는 [`@apps-in-toss/web-framework`](https://www.npmjs.com/package/@apps-in-toss/web-framework)를 추적하고, [`sdk-example`](https://github.com/apps-in-toss-community/sdk-example)은 원본 SDK와 devtools를 모두 추적한다. 즉 새 SDK 버전이 나오면 (1) devtools가 mock/타입 시그니처를 따라잡고 → (2) sdk-example이 양쪽 새 버전을 동시에 반영하는 흐름. devtools 단독 PR이 sdk-example을 깨뜨리면 양쪽을 함께 본다.
 
 세 가지 메커니즘으로 SDK 변경에 안전하게 대응합니다:
 
