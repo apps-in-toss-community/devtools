@@ -21,6 +21,7 @@ import type {
 } from './types.js';
 
 export type {
+  AitNavBarType,
   AnalyticsLogEntry,
   AppOrientation,
   DeviceApiMode,
@@ -257,6 +258,7 @@ const DEFAULT_STATE: AitDevtoolsState = {
     customHeight: 874,
     frame: false,
     aitNavBar: true,
+    aitNavBarType: 'partner',
   },
 };
 

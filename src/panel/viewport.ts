@@ -9,6 +9,7 @@
 import { closeView } from '../mock/navigation/index.js';
 import { aitState } from '../mock/state.js';
 import type {
+  AitNavBarType,
   AppOrientation,
   LandscapeSide,
   SafeAreaInsets,
@@ -317,7 +318,11 @@ function removeNavBarElement(): void {
 
 /**
  * Apps in Toss host nav bar 렌더. OS status bar 아래에 48px 높이로 쌓인다.
- * 구성: 좌측 뒤로가기(‹), 앱 아이콘 + 이름(`brand.displayName`), 우측 `⋯` + 구분선 + `×`.
+ *
+ * 변형(SDK `webViewProps.type`과 의미 일치):
+ * - `partner` (기본): 흰 배경, 좌측 뒤로가기(‹), 앱 아이콘 + 이름(`brand.displayName`),
+ *   우측 `⋯` + 구분선 + `×`.
+ * - `game`: 투명 배경, 게임 캔버스를 가리지 않도록 우측 `⋯` + 구분선 + `×`만.
  *
  * `env(safe-area-inset-top)`에는 이 높이가 포함되지 않으므로 (공식 SDK 확인),
  * 오버레이는 preset.safeAreaTop만큼 아래로 내려서 그린다.
@@ -325,24 +330,14 @@ function removeNavBarElement(): void {
  * 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출한다.
  * 실제 SDK 이벤트 플러밍을 한 곳에서 검증할 수 있다.
  */
-function renderNavBar(preset: ViewportPreset, displayName: string): void {
+function renderNavBar(preset: ViewportPreset, displayName: string, type: AitNavBarType): void {
   removeNavBarElement();
   const el = h('div', {
     id: NAV_BAR_ELEMENT_ID,
-    className: 'ait-navbar',
+    className: `ait-navbar ait-navbar-${type}`,
     'aria-hidden': 'true',
   });
   el.style.top = `${preset.safeAreaTop}px`;
-
-  const backBtn = h('button', {
-    className: 'ait-navbar-btn ait-navbar-back',
-    type: 'button',
-    'aria-label': 'Back',
-  });
-  backBtn.textContent = '‹';
-  backBtn.addEventListener('click', () => {
-    aitState.trigger('backEvent');
-  });
 
   const moreBtn = h('button', {
     className: 'ait-navbar-btn',
@@ -361,25 +356,42 @@ function renderNavBar(preset: ViewportPreset, displayName: string): void {
     closeView().catch((err) => console.error('[@ait-co/devtools] navbar close failed:', err));
   });
 
-  const nameSpan = h('span', { className: 'ait-navbar-name' });
-  nameSpan.textContent = displayName;
-
-  el.append(
-    backBtn,
-    h(
-      'div',
-      { className: 'ait-navbar-title' },
-      h('span', { className: 'ait-navbar-icon' }),
-      nameSpan,
-    ),
-    h(
-      'div',
-      { className: 'ait-navbar-actions' },
-      moreBtn,
-      h('span', { className: 'ait-navbar-divider' }),
-      closeBtn,
-    ),
+  const actions = h(
+    'div',
+    { className: 'ait-navbar-actions' },
+    moreBtn,
+    h('span', { className: 'ait-navbar-divider' }),
+    closeBtn,
   );
+
+  if (type === 'game') {
+    // Game: 투명 배경, back/title 없음, 우측 actions만 (실제 토스 host 동작과 일치).
+    el.append(actions);
+  } else {
+    const backBtn = h('button', {
+      className: 'ait-navbar-btn ait-navbar-back',
+      type: 'button',
+      'aria-label': 'Back',
+    });
+    backBtn.textContent = '‹';
+    backBtn.addEventListener('click', () => {
+      aitState.trigger('backEvent');
+    });
+
+    const nameSpan = h('span', { className: 'ait-navbar-name' });
+    nameSpan.textContent = displayName;
+
+    el.append(
+      backBtn,
+      h(
+        'div',
+        { className: 'ait-navbar-title' },
+        h('span', { className: 'ait-navbar-icon' }),
+        nameSpan,
+      ),
+      actions,
+    );
+  }
 
   document.body.appendChild(el);
 }
@@ -498,7 +510,7 @@ export function applyViewport(state: ViewportState): void {
   else removeHomeIndicator();
 
   if (preset && state.aitNavBar && !landscape) {
-    renderNavBar(preset, aitState.state.brand.displayName);
+    renderNavBar(preset, aitState.state.brand.displayName, state.aitNavBarType);
   } else {
     removeNavBarElement();
   }
@@ -554,6 +566,9 @@ export function loadViewportFromStorage(): Partial<ViewportState> | null {
     if (isValidCustomDimension(obj.customHeight)) next.customHeight = obj.customHeight;
     if (typeof obj.frame === 'boolean') next.frame = obj.frame;
     if (typeof obj.aitNavBar === 'boolean') next.aitNavBar = obj.aitNavBar;
+    if (obj.aitNavBarType === 'partner' || obj.aitNavBarType === 'game') {
+      next.aitNavBarType = obj.aitNavBarType;
+    }
     return next;
   } catch {
     return null;

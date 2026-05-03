@@ -29,6 +29,7 @@ function makeState(overrides: Partial<ViewportState> = {}): ViewportState {
     customHeight: 874,
     frame: false,
     aitNavBar: true,
+    aitNavBarType: 'partner',
     ...overrides,
   };
 }
@@ -241,6 +242,34 @@ describe('applyViewport (DOM)', () => {
   it('landscape에서는 nav bar 오버레이를 숨긴다', () => {
     applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, orientation: 'landscape' }));
     expect(document.getElementById('__ait-viewport-navbar')).toBeNull();
+  });
+
+  it('aitNavBarType=partner는 ait-navbar-partner 클래스 + back/title/actions 모두 렌더', () => {
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, aitNavBarType: 'partner' }));
+    const navBar = document.getElementById('__ait-viewport-navbar');
+    expect(navBar?.classList.contains('ait-navbar-partner')).toBe(true);
+    expect(navBar?.querySelector('.ait-navbar-back')).not.toBeNull();
+    expect(navBar?.querySelector('.ait-navbar-title')).not.toBeNull();
+    expect(navBar?.querySelector('.ait-navbar-actions')).not.toBeNull();
+  });
+
+  it('aitNavBarType=game은 back/title을 생략하고 actions만 렌더', () => {
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, aitNavBarType: 'game' }));
+    const navBar = document.getElementById('__ait-viewport-navbar');
+    expect(navBar).not.toBeNull();
+    expect(navBar?.classList.contains('ait-navbar-game')).toBe(true);
+    expect(navBar?.querySelector('.ait-navbar-back')).toBeNull();
+    expect(navBar?.querySelector('.ait-navbar-title')).toBeNull();
+    expect(navBar?.querySelector('.ait-navbar-name')).toBeNull();
+    expect(navBar?.querySelector('.ait-navbar-actions')).not.toBeNull();
+  });
+
+  it('aitNavBarType을 patch하면 nav bar가 다시 렌더된다 (partner→game)', () => {
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, aitNavBarType: 'partner' }));
+    expect(document.querySelector('.ait-navbar.ait-navbar-partner')).not.toBeNull();
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, aitNavBarType: 'game' }));
+    expect(document.querySelector('.ait-navbar.ait-navbar-partner')).toBeNull();
+    expect(document.querySelector('.ait-navbar.ait-navbar-game')).not.toBeNull();
   });
 
   it('nav bar는 preset.safeAreaTop만큼 아래로 이동한다 (status bar 아래)', () => {
@@ -515,6 +544,7 @@ describe('sessionStorage persistence', () => {
         customHeight: 900,
         frame: false,
         aitNavBar: false,
+        aitNavBarType: 'game',
       }),
     );
     const restored = loadViewportFromStorage();
@@ -527,7 +557,16 @@ describe('sessionStorage persistence', () => {
       customHeight: 900,
       frame: false,
       aitNavBar: false,
+      aitNavBarType: 'game',
     });
+  });
+
+  it('잘못된 aitNavBarType은 무시한다', () => {
+    sessionStorage.setItem(
+      VIEWPORT_STORAGE_KEY,
+      JSON.stringify({ aitNavBarType: 'not-a-real-type' }),
+    );
+    expect(loadViewportFromStorage()?.aitNavBarType).toBeUndefined();
   });
 
   it('잘못된 preset id는 무시한다', () => {
@@ -643,6 +682,7 @@ describe('body-scroll hint (console.info)', () => {
       customHeight: 0,
       frame: false,
       aitNavBar: false,
+      aitNavBarType: 'partner',
     });
     expect(info).toHaveBeenCalledTimes(1);
     expect(info.mock.calls[0][0]).toContain('Viewport simulation active');
@@ -656,6 +696,7 @@ describe('body-scroll hint (console.info)', () => {
       customHeight: 0,
       frame: false,
       aitNavBar: false,
+      aitNavBarType: 'partner',
     });
     expect(info).toHaveBeenCalledTimes(1); // not re-emitted
 
@@ -674,13 +715,14 @@ describe('aitState.viewport integration', () => {
     disposeViewport();
   });
 
-  it('기본값은 preset=none, orientation=auto, appOrientation=null, landscapeSide=left, aitNavBar=true', () => {
+  it('기본값은 preset=none, orientation=auto, appOrientation=null, landscapeSide=left, aitNavBar=true, aitNavBarType=partner', () => {
     expect(aitState.state.viewport.preset).toBe('none');
     expect(aitState.state.viewport.orientation).toBe('auto');
     expect(aitState.state.viewport.appOrientation).toBeNull();
     expect(aitState.state.viewport.landscapeSide).toBe('left');
     expect(aitState.state.viewport.frame).toBe(false);
     expect(aitState.state.viewport.aitNavBar).toBe(true);
+    expect(aitState.state.viewport.aitNavBarType).toBe('partner');
   });
 
   it('patch로 프리셋을 변경할 수 있다', () => {

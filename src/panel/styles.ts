@@ -506,6 +506,22 @@ export const PANEL_STYLES = /* css */ `
   .ait-navbar-back { padding: 0 8px; font-size: 24px; }
   .ait-navbar-divider { width: 1px; height: 16px; background: rgba(0, 0, 0, 0.15); }
 
+  /* Game variant: 투명 배경, 우측 actions만 — 풀스크린 게임 캔버스를 가리지 않는다 */
+  .ait-navbar.ait-navbar-game {
+    background: transparent;
+    backdrop-filter: none;
+    justify-content: flex-end;
+    color: #fff;
+  }
+  .ait-navbar.ait-navbar-game .ait-navbar-actions {
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+  }
+  .ait-navbar.ait-navbar-game .ait-navbar-divider {
+    background: rgba(255, 255, 255, 0.3);
+  }
+  .ait-navbar.ait-navbar-game .ait-navbar-btn:hover { color: #8ab4ff; }
+
   @media (max-width: ${PANEL_FULLSCREEN_BREAKPOINT}px) {
     .ait-panel.open {
       position: fixed;

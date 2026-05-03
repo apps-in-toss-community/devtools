@@ -1,5 +1,10 @@
 import { aitState } from '../../mock/state.js';
-import type { LandscapeSide, ViewportOrientation, ViewportPresetId } from '../../mock/types.js';
+import type {
+  AitNavBarType,
+  LandscapeSide,
+  ViewportOrientation,
+  ViewportPresetId,
+} from '../../mock/types.js';
 import { h, monitoringNotice } from '../helpers.js';
 import {
   AIT_NAV_BAR_HEIGHT,
@@ -125,6 +130,18 @@ export function renderViewportTab(): HTMLElement {
     aitState.patch('viewport', { aitNavBar: navBarCheckbox.checked });
   });
 
+  // --- Nav bar type (partner / game) — only meaningful when aitNavBar is on ---
+  const navBarTypeSelect = h('select', { className: 'ait-select' });
+  if (disabled || !vp.aitNavBar) navBarTypeSelect.disabled = true;
+  for (const opt of ['partner', 'game'] as AitNavBarType[]) {
+    const option = h('option', { value: opt }, opt);
+    if (opt === vp.aitNavBarType) option.selected = true;
+    navBarTypeSelect.appendChild(option);
+  }
+  navBarTypeSelect.addEventListener('change', () => {
+    aitState.patch('viewport', { aitNavBarType: navBarTypeSelect.value as AitNavBarType });
+  });
+
   // --- Status panel: applied size + HiDPI + safe area ---
   const size = resolveViewportSize(vp);
   const statusEl = h('div', { className: 'ait-section' });
@@ -183,7 +200,11 @@ export function renderViewportTab(): HTMLElement {
           'div',
           { className: 'ait-status-row' },
           h('span', {}, 'AIT nav bar'),
-          h('span', { className: 'ait-status-value' }, `${AIT_NAV_BAR_HEIGHT}px (excl. SafeArea)`),
+          h(
+            'span',
+            { className: 'ait-status-value' },
+            `${AIT_NAV_BAR_HEIGHT}px (excl. SafeArea) · ${vp.aitNavBarType}`,
+          ),
         ),
       );
     }
@@ -225,6 +246,7 @@ export function renderViewportTab(): HTMLElement {
         h('label', {}, 'Show Apps in Toss nav bar'),
         navBarCheckbox,
       ),
+      h('div', { className: 'ait-row' }, h('label', {}, 'Nav bar type'), navBarTypeSelect),
     ),
     statusEl,
   );
