@@ -2,6 +2,8 @@
 
 조직 공통 규칙(프로젝트 성격, 공통 스택, pre-commit hook, 버전·Changesets 정책, MCP 전략, gw, TODO, 짝 관계 전체 그림)은 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md) 및 [`meta/mcp-strategy.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/meta/mcp-strategy.md) / [`meta/release-strategy.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/meta/release-strategy.md)가 source of truth. 이 파일은 devtools repo only knowledge만 담는다.
 
+PR 머지 시 umbrella `TODO.md` sync 책임이 작성자에게 있다 (관련 항목 close + 새 follow-up 추가). 상세는 umbrella [`CLAUDE.md` "TODO 관리"](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md#todo-관리--umbrella가-single-source-of-truth).
+
 ## 프로젝트 성격 (요약)
 
 `apps-in-toss-community`는 비공식(unofficial) 오픈소스 커뮤니티. 토스 팀과 제휴 없음. 산출물에서 "공식/official/powered by Toss" 등 제휴·후원·인증 암시 표현 금지. 상세는 umbrella [`CLAUDE.md`](https://github.com/apps-in-toss-community/umbrella/blob/main/CLAUDE.md).
