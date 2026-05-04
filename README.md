@@ -325,6 +325,9 @@ __ait.patch('viewport', { preset: 'custom', customWidth: 360, customHeight: 740 
 // 앱인토스 nav bar 숨기기 (순수 뷰포트만 보고 싶을 때)
 __ait.patch('viewport', { aitNavBar: false });
 
+// Nav bar 변형 토글 ('partner' = 흰 배경 + 아이콘/이름, 'game' = 투명 배경 + ⋯/× 만)
+__ait.patch('viewport', { aitNavBarType: 'game' });
+
 // 해제
 __ait.patch('viewport', { preset: 'none' });
 ```

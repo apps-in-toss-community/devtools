@@ -38,6 +38,40 @@ describe('renderViewportTab', () => {
     expect(root.textContent).not.toContain('AIT nav bar');
   });
 
+  it('Nav bar type select가 노출되고 현재 값(partner)이 선택되어 있다', () => {
+    aitState.patch('viewport', { preset: 'iphone-17-pro', aitNavBar: true });
+    const root = renderViewportTab();
+    expect(root.textContent).toContain('Nav bar type');
+    const typeSelect = Array.from(root.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'partner'),
+    ) as HTMLSelectElement | undefined;
+    expect(typeSelect).not.toBeUndefined();
+    expect(typeSelect?.value).toBe('partner');
+  });
+
+  it('Nav bar type select 변경 시 patch가 호출되고 status 라벨도 game으로 갱신된다', () => {
+    aitState.patch('viewport', { preset: 'iphone-17-pro', aitNavBar: true });
+    const root = renderViewportTab();
+    const typeSelect = Array.from(root.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'partner'),
+    ) as HTMLSelectElement;
+    typeSelect.value = 'game';
+    typeSelect.dispatchEvent(new Event('change'));
+    expect(aitState.state.viewport.aitNavBarType).toBe('game');
+
+    const refreshed = renderViewportTab();
+    expect(refreshed.textContent).toContain('· game');
+  });
+
+  it('aitNavBar=false이면 Nav bar type select는 disabled', () => {
+    aitState.patch('viewport', { preset: 'iphone-17-pro', aitNavBar: false });
+    const root = renderViewportTab();
+    const typeSelect = Array.from(root.querySelectorAll('select')).find((s) =>
+      Array.from(s.options).some((o) => o.value === 'partner'),
+    ) as HTMLSelectElement;
+    expect(typeSelect.disabled).toBe(true);
+  });
+
   it('preset=custom에서 width/height 입력 필드가 노출된다', () => {
     aitState.patch('viewport', { preset: 'custom' });
     const root = renderViewportTab();

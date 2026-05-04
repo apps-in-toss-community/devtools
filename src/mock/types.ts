@@ -126,6 +126,13 @@ export type LandscapeSide = 'left' | 'right';
 
 export type NotchType = 'none' | 'notch' | 'dynamic-island' | 'punch-hole-center';
 
+/**
+ * Apps in Toss host nav bar 변형. SDK `webViewProps.type`과 의미 일치.
+ * - `partner` (기본): 흰 배경, 뒤로가기 + 앱 아이콘/이름 + ⋯ + ×.
+ * - `game`: 투명 배경, 게임 캔버스를 가리지 않도록 ⋯ + ×만 표시.
+ */
+export type AitNavBarType = 'partner' | 'game';
+
 export interface ViewportPreset {
   id: ViewportPresetId;
   label: string;
@@ -158,4 +165,6 @@ export interface ViewportState {
   frame: boolean;
   /** Render the Apps in Toss host nav bar (back / app name / ··· / close) inside the frame. */
   aitNavBar: boolean;
+  /** Nav bar 변형. `partner` = 기본(흰 배경 + 아이콘/이름), `game` = 투명 배경 + ⋯/× 만. */
+  aitNavBarType: AitNavBarType;
 }
