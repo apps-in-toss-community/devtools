@@ -106,6 +106,15 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.4.0 <2.4.8`)만 
 
 **지원 범위 확장 (예: 2.4.8 publish됨):** `pnpm add -D @apps-in-toss/web-framework@2.4.8` → `pnpm typecheck`로 시그니처 변경 확인 → `package.json` peer range를 `>=2.4.0 <2.4.9`로 → (matrix 도입 후) CI matrix에 `2.4.8` 추가 → 단일 PR로 일관된 상태 유지.
 
+**SDK breaking change 대응:** 한 devtools 패키지가 호환되지 않는 SDK를 동시 지원하지 않는다 — devtools도 함께 bump한다.
+
+1. 새 SDK 대응은 `main`에서 진행. peer range를 새 SDK 라인 한 줄로 교체, 이전 라인은 제거.
+2. 직전 라인은 `release/<prev>.x` maintenance 브랜치로 분기. patch만 cherry-pick으로 백포팅.
+3. `__typecheck.ts`의 `import * as Original`을 새 SDK로 바꾸고 깨진 시그니처를 mock에 맞춰 수정. `unplugin/index.ts`의 패키지명 상수(`FRAMEWORK_ID` 등)도 SDK가 rename된 경우 함께 갱신.
+4. devtools 자체도 호환성 끊김에 맞춰 bump (Changesets). 사용자는 SDK 업그레이드와 함께 devtools도 같은 라인으로 올린다.
+
+같은 devtools 안에서 SDK 라인별 런타임 분기는 하지 않는다 (mock 본체가 두 벌이 되어 비용이 큼). 동시 지원 윈도우가 정말 필요해지면 그때 별도 결정.
+
 ## 패키지 export 구조
 
 | Import path | 용도 |
