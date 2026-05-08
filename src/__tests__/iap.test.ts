@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checkoutPayment, IAP } from '../mock/iap/index.js';
 import { aitState } from '../mock/state.js';
+import { renderIapTab } from '../panel/tabs/iap.js';
 
 describe('IAP mock', () => {
   beforeEach(() => {
@@ -92,6 +93,101 @@ describe('IAP mock', () => {
     expect(aitState.state.iap.completedOrders).toContainEqual(
       expect.objectContaining({ orderId: 'order-1', status: 'COMPLETED' }),
     );
+  });
+
+  describe('panel orders viewer (renderIapTab)', () => {
+    it('pending/completed가 비어있으면 빈 메시지를 노출한다', () => {
+      const root = renderIapTab();
+      const text = root.textContent ?? '';
+      expect(text).toContain('Pending Orders (0)');
+      expect(text).toContain('(no pending orders)');
+      expect(text).toContain('Completed Orders (0)');
+      expect(text).toContain('(no completed orders)');
+    });
+
+    it('pending order는 sku와 orderId 일부, Complete 버튼을 노출한다', () => {
+      aitState.patch('iap', {
+        pendingOrders: [
+          {
+            orderId: 'order-p-123',
+            sku: 'mock-gem-100',
+            paymentCompletedDate: new Date('2026-05-08T10:00:00Z').toISOString(),
+          },
+        ],
+      });
+      const root = renderIapTab();
+      const text = root.textContent ?? '';
+      expect(text).toContain('Pending Orders (1)');
+      expect(text).toContain('mock-gem-100');
+      expect(text).toContain('PENDING');
+      expect(text).toContain('order-p-123');
+
+      const buttons = Array.from(root.querySelectorAll('button')).filter(
+        (b) => b.textContent === 'Complete',
+      );
+      expect(buttons).toHaveLength(1);
+    });
+
+    it('Complete 버튼 클릭 시 mock의 completeProductGrant가 호출되고 state가 이동한다', async () => {
+      aitState.patch('iap', {
+        pendingOrders: [
+          {
+            orderId: 'mock-order-complete-1',
+            sku: 'mock-gem-100',
+            paymentCompletedDate: new Date().toISOString(),
+          },
+        ],
+      });
+      const root = renderIapTab();
+      const completeBtn = Array.from(root.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Complete',
+      ) as HTMLButtonElement;
+      completeBtn.click();
+      // completeProductGrant는 await 없이 sync로 state를 patch하고 Promise를 리턴
+      await Promise.resolve();
+
+      expect(aitState.state.iap.pendingOrders).toHaveLength(0);
+      expect(aitState.state.iap.completedOrders).toContainEqual(
+        expect.objectContaining({ orderId: 'mock-order-complete-1', status: 'COMPLETED' }),
+      );
+    });
+
+    it('completed order는 sku, status, orderId 일부를 노출한다', () => {
+      aitState.patch('iap', {
+        completedOrders: [
+          {
+            orderId: 'order-c-789',
+            sku: 'mock-gem-100',
+            status: 'COMPLETED',
+            date: new Date().toISOString(),
+          },
+        ],
+      });
+      const root = renderIapTab();
+      const text = root.textContent ?? '';
+      expect(text).toContain('Completed Orders (1)');
+      expect(text).toContain('mock-gem-100');
+      expect(text).toContain('COMPLETED');
+      expect(text).toContain('order-c-789');
+    });
+
+    it('panelEditable=false이면 Complete 버튼이 disabled', () => {
+      aitState.patch('iap', {
+        pendingOrders: [
+          {
+            orderId: 'mock-order-readonly-1',
+            sku: 'mock-gem-100',
+            paymentCompletedDate: new Date().toISOString(),
+          },
+        ],
+      });
+      aitState.update({ panelEditable: false });
+      const root = renderIapTab();
+      const completeBtn = Array.from(root.querySelectorAll('button')).find(
+        (b) => b.textContent === 'Complete',
+      ) as HTMLButtonElement;
+      expect(completeBtn.disabled).toBe(true);
+    });
   });
 
   describe('checkoutPayment', () => {
