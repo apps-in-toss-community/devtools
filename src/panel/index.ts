@@ -313,7 +313,7 @@ function mount() {
     });
   });
 
-  // 상태 변경 시 자동 갱신 (analytics, storage 탭)
+  // 상태 변경 시 자동 갱신 (analytics, storage, device, viewport, iap 탭)
   // Defense-in-depth: outer catch complements refreshPanel's inner tab-rendering catch.
   aitState.subscribe(() => {
     try {

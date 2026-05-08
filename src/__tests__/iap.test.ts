@@ -106,10 +106,11 @@ describe('IAP mock', () => {
     });
 
     it('pending order는 sku와 orderId 일부, Complete 버튼을 노출한다', () => {
+      // 13자 이상이어야 shortOrderId가 …suffix 형태로 잘라낸다
       aitState.patch('iap', {
         pendingOrders: [
           {
-            orderId: 'order-p-123',
+            orderId: 'mock-order-pending-abcd1234',
             sku: 'mock-gem-100',
             paymentCompletedDate: new Date('2026-05-08T10:00:00Z').toISOString(),
           },
@@ -120,12 +121,30 @@ describe('IAP mock', () => {
       expect(text).toContain('Pending Orders (1)');
       expect(text).toContain('mock-gem-100');
       expect(text).toContain('PENDING');
-      expect(text).toContain('order-p-123');
+      // shortOrderId가 마지막 10자만 노출 (… prefix + slice(-10))
+      expect(text).toContain('…g-abcd1234');
+      expect(text).not.toContain('mock-order-pending-abcd1234');
 
       const buttons = Array.from(root.querySelectorAll('button')).filter(
         (b) => b.textContent === 'Complete',
       );
       expect(buttons).toHaveLength(1);
+    });
+
+    it('짧은 orderId(12자 이하)는 truncate 없이 그대로 노출한다', () => {
+      aitState.patch('iap', {
+        pendingOrders: [
+          {
+            orderId: 'short-id-12',
+            sku: 'mock-gem-100',
+            paymentCompletedDate: new Date().toISOString(),
+          },
+        ],
+      });
+      const root = renderIapTab();
+      const text = root.textContent ?? '';
+      expect(text).toContain('short-id-12');
+      expect(text).not.toContain('…short-id-12');
     });
 
     it('Complete 버튼 클릭 시 mock의 completeProductGrant가 호출되고 state가 이동한다', async () => {
@@ -156,7 +175,7 @@ describe('IAP mock', () => {
       aitState.patch('iap', {
         completedOrders: [
           {
-            orderId: 'order-c-789',
+            orderId: 'mock-order-done-xyz9876',
             sku: 'mock-gem-100',
             status: 'COMPLETED',
             date: new Date().toISOString(),
@@ -168,7 +187,7 @@ describe('IAP mock', () => {
       expect(text).toContain('Completed Orders (1)');
       expect(text).toContain('mock-gem-100');
       expect(text).toContain('COMPLETED');
-      expect(text).toContain('order-c-789');
+      expect(text).toContain('…ne-xyz9876');
     });
 
     it('panelEditable=false이면 Complete 버튼이 disabled', () => {
