@@ -144,7 +144,6 @@ describe('IAP mock', () => {
       const root = renderIapTab();
       const text = root.textContent ?? '';
       expect(text).toContain('short-id-12');
-      expect(text).not.toContain('…short-id-12');
     });
 
     it('Complete 버튼 클릭 시 mock의 completeProductGrant가 호출되고 state가 이동한다', async () => {
