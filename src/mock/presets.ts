@@ -19,12 +19,16 @@ import { aitState } from './state.js';
  * 일부러 좁게 잡았다: viewport / brand / mockData / analyticsLog 등 QA 시나리오와
  * 직접 관련 없는 영역은 preset 대상에서 제외한다 (preset 적용으로 unrelated state가
  * 흔들리는 사고 방지). 필요해지면 추가.
+ *
+ * `iap` slice는 일부러 `nextResult`만 노출한다 — products / pendingOrders /
+ * completedOrders는 array/object 비교가 까다롭고 QA 시나리오에서 강제할 일이 거의
+ * 없다. `captureCurrentState` / `matchesPreset` 의 iap 처리 범위와 동기화.
  */
 export interface MockPresetState {
   networkStatus?: AitDevtoolsState['networkStatus'];
   permissions?: Partial<AitDevtoolsState['permissions']>;
   auth?: Partial<AitDevtoolsState['auth']>;
-  iap?: Partial<AitDevtoolsState['iap']>;
+  iap?: { nextResult?: AitDevtoolsState['iap']['nextResult'] };
   ads?: Partial<AitDevtoolsState['ads']>;
   payment?: Partial<AitDevtoolsState['payment']>;
 }
@@ -109,7 +113,11 @@ export const builtInPresets: readonly MockPreset[] = [
 
 /**
  * Preset의 nested slice를 검증된 키만 골라서 풀어낸다. Forward-compat 차원에서
- * 알지 못하는 키는 조용히 drop, dev 모드에서는 한 번 warn한다.
+ * 알지 못하는 키는 drop, drop된 키 전부를 모아 한 번에 warn한다.
+ *
+ * Value 단위 검증은 하지 않는다 — `permissions.camera`에 enum 외 값이 들어와도
+ * 그대로 통과한다. mock state라 잘못된 값은 mock 함수 분기 결과만 흔든다.
+ * 새 enum 값이 추가됐을 때 저장된 preset을 reject하지 않으려는 의도.
  */
 function pickKnownKeys<T extends object>(
   input: unknown,
@@ -117,16 +125,16 @@ function pickKnownKeys<T extends object>(
 ): Partial<T> {
   if (typeof input !== 'object' || input === null) return {};
   const out: Partial<T> = {};
-  let droppedKey: string | null = null;
+  const dropped: string[] = [];
   for (const [key, value] of Object.entries(input)) {
     if ((allowed as readonly string[]).includes(key)) {
       (out as Record<string, unknown>)[key] = value;
-    } else if (droppedKey === null) {
-      droppedKey = key;
+    } else {
+      dropped.push(key);
     }
   }
-  if (droppedKey !== null) {
-    console.warn(`[@ait-co/devtools] Preset dropped unknown key: ${droppedKey}`);
+  if (dropped.length > 0) {
+    console.warn(`[@ait-co/devtools] Preset dropped unknown keys: ${dropped.join(', ')}`);
   }
   return out;
 }
@@ -140,39 +148,46 @@ const PERMISSION_KEYS = [
   'microphone',
 ] as const;
 const AUTH_KEYS = ['isLoggedIn', 'isTossLoginIntegrated', 'userKeyHash'] as const;
-const IAP_KEYS = ['products', 'nextResult', 'pendingOrders', 'completedOrders'] as const;
+const IAP_KEYS = ['nextResult'] as const;
 const ADS_KEYS = ['isLoaded', 'nextEvent', 'forceNoFill', 'lastEvent'] as const;
 const PAYMENT_KEYS = ['nextResult', 'failReason'] as const;
 
 /**
  * Preset state를 현재 `aitState`에 적용한다. 정의된 키만 덮어쓰고, 알지 못하는 키는
- * 조용히 drop한다 (한 번 warn). 적용 후 한 번의 listener notify가 보장된다.
+ * 조용히 drop한다 (한 번 warn). 여러 슬라이스를 적용해도 listener notify는 한 번이다
+ * (`aitState.transaction` 사용 — panel re-render 폭주 방지).
  */
 export function applyPreset(state: MockPresetState): void {
-  if (state.networkStatus !== undefined) {
-    aitState.update({ networkStatus: state.networkStatus });
-  }
-  if (state.permissions !== undefined) {
-    aitState.patch(
-      'permissions',
-      pickKnownKeys<AitDevtoolsState['permissions']>(state.permissions, PERMISSION_KEYS),
-    );
-  }
-  if (state.auth !== undefined) {
-    aitState.patch('auth', pickKnownKeys<AitDevtoolsState['auth']>(state.auth, AUTH_KEYS));
-  }
-  if (state.iap !== undefined) {
-    aitState.patch('iap', pickKnownKeys<AitDevtoolsState['iap']>(state.iap, IAP_KEYS));
-  }
-  if (state.ads !== undefined) {
-    aitState.patch('ads', pickKnownKeys<AitDevtoolsState['ads']>(state.ads, ADS_KEYS));
-  }
-  if (state.payment !== undefined) {
-    aitState.patch(
-      'payment',
-      pickKnownKeys<AitDevtoolsState['payment']>(state.payment, PAYMENT_KEYS),
-    );
-  }
+  aitState.transaction(() => {
+    if (state.networkStatus !== undefined) {
+      aitState.update({ networkStatus: state.networkStatus });
+    }
+    if (state.permissions !== undefined) {
+      aitState.patch(
+        'permissions',
+        pickKnownKeys<AitDevtoolsState['permissions']>(state.permissions, PERMISSION_KEYS),
+      );
+    }
+    if (state.auth !== undefined) {
+      aitState.patch('auth', pickKnownKeys<AitDevtoolsState['auth']>(state.auth, AUTH_KEYS));
+    }
+    if (state.iap !== undefined) {
+      const picked = pickKnownKeys<{ nextResult: AitDevtoolsState['iap']['nextResult'] }>(
+        state.iap,
+        IAP_KEYS,
+      );
+      aitState.patch('iap', picked);
+    }
+    if (state.ads !== undefined) {
+      aitState.patch('ads', pickKnownKeys<AitDevtoolsState['ads']>(state.ads, ADS_KEYS));
+    }
+    if (state.payment !== undefined) {
+      aitState.patch(
+        'payment',
+        pickKnownKeys<AitDevtoolsState['payment']>(state.payment, PAYMENT_KEYS),
+      );
+    }
+  });
 }
 
 /**

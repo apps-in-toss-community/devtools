@@ -73,12 +73,35 @@ describe('Mock state presets', () => {
       expect(aitState.state.permissions).toBe(before.permissions);
     });
 
-    it('listener notify가 일어난다', () => {
+    it('여러 슬라이스를 적용해도 listener notify는 정확히 1회 (transaction)', () => {
       const listener = vi.fn();
       const unsub = aitState.subscribe(listener);
-      applyPreset({ networkStatus: 'OFFLINE', permissions: { camera: 'denied' } });
-      expect(listener.mock.calls.length).toBeGreaterThan(0);
+      applyPreset({
+        networkStatus: 'OFFLINE',
+        permissions: { camera: 'denied' },
+        auth: { isLoggedIn: false },
+        iap: { nextResult: 'NETWORK_ERROR' },
+        ads: { forceNoFill: true },
+        payment: { nextResult: 'fail', failReason: 'NETWORK_ERROR' },
+      });
+      expect(listener).toHaveBeenCalledTimes(1);
       unsub();
+    });
+
+    it('forward-compat: 다중 unknown keys를 한 번에 warn한다', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      applyPreset({
+        permissions: {
+          camera: 'denied',
+          bogus1: 'denied',
+          bogus2: 'denied',
+        } as unknown as MockPresetState['permissions'],
+      });
+      expect(warn).toHaveBeenCalledTimes(1);
+      const msg = warn.mock.calls[0]?.[0] as string;
+      expect(msg).toContain('bogus1');
+      expect(msg).toContain('bogus2');
+      warn.mockRestore();
     });
 
     it('built-in offline preset은 적용 후 OFFLINE이고 IAP nextResult가 NETWORK_ERROR다', () => {

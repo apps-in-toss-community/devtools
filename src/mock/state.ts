@@ -277,6 +277,7 @@ function generateDeviceId(): string {
 export class AitStateManager {
   private _state: AitDevtoolsState;
   private _listeners = new Set<Listener>();
+  private _inTransaction = false;
 
   constructor() {
     this._state = structuredClone(DEFAULT_STATE);
@@ -315,6 +316,29 @@ export class AitStateManager {
     return () => this._listeners.delete(listener);
   }
 
+  /**
+   * 한 묶음의 update/patch 호출을 묶어 listener notify 1회로 만든다.
+   * preset 적용처럼 여러 슬라이스를 동시에 바꿀 때 panel re-render 폭주를
+   * 방지한다. 중첩 호출은 outermost transaction이 끝날 때 한 번만 notify.
+   *
+   * Rollback은 없다 — `fn`이 throw해도 그때까지의 state 변경은 유지되며
+   * notify는 skip된다(다음 update에서 한꺼번에 보임). DB transaction이 아니라
+   * 단순 batch라고 생각하면 된다.
+   */
+  transaction(fn: () => void): void {
+    if (this._inTransaction) {
+      fn();
+      return;
+    }
+    this._inTransaction = true;
+    try {
+      fn();
+    } finally {
+      this._inTransaction = false;
+    }
+    this._notify();
+  }
+
   /** 분석 로그 추가 */
   logAnalytics(entry: Omit<AnalyticsLogEntry, 'timestamp'>) {
     this._state = {
@@ -336,6 +360,7 @@ export class AitStateManager {
   }
 
   private _notify() {
+    if (this._inTransaction) return;
     for (const listener of this._listeners) {
       listener();
     }

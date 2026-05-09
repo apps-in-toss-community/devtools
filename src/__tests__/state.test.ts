@@ -117,4 +117,56 @@ describe('AitStateManager', () => {
     aitState.reset();
     expect(aitState.state.panelEditable).toBe(true);
   });
+
+  describe('transaction', () => {
+    it('내부의 여러 update/patch를 묶어 listener notify 1회로 만든다', () => {
+      const listener = vi.fn();
+      const unsub = aitState.subscribe(listener);
+
+      aitState.transaction(() => {
+        aitState.update({ locale: 'en-US' });
+        aitState.patch('auth', { isLoggedIn: false });
+        aitState.patch('brand', { displayName: 'Test' });
+      });
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(aitState.state.locale).toBe('en-US');
+      expect(aitState.state.auth.isLoggedIn).toBe(false);
+      expect(aitState.state.brand.displayName).toBe('Test');
+      unsub();
+    });
+
+    it('중첩 transaction은 outermost 종료 시 한 번만 notify한다', () => {
+      const listener = vi.fn();
+      const unsub = aitState.subscribe(listener);
+
+      aitState.transaction(() => {
+        aitState.update({ locale: 'en-US' });
+        aitState.transaction(() => {
+          aitState.patch('auth', { isLoggedIn: false });
+        });
+        aitState.patch('brand', { displayName: 'Test' });
+      });
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      unsub();
+    });
+
+    it('내부에서 throw해도 transaction 상태는 복구된다', () => {
+      const listener = vi.fn();
+      const unsub = aitState.subscribe(listener);
+
+      expect(() => {
+        aitState.transaction(() => {
+          aitState.update({ locale: 'en-US' });
+          throw new Error('boom');
+        });
+      }).toThrow('boom');
+
+      // 다음 update가 정상적으로 notify된다 (transaction flag가 stuck되지 않음)
+      aitState.update({ locale: 'ja-JP' });
+      expect(listener).toHaveBeenCalledTimes(1);
+      unsub();
+    });
+  });
 });
