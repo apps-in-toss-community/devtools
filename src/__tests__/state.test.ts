@@ -152,7 +152,7 @@ describe('AitStateManager', () => {
       unsub();
     });
 
-    it('내부에서 throw해도 transaction 상태는 복구된다', () => {
+    it('내부에서 throw해도 partial state를 1회 notify하고 flag가 복구된다', () => {
       const listener = vi.fn();
       const unsub = aitState.subscribe(listener);
 
@@ -163,9 +163,13 @@ describe('AitStateManager', () => {
         });
       }).toThrow('boom');
 
-      // 다음 update가 정상적으로 notify된다 (transaction flag가 stuck되지 않음)
-      aitState.update({ locale: 'ja-JP' });
+      // throw 직전까지의 partial state(locale=en-US)가 1회 notify된다
       expect(listener).toHaveBeenCalledTimes(1);
+      expect(aitState.state.locale).toBe('en-US');
+
+      // 이후 update가 정상적으로 notify된다 (transaction flag가 stuck되지 않음)
+      aitState.update({ locale: 'ja-JP' });
+      expect(listener).toHaveBeenCalledTimes(2);
       unsub();
     });
   });

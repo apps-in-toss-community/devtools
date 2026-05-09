@@ -321,9 +321,10 @@ export class AitStateManager {
    * preset 적용처럼 여러 슬라이스를 동시에 바꿀 때 panel re-render 폭주를
    * 방지한다. 중첩 호출은 outermost transaction이 끝날 때 한 번만 notify.
    *
-   * Rollback은 없다 — `fn`이 throw해도 그때까지의 state 변경은 유지되며
-   * notify는 skip된다(다음 update에서 한꺼번에 보임). DB transaction이 아니라
-   * 단순 batch라고 생각하면 된다.
+   * Rollback은 없다 — `fn`이 throw해도 그때까지의 state 변경은 유지된다.
+   * 구독자가 partial state를 영원히 못 보는 사고를 막기 위해, throw 여부와
+   * 무관하게 항상 한 번 notify한 뒤 throw를 propagate한다. DB transaction이
+   * 아니라 "여러 mutation을 한 notify로 묶는 batch"라고 생각하면 된다.
    */
   transaction(fn: () => void): void {
     if (this._inTransaction) {
@@ -335,8 +336,8 @@ export class AitStateManager {
       fn();
     } finally {
       this._inTransaction = false;
+      this._notify();
     }
-    this._notify();
   }
 
   /** 분석 로그 추가 */
