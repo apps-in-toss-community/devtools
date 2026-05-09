@@ -117,4 +117,17 @@ describe('renderAdsTab', () => {
     cb.dispatchEvent(new Event('change'));
     expect(aitState.state.ads.forceNoFill).toBe(true);
   });
+
+  // Regression: TossAds Load handler must read forceNoFill from live state, not the
+  // render-time snapshot. The button keeps a closure over the rendered tab, so a
+  // post-render checkbox toggle must still take effect when the user clicks Load.
+  it('TossAds Load: 렌더 후 forceNoFill 토글해도 live state를 반영한다', () => {
+    const root = renderAdsTab();
+    const cb = root.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change'));
+    loadBtn(root, 'TossAds').click();
+    expect(aitState.state.ads.isLoaded).toBe(false);
+    expect(aitState.state.ads.lastEvent?.type).toBe('error: No fill');
+  });
 });

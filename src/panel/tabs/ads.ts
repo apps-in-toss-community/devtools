@@ -105,7 +105,7 @@ export function renderAdsTab(): HTMLElement {
       () => {
         // TossAds has no load/show event API in the SDK; surface initialize lifecycle
         // through the same event log so the tab reads consistently with the others.
-        if (s.ads.forceNoFill) {
+        if (aitState.state.ads.forceNoFill) {
           recordError('No fill');
           return;
         }
