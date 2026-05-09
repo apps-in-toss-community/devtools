@@ -319,12 +319,17 @@ export class AitStateManager {
   /**
    * 한 묶음의 update/patch 호출을 묶어 listener notify 1회로 만든다.
    * preset 적용처럼 여러 슬라이스를 동시에 바꿀 때 panel re-render 폭주를
-   * 방지한다. 중첩 호출은 outermost transaction이 끝날 때 한 번만 notify.
+   * 방지한다. 중첩 호출은 outermost transaction이 끝날 때 한 번만 notify
+   * (inner도 throw해도 outer finally가 flag를 복구한다).
    *
    * Rollback은 없다 — `fn`이 throw해도 그때까지의 state 변경은 유지된다.
    * 구독자가 partial state를 영원히 못 보는 사고를 막기 위해, throw 여부와
    * 무관하게 항상 한 번 notify한 뒤 throw를 propagate한다. DB transaction이
    * 아니라 "여러 mutation을 한 notify로 묶는 batch"라고 생각하면 된다.
+   *
+   * Listener는 throw해선 안 된다 — finally 안의 `_notify()`가 throw하면 원래
+   * `fn`의 throw를 덮어버린다. 우리 구독자는 panel re-render뿐이라 실제
+   * 발생 사례는 없지만, 외부에서 listener를 등록할 때 주의.
    */
   transaction(fn: () => void): void {
     if (this._inTransaction) {
