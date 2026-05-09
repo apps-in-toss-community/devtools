@@ -22,6 +22,10 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
       options?: { adGroupId?: string };
     }): (() => void) => {
       setTimeout(() => {
+        if (aitState.state.ads.forceNoFill) {
+          args.onError(new Error('No fill'));
+          return;
+        }
         aitState.patch('ads', { isLoaded: true });
         args.onEvent({ type: 'loaded', data: { adGroupId: args.options?.adGroupId } });
       }, 200);
@@ -102,6 +106,10 @@ export const loadFullScreenAd = withIsSupported(
     options?: { adGroupId?: string };
   }): (() => void) => {
     setTimeout(() => {
+      if (aitState.state.ads.forceNoFill) {
+        args.onError(new Error('No fill'));
+        return;
+      }
       aitState.patch('ads', { isLoaded: true });
       args.onEvent({ type: 'loaded', data: { adGroupId: args.options?.adGroupId } });
     }, 200);

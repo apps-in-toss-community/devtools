@@ -1,3 +1,4 @@
+import { renderAdsTab } from './ads.js';
 import { renderAnalyticsTab } from './analytics.js';
 import { renderDeviceTab } from './device.js';
 import { renderEnvironmentTab } from './environment.js';
@@ -13,6 +14,7 @@ export type TabId =
   | 'permissions'
   | 'location'
   | 'iap'
+  | 'ads'
   | 'events'
   | 'analytics'
   | 'storage'
@@ -26,6 +28,7 @@ export const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'location', label: 'Location' },
   { id: 'device', label: 'Device' },
   { id: 'iap', label: 'IAP' },
+  { id: 'ads', label: 'Ads' },
   { id: 'events', label: 'Events' },
   { id: 'analytics', label: 'Analytics' },
   { id: 'storage', label: 'Storage' },
@@ -44,6 +47,7 @@ export function createTabRenderers(refreshPanel: () => void): Record<TabId, () =
     device: renderDeviceTab,
     viewport: renderViewportTab,
     iap: renderIapTab,
+    ads: renderAdsTab,
     events: renderEventsTab,
     analytics: renderAnalyticsTab,
     storage: () => renderStorageTab(refreshPanel),
