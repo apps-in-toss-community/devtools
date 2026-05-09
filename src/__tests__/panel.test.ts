@@ -7,6 +7,7 @@ import type { TabId } from '../panel/tabs/index.js';
 
 const tabSpies: Record<TabId, Mock<() => HTMLElement>> = {
   env: vi.fn(() => document.createElement('div')),
+  presets: vi.fn(() => document.createElement('div')),
   permissions: vi.fn(() => document.createElement('div')),
   location: vi.fn(() => document.createElement('div')),
   device: vi.fn(() => document.createElement('div')),

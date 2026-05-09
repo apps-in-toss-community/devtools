@@ -7,7 +7,7 @@
 - **60+ SDK API mock** — 인증, 결제, IAP, 위치, 카메라, 스토리지 등
 - **Device API 모드 시스템** — mock / web / prompt 세 가지 모드로 디바이스 API 동작 전환
 - **Device simulation** — iPhone/Galaxy 프리셋 + orientation 토글로 데스크탑 브라우저에서 모바일 뷰포트 시뮬레이션
-- **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (9개 탭)
+- **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (10개 탭, mock state preset library 포함)
 - **모든 번들러 지원** — [unplugin](https://github.com/unjs/unplugin) 기반 Vite, Webpack, Rspack, esbuild, Rollup 통합
 
 ## Reference consumer
@@ -247,11 +247,12 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 플러그인 사용 시 진입점 파일에 패널이 자동 주입됩니다. 화면 우하단의 **'AIT' 버튼**을 클릭하면 토글됩니다.
 
-### 9개 탭
+### 10개 탭
 
 | 탭 | 설명 |
 |---|---|
 | **Environment** | 플랫폼 OS (ios/android), 앱 버전, 환경 (toss/sandbox), 로케일, 네트워크 상태, Safe Area Insets |
+| **Presets** | 자주 쓰는 QA 시나리오(권한 거부, offline, 미로그인 등)를 한 클릭으로 적용/해제. 사용자 preset 저장/삭제 가능 |
 | **Viewport** | 디바이스 프리셋(iPhone/Galaxy) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **Permissions** | camera, photos, geolocation, clipboard, contacts, microphone 권한 상태 제어 (allowed/denied/notDetermined) |
 | **Location** | 위도, 경도, 정확도 설정 |
@@ -262,6 +263,40 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 | **Storage** | `Storage` API로 저장된 항목 조회 및 초기화 |
 
 > **prompt 모드 자동 열림**: prompt 모드로 설정된 API가 호출되면, Panel이 자동으로 Device 탭을 열고 사용자 입력 UI를 표시합니다.
+
+### Mock state preset library (Presets 탭)
+
+한 시나리오에 여러 mock 키가 동시에 일정 상태여야 하는 경우(예: "offline일 때 IAP `NETWORK_ERROR` + 결제 fail")를 매번 손으로 맞추지 않고 한 클릭으로 적용합니다. 적용된 preset은 ✓ 표시되며, 정의된 키 중 하나라도 변경되면 자동으로 indicator가 풀립니다 (preset이 정의하지 않은 키는 비교 대상이 아님).
+
+내장 preset:
+
+| ID | 의미 |
+|---|---|
+| `all-allowed` | 모든 권한 허용, WIFI, 로그인됨, IAP success — 기본 시나리오 복귀 |
+| `permission-denied` | camera / photos / geolocation / contacts 거부 |
+| `offline` | `getNetworkStatus` → OFFLINE, IAP `NETWORK_ERROR`, 결제 fail |
+| `logged-out` | `auth.isLoggedIn=false`. 로그인 플로우 검증 |
+| `iap-pending` | IAP `nextResult` → `PAYMENT_PENDING` |
+| `ads-no-fill` | 광고 fill 실패 분기 |
+
+사용자가 토글로 만든 임의 상태는 "Save current as preset" 버튼으로 저장됩니다 (`localStorage` 영속, `__ait_preset:<id>` prefix). 저장된 preset은 새로고침/탭 재진입 후에도 유지됩니다. Preset 적용 범위는 `networkStatus / permissions / auth / iap / ads / payment` 슬라이스로 제한 — viewport나 brand 같은 무관한 상태가 흔들리지 않습니다.
+
+코드에서도 export됩니다:
+
+```ts
+import { applyPreset, builtInPresets, saveUserPreset } from '@ait-co/devtools';
+
+// 내장 preset 적용
+const offline = builtInPresets.find((p) => p.id === 'offline')!;
+applyPreset(offline.state);
+
+// 커스텀 preset 저장
+saveUserPreset('My QA scenario', {
+  networkStatus: 'OFFLINE',
+  permissions: { camera: 'denied' },
+  auth: { isLoggedIn: false },
+});
+```
 
 ## Device simulation (Viewport 탭)
 

@@ -369,6 +369,38 @@ export const PANEL_STYLES = /* css */ `
     color: #e53e3e; /* readable on both light (#fff) and dark (#1a1a2e) panel backgrounds */
   }
 
+  /* Presets tab */
+  .ait-preset-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid #2a2a4a;
+  }
+  .ait-preset-row.ait-preset-active .ait-preset-label {
+    color: #4ade80;
+    font-weight: 600;
+  }
+  .ait-preset-label {
+    font-size: 12px;
+    color: #ddd;
+    flex: 1;
+    word-break: break-word;
+  }
+  .ait-preset-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .ait-preset-description {
+    font-size: 11px;
+    color: #777;
+    padding: 0 0 6px 4px;
+    border-bottom: 1px solid #2a2a4a;
+    margin-bottom: 0;
+  }
+
   /* Viewport tab status rows */
   .ait-status-row {
     display: flex;

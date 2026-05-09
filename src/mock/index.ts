@@ -76,6 +76,20 @@ export {
 export { partner } from './partner/index.js';
 // --- 권한 (bridge-core 호환) ---
 export { getPermission, openPermissionDialog, requestPermission } from './permissions.js';
+export {
+  deleteUserPreset,
+  listUserPresets,
+  saveUserPreset,
+} from './preset-store.js';
+// --- Mock state preset library ---
+export {
+  applyPreset,
+  builtInPresets,
+  captureCurrentState,
+  type MockPreset,
+  type MockPresetState,
+  matchesPreset,
+} from './presets.js';
 export type { AitDevtoolsState } from './state.js';
 // --- 상태 관리 (내부 + 외부 접근용) ---
 export { aitState } from './state.js';
