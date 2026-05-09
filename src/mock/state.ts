@@ -118,6 +118,8 @@ export interface AitDevtoolsState {
       | 'failedToShow'
       | 'impression'
       | 'userEarnedReward';
+    forceNoFill: boolean;
+    lastEvent: { type: string; timestamp: number } | null;
   };
 
   // 게임
@@ -219,6 +221,8 @@ const DEFAULT_STATE: AitDevtoolsState = {
   ads: {
     isLoaded: false,
     nextEvent: 'loaded',
+    forceNoFill: false,
+    lastEvent: null,
   },
 
   game: {

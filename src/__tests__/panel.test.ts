@@ -12,6 +12,7 @@ const tabSpies: Record<TabId, Mock<() => HTMLElement>> = {
   device: vi.fn(() => document.createElement('div')),
   viewport: vi.fn(() => document.createElement('div')),
   iap: vi.fn(() => document.createElement('div')),
+  ads: vi.fn(() => document.createElement('div')),
   events: vi.fn(() => document.createElement('div')),
   analytics: vi.fn(() => document.createElement('div')),
   storage: vi.fn(() => document.createElement('div')),

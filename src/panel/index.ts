@@ -323,7 +323,8 @@ function mount() {
           currentTab === 'storage' ||
           currentTab === 'device' ||
           currentTab === 'viewport' ||
-          currentTab === 'iap')
+          currentTab === 'iap' ||
+          currentTab === 'ads')
       ) {
         refreshPanel();
       }
