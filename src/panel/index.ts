@@ -10,7 +10,7 @@ import { h } from './helpers.js';
 import { PANEL_FULLSCREEN_BREAKPOINT, PANEL_HEIGHT, PANEL_STYLES, PANEL_WIDTH } from './styles.js';
 import { setDeviceRefreshPanel } from './tabs/device.js';
 import { createTabRenderers, TABS, type TabId } from './tabs/index.js';
-import { initViewport } from './viewport.js';
+import { disposeViewport, initViewport } from './viewport.js';
 
 // --- Draggable toggle button ---
 
@@ -180,6 +180,14 @@ let isOpen = false;
 let panelEl: HTMLElement | null = null;
 let bodyEl: HTMLElement | null = null;
 let tabsEl: HTMLElement | null = null;
+let toggleEl: HTMLElement | null = null;
+let injectedStyle: HTMLStyleElement | null = null;
+
+// Saved listener refs so disposePanel() can detach them. Anonymous handlers
+// can't be removed, so mount() now binds these to module-level vars.
+let panelSwitchTabHandler: ((e: Event) => void) | null = null;
+let resizeHandler: (() => void) | null = null;
+let aitStateUnsubscribe: (() => void) | null = null;
 
 // Lazy-initialized after refreshPanel is defined
 let tabRenderers: Record<TabId, () => HTMLElement> | null = null;
@@ -202,19 +210,6 @@ function refreshPanel() {
   });
 }
 
-// Listen for tab switch requests from device tab (prompt auto-open)
-if (typeof window !== 'undefined') {
-  window.addEventListener('__ait:panel-switch-tab', (e: Event) => {
-    const detail = (e as CustomEvent).detail as { tab: TabId };
-    currentTab = detail.tab;
-    if (panelEl && !panelEl.classList.contains('open')) {
-      isOpen = true;
-      panelEl.classList.add('open');
-    }
-    refreshPanel();
-  });
-}
-
 function mount() {
   if (typeof document === 'undefined') return;
   if (document.querySelector('.ait-panel-toggle')) return;
@@ -226,12 +221,13 @@ function mount() {
   initViewport();
 
   // Styles
-  const style = document.createElement('style');
-  style.textContent = PANEL_STYLES;
-  document.head.appendChild(style);
+  injectedStyle = document.createElement('style');
+  injectedStyle.textContent = PANEL_STYLES;
+  document.head.appendChild(injectedStyle);
 
   // Toggle button
   const toggle = h('button', { className: 'ait-panel-toggle', title: 'AIT DevTools' }, 'AIT');
+  toggleEl = toggle;
   restoreButtonPosition(toggle);
 
   // Panel
@@ -303,7 +299,7 @@ function mount() {
 
   // Re-clamp button and panel position on window resize (rAF-throttled)
   let resizeRaf = 0;
-  window.addEventListener('resize', () => {
+  resizeHandler = () => {
     if (resizeRaf) return;
     resizeRaf = requestAnimationFrame(() => {
       resizeRaf = 0;
@@ -311,11 +307,12 @@ function mount() {
       saveButtonPosition(toggle);
       if (isOpen) updatePanelPosition(toggle);
     });
-  });
+  };
+  window.addEventListener('resize', resizeHandler);
 
   // 상태 변경 시 자동 갱신 (analytics, storage, device, viewport, iap 탭)
   // Defense-in-depth: outer catch complements refreshPanel's inner tab-rendering catch.
-  aitState.subscribe(() => {
+  aitStateUnsubscribe = aitState.subscribe(() => {
     try {
       if (
         isOpen &&
@@ -334,7 +331,60 @@ function mount() {
     }
   });
 
+  // Listen for tab switch requests from device tab (prompt auto-open).
+  // Bound here (not at module scope) so disposePanel() can detach it; outside
+  // of a mount, switching tabs has no panel to act on anyway.
+  panelSwitchTabHandler = (e: Event) => {
+    const detail = (e as CustomEvent).detail as { tab: TabId };
+    currentTab = detail.tab;
+    if (panelEl && !panelEl.classList.contains('open')) {
+      isOpen = true;
+      panelEl.classList.add('open');
+    }
+    refreshPanel();
+  };
+  window.addEventListener('__ait:panel-switch-tab', panelSwitchTabHandler);
+
   refreshPanel();
+}
+
+/**
+ * Pairs with `mount()` (and the existing `disposeViewport()`).
+ * Idempotent — safe to call before mount or twice in a row.
+ *
+ * Removes panel DOM (toggle + panel root), the injected `<style>`, all
+ * window/aitState listeners, and resets module-level state. After dispose,
+ * `mount()` can be called again to re-mount cleanly.
+ */
+function disposePanel(): void {
+  if (typeof document === 'undefined') return;
+
+  if (panelSwitchTabHandler && typeof window !== 'undefined') {
+    window.removeEventListener('__ait:panel-switch-tab', panelSwitchTabHandler);
+  }
+  if (resizeHandler && typeof window !== 'undefined') {
+    window.removeEventListener('resize', resizeHandler);
+  }
+  if (aitStateUnsubscribe) aitStateUnsubscribe();
+
+  toggleEl?.remove();
+  panelEl?.remove();
+  injectedStyle?.remove();
+
+  disposeViewport();
+  setDeviceRefreshPanel(() => {});
+
+  panelSwitchTabHandler = null;
+  resizeHandler = null;
+  aitStateUnsubscribe = null;
+  toggleEl = null;
+  panelEl = null;
+  bodyEl = null;
+  tabsEl = null;
+  injectedStyle = null;
+  tabRenderers = null;
+  currentTab = 'env';
+  isOpen = false;
 }
 
 // DOM ready 시 마운트
@@ -353,4 +403,4 @@ if (typeof document !== 'undefined') {
   }
 }
 
-export { mount };
+export { disposePanel, mount };
