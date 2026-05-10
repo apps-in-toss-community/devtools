@@ -127,6 +127,8 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.4.0 <2.4.8`)만 
 
 이 repo 내부 자기완결 fixture(`e2e/fixture/`)를 쓴다. 외부 repo 의존 없음. 로컬은 `pnpm test:e2e` 한 줄. `playwright.config.ts`의 `webServer`가 `pnpm build` → fixture vite build → vite preview(:4173)를 자동 수행한다. CI는 `.github/workflows/ci.yml`의 `e2e` job이 동일 절차 실행, Playwright 브라우저는 `@playwright/test` 버전 키로 캐싱. 머지 게이트로 묶으려면 branch protection에서 `e2e` 체크 required로 추가 (job 이름 안정 유지).
 
+같은 fixture는 GitHub Pages로도 배포된다 (<https://devtools.aitc.dev/>). main에 `e2e/fixture/**`·`src/**`·`package.json` 변경이 들어오면 `.github/workflows/deploy-fixture.yml`이 `pnpm e2e:build`로 정적 산출물을 만들어 Pages에 publish한다. CNAME은 `e2e/fixture/public/CNAME`에 source-control되며 vite가 `dist/` 루트에 그대로 복사한다.
+
 **Vite 8 (rolldown) 우회책:**
 - `@apps-in-toss/web-framework` → mock 매핑은 unplugin `resolveId` 대신 `vite.config.ts`의 `resolve.alias`로 `dist/mock/index.js` 직접 지정 (rolldown bare string resolveId 버그 우회).
 - 패널 주입은 unplugin `transform`이 rolldown 프로덕션 빌드에서 신뢰성 없음 → `main.ts`에 `import '@ait-co/devtools/panel'` 명시.
