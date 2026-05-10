@@ -97,7 +97,7 @@ src/
 
 ## SDK 업데이트 대응
 
-devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.4.0 <2.4.8`)만 지원. devDep은 `2.4.7` 한 버전 고정. (후속 PR에서 CI matrix `compat-check`로 양 끝 버전 typecheck 자동화 예정.)
+devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 지원. devDep은 `2.5.0` 한 버전 고정. (후속 PR에서 CI matrix `compat-check`로 양 끝 버전 typecheck 자동화 예정.)
 
 - peer는 **required**, devDep은 고정.
 - `src/__typecheck.ts`가 컴파일 타임에 시그니처 불일치 감지.

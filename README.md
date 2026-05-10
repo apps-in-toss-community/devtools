@@ -26,7 +26,7 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> **지원 SDK 버전**: `@apps-in-toss/web-framework >=2.4.0 <2.4.8` (peer, required).
+> **지원 SDK 버전**: `@apps-in-toss/web-framework >=2.5.0 <2.6.0` (peer, required).
 >
 > devtools는 위 범위의 SDK 버전에서만 동작이 검증됩니다. 범위 밖 SDK를 설치하면
 > 패키지 매니저가 install-time에 peer 경고를 표시합니다. 또한 devtools가 아직 mock하지
