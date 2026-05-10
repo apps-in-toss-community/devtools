@@ -58,10 +58,13 @@
 
 ### 안정 ✅ (touch frequency 0, `__typecheck.ts`로 컴파일 게이트)
 
-전 0.1.x 동안 **`src/mock/` 내 본체 코드가 한 번도 변경되지 않은** 영역. `src/__typecheck.ts`가 60+ assertion으로 SDK 시그니처와 호환을 강제하므로, peer range가 같은 한 (현재 `>=2.4.0 <2.4.8`) drift 위험은 컴파일 타임에 차단된다.
+전 0.1.x 동안 **각 mock 도메인 함수의 외부 시그니처가 한 번도 변경되지 않은** 영역. `src/__typecheck.ts`가 60+ assertion으로 SDK 시그니처와 호환을 강제하므로, peer range가 같은 한 (현재 `>=2.4.0 <2.4.8`) drift 위험은 컴파일 타임에 차단된다.
+
+> 본체 코드 touch 자체는 두 곳에서 발생했지만 외부 시그니처는 보존되었다: `src/mock/ads/index.ts`는 #101에서 `forceNoFill` 분기 추가 (panel Ads 탭이 활용), `src/mock/state.ts`는 새 슬라이스(`viewport`/`ads`/`presets`) 추가로 7개 PR에서 수정. 두 케이스 모두 기존 caller에 비호환 변경 없음.
 
 - **인증/로그인**: `appLogin`, `appsInTossSignTossCert`, `getIsTossLoginIntegratedService`, `getUserKeyForGame`
 - **화면/네비게이션/환경 정보**: `closeView`, `openURL`, `share`, `getTossShareLink`, `setIosSwipeGestureEnabled`, `setDeviceOrientation`, `setScreenAwakeMode`, `setSecureScreen`, `requestReview`, `getPlatformOS`, `getOperationalEnvironment`, `getTossAppVersion`, `isMinVersionSupported`, `getSchemeUri`, `getLocale`, `getDeviceId`, `getGroupId`, `getNetworkStatus`, `getServerTime`, `env`, `getAppsInTossGlobals`, `SafeAreaInsets`, `getSafeAreaInsets`
+- **디바이스 기능**: `Storage`, `getCurrentLocation`, `startUpdateLocation`, `Accuracy`, `openCamera`, `fetchAlbumPhotos`, `fetchContacts`, `getDefaultPlaceholderImages`, `generateHapticFeedback`, `saveBase64Data` (도메인 디렉토리 `src/mock/device/`는 0.1.x 전 구간 touch 0회). `getClipboardText` / `setClipboardText`는 함수 자체는 touch 0회지만 0.1.2에서 default 모드가 `'web'` → `'mock'`으로 flip되었으니 ⚠️ 참고
 - **이벤트**: `graniteEvent`, `appsInTossEvent`, `tdsEvent`, `onVisibilityChangedByTransparentServiceWeb`
 - **분석**: `Analytics`, `eventLog`
 - **광고**: `GoogleAdMob`, `TossAds`, `loadFullScreenAd`, `showFullScreenAd`
@@ -72,7 +75,7 @@
 - **타입 re-export**: `AnalyticsLogEntry`, `DeviceApiMode`, `DeviceModes`, `HapticFeedbackType`, `IapNextResult`, `LocationCoords`, `MockContact`, `MockData`, `MockIapProduct`, `MockLocation`, `NetworkStatus`, `OperationalEnvironment`, `PermissionName`, `PermissionStatus`, `PlatformOS`, `Primitive`, `SafeAreaInsetsType`
 - **unplugin 표면**: `default` factory + `AitDevtoolsOptions` (`panel`, `forceEnable`, `mock`) — 0.1.1 fix 이후 touch 0회
 
-근거: `git log v0.1.1..HEAD -- src/mock/auth/ src/mock/iap/ ...` 모두 비어있음. panel과 viewport, presets만 새로 들어왔다.
+근거: `git log v0.1.1..HEAD -- src/mock/<auth|iap|navigation|device|game|partner|analytics|permissions>/` 모두 비어있음. 본체 변경은 위 callout의 `ads/index.ts`와 `state.ts`(시그니처 호환) 두 곳뿐이고, 새 코드는 panel/viewport/presets로 들어갔다.
 
 ### 변경 가능성 있음 ⚠️ (active development)
 
@@ -80,7 +83,7 @@
 - **`@ait-co/devtools` mock state preset API** (`applyPreset`, `builtInPresets`, `captureCurrentState`, `matchesPreset`, `saveUserPreset`, `listUserPresets`, `deleteUserPreset`, `MockPreset`, `MockPresetState`): 0.1.9에 도입된 신규 export. 사용 패턴이 충분히 누적되지 않아 1.0.0 약속에 포함하기 전에 한두 cycle 더 관찰이 필요. README의 "코드에서도 export됩니다" 섹션이 reference이지만 외부 consumer 사례는 아직 없다.
 - **Viewport 프리셋 데이터** (iPhone Air, Galaxy S26 시리즈 `(est)` 라벨): 출시 전 추정값. 출시 후 갱신 예정 — 데이터 변경이지 API 변경은 아니다.
 - **mock clipboard 기본 모드**: 0.1.2에서 이미 한 번 flip (`'web'` → `'mock'`). 비슷한 "polyfill과의 상호작용" 분기가 다른 device API (camera/location)에서 발견될 가능성 있음.
-- **`aitState` / `AitDevtoolsState`**: panel/unplugin 진화에 따라 새 슬라이스가 들어올 가능성 (`viewport`, `ads`, `presets` 등이 0.1.x 동안 추가됨). 주요 슬라이스 키는 안정. 외부에서 `aitState.patch('newKey', ...)`을 직접 호출하는 패턴은 위험.
+- **`aitState` (export) / `AitDevtoolsState` (export type)**: panel/unplugin 진화에 따라 새 슬라이스가 들어올 가능성 (`viewport`, `ads`, `presets` 등이 0.1.x 동안 추가됨). 주요 슬라이스 키는 안정 — 1.0.0에서 동결할 키 집합을 별도 정의하면 외부에서 `aitState.patch('frozenKey', ...)`만 안전 보장 가능.
 
 ### 미정 ❓ (1.0.0 commit 전 결정 필요)
 
@@ -109,7 +112,7 @@
 
 ### 권장 결론
 
-- **즉시 1.0.0 cut**: 비권장 (preset API 검증 부족 + 미정 ❓ 4건)
+- **즉시 1.0.0 cut**: 비권장 (preset API 검증 부족 + 미정 ❓ 5건 + 미체크 항목 5건)
 - **0.1.x를 1~2 patch 더 회전 후 1.0.0** (Recommended): 위 미정 4건 정리 + preset API 사용 사례 1+ 확인 후 cut. 예상 시점은 SDK 새 버전이 한 번 떨어지는 타이밍과 합쳐서 자연스럽게.
 - **0.1.x를 더 길게 유지**: preset/panel 영역에 큰 변경이 더 들어올 예정이라면 합리적. 단 surface는 이미 충분히 넓고 안정해서 무리하게 patch만 누적할 필요는 없음.
 
