@@ -328,6 +328,11 @@ test.describe('Layer C: Panel-App bridge', () => {
   // panel subscribers attached.
   test('aitState is a single shared instance (not duplicated per entry)', async ({ page }) => {
     const result = await page.evaluate(() => {
+      // Reads private `_listeners` to verify panel actually subscribed. If that
+      // field is renamed in state.ts, update the cast here too — `size` will
+      // become `undefined` and listenerCount falls to 0, failing the assertion
+      // below with a misleading "no subscribers" message instead of a clean
+      // type error.
       const w = window as unknown as { __ait?: { _listeners?: { size?: number } } };
       const g = globalThis as unknown as { __aitDevtoolsStateSingleton__?: object };
       return {
@@ -364,12 +369,10 @@ test.describe('Layer C: Panel-App bridge', () => {
     await expect(page.locator('.ait-panel.open')).toBeHidden({ timeout: 3000 });
 
     // Result element starts non-empty from the previous click; wait for it to
-    // change rather than waiting for non-empty.
+    // flip to the error branch in one atomic assertion.
     await page.getByTestId('iap-purchase-btn').click();
-    await expect(page.getByTestId('iap-purchase-result')).not.toHaveText(successText, {
+    await expect(page.getByTestId('iap-purchase-result')).toHaveText(/^error:/, {
       timeout: 3000,
     });
-    const offlineText = (await page.getByTestId('iap-purchase-result').textContent()) ?? '';
-    expect(offlineText).toMatch(/^error:/);
   });
 });

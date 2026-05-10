@@ -387,7 +387,7 @@ const globalRef = globalThis as GlobalWithSingleton;
 if (!globalRef[SINGLETON_KEY]) {
   globalRef[SINGLETON_KEY] = new AitStateManager();
 }
-export const aitState: AitStateManager = globalRef[SINGLETON_KEY];
+export const aitState: AitStateManager = globalRef[SINGLETON_KEY]!;
 
 // 브라우저 콘솔에서 접근 가능하도록
 if (typeof window !== 'undefined') {
