@@ -248,3 +248,15 @@ type _OpenPermissionDialog = Assert<
   typeof Original.openPermissionDialog
 >;
 type _RequestPermission = Assert<typeof Mock.requestPermission, typeof Original.requestPermission>;
+
+// --- 알림 ---
+type _RequestNotificationAgreement = Assert<
+  typeof Mock.requestNotificationAgreement,
+  typeof Original.requestNotificationAgreement
+>;
+
+// --- 추가 mock (web-framework 메인 export에는 없음, native-modules/web-bridge 개별 d.ts 기준) ---
+// getAnonymousKey, requestTossPayPaysBilling은 @apps-in-toss/web-framework 메인
+// 표면에서 노출되지 않는다 (web-bridge index.d.ts에서 re-export 안 됨). 사용자가
+// 깊은 경로로 import하거나 SDK가 향후 메인에 노출했을 때를 대비해 mock은
+// 두지만, Original.X로 시그니처 align할 대상 자체가 없어 Assert는 생략한다.

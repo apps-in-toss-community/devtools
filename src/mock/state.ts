@@ -106,6 +106,7 @@ export interface AitDevtoolsState {
     isLoggedIn: boolean;
     isTossLoginIntegrated: boolean;
     userKeyHash: string;
+    anonymousKeyHash: string;
   };
 
   // 광고
@@ -216,6 +217,7 @@ const DEFAULT_STATE: AitDevtoolsState = {
     isLoggedIn: true,
     isTossLoginIntegrated: true,
     userKeyHash: 'mock-user-hash-abc123',
+    anonymousKeyHash: 'mock-anon-hash-xyz789',
   },
 
   ads: {

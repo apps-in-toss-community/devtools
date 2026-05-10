@@ -13,6 +13,7 @@ export { Analytics, eventLog } from './analytics/index.js';
 export {
   appLogin,
   appsInTossSignTossCert,
+  getAnonymousKey,
   getIsTossLoginIntegratedService,
   getUserKeyForGame,
 } from './auth/index.js';
@@ -41,7 +42,7 @@ export {
   submitGameCenterLeaderBoardScore,
 } from './game/index.js';
 // --- IAP / 결제 ---
-export { checkoutPayment, IAP } from './iap/index.js';
+export { checkoutPayment, IAP, requestTossPayPaysBilling } from './iap/index.js';
 // --- 화면/네비게이션/환경정보/이벤트 ---
 export {
   appsInTossEvent,
@@ -72,6 +73,8 @@ export {
   share,
   tdsEvent,
 } from './navigation/index.js';
+// --- 알림 ---
+export { requestNotificationAgreement } from './notification.js';
 // --- 파트너 ---
 export { partner } from './partner/index.js';
 // --- 권한 (bridge-core 호환) ---

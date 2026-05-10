@@ -15,7 +15,14 @@ describe('AitStateManager', () => {
 
   it('update: 중첩 객체를 전달하면 통째로 교체하며 이전 참조는 변경되지 않는다', () => {
     const oldAuth = aitState.state.auth;
-    aitState.update({ auth: { isLoggedIn: false, isTossLoginIntegrated: false, userKeyHash: '' } });
+    aitState.update({
+      auth: {
+        isLoggedIn: false,
+        isTossLoginIntegrated: false,
+        userKeyHash: '',
+        anonymousKeyHash: '',
+      },
+    });
     expect(aitState.state.auth.isLoggedIn).toBe(false);
     expect(aitState.state.auth.isTossLoginIntegrated).toBe(false);
     // update는 shallow merge이므로 중첩 객체를 완전히 대체한다
