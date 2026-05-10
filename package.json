@@ -36,6 +36,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/fixture/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "e2e:build": "pnpm build && vite build --config e2e/fixture/vite.config.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
