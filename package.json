@@ -33,14 +33,15 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/fixture/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/fixture/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "check-sdk-update": "tsx scripts/check-sdk-update.ts",
-    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test"
+    "build:og": "tsx --tsconfig scripts/tsconfig.json scripts/build-og-image.tsx",
+    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test && pnpm build:og"
   },
   "peerDependencies": {
     "@apps-in-toss/web-framework": ">=2.4.0 <2.4.8"
@@ -58,7 +59,11 @@
     "@biomejs/biome": "2.4.12",
     "@changesets/cli": "^2.31.0",
     "@playwright/test": "^1.59.1",
+    "@types/react": "^19.2.14",
     "jsdom": "^29.0.2",
+    "react": "^19.2.5",
+    "satori": "^0.26.0",
+    "sharp": "^0.34.5",
     "tsdown": "^0.21.7",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
