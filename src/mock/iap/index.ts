@@ -206,3 +206,20 @@ export async function checkoutPayment(options: {
   }
   return { success: false, reason: failReason || 'Mock payment failed' };
 }
+
+export const requestTossPayPaysBilling = Object.assign(
+  async function requestTossPayPaysBilling(options: {
+    params: { wrappedToken: string };
+  }): Promise<{ success: boolean; reason?: string } | undefined> {
+    const { nextResult, failReason } = aitState.state.payment;
+    console.log('[@ait-co/devtools] requestTossPayPaysBilling:', options.params.wrappedToken);
+
+    await new Promise((r) => setTimeout(r, 300));
+
+    if (nextResult === 'success') {
+      return { success: true };
+    }
+    return { success: false, reason: failReason || 'Mock billing auth failed' };
+  },
+  { isSupported: () => true },
+);

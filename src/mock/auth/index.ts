@@ -25,6 +25,13 @@ export async function getUserKeyForGame(): Promise<
   return { hash: aitState.state.auth.userKeyHash, type: 'HASH' };
 }
 
+export async function getAnonymousKey(): Promise<
+  { hash: string; type: 'HASH' } | 'ERROR' | undefined
+> {
+  if (!aitState.state.auth.anonymousKeyHash) return undefined;
+  return { hash: aitState.state.auth.anonymousKeyHash, type: 'HASH' };
+}
+
 export interface AppsInTossSignTossCertParams {
   txId: string;
 }
