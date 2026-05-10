@@ -316,7 +316,60 @@ test.describe('Layer C: Panel-App bridge', () => {
     // src/panel/tabs/permissions.ts, so this confirms the tab renders but does
     // NOT prove a bridge effect from the fixture app's getPermission() call.
     // A true bridge test (panel mutation → fixture observes new return value)
-    // is intentionally deferred — see the layer comment above.
+    // is below ("preset Apply changes mock state observed by fixture").
     await expect(page.locator('.ait-panel-body')).toContainText('camera', { timeout: 3000 });
+  });
+
+  // Regression guard for dual-singleton bug: tsdown builds mock and panel as
+  // self-contained entries. Without a runtime singleton guard, each entry
+  // bundles its own AitStateManager, so panel toggles never reach the mock SDK
+  // that fixture imports. Smoke at the bundle level: there must be exactly one
+  // shared aitState instance reachable from window.__ait, and it must have
+  // panel subscribers attached.
+  test('aitState is a single shared instance (not duplicated per entry)', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const w = window as unknown as { __ait?: { _listeners?: { size?: number } } };
+      const g = globalThis as unknown as { __aitDevtoolsStateSingleton__?: object };
+      return {
+        hasGlobalSingleton: !!g.__aitDevtoolsStateSingleton__,
+        sameRef: w.__ait === g.__aitDevtoolsStateSingleton__,
+        listenerCount: w.__ait?._listeners?.size ?? 0,
+      };
+    });
+    expect(result.hasGlobalSingleton).toBe(true);
+    expect(result.sameRef).toBe(true);
+    // Panel subscribes from at least one place (index.ts re-render). If the
+    // panel and mock entries had separate instances, window.__ait would be the
+    // mock entry's instance with 0 subscribers.
+    expect(result.listenerCount).toBeGreaterThan(0);
+  });
+
+  test('preset Apply changes mock state observed by fixture SDK', async ({ page }) => {
+    // Capture iap-purchase result with default (success) preset.
+    await apiClick(page, 'iap-purchase');
+    const successText = (await page.getByTestId('iap-purchase-result').textContent()) ?? '';
+    expect(successText).toMatch(/^success:/);
+
+    // Apply Offline preset from the panel.
+    await openPanel(page);
+    await switchTab(page, 'presets');
+    await enableEditMode(page);
+    await page
+      .locator('.ait-preset-row', { hasText: 'Offline' })
+      .locator('.ait-btn', { hasText: /^(Apply|Re-apply)$/ })
+      .click();
+
+    // Close panel and trigger iap-purchase again — must now hit error branch.
+    await page.locator('button.ait-panel-toggle').click();
+    await expect(page.locator('.ait-panel.open')).toBeHidden({ timeout: 3000 });
+
+    // Result element starts non-empty from the previous click; wait for it to
+    // change rather than waiting for non-empty.
+    await page.getByTestId('iap-purchase-btn').click();
+    await expect(page.getByTestId('iap-purchase-result')).not.toHaveText(successText, {
+      timeout: 3000,
+    });
+    const offlineText = (await page.getByTestId('iap-purchase-result').textContent()) ?? '';
+    expect(offlineText).toMatch(/^error:/);
   });
 });

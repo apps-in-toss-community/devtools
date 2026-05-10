@@ -373,7 +373,21 @@ export class AitStateManager {
   }
 }
 
-export const aitState = new AitStateManager();
+// `tsdown.config.ts`는 mock/panel/unplugin entry를 별도 config object로 빌드한다
+// ("every entry is self-contained"). 그 결과 소비자가 두 entry(예: `@ait-co/devtools` +
+// `@ait-co/devtools/panel`)를 동시에 import하면 `state.ts`가 entry별로 따로 번들되어
+// `AitStateManager` 인스턴스가 entry당 1개씩 만들어진다. panel이 toggle한 state는
+// mock SDK가 보는 state와 다른 인스턴스가 되어 모든 토글이 비기능이 된다.
+//
+// build pipeline을 건드리지 않고 runtime guard로 해결한다: globalThis에 인스턴스를
+// 캐시해 같은 페이지의 모든 entry가 동일 인스턴스를 공유하도록 한다.
+const SINGLETON_KEY = '__aitDevtoolsStateSingleton__';
+type GlobalWithSingleton = typeof globalThis & { [SINGLETON_KEY]?: AitStateManager };
+const globalRef = globalThis as GlobalWithSingleton;
+if (!globalRef[SINGLETON_KEY]) {
+  globalRef[SINGLETON_KEY] = new AitStateManager();
+}
+export const aitState: AitStateManager = globalRef[SINGLETON_KEY];
 
 // 브라우저 콘솔에서 접근 가능하도록
 if (typeof window !== 'undefined') {
