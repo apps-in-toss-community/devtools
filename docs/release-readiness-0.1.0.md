@@ -113,7 +113,7 @@
 ### 권장 결론
 
 - **즉시 1.0.0 cut**: 비권장 (preset API 검증 부족 + 미정 ❓ 5건 + 미체크 항목 5건)
-- **0.1.x를 1~2 patch 더 회전 후 1.0.0** (Recommended): 위 미정 4건 정리 + preset API 사용 사례 1+ 확인 후 cut. 예상 시점은 SDK 새 버전이 한 번 떨어지는 타이밍과 합쳐서 자연스럽게.
+- **0.1.x를 1~2 patch 더 회전 후 1.0.0** (Recommended): 위 미정 5건 정리 + preset API 사용 사례 1+ 확인 후 cut. 예상 시점은 SDK 새 버전이 한 번 떨어지는 타이밍과 합쳐서 자연스럽게.
 - **0.1.x를 더 길게 유지**: preset/panel 영역에 큰 변경이 더 들어올 예정이라면 합리적. 단 surface는 이미 충분히 넓고 안정해서 무리하게 patch만 누적할 필요는 없음.
 
 ## 0.1 라인 release notes (highlights, draft)
