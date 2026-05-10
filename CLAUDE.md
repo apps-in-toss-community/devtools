@@ -97,14 +97,14 @@ src/
 
 ## SDK 업데이트 대응
 
-devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.4.0 <2.4.8`)만 지원. devDep은 `2.4.7` 한 버전 고정. (후속 PR에서 CI matrix `compat-check`로 양 끝 버전 typecheck 자동화 예정.)
+devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 지원. devDep은 `2.5.0` 한 버전 고정. (후속 PR에서 CI matrix `compat-check`로 양 끝 버전 typecheck 자동화 예정.)
 
 - peer는 **required**, devDep은 고정.
 - `src/__typecheck.ts`가 컴파일 타임에 시그니처 불일치 감지.
 - `src/mock/proxy.ts`의 `createMockProxy`는 미구현 API 접근 시 **throw** — "잘 되는 척" 방지.
 - `.github/workflows/check-sdk-update.yml`이 매주 월요일 새 버전 감지 → 이슈 생성.
 
-**지원 범위 확장 (예: 2.4.8 publish됨):** `pnpm add -D @apps-in-toss/web-framework@2.4.8` → `pnpm typecheck`로 시그니처 변경 확인 → `package.json` peer range를 `>=2.4.0 <2.4.9`로 → (matrix 도입 후) CI matrix에 `2.4.8` 추가 → 단일 PR로 일관된 상태 유지.
+**지원 범위 확장 (예: 2.5.1 publish됨):** `pnpm add -D @apps-in-toss/web-framework@2.5.1` → `pnpm typecheck`로 시그니처 변경 확인 → `package.json` peer range를 `>=2.5.0 <2.5.2`로 → (matrix 도입 후) CI matrix에 `2.5.1` 추가 → 단일 PR로 일관된 상태 유지.
 
 **SDK breaking change 대응:** 한 devtools 패키지가 호환되지 않는 SDK를 동시 지원하지 않는다 — devtools도 함께 bump한다.
 
