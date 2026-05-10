@@ -302,6 +302,22 @@ saveUserPreset('My QA scenario', {
 });
 ```
 
+### Panel mount / dispose
+
+`@ait-co/devtools/panel`을 import하면 DOM ready 시 자동으로 마운트됩니다. 마운트는 idempotent — 같은 페이지에 여러 번 import되거나 `mount()`를 다시 불러도 토글 버튼은 하나만 떠 있습니다.
+
+HMR이나 SPA 라우팅에서 패널을 명시적으로 떼어내야 하는 경우 `disposePanel()`을 사용하세요:
+
+```ts
+import { disposePanel, mount } from '@ait-co/devtools/panel';
+
+disposePanel();  // 토글 / 패널 / inject된 <style> / 모든 listener 제거.
+                  // 호출 전이거나 두 번 호출해도 안전.
+mount();          // 깨끗한 상태로 다시 마운트. 중복 <style>·listener 없음.
+```
+
+내부에서 `disposeViewport()`도 함께 호출하므로 viewport 시뮬레이션도 함께 원복됩니다.
+
 ## Device simulation (Viewport 탭)
 
 데스크탑 브라우저에서 모바일 미니앱을 개발할 때, 실제 디바이스 해상도/safe area/노치/홈 인디케이터/앱인토스 nav bar를 반영해 레이아웃을 검증할 수 있습니다.
