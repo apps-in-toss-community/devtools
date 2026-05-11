@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   acceptConsent,
   CURRENT_POLICY_VERSION,
+  deleteMyData,
   denyConsent,
   getOrCreateAnonId,
   readConsentState,
@@ -126,10 +127,21 @@ describe('shouldShowToast (30-day reprompt)', () => {
     expect(shouldShowToast()).toBe(false);
   });
 
-  it('returns false when consent is "denied" (regardless of reprompt window)', () => {
+  it('returns true when consent="denied" and reprompt_after is in the past (one re-prompt)', () => {
     localStorage.setItem(KEY_CONSENT, 'denied');
     localStorage.setItem(KEY_REPROMPT_AFTER, String(Date.now() - 1000));
-    // denied stays denied — shouldShowToast only re-prompts undecided users
+    expect(shouldShowToast()).toBe(true);
+  });
+
+  it('returns false when consent="denied" and reprompt_after is in the future', () => {
+    localStorage.setItem(KEY_CONSENT, 'denied');
+    localStorage.setItem(KEY_REPROMPT_AFTER, String(Date.now() + 1_000_000));
+    expect(shouldShowToast()).toBe(false);
+  });
+
+  it('returns false when consent="denied" and reprompt_after is MAX_SAFE_INTEGER (permanent silence)', () => {
+    localStorage.setItem(KEY_CONSENT, 'denied');
+    localStorage.setItem(KEY_REPROMPT_AFTER, String(Number.MAX_SAFE_INTEGER));
     expect(shouldShowToast()).toBe(false);
   });
 
@@ -212,5 +224,54 @@ describe('getOrCreateAnonId', () => {
     const fixed = 'fixed-uuid-value';
     localStorage.setItem(KEY_ANON_ID, fixed);
     expect(getOrCreateAnonId()).toBe(fixed);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteMyData
+// ---------------------------------------------------------------------------
+describe('deleteMyData', () => {
+  it('returns false when no anon_id is stored (nothing to delete)', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(await deleteMyData('https://t.example.dev')).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('calls DELETE on <endpoint>/e?anon_id=… and rotates anon_id on success', async () => {
+    localStorage.setItem(KEY_ANON_ID, 'original-id');
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const ok = await deleteMyData('https://t.example.dev');
+    expect(ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const call = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(call[0]).toBe('https://t.example.dev/e?anon_id=original-id');
+    expect(call[1]).toMatchObject({ method: 'DELETE' });
+    const rotated = localStorage.getItem(KEY_ANON_ID);
+    expect(rotated).not.toBe('original-id');
+    expect(rotated).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('returns false and does NOT rotate anon_id on non-ok response', async () => {
+    localStorage.setItem(KEY_ANON_ID, 'original-id');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(null, { status: 500 })),
+    );
+    expect(await deleteMyData('https://t.example.dev')).toBe(false);
+    expect(localStorage.getItem(KEY_ANON_ID)).toBe('original-id');
+  });
+
+  it('returns false and does NOT rotate anon_id on network error', async () => {
+    localStorage.setItem(KEY_ANON_ID, 'original-id');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('network down');
+      }),
+    );
+    expect(await deleteMyData('https://t.example.dev')).toBe(false);
+    expect(localStorage.getItem(KEY_ANON_ID)).toBe('original-id');
   });
 });
