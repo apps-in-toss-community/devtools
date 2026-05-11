@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import { h, monitoringNotice } from '../helpers.js';
 
@@ -7,7 +8,11 @@ export function renderAnalyticsTab(): HTMLElement {
   if (disabled) container.appendChild(monitoringNotice());
   const logs = aitState.state.analyticsLog;
 
-  const clearBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger' }, 'Clear');
+  const clearBtn = h(
+    'button',
+    { className: 'ait-btn ait-btn-sm ait-btn-danger' },
+    t('analytics.btn.clear'),
+  );
   if (disabled) clearBtn.disabled = true;
   clearBtn.addEventListener('click', () => {
     aitState.update({ analyticsLog: [] });
@@ -20,7 +25,11 @@ export function renderAnalyticsTab(): HTMLElement {
       h(
         'div',
         { className: 'ait-row' },
-        h('div', { className: 'ait-section-title' }, `Analytics Log (${logs.length})`),
+        h(
+          'div',
+          { className: 'ait-section-title' },
+          t('analytics.section.log', { count: logs.length }),
+        ),
         clearBtn,
       ),
       ...logs

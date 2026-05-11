@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { deleteUserPreset, listUserPresets, saveUserPreset } from '../../mock/preset-store.js';
 import {
   applyPreset,
@@ -18,12 +19,19 @@ export function renderPresetsTab(refreshPanel: () => void): HTMLElement {
   const snapshot = aitState.state;
 
   container.append(
-    renderSection('Built-in scenarios', builtInPresets, disabled, snapshot, refreshPanel, false),
+    renderSection(
+      t('presets.section.builtIn'),
+      builtInPresets,
+      disabled,
+      snapshot,
+      refreshPanel,
+      false,
+    ),
   );
 
   container.append(
     renderSection(
-      `Saved presets (${userPresets.length})`,
+      t('presets.section.saved', { count: userPresets.length }),
       userPresets,
       disabled,
       snapshot,
@@ -33,10 +41,10 @@ export function renderPresetsTab(refreshPanel: () => void): HTMLElement {
   );
 
   // Save current state as preset
-  const saveBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Save current as preset');
+  const saveBtn = h('button', { className: 'ait-btn ait-btn-sm' }, t('presets.btn.saveCurrent'));
   if (disabled) saveBtn.disabled = true;
   saveBtn.addEventListener('click', () => {
-    const label = window.prompt('Preset label?');
+    const label = window.prompt(t('presets.prompt.label'));
     if (label === null) return;
     try {
       saveUserPreset(label, captureCurrentState(aitState.state));
@@ -51,11 +59,11 @@ export function renderPresetsTab(refreshPanel: () => void): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Save'),
+      h('div', { className: 'ait-section-title' }, t('presets.section.save')),
       h(
         'div',
         { style: 'color:#888;font-size:11px;margin-bottom:6px' },
-        'Capture network / permissions / auth / IAP / ads / payment slices.',
+        t('presets.save.description'),
       ),
       saveBtn,
     ),
@@ -83,7 +91,7 @@ function renderSection(
       h(
         'div',
         { style: 'color:#555;font-size:12px' },
-        deletable ? 'No saved presets yet.' : 'No built-in presets.',
+        deletable ? t('presets.empty.saved') : t('presets.empty.builtIn'),
       ),
     );
     return section;
@@ -101,7 +109,7 @@ function renderSection(
     const applyBtn = h(
       'button',
       { className: 'ait-btn ait-btn-sm' },
-      isActive ? 'Re-apply' : 'Apply',
+      isActive ? t('presets.btn.reApply') : t('presets.btn.apply'),
     );
     if (disabled) applyBtn.disabled = true;
     applyBtn.addEventListener('click', () => {
@@ -111,10 +119,14 @@ function renderSection(
 
     const buttons: Node[] = [applyBtn];
     if (deletable) {
-      const delBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger' }, 'Delete');
+      const delBtn = h(
+        'button',
+        { className: 'ait-btn ait-btn-sm ait-btn-danger' },
+        t('presets.btn.delete'),
+      );
       if (disabled) delBtn.disabled = true;
       delBtn.addEventListener('click', () => {
-        if (!window.confirm(`Delete preset "${preset.label}"?`)) return;
+        if (!window.confirm(t('presets.confirm.delete', { label: preset.label }))) return;
         deleteUserPreset(preset.id);
         refreshPanel();
       });

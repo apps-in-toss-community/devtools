@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import type { PermissionName, PermissionStatus } from '../../mock/types.js';
 import { h, monitoringNotice, selectRow } from '../helpers.js';
@@ -22,7 +23,7 @@ export function renderPermissionsTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Device Permissions'),
+      h('div', { className: 'ait-section-title' }, t('permissions.section.device')),
       ...names.map((name) =>
         selectRow(
           name,

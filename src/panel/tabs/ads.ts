@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { GoogleAdMob, loadFullScreenAd, showFullScreenAd } from '../../mock/ads/index.js';
 import { aitState } from '../../mock/state.js';
 import { h, monitoringNotice } from '../helpers.js';
@@ -25,7 +26,7 @@ function lastEventLine(): HTMLElement {
     return h(
       'div',
       { className: 'ait-log-entry' },
-      h('span', { style: 'color:#555' }, 'No events yet'),
+      h('span', { style: 'color:#555' }, t('ads.empty.events')),
     );
   }
   const time = new Date(last.timestamp).toLocaleTimeString();
@@ -44,8 +45,8 @@ function adSection(
   onShow: () => void,
   disabled: boolean,
 ): HTMLElement {
-  const loadBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Load');
-  const showBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Show');
+  const loadBtn = h('button', { className: 'ait-btn ait-btn-sm' }, t('ads.btn.load'));
+  const showBtn = h('button', { className: 'ait-btn ait-btn-sm' }, t('ads.btn.show'));
   if (disabled) {
     loadBtn.disabled = true;
     showBtn.disabled = true;
@@ -79,13 +80,13 @@ export function renderAdsTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Ads State'),
-      statusRow('isLoaded', String(s.ads.isLoaded)),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Force "no fill"'), forceNoFillCb),
+      h('div', { className: 'ait-section-title' }, t('ads.section.state')),
+      statusRow(t('ads.row.isLoaded'), String(s.ads.isLoaded)),
+      h('div', { className: 'ait-row' }, h('label', {}, t('ads.row.forceNoFill')), forceNoFillCb),
       lastEventLine(),
     ),
     adSection(
-      'GoogleAdMob',
+      t('ads.section.googleAdMob'),
       () => {
         GoogleAdMob.loadAppsInTossAdMob({
           onEvent: (e) => recordEvent(e.type),
@@ -101,7 +102,7 @@ export function renderAdsTab(): HTMLElement {
       disabled,
     ),
     adSection(
-      'TossAds',
+      t('ads.section.tossAds'),
       () => {
         // TossAds has no load/show event API in the SDK; surface initialize lifecycle
         // through the same event log so the tab reads consistently with the others.
@@ -126,7 +127,7 @@ export function renderAdsTab(): HTMLElement {
       disabled,
     ),
     adSection(
-      'FullScreenAd',
+      t('ads.section.fullScreenAd'),
       () => {
         loadFullScreenAd({
           onEvent: (e) => recordEvent(e.type),

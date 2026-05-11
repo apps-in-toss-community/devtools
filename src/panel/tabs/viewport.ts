@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import type {
   AitNavBarType,
@@ -108,9 +109,9 @@ export function renderViewportTab(): HTMLElement {
       }
     });
     customRow.append(
-      h('div', { className: 'ait-section-title' }, 'Custom size'),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Width (px)'), widthInput),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Height (px)'), heightInput),
+      h('div', { className: 'ait-section-title' }, t('viewport.section.custom')),
+      h('div', { className: 'ait-row' }, h('label', {}, t('viewport.row.width')), widthInput),
+      h('div', { className: 'ait-row' }, h('label', {}, t('viewport.row.height')), heightInput),
     );
   }
 
@@ -148,11 +149,7 @@ export function renderViewportTab(): HTMLElement {
 
   if (vp.preset === 'none' || size.width === 0) {
     statusEl.appendChild(
-      h(
-        'div',
-        { style: 'color:#888;font-size:11px' },
-        'No viewport constraint — body fills the window.',
-      ),
+      h('div', { style: 'color:#888;font-size:11px' }, t('viewport.status.noConstraint')),
     );
   } else {
     const preset = vp.preset === 'custom' ? null : getPreset(vp.preset);
@@ -164,12 +161,15 @@ export function renderViewportTab(): HTMLElement {
     const dpr = preset?.dpr ?? 1;
     const physW = Math.round(size.width * dpr);
     const physH = Math.round(size.height * dpr);
-    const orientDisplay = vp.orientation === 'auto' ? `${effOrient} (auto)` : effOrient;
+    const orientDisplay =
+      vp.orientation === 'auto'
+        ? t('viewport.orientation.autoSuffix', { orient: effOrient })
+        : effOrient;
     rows.push(
       h(
         'div',
         { className: 'ait-status-row' },
-        h('span', {}, 'CSS / physical'),
+        h('span', {}, t('viewport.status.cssPhysical')),
         h(
           'span',
           { className: 'ait-status-value' },
@@ -184,7 +184,7 @@ export function renderViewportTab(): HTMLElement {
         h(
           'div',
           { className: 'ait-status-row' },
-          h('span', {}, 'Safe area'),
+          h('span', {}, t('viewport.status.safeArea')),
           h(
             'span',
             { className: 'ait-status-value' },
@@ -199,11 +199,14 @@ export function renderViewportTab(): HTMLElement {
         h(
           'div',
           { className: 'ait-status-row' },
-          h('span', {}, 'AIT nav bar'),
+          h('span', {}, t('viewport.status.aitNavBar')),
           h(
             'span',
             { className: 'ait-status-value' },
-            `${AIT_NAV_BAR_HEIGHT}px (excl. SafeArea) · ${vp.aitNavBarType}`,
+            t('viewport.status.aitNavBarValue', {
+              height: AIT_NAV_BAR_HEIGHT,
+              type: vp.aitNavBarType,
+            }),
           ),
         ),
       );
@@ -216,9 +219,14 @@ export function renderViewportTab(): HTMLElement {
   const deviceSection = h(
     'div',
     { className: 'ait-section' },
-    h('div', { className: 'ait-section-title' }, 'Device'),
-    h('div', { className: 'ait-row' }, h('label', {}, 'Preset'), presetSelect),
-    h('div', { className: 'ait-row' }, h('label', {}, 'Orientation'), orientationSelect),
+    h('div', { className: 'ait-section-title' }, t('viewport.section.device')),
+    h('div', { className: 'ait-row' }, h('label', {}, t('viewport.row.preset')), presetSelect),
+    h(
+      'div',
+      { className: 'ait-row' },
+      h('label', {}, t('viewport.row.orientation')),
+      orientationSelect,
+    ),
   );
 
   // Landscape side row only shown when effective orientation is landscape and
@@ -227,7 +235,12 @@ export function renderViewportTab(): HTMLElement {
     const notch = getPreset(vp.preset).notch;
     if (notch === 'notch' || notch === 'dynamic-island') {
       deviceSection.appendChild(
-        h('div', { className: 'ait-row' }, h('label', {}, 'Notch side'), landscapeSideSelect),
+        h(
+          'div',
+          { className: 'ait-row' },
+          h('label', {}, t('viewport.row.notchSide')),
+          landscapeSideSelect,
+        ),
       );
     }
   }
@@ -238,15 +251,25 @@ export function renderViewportTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Appearance'),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Show frame'), frameCheckbox),
+      h('div', { className: 'ait-section-title' }, t('viewport.section.appearance')),
       h(
         'div',
         { className: 'ait-row' },
-        h('label', {}, 'Show Apps in Toss nav bar'),
+        h('label', {}, t('viewport.row.showFrame')),
+        frameCheckbox,
+      ),
+      h(
+        'div',
+        { className: 'ait-row' },
+        h('label', {}, t('viewport.row.showAitNavBar')),
         navBarCheckbox,
       ),
-      h('div', { className: 'ait-row' }, h('label', {}, 'Nav bar type'), navBarTypeSelect),
+      h(
+        'div',
+        { className: 'ait-row' },
+        h('label', {}, t('viewport.row.navBarType')),
+        navBarTypeSelect,
+      ),
     ),
     statusEl,
   );
