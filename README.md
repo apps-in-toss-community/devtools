@@ -327,10 +327,12 @@ mount();          // 깨끗한 상태로 다시 마운트. 중복 <style>·liste
 | 카테고리 | 기기 |
 |---|---|
 | Apple | iPhone SE (3rd gen), iPhone 16e, iPhone 17, iPhone Air, iPhone 17 Pro, iPhone 17 Pro Max |
-| Samsung | Galaxy S26, S26+, S26 Ultra, Z Flip7, Z Fold7 (folded / unfolded) |
+| Samsung | Galaxy S26 *(S25 fallback)*, S26+ *(S25 fallback)*, S26 Ultra *(S25 fallback)*, Z Flip7, Z Fold7 (folded / unfolded) |
 | 기타 | Custom (width/height 직접 입력), None (기본) |
 
-> iPhone 17 시리즈는 2025-09에 출시되었습니다. Samsung Galaxy S26 시리즈는 2026-04 기준 미출시이므로 현재 S25 기반 값을 담고 있으며, 실제 출시 후 갱신 예정입니다.
+> **Galaxy S26 시리즈는 2026-05 기준 미출시.** 드롭다운에 보이는 `Galaxy S26 / S26+ / S26 Ultra` 항목은 현재 S25 / S25+ / S25 Ultra의 viewport spec(`width × height`, DPR, safe area)을 그대로 fallback으로 쓰고 있습니다. 라벨에 `(S25 fallback)`이 붙어 있어 UI에서 즉시 구분 가능하며, S26 시리즈 출시 후 확정 spec으로 갱신될 예정입니다. QA에서 픽셀 단위 정확도가 필요한 경우 이 값을 절대값으로 신뢰하지 마세요.
+>
+> iPhone 17 시리즈는 2025-09에 출시되어 실제 spec 기반입니다.
 
 각 프리셋은 다음 정보를 포함합니다:
 - **CSS viewport** (portrait `width × height`)
@@ -406,7 +408,7 @@ Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 ### Known limitations
 
 - **Body가 스크롤 컨테이너가 됩니다** — 뷰포트 활성화 중에는 스크롤이 `window`가 아닌 `document.body`에서 발생합니다. `window.addEventListener('scroll', ...)`나 root에 붙은 `IntersectionObserver`는 실 디바이스와 다른 동작을 보일 수 있습니다. 미니앱 코드에서 스크롤을 다룬다면 `body`도 함께 검증하세요.
-- **추정 프리셋(`(est)` 라벨)** — iPhone Air, Galaxy S26 시리즈는 미출시 또는 공식 스펙 미공개. 출시 후 갱신 예정. QA 시 절대값으로 신뢰하지 마세요.
+- **추정/fallback 프리셋** — iPhone Air는 `(est)` 라벨(미출시), Galaxy S26 / S26+ / S26 Ultra는 `(S25 fallback)` 라벨(미출시, S25 spec을 그대로 사용). 모두 실제 출시 후 갱신 예정이며, QA 시 절대값으로 신뢰하지 마세요.
 
 ## `window.__ait` 콘솔 API
 

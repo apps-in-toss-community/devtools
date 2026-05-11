@@ -125,10 +125,18 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     safeAreaTop: 62,
     safeAreaBottom: 34,
   },
-  // Samsung — S26 series specs are estimated from S25 until release.
+  // Samsung
+  //
+  // Galaxy S26 / S26+ / S26 Ultra are unreleased as of 2026-05. The values below
+  // mirror the corresponding S25 / S25+ / S25 Ultra spec as a fallback so users
+  // get *some* Samsung punch-hole simulation rather than a missing entry. Treat
+  // these as approximate — update once the S26 series ships and confirmed
+  // viewport specs are available. The `(S25 fallback)` suffix in `label`
+  // surfaces this caveat in the UI dropdown so QA doesn't trust the values as
+  // ground truth.
   {
     id: 'galaxy-s26',
-    label: 'Galaxy S26 (est)',
+    label: 'Galaxy S26 (S25 fallback)',
     width: 384,
     height: 832,
     dpr: 3,
@@ -138,7 +146,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
   },
   {
     id: 'galaxy-s26-plus',
-    label: 'Galaxy S26+ (est)',
+    label: 'Galaxy S26+ (S25 fallback)',
     width: 412,
     height: 915,
     dpr: 3,
@@ -148,7 +156,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
   },
   {
     id: 'galaxy-s26-ultra',
-    label: 'Galaxy S26 Ultra (est)',
+    label: 'Galaxy S26 Ultra (S25 fallback)',
     width: 412,
     height: 915,
     dpr: 3.5,

@@ -65,11 +65,17 @@ describe('viewport presets', () => {
     );
   });
 
-  it('미출시 / 추정 프리셋은 라벨에 (est)를 포함한다', () => {
+  it('미출시 / 추정 프리셋은 라벨에 출시 상태를 표시한다', () => {
+    // iPhone Air: 미출시(추정값) → `(est)`
     const iphoneAir = VIEWPORT_PRESETS.find((p) => p.id === 'iphone-air');
     expect(iphoneAir?.label).toContain('(est)');
-    const s26 = VIEWPORT_PRESETS.find((p) => p.id === 'galaxy-s26');
-    expect(s26?.label).toContain('(est)');
+
+    // Galaxy S26 시리즈: 미출시 + S25 spec을 그대로 fallback → `(S25 fallback)`
+    for (const id of ['galaxy-s26', 'galaxy-s26-plus', 'galaxy-s26-ultra'] as const) {
+      const preset = VIEWPORT_PRESETS.find((p) => p.id === id);
+      expect(preset, `${id} preset must exist`).toBeDefined();
+      expect(preset?.label).toContain('(S25 fallback)');
+    }
   });
 });
 
