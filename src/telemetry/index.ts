@@ -33,10 +33,11 @@ function readGlobalString(key: string): string | undefined {
 export const TELEMETRY_ENDPOINT: string =
   readGlobalString('__TELEMETRY_ENDPOINT__') ?? 'https://t.aitc.dev';
 
-// Version is injected by tsdown define (__VERSION__). Declared globally in panel/index.ts.
-// We read it via the same global that panel uses.
+// Version is injected by tsdown define (__VERSION__) as a compile-time text
+// substitution — same mechanism panel/index.ts uses for its header label.
+// It is NOT a runtime global, so a globalThis lookup would always miss.
 function getVersion(): string {
-  return readGlobalString('__VERSION__') ?? '0.0.0';
+  return __VERSION__;
 }
 
 // ---------------------------------------------------------------------------
