@@ -330,7 +330,7 @@ mount();          // 깨끗한 상태로 다시 마운트. 중복 <style>·liste
 | Samsung | Galaxy S26 *(S25 fallback)*, S26+ *(S25 fallback)*, S26 Ultra *(S25 fallback)*, Z Flip7, Z Fold7 (folded / unfolded) |
 | 기타 | Custom (width/height 직접 입력), None (기본) |
 
-> **Galaxy S26 시리즈는 2026-05 기준 미출시.** 드롭다운에 보이는 `Galaxy S26 / S26+ / S26 Ultra` 항목은 현재 S25 / S25+ / S25 Ultra의 viewport spec(`width × height`, DPR, safe area)을 그대로 fallback으로 쓰고 있습니다. 라벨에 `(S25 fallback)`이 붙어 있어 UI에서 즉시 구분 가능하며, 실제 S26 시리즈 출시 후 공식 스펙으로 갱신될 예정입니다. QA에서 픽셀 단위 정확도가 필요한 경우 이 값을 절대값으로 신뢰하지 마세요.
+> **Galaxy S26 시리즈는 2026-05 기준 미출시.** 드롭다운에 보이는 `Galaxy S26 / S26+ / S26 Ultra` 항목은 현재 S25 / S25+ / S25 Ultra의 viewport spec(`width × height`, DPR, safe area)을 그대로 fallback으로 쓰고 있습니다. 라벨에 `(S25 fallback)`이 붙어 있어 UI에서 즉시 구분 가능하며, S26 시리즈 출시 후 확정 spec으로 갱신될 예정입니다. QA에서 픽셀 단위 정확도가 필요한 경우 이 값을 절대값으로 신뢰하지 마세요.
 >
 > iPhone 17 시리즈는 2025-09에 출시되어 실제 spec 기반입니다.
 
