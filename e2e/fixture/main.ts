@@ -60,6 +60,8 @@ import {
   openURL,
   // partner
   partner,
+  // notification
+  requestNotificationAgreement,
   requestPermission,
   requestReview,
   SafeAreaInsets,
@@ -494,6 +496,22 @@ if (!app) throw new Error('#app not found');
   apiButton(s, 'partner-remove', async () => {
     await partner.removeAccessoryButton();
     return undefined;
+  });
+}
+
+// --- Notifications ---
+{
+  const s = apiSection(app, 'notification', 'Notification');
+  apiButton(s, 'notification-request', async () => {
+    return await withTimeout(
+      new Promise<string>((resolve, reject) => {
+        requestNotificationAgreement({
+          options: { templateCode: 'fixture-template' },
+          onEvent: (r) => resolve(r.type),
+          onError: (e) => reject(e instanceof Error ? e : new Error(String(e))),
+        });
+      }),
+    );
   });
 }
 

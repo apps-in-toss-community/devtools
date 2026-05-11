@@ -109,6 +109,11 @@ export interface AitDevtoolsState {
     anonymousKeyHash: string;
   };
 
+  // 알림
+  notification: {
+    nextResult: 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
+  };
+
   // 광고
   ads: {
     isLoaded: boolean;
@@ -218,6 +223,10 @@ const DEFAULT_STATE: AitDevtoolsState = {
     isTossLoginIntegrated: true,
     userKeyHash: 'mock-user-hash-abc123',
     anonymousKeyHash: 'mock-anon-hash-xyz789',
+  },
+
+  notification: {
+    nextResult: 'newAgreement',
   },
 
   ads: {

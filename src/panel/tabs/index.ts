@@ -5,6 +5,7 @@ import { renderEnvironmentTab } from './environment.js';
 import { renderEventsTab } from './events.js';
 import { renderIapTab } from './iap.js';
 import { renderLocationTab } from './location.js';
+import { renderNotificationsTab } from './notifications.js';
 import { renderPermissionsTab } from './permissions.js';
 import { renderPresetsTab } from './presets.js';
 import { renderStorageTab } from './storage.js';
@@ -14,6 +15,7 @@ export type TabId =
   | 'env'
   | 'presets'
   | 'permissions'
+  | 'notifications'
   | 'location'
   | 'iap'
   | 'ads'
@@ -28,6 +30,7 @@ export const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'presets', label: 'Presets' },
   { id: 'viewport', label: 'Viewport' },
   { id: 'permissions', label: 'Permissions' },
+  { id: 'notifications', label: 'Notifications' },
   { id: 'location', label: 'Location' },
   { id: 'device', label: 'Device' },
   { id: 'iap', label: 'IAP' },
@@ -48,6 +51,7 @@ export function createTabRenderers(refreshPanel: () => void): Record<TabId, () =
     env: renderEnvironmentTab,
     presets: () => renderPresetsTab(refreshPanel),
     permissions: renderPermissionsTab,
+    notifications: renderNotificationsTab,
     location: renderLocationTab,
     device: renderDeviceTab,
     viewport: renderViewportTab,
