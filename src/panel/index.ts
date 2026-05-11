@@ -6,6 +6,7 @@
  */
 
 import { aitState } from '../mock/state.js';
+import { telemetry } from '../telemetry/index.js';
 import { h } from './helpers.js';
 import { PANEL_FULLSCREEN_BREAKPOINT, PANEL_HEIGHT, PANEL_STYLES, PANEL_WIDTH } from './styles.js';
 import { setDeviceRefreshPanel } from './tabs/device.js';
@@ -237,6 +238,7 @@ function mount() {
   closeBtn.addEventListener('click', () => {
     isOpen = false;
     panelEl!.classList.remove('open');
+    telemetry.onPanelClose();
   });
 
   const mockBadge = h(
@@ -274,6 +276,7 @@ function mount() {
     const tabEl = h('button', { className: 'ait-panel-tab', 'data-tab': tab.id }, tab.label);
     tabEl.addEventListener('click', () => {
       currentTab = tab.id;
+      telemetry.onTabView(tab.id);
       refreshPanel();
     });
     tabsEl.appendChild(tabEl);
@@ -294,6 +297,9 @@ function mount() {
     if (isOpen) {
       updatePanelPosition(toggle);
       refreshPanel();
+      telemetry.onPanelOpen();
+    } else {
+      telemetry.onPanelClose();
     }
   });
 
@@ -346,6 +352,9 @@ function mount() {
   window.addEventListener('__ait:panel-switch-tab', panelSwitchTabHandler);
 
   refreshPanel();
+
+  // Telemetry: check consent state, show toast if needed, fire panel_mount if granted.
+  telemetry.init();
 }
 
 /**
