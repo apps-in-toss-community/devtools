@@ -126,27 +126,42 @@ export function setConsentViaToggle(granted: boolean): void {
 
 /**
  * Returns true if the toast should be shown now.
- * Conditions: undecided AND (reprompt_after is 0 OR reprompt_after < now).
+ * Conditions:
+ *   - undecided (no prior choice or policy bumped to a newer version)
+ *   - denied + reprompt_after set + reprompt_after < now (one re-prompt after
+ *     the configured silence window; `denyConsent` flips to permanent silence
+ *     on the second denial by setting reprompt_after to MAX_SAFE_INTEGER).
  */
 export function shouldShowToast(): boolean {
   const state = resolveEffectiveConsent();
-  if (state !== 'undecided') return false;
-  const repromptAfter = readRepromptAfter();
-  if (repromptAfter === 0) return true; // never denied before
-  return Date.now() > repromptAfter;
+  if (state === 'undecided') {
+    const repromptAfter = readRepromptAfter();
+    if (repromptAfter === 0) return true;
+    return Date.now() > repromptAfter;
+  }
+  if (state === 'denied') {
+    const repromptAfter = readRepromptAfter();
+    if (repromptAfter === 0 || repromptAfter >= Number.MAX_SAFE_INTEGER) return false;
+    return Date.now() > repromptAfter;
+  }
+  return false;
 }
 
 /**
- * Sends the DELETE request to remove the user's data from the server.
+ * Sends the DELETE request to remove the user's data from the server, and
+ * rotates the local anon_id on success so any subsequent events are unlinkable
+ * from the deleted history.
  */
 export async function deleteMyData(endpoint: string): Promise<boolean> {
   const anonId = localStorage.getItem(KEY_ANON_ID);
   if (!anonId) return false;
   try {
-    const res = await fetch(`${endpoint}?anon_id=${encodeURIComponent(anonId)}`, {
+    const res = await fetch(`${endpoint}/e?anon_id=${encodeURIComponent(anonId)}`, {
       method: 'DELETE',
     });
-    return res.ok;
+    if (!res.ok) return false;
+    localStorage.setItem(KEY_ANON_ID, crypto.randomUUID());
+    return true;
   } catch {
     return false;
   }
