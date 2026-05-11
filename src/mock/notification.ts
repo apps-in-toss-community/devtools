@@ -3,20 +3,22 @@
  *
  * SDK는 callback-style: `requestNotificationAgreement(params)`이 즉시 cancel 함수를
  * 반환하고, 결과는 `params.onEvent`로 전달된다. mock도 같은 모양을 흉내내며,
- * 기본은 `'newAgreement'` (사용자가 처음 동의한 케이스). localStorage
- * `__ait_storage:notificationAgreement`에 마지막 결과를 남겨 다른 mock과 섞이지
- * 않게 한다.
+ * 결과는 panel(Notifications 탭)이 토글한 `aitState.state.notification.nextResult`를
+ * 그대로 사용한다.
+ *
+ * `agreementRejected`도 정상 결과의 한 종류이므로 `onEvent`로 전달한다.
+ * `onError`는 `onEvent` 호출 자체가 throw할 때만 들어간다 (실제 SDK도 reject를
+ * error가 아닌 event type으로 표현한다).
  */
 
-type NotificationAgreementResult = 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
+import { aitState } from './state.js';
+import type { NotificationAgreementResult } from './types.js';
 
 interface RequestNotificationAgreementOptions {
   options: { templateCode: string };
   onEvent: (result: { type: NotificationAgreementResult }) => void;
   onError: (error: unknown) => void | Promise<void>;
 }
-
-const STORAGE_KEY = '__ait_storage:notificationAgreement';
 
 export function requestNotificationAgreement(
   params: RequestNotificationAgreementOptions,
@@ -25,22 +27,7 @@ export function requestNotificationAgreement(
 
   Promise.resolve().then(async () => {
     if (cancelled) return;
-    const previous = (() => {
-      try {
-        return localStorage.getItem(STORAGE_KEY);
-      } catch {
-        return null;
-      }
-    })();
-
-    const type: NotificationAgreementResult =
-      previous === 'agreed' ? 'alreadyAgreed' : 'newAgreement';
-
-    try {
-      localStorage.setItem(STORAGE_KEY, 'agreed');
-    } catch {
-      /* localStorage unavailable — ignore */
-    }
+    const type = aitState.state.notification.nextResult;
 
     console.log(
       '[@ait-co/devtools] requestNotificationAgreement:',

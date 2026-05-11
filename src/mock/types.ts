@@ -77,6 +77,8 @@ export type IapNextResult =
   | 'ITEM_ALREADY_OWNED'
   | 'INTERNAL_ERROR';
 
+export type NotificationAgreementResult = 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
+
 export interface AnalyticsLogEntry {
   timestamp: number;
   type: string;

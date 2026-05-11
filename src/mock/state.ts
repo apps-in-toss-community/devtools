@@ -12,6 +12,7 @@ import type {
   MockIapProduct,
   MockLocation,
   NetworkStatus,
+  NotificationAgreementResult,
   OperationalEnvironment,
   PermissionName,
   PermissionStatus,
@@ -36,6 +37,7 @@ export type {
   MockLocation,
   NetworkStatus,
   NotchType,
+  NotificationAgreementResult,
   OperationalEnvironment,
   PermissionName,
   PermissionStatus,
@@ -107,6 +109,11 @@ export interface AitDevtoolsState {
     isTossLoginIntegrated: boolean;
     userKeyHash: string;
     anonymousKeyHash: string;
+  };
+
+  // 알림
+  notification: {
+    nextResult: NotificationAgreementResult;
   };
 
   // 광고
@@ -218,6 +225,10 @@ const DEFAULT_STATE: AitDevtoolsState = {
     isTossLoginIntegrated: true,
     userKeyHash: 'mock-user-hash-abc123',
     anonymousKeyHash: 'mock-anon-hash-xyz789',
+  },
+
+  notification: {
+    nextResult: 'newAgreement',
   },
 
   ads: {

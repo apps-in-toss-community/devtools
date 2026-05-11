@@ -20,6 +20,7 @@ const SECTION_IDS = [
   'game',
   'analytics',
   'partner',
+  'notification',
   'events',
 ] as const;
 
@@ -71,7 +72,7 @@ async function apiClick(page: Page, id: string): Promise<string> {
 // ============================================================================
 
 test.describe('Smoke', () => {
-  test('fixture renders all 16 sections with panel toggle button', async ({ page }) => {
+  test('fixture renders all 17 sections with panel toggle button', async ({ page }) => {
     const errors: string[] = [];
     // Register listener before goto so early page errors are captured
     page.on('pageerror', (e) => errors.push(e.message));
@@ -347,6 +348,43 @@ test.describe('Layer C: Panel-App bridge', () => {
     // panel and mock entries had separate instances, window.__ait would be the
     // mock entry's instance with 0 subscribers.
     expect(result.listenerCount).toBeGreaterThan(0);
+  });
+
+  test('notifications tab: default newAgreement is observed by fixture SDK', async ({ page }) => {
+    // beforeEach already navigated to '/'. Default state.notification.nextResult
+    // is 'newAgreement' — no panel interaction needed.
+    const r = await apiClick(page, 'notification-request');
+    expect(r).toBe('newAgreement');
+  });
+
+  test('notifications tab: alreadyAgreed radio is observed by fixture SDK', async ({ page }) => {
+    await openPanel(page);
+    await switchTab(page, 'notifications');
+    const radio = page.locator('input[name="ait-notification-result"][value="alreadyAgreed"]');
+    await radio.check();
+    // Guard against silent selector misses: make the failure mode "radio not
+    // checked" (loud) instead of "default value still observed" (mysterious).
+    await expect(radio).toBeChecked();
+    await page.locator('button.ait-panel-toggle').click();
+    await expect(page.locator('.ait-panel.open')).toBeHidden({ timeout: 3000 });
+
+    const r = await apiClick(page, 'notification-request');
+    expect(r).toBe('alreadyAgreed');
+  });
+
+  test('notifications tab: agreementRejected radio is observed by fixture SDK', async ({
+    page,
+  }) => {
+    await openPanel(page);
+    await switchTab(page, 'notifications');
+    const radio = page.locator('input[name="ait-notification-result"][value="agreementRejected"]');
+    await radio.check();
+    await expect(radio).toBeChecked();
+    await page.locator('button.ait-panel-toggle').click();
+    await expect(page.locator('.ait-panel.open')).toBeHidden({ timeout: 3000 });
+
+    const r = await apiClick(page, 'notification-request');
+    expect(r).toBe('agreementRejected');
   });
 
   test('preset Apply changes mock state observed by fixture SDK', async ({ page }) => {
