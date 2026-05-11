@@ -56,8 +56,9 @@ const CUSTOM_PRESET: ViewportPreset = {
 
 /**
  * Device presets (2026). CSS viewport 크기는 실제 기기의 `window.innerWidth/innerHeight`.
- * iPhone 17 시리즈는 2025-09 출시. iPhone Air와 Galaxy S26 시리즈는 2026-04 기준 미출시라
- * 추정 값(`(est)` 라벨 표기). 실제 출시 후 값을 갱신한다.
+ * iPhone 17 시리즈는 2025-09 출시. iPhone Air는 2026-04 기준 미출시 추정(`(est)` 라벨).
+ * Galaxy S26 시리즈는 2026-03-11 출시 — viewport 값은 phone-simulator.com에서 보고된
+ * 측정치를 사용. safe area는 토스 호스트 환경 실측 필요 — S25 값으로 잠정.
  *
  * iPhone 17과 17 Pro는 CSS viewport / DPR / safe area가 동일 — 이는 의도이며 카피-페이스트
  * 실수가 아니다. Apple의 17 lineup은 base와 Pro의 web-relevant 스펙이 같다.
@@ -127,18 +128,15 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
   },
   // Samsung
   //
-  // Galaxy S26 / S26+ / S26 Ultra are unreleased as of 2026-05. The values below
-  // mirror the corresponding S25 / S25+ / S25 Ultra spec as a fallback so users
-  // get *some* Samsung punch-hole simulation rather than a missing entry. Treat
-  // these as approximate — update once the S26 series ships and confirmed
-  // viewport specs are available. The `(S25 fallback)` suffix in `label`
-  // surfaces this caveat in the UI dropdown so QA doesn't trust the values as
-  // ground truth.
+  // Galaxy S26 series shipped 2026-03-11. Viewport widths/heights below come
+  // from phone-simulator.com's measured values. safe-area top/bottom remain
+  // S25-derived placeholders because we have no toss host live-measure yet —
+  // do not treat them as ground truth for QA.
   {
     id: 'galaxy-s26',
-    label: 'Galaxy S26 (S25 fallback)',
-    width: 384,
-    height: 832,
+    label: 'Galaxy S26',
+    width: 360,
+    height: 773,
     dpr: 3,
     notch: 'punch-hole-center',
     safeAreaTop: 32,
@@ -146,9 +144,9 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
   },
   {
     id: 'galaxy-s26-plus',
-    label: 'Galaxy S26+ (S25 fallback)',
-    width: 412,
-    height: 915,
+    label: 'Galaxy S26+',
+    width: 480,
+    height: 1040,
     dpr: 3,
     notch: 'punch-hole-center',
     safeAreaTop: 32,
@@ -156,10 +154,10 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
   },
   {
     id: 'galaxy-s26-ultra',
-    label: 'Galaxy S26 Ultra (S25 fallback)',
-    width: 412,
-    height: 915,
-    dpr: 3.5,
+    label: 'Galaxy S26 Ultra',
+    width: 480,
+    height: 1040,
+    dpr: 3,
     notch: 'punch-hole-center',
     safeAreaTop: 40,
     safeAreaBottom: 0,

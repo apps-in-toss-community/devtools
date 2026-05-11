@@ -45,7 +45,7 @@ describe('viewport presets', () => {
     expect(iphone17Pro.safeAreaTop).toBeGreaterThan(0);
     expect(iphone17Pro.safeAreaBottom).toBeGreaterThan(0);
 
-    expect(getPreset('galaxy-s26').width).toBe(384);
+    expect(getPreset('galaxy-s26').width).toBe(360);
     expect(getPreset('iphone-se-3').notch).toBe('none');
     expect(getPreset('iphone-se-3').safeAreaBottom).toBe(0);
   });
@@ -69,13 +69,25 @@ describe('viewport presets', () => {
     // iPhone Air: 미출시(추정값) → `(est)`
     const iphoneAir = VIEWPORT_PRESETS.find((p) => p.id === 'iphone-air');
     expect(iphoneAir?.label).toContain('(est)');
+  });
 
-    // Galaxy S26 시리즈: 미출시 + S25 spec을 그대로 fallback → `(S25 fallback)`
-    for (const id of ['galaxy-s26', 'galaxy-s26-plus', 'galaxy-s26-ultra'] as const) {
-      const preset = VIEWPORT_PRESETS.find((p) => p.id === id);
-      expect(preset, `${id} preset must exist`).toBeDefined();
-      expect(preset?.label).toContain('(S25 fallback)');
-    }
+  it('Galaxy S26 시리즈는 출시된 spec(phone-simulator.com 측정치)을 사용한다', () => {
+    const s26 = VIEWPORT_PRESETS.find((p) => p.id === 'galaxy-s26');
+    expect(s26).toMatchObject({ label: 'Galaxy S26', width: 360, height: 773, dpr: 3 });
+    expect(s26?.label).not.toContain('fallback');
+
+    const s26Plus = VIEWPORT_PRESETS.find((p) => p.id === 'galaxy-s26-plus');
+    expect(s26Plus).toMatchObject({ label: 'Galaxy S26+', width: 480, height: 1040, dpr: 3 });
+    expect(s26Plus?.label).not.toContain('fallback');
+
+    const s26Ultra = VIEWPORT_PRESETS.find((p) => p.id === 'galaxy-s26-ultra');
+    expect(s26Ultra).toMatchObject({
+      label: 'Galaxy S26 Ultra',
+      width: 480,
+      height: 1040,
+      dpr: 3,
+    });
+    expect(s26Ultra?.label).not.toContain('fallback');
   });
 });
 
