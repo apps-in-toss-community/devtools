@@ -360,7 +360,11 @@ test.describe('Layer C: Panel-App bridge', () => {
   test('notifications tab: alreadyAgreed radio is observed by fixture SDK', async ({ page }) => {
     await openPanel(page);
     await switchTab(page, 'notifications');
-    await page.locator('input[name="ait-notification-result"][value="alreadyAgreed"]').check();
+    const radio = page.locator('input[name="ait-notification-result"][value="alreadyAgreed"]');
+    await radio.check();
+    // Guard against silent selector misses: make the failure mode "radio not
+    // checked" (loud) instead of "default value still observed" (mysterious).
+    await expect(radio).toBeChecked();
     await page.locator('button.ait-panel-toggle').click();
     await expect(page.locator('.ait-panel.open')).toBeHidden({ timeout: 3000 });
 
@@ -373,7 +377,9 @@ test.describe('Layer C: Panel-App bridge', () => {
   }) => {
     await openPanel(page);
     await switchTab(page, 'notifications');
-    await page.locator('input[name="ait-notification-result"][value="agreementRejected"]').check();
+    const radio = page.locator('input[name="ait-notification-result"][value="agreementRejected"]');
+    await radio.check();
+    await expect(radio).toBeChecked();
     await page.locator('button.ait-panel-toggle').click();
     await expect(page.locator('.ait-panel.open')).toBeHidden({ timeout: 3000 });
 

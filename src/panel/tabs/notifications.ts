@@ -1,9 +1,8 @@
 import { aitState } from '../../mock/state.js';
+import type { NotificationAgreementResult } from '../../mock/types.js';
 import { h, monitoringNotice } from '../helpers.js';
 
-type NotificationResult = 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
-
-const RESULTS: Array<{ value: NotificationResult; label: string }> = [
+const RESULTS: Array<{ value: NotificationAgreementResult; label: string }> = [
   { value: 'newAgreement', label: 'newAgreement (first-time agree)' },
   { value: 'alreadyAgreed', label: 'alreadyAgreed (already opted-in)' },
   { value: 'agreementRejected', label: 'agreementRejected (user declined)' },
@@ -11,8 +10,8 @@ const RESULTS: Array<{ value: NotificationResult; label: string }> = [
 
 function radioRow(
   name: string,
-  current: NotificationResult,
-  option: { value: NotificationResult; label: string },
+  current: NotificationAgreementResult,
+  option: { value: NotificationAgreementResult; label: string },
   disabled: boolean,
 ): HTMLElement {
   const input = h('input', { type: 'radio', name, value: option.value });

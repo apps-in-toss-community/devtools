@@ -5,11 +5,14 @@
  * 반환하고, 결과는 `params.onEvent`로 전달된다. mock도 같은 모양을 흉내내며,
  * 결과는 panel(Notifications 탭)이 토글한 `aitState.state.notification.nextResult`를
  * 그대로 사용한다.
+ *
+ * `agreementRejected`도 정상 결과의 한 종류이므로 `onEvent`로 전달한다.
+ * `onError`는 `onEvent` 호출 자체가 throw할 때만 들어간다 (실제 SDK도 reject를
+ * error가 아닌 event type으로 표현한다).
  */
 
 import { aitState } from './state.js';
-
-type NotificationAgreementResult = 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
+import type { NotificationAgreementResult } from './types.js';
 
 interface RequestNotificationAgreementOptions {
   options: { templateCode: string };

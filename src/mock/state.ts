@@ -12,6 +12,7 @@ import type {
   MockIapProduct,
   MockLocation,
   NetworkStatus,
+  NotificationAgreementResult,
   OperationalEnvironment,
   PermissionName,
   PermissionStatus,
@@ -36,6 +37,7 @@ export type {
   MockLocation,
   NetworkStatus,
   NotchType,
+  NotificationAgreementResult,
   OperationalEnvironment,
   PermissionName,
   PermissionStatus,
@@ -111,7 +113,7 @@ export interface AitDevtoolsState {
 
   // 알림
   notification: {
-    nextResult: 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
+    nextResult: NotificationAgreementResult;
   };
 
   // 광고
