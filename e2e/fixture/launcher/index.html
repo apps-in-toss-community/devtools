@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#0b0d10" />
@@ -26,6 +27,14 @@
       button { padding: 10px 14px; font-size: 14px; font-weight: 600; border-radius: 8px; border: 0; background: #3b6fff; color: #fff; cursor: pointer; }
       button.secondary { background: #2a2e33; color: #e8eaed; }
       #msg { font-size: 12px; color: #f28b82; min-height: 16px; text-align: center; }
+      #install-hint {
+        display: none; width: min(92vw, 420px); padding: 10px 12px; border-radius: 8px;
+        background: #16191d; border: 1px solid #2a2e33; font-size: 12px; color: #9aa0a6; line-height: 1.5;
+      }
+      #install-hint b { color: #e8eaed; font-weight: 600; }
+      #install-hint.show { display: block; }
+      #install-btn { display: none; }
+      #install-btn.show { display: inline-block; margin-top: 8px; }
       /* Live view: launcher becomes a chromeless shell around the dev app. */
       #frame { position: fixed; inset: 0; border: 0; width: 100%; height: 100dvh; background: #fff; display: none; }
       #rescan {
@@ -43,6 +52,12 @@
         <code>https://…trycloudflare.com</code> URL below. The dev app then opens full-screen
         inside this launcher.
       </p>
+      <div id="install-hint" data-testid="launcher-install-hint">
+        <b>Tip — install this launcher once.</b> On <b>iOS Safari</b>: Share → “Add to Home Screen”.
+        On <b>Android Chrome</b>: menu (⋮) → “Add to Home screen” / “Install app”. Then open it from
+        the home‑screen icon — it runs full‑screen with no address bar, and remembers your last URL.
+        <button type="button" id="install-btn" data-testid="launcher-install-btn">Install app</button>
+      </div>
       <div id="scanner" data-testid="launcher-scanner">
         <video playsinline>
           <track kind="captions" />

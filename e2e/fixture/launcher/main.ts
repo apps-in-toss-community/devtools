@@ -21,8 +21,47 @@ const scanBtn = document.getElementById('scan-btn') as HTMLButtonElement;
 const msg = document.getElementById('msg') as HTMLElement;
 const frame = document.getElementById('frame') as HTMLIFrameElement;
 const rescanBtn = document.getElementById('rescan') as HTMLButtonElement;
+const installHint = document.getElementById('install-hint') as HTMLElement;
+const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
 
 let scanner: QrScanner | null = null;
+
+// `beforeinstallprompt` is Chromium-only and not in lib.dom; minimal shape.
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+function isStandalone(): boolean {
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    // iOS Safari home-screen apps expose this non-standard flag.
+    (navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+}
+
+// Nudge users who opened the launcher in a normal browser tab to install it
+// first — that's what makes it chromeless and stable across sessions.
+let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
+if (!isStandalone()) {
+  installHint.classList.add('show');
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e as BeforeInstallPromptEvent;
+    installBtn.classList.add('show');
+  });
+  installBtn.addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    await deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    installBtn.classList.remove('show');
+  });
+}
+window.addEventListener('appinstalled', () => {
+  installHint.classList.remove('show');
+  installBtn.classList.remove('show');
+});
 
 function normalizeUrl(raw: string): string | null {
   const trimmed = raw.trim();
