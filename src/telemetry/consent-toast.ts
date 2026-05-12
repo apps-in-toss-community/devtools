@@ -1,12 +1,11 @@
 /**
  * Consent toast UI — vanilla DOM, fixed bottom-right.
  *
- * Ko-only for now — devtools has no i18n layer.
- * TODO: revisit when/if an i18n layer is added to the panel.
- *
  * Shows once per "undecided + reprompt window cleared" session.
  * Calls onAccept / onDeny callbacks; caller is responsible for persisting state.
  */
+
+import { t } from '../i18n/index.js';
 
 const TOAST_ID = '__ait-telemetry-toast';
 
@@ -108,22 +107,22 @@ export function showConsentToast({ onAccept, onDeny }: ConsentToastOptions): voi
 
   const header = document.createElement('div');
   header.className = 'ait-toast-header';
-  header.textContent = '익명 사용 통계를 보낼까요?';
+  header.textContent = t('toast.consent.title');
 
   const body = document.createElement('div');
   body.className = 'ait-toast-body';
-  body.textContent = '도구 개선을 위해 익명 이벤트만 수집해요. 언제든 환경 탭에서 끌 수 있어요.';
+  body.textContent = t('toast.consent.body');
 
   const learnMore = document.createElement('a');
   learnMore.className = 'ait-toast-link';
   learnMore.href = 'https://docs.aitc.dev/privacy';
   learnMore.target = '_blank';
   learnMore.rel = 'noopener noreferrer';
-  learnMore.textContent = '더 알아보기';
+  learnMore.textContent = t('toast.consent.learnMore');
 
   const yesBtn = document.createElement('button');
   yesBtn.className = 'ait-toast-btn-primary';
-  yesBtn.textContent = 'Yes, send';
+  yesBtn.textContent = t('toast.consent.accept');
   yesBtn.addEventListener('click', () => {
     removeToast();
     onAccept();
@@ -131,7 +130,7 @@ export function showConsentToast({ onAccept, onDeny }: ConsentToastOptions): voi
 
   const noBtn = document.createElement('button');
   noBtn.className = 'ait-toast-btn-secondary';
-  noBtn.textContent = 'No, thanks';
+  noBtn.textContent = t('toast.consent.deny');
   noBtn.addEventListener('click', () => {
     removeToast();
     onDeny();

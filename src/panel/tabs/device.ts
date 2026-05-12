@@ -1,3 +1,4 @@
+import { type StringKey, t } from '../../i18n/index.js';
 import { getDefaultPlaceholderImages } from '../../mock/device/index.js';
 import { aitState } from '../../mock/state.js';
 import { h, monitoringNotice, selectRow } from '../helpers.js';
@@ -36,7 +37,7 @@ function renderPromptBanner(): HTMLElement | null {
   const banner = h('div', { className: 'ait-prompt-banner' });
 
   if (pendingPrompt.type === 'camera') {
-    banner.append(h('div', { className: 'ait-prompt-title' }, 'Camera Prompt — Select an image'));
+    banner.append(h('div', { className: 'ait-prompt-title' }, t('device.prompt.camera.title')));
     const input = h('input', {
       type: 'file',
       accept: 'image/*',
@@ -51,7 +52,7 @@ function renderPromptBanner(): HTMLElement | null {
     });
     banner.appendChild(input);
   } else if (pendingPrompt.type === 'photos') {
-    banner.append(h('div', { className: 'ait-prompt-title' }, 'Photos Prompt — Select images'));
+    banner.append(h('div', { className: 'ait-prompt-title' }, t('device.prompt.photos.title')));
     const input = h('input', {
       type: 'file',
       accept: 'image/*',
@@ -79,8 +80,8 @@ function renderPromptBanner(): HTMLElement | null {
         'div',
         { className: 'ait-prompt-title' },
         pendingPrompt.type === 'location'
-          ? 'Location Prompt — Enter coordinates'
-          : 'Location Update — Send coordinates',
+          ? t('device.prompt.location.title')
+          : t('device.prompt.locationUpdate.title'),
       ),
     );
     const latInput = h('input', {
@@ -93,7 +94,7 @@ function renderPromptBanner(): HTMLElement | null {
       value: String(aitState.state.location.coords.longitude),
       style: 'width:80px',
     });
-    const sendBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Send');
+    const sendBtn = h('button', { className: 'ait-btn ait-btn-sm' }, t('device.prompt.send'));
     sendBtn.addEventListener('click', () => {
       const loc = {
         coords: {
@@ -113,23 +114,29 @@ function renderPromptBanner(): HTMLElement | null {
       h(
         'div',
         { className: 'ait-prompt-input-row' },
-        h('label', {}, 'Lat'),
+        h('label', {}, t('device.prompt.label.lat')),
         latInput,
-        h('label', {}, 'Lng'),
+        h('label', {}, t('device.prompt.label.lng')),
         lngInput,
         sendBtn,
       ),
     );
   } else {
     // Fallback for unknown prompt types
-    banner.append(h('div', { className: 'ait-prompt-title' }, `Prompt: ${pendingPrompt.type}`));
+    banner.append(
+      h(
+        'div',
+        { className: 'ait-prompt-title' },
+        t('device.prompt.fallbackTitle', { type: pendingPrompt.type }),
+      ),
+    );
   }
 
   // Cancel button for all prompt types
   const cancelBtn = h(
     'button',
     { className: 'ait-btn ait-btn-sm ait-btn-danger', style: 'margin-top:8px' },
-    'Cancel',
+    t('device.prompt.cancel'),
   );
   cancelBtn.addEventListener('click', () => {
     pendingPrompt = null;
@@ -155,23 +162,26 @@ export function renderDeviceTab(): HTMLElement {
   }
 
   // Device API Mode selectors
-  const modeEntries: Array<{ label: string; key: keyof typeof s.deviceModes; options: string[] }> =
-    [
-      { label: 'Camera', key: 'camera', options: ['mock', 'web', 'prompt'] },
-      { label: 'Photos', key: 'photos', options: ['mock', 'web', 'prompt'] },
-      { label: 'Location', key: 'location', options: ['mock', 'web', 'prompt'] },
-      { label: 'Network', key: 'network', options: ['mock', 'web'] },
-      { label: 'Clipboard', key: 'clipboard', options: ['mock', 'web'] },
-    ];
+  const modeEntries: Array<{
+    labelKey: StringKey;
+    key: keyof typeof s.deviceModes;
+    options: string[];
+  }> = [
+    { labelKey: 'device.row.camera', key: 'camera', options: ['mock', 'web', 'prompt'] },
+    { labelKey: 'device.row.photos', key: 'photos', options: ['mock', 'web', 'prompt'] },
+    { labelKey: 'device.row.location', key: 'location', options: ['mock', 'web', 'prompt'] },
+    { labelKey: 'device.row.network', key: 'network', options: ['mock', 'web'] },
+    { labelKey: 'device.row.clipboard', key: 'clipboard', options: ['mock', 'web'] },
+  ];
 
   container.append(
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Device API Modes'),
+      h('div', { className: 'ait-section-title' }, t('device.section.modes')),
       ...modeEntries.map((entry) =>
         selectRow(
-          entry.label,
+          t(entry.labelKey),
           entry.options,
           s.deviceModes[entry.key],
           (v) => {
@@ -200,7 +210,7 @@ export function renderDeviceTab(): HTMLElement {
     imageGrid.appendChild(thumb);
   });
 
-  const addBtn = h('button', { className: 'ait-btn-secondary' }, '+ Add');
+  const addBtn = h('button', { className: 'ait-btn-secondary' }, t('device.btn.add'));
   addBtn.addEventListener('click', () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -225,13 +235,13 @@ export function renderDeviceTab(): HTMLElement {
   });
   if (disabled) addBtn.disabled = true;
 
-  const defaultsBtn = h('button', { className: 'ait-btn-secondary' }, 'Use defaults');
+  const defaultsBtn = h('button', { className: 'ait-btn-secondary' }, t('device.btn.useDefaults'));
   defaultsBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [...getDefaultPlaceholderImages()] });
   });
   if (disabled) defaultsBtn.disabled = true;
 
-  const clearImagesBtn = h('button', { className: 'ait-btn-secondary' }, 'Clear');
+  const clearImagesBtn = h('button', { className: 'ait-btn-secondary' }, t('device.btn.clear'));
   clearImagesBtn.addEventListener('click', () => {
     aitState.patch('mockData', { images: [] });
   });
@@ -241,7 +251,11 @@ export function renderDeviceTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, `Mock Images (${images.length})`),
+      h(
+        'div',
+        { className: 'ait-section-title' },
+        t('device.section.mockImages', { count: images.length }),
+      ),
       imageGrid,
       h('div', { className: 'ait-btn-row' }, addBtn, defaultsBtn, clearImagesBtn),
     ),

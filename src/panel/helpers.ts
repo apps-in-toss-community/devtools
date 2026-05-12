@@ -2,6 +2,8 @@
  * 공통 DOM 헬퍼 함수
  */
 
+import { t } from '../i18n/index.js';
+
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   attrs?: Record<string, string>,
@@ -51,9 +53,5 @@ export function inputRow(
 }
 
 export function monitoringNotice(): HTMLElement {
-  return h(
-    'div',
-    { className: 'ait-monitoring-notice' },
-    'Read-only — mock responses are controlled at build time.',
-  );
+  return h('div', { className: 'ait-monitoring-notice' }, t('common.readOnly'));
 }
