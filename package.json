@@ -25,6 +25,10 @@
       "types": "./dist/unplugin/index.d.ts",
       "import": "./dist/unplugin/index.js",
       "require": "./dist/unplugin/index.cjs"
+    },
+    "./mcp/server": {
+      "types": "./dist/mcp/server.d.ts",
+      "import": "./dist/mcp/server.js"
     }
   },
   "files": [
@@ -53,6 +57,7 @@
     }
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "unplugin": "^3.0.0"
   },
   "devDependencies": {

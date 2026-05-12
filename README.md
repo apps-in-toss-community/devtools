@@ -166,11 +166,13 @@ module.exports = {
 | `panel` | `boolean` | `true` | DevTools Panel 자동 주입 여부 |
 | `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
+| `mcp` | `boolean` | `false` | Vite dev server에 MCP state endpoint 추가 (Vite 전용, [MCP 섹션](#mcp-server-spike) 참조) |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
 aitDevtools.vite({ forceEnable: true }); // production에서도 활성화 (mock 기본 OFF, panel ON)
 aitDevtools.vite({ forceEnable: true, mock: true }); // production에서 mock도 활성화
+aitDevtools.vite({ mcp: true }); // AI 에이전트용 MCP endpoint 활성화
 ```
 
 ## Production 빌드
@@ -738,6 +740,70 @@ Turbopack은 unplugin을 지원하지 않으므로, `next.config.js`에서 `reso
 import '@ait-co/devtools/panel';
 ```
 
+## MCP Server (spike)
+
+> **Spike 상태**: `devtools_get_mock_state` 1개 tool만 구현된 최소 검증 버전입니다.
+> 사용 피드백이 확인되면 write path + 추가 tool을 후속 릴리즈에서 확장할 예정입니다.
+
+AI 코딩 에이전트(Claude Code, Cursor 등)가 실행 중인 브라우저의 mock state를
+[MCP(Model Context Protocol)](https://modelcontextprotocol.io/)를 통해 직접 읽을 수 있습니다.
+
+### 구조
+
+```
+브라우저 (aitState)
+  └─ POST /api/ait-devtools/state (panel이 state 변경 시 자동 push)
+       └─ Vite dev server (unplugin mcp: true 로 등록)
+            └─ GET /api/ait-devtools/state
+                 └─ MCP stdio server (dist/mcp/server.js)
+                      └─ AI 에이전트 (devtools_get_mock_state tool)
+```
+
+### 설정
+
+**1. Vite 플러그인에 `mcp: true` 추가**
+
+```ts
+// vite.config.ts
+import aitDevtools from '@ait-co/devtools/unplugin';
+
+export default {
+  plugins: [aitDevtools.vite({ mcp: true })],
+};
+```
+
+**2. MCP 클라이언트 설정 (예: Claude Code `.claude/settings.json`)**
+
+```json
+{
+  "mcpServers": {
+    "ait-devtools": {
+      "command": "node",
+      "args": ["node_modules/@ait-co/devtools/dist/mcp/server.js"],
+      "env": {
+        "AIT_DEVTOOLS_URL": "http://localhost:5173"
+      }
+    }
+  }
+}
+```
+
+`AIT_DEVTOOLS_URL`은 기본값이 `http://localhost:5173`이므로 기본 포트를 쓰면 생략 가능합니다.
+
+**3. 앱을 브라우저에서 열고, AI 에이전트에서 tool 호출**
+
+```
+> devtools_get_mock_state
+```
+
+현재 mock state 전체(권한, 위치, 인증, 네트워크, IAP 등)를 JSON으로 반환합니다.
+
+### 구현된 tool
+
+| Tool | 설명 |
+|---|---|
+| `devtools_get_mock_state` | 현재 `AitDevtoolsState` 스냅샷 반환 (read-only) |
+
 ## 패키지 Export 구조
 
 | Import path | 용도 |
@@ -745,6 +811,7 @@ import '@ait-co/devtools/panel';
 | `@ait-co/devtools` 또는 `@ait-co/devtools/mock` | 모든 mock export (번들러 alias 대상) |
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
+| `@ait-co/devtools/mcp/server` | MCP stdio server (Node.js, `dist/mcp/server.js`) |
 
 ## 라이센스
 

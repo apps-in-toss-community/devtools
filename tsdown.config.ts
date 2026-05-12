@@ -40,4 +40,14 @@ export default defineConfig([
     entry: { 'unplugin/index': 'src/unplugin/index.ts' },
     format: ['esm', 'cjs'],
   },
+  {
+    ...common,
+    // MCP server is a Node.js stdio process — ESM only, no browser globals
+    platform: 'node',
+    entry: { 'mcp/server': 'src/mcp/server.ts' },
+    format: ['esm'],
+    // Shebang is preserved in the source; tsdown strips it during transform.
+    // Re-add via banner so `node dist/mcp/server.js` works without explicit node invocation.
+    banner: { js: '#!/usr/bin/env node' },
+  },
 ]);

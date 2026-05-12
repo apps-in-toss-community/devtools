@@ -5,13 +5,33 @@
  * 외부 의존성 없이 vanilla DOM으로 구현.
  */
 
-import { aitState } from '../mock/state.js';
+import { type AitDevtoolsState, aitState } from '../mock/state.js';
 import { telemetry } from '../telemetry/index.js';
 import { h } from './helpers.js';
 import { PANEL_FULLSCREEN_BREAKPOINT, PANEL_HEIGHT, PANEL_STYLES, PANEL_WIDTH } from './styles.js';
 import { setDeviceRefreshPanel } from './tabs/device.js';
 import { createTabRenderers, TABS, type TabId } from './tabs/index.js';
 import { disposeViewport, initViewport } from './viewport.js';
+
+/** MCP endpoint registered by the unplugin when `mcp: true` is set */
+const MCP_STATE_PATH = '/api/ait-devtools/state';
+
+/**
+ * Push a state snapshot to the Vite dev-server MCP endpoint.
+ * No-ops silently when the endpoint is not available (e.g., mcp option not set,
+ * or running in production). Fire-and-forget — never throws.
+ */
+function pushStateToMcpEndpoint(state: AitDevtoolsState): void {
+  // Only attempt in a browser context with fetch available
+  if (typeof fetch === 'undefined') return;
+  fetch(MCP_STATE_PATH, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state),
+  }).catch(() => {
+    // Silently ignore — endpoint is not available when mcp option is not set
+  });
+}
 
 // --- Draggable toggle button ---
 
@@ -335,6 +355,12 @@ function mount() {
     } catch (err) {
       console.error('[@ait-co/devtools] Error in subscribe callback:', err);
     }
+
+    // MCP state push: when the unplugin `mcp: true` option is set, the Vite
+    // dev server exposes POST /api/ait-devtools/state. Push a snapshot there
+    // on every state change so the MCP stdio server can serve it to AI agents.
+    // Fire-and-forget — failures are debug-level only; never block the panel.
+    pushStateToMcpEndpoint(aitState.state);
   });
 
   // Listen for tab switch requests from device tab (prompt auto-open).

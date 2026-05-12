@@ -58,17 +58,36 @@ export interface AitDevtoolsOptions {
    * mock alias 활성화 여부. default: true (development), false (production + forceEnable)
    */
   mock?: boolean;
+  /**
+   * Vite dev server에 MCP state endpoint를 추가할지 여부 (default: false).
+   *
+   * `true`로 설정하면:
+   *  - GET  /api/ait-devtools/state  — 마지막으로 브라우저가 push한 mock state 스냅샷 반환
+   *  - POST /api/ait-devtools/state  — 브라우저 panel이 상태 변경 시 자동 push (panel 내부 처리)
+   *
+   * 이 endpoint를 `@ait-co/devtools` MCP stdio server가 읽어 AI 에이전트에 mock state를 노출한다.
+   * Vite 전용: webpack/rspack/esbuild/rollup 환경에서는 무시된다.
+   */
+  mcp?: boolean;
 }
 
 const FRAMEWORK_ID = '@apps-in-toss/web-framework';
 const BRIDGE_ID = '@apps-in-toss/web-bridge';
 const ANALYTICS_ID = '@apps-in-toss/web-analytics';
 
+/** MCP state endpoint path — browser panel POSTs here, MCP server GETs here */
+const MCP_STATE_PATH = '/api/ait-devtools/state';
+
 const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   const isDev = process.env.NODE_ENV !== 'production';
   const shouldEnable = isDev || (options?.forceEnable ?? false);
   const shouldMock = shouldEnable && (options?.mock ?? isDev);
   const shouldPanel = shouldEnable && (options?.panel ?? true);
+  const shouldMcp = shouldEnable && (options?.mcp ?? false);
+
+  // In-memory store for the last state snapshot pushed by the browser panel.
+  // Only allocated when mcp: true to avoid any overhead in the common case.
+  let lastState: string | null = null;
 
   return {
     name: 'ait-co-devtools',
@@ -101,6 +120,65 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
       // transformInclude가 진입점 파일만 통과시키므로 바로 prepend
       return `import '@ait-co/devtools/panel';\n${code}`;
     },
+
+    // Vite-only: register the MCP state HTTP endpoint on the dev server.
+    // Non-Vite bundlers do not have a dev server concept so this is silently
+    // skipped (unplugin passes `vite` key only when building for Vite).
+    vite: shouldMcp
+      ? {
+          configureServer(server) {
+            server.middlewares.use(MCP_STATE_PATH, (req, res) => {
+              // Allow Claude Code / AI agents (running locally) to read state
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+              res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+              if (req.method === 'OPTIONS') {
+                res.writeHead(204);
+                res.end();
+                return;
+              }
+
+              if (req.method === 'GET') {
+                if (lastState === null) {
+                  res.writeHead(503, { 'Content-Type': 'application/json' });
+                  res.end(
+                    JSON.stringify({
+                      error: 'No state received yet. Open the app in a browser first.',
+                    }),
+                  );
+                  return;
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(lastState);
+                return;
+              }
+
+              if (req.method === 'POST') {
+                const chunks: Buffer[] = [];
+                req.on('data', (chunk: Buffer) => chunks.push(chunk));
+                req.on('end', () => {
+                  try {
+                    const body = Buffer.concat(chunks).toString('utf-8');
+                    // Validate it's parseable JSON before caching
+                    JSON.parse(body);
+                    lastState = body;
+                    res.writeHead(204);
+                  } catch {
+                    res.writeHead(400, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                  }
+                  res.end();
+                });
+                return;
+              }
+
+              res.writeHead(405, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Method not allowed' }));
+            });
+          },
+        }
+      : undefined,
   };
 });
 
