@@ -40,4 +40,11 @@ export default defineConfig([
     entry: { 'unplugin/index': 'src/unplugin/index.ts' },
     format: ['esm', 'cjs'],
   },
+  {
+    // Lazy-loaded by unplugin/index only when the `tunnel` option is on, so the
+    // cloudflared / qrcode-terminal deps stay off the graph otherwise.
+    ...common,
+    entry: { 'unplugin/tunnel': 'src/unplugin/tunnel.ts' },
+    format: ['esm', 'cjs'],
+  },
 ]);

@@ -123,6 +123,12 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite/.webpack/.rspack/.esbuild/.rollup) |
 
+## 실기기 미리보기 (tunnel + launcher)
+
+unplugin `tunnel` 옵션(Vite dev 전용, `src/unplugin/index.ts`의 `vite.configureServer` 분기 + `src/unplugin/tunnel.ts`)이 dev 서버가 listen하면 `cloudflared` quick tunnel(`*.trycloudflare.com`, 계정 불필요)을 띄우고 터미널에 URL + ASCII QR을 출력한다. production은 `forceEnable`이어도 터널을 안 띄운다 (의도치 않은 노출 방지). `cloudflared`/`qrcode-terminal`는 **동적 import**로만 로드 → 터널 미사용 시 그래프에 안 들어옴. 이 둘은 `dependencies`에 들어가는데, "외부 의존성 최소화" 원칙의 의도적 예외다 (런타임 코드 경로에서 필요, 동적 import로 비용 격리). `tunnel.ts`의 `parseTrycloudflareUrl`/`printTunnelBanner`는 순수 함수로 빼서 vitest로 검증하고, cloudflared spawn 자체는 jsdom 범위 밖이라 e2e/수동 검증 ("web 모드는 e2e"와 같은 정신).
+
+폰 쪽은 고정 URL(`https://devtools.aitc.dev/launcher/`)에 배포된 launcher PWA(`e2e/fixture/launcher/`)를 한 번 홈 화면에 추가하고, 그 안의 풀뷰포트 `<iframe>`으로 그날의 tunnel URL을 띄운다 (quick tunnel URL은 매 실행마다 바뀌어서 URL 자체를 PWA로 설치하면 죽은 링크가 되고, cross-origin 전환은 standalone이 깨짐 → launcher가 same-origin 크롬리스 셸 역할). launcher는 카메라 QR 스캔(`qr-scanner`, **devDependency** — launcher SPA에서만 쓰이고 npm 패키지엔 안 실림) + URL 붙여넣기 fallback + `localStorage` 마지막 URL 자동 로드 + "Rescan" 버튼. PWA 정적 파일(`manifest.webmanifest`/`sw.js`/아이콘)은 `e2e/fixture/public/launcher/`에 두면 vite가 `dist/launcher/`로 복사. `e2e/fixture/vite.config.ts`는 이 launcher 페이지 때문에 MPA(`rollupOptions.input`에 `index.html` + `launcher/index.html`)이고, 같은 config의 unplugin 호출에 `tunnel: !!process.env.AIT_TUNNEL`이 있어 `AIT_TUNNEL=1 pnpm exec vite --config e2e/fixture/vite.config.ts`로 수동 QA 가능. (named tunnel로 고정 hostname 받는 방식은 추후 `tunnel: { hostname }` 옵션으로 확장 여지.)
+
 ## E2E 테스트 플로우
 
 이 repo 내부 자기완결 fixture(`e2e/fixture/`)를 쓴다. 외부 repo 의존 없음. 로컬은 `pnpm test:e2e` 한 줄. `playwright.config.ts`의 `webServer`가 `pnpm build` → fixture vite build → vite preview(:4173)를 자동 수행한다. CI는 `.github/workflows/ci.yml`의 `e2e` job이 동일 절차 실행, Playwright 브라우저는 `@playwright/test` 버전 키로 캐싱. 머지 게이트로 묶으려면 branch protection에서 `e2e` 체크 required로 추가 (job 이름 안정 유지).
