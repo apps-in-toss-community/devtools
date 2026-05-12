@@ -36,7 +36,7 @@ export function renderAnalyticsTab(): HTMLElement {
         .slice(-30)
         .reverse()
         .map((entry) => {
-          const time = new Date(entry.timestamp).toLocaleTimeString('ko-KR', { hour12: false });
+          const time = new Date(entry.timestamp).toLocaleTimeString();
           return h(
             'div',
             { className: 'ait-log-entry' },

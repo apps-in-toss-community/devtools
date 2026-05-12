@@ -364,9 +364,20 @@ function mount() {
   // idempotent (`document.querySelector('.ait-panel-toggle')` guard), so
   // dispose+mount is the simplest "re-render whole panel" hook.
   localeChangeHandler = () => {
+    // disposePanel() resets currentTab to 'env' and isOpen to false. Capture
+    // them first so the user stays on the same tab and the panel doesn't
+    // close out from under them mid-interaction.
+    const savedTab = currentTab;
+    const savedOpen = isOpen;
     disposePanel();
     try {
       mount();
+      currentTab = savedTab;
+      if (savedOpen && panelEl) {
+        isOpen = true;
+        panelEl.classList.add('open');
+      }
+      refreshPanel();
     } catch (err) {
       console.error('[@ait-co/devtools] Failed to re-mount after locale change:', err);
     }
