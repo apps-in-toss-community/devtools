@@ -7,5 +7,7 @@ Cloudflare quick tunnel (`*.trycloudflare.com`, no account) and prints the publi
 URL + an ASCII QR in the terminal. Pair it with the new launcher PWA at
 `https://devtools.aitc.dev/launcher/` to run the dev app full-screen on a real
 phone — scan/paste the URL once per session; the launcher remembers the last URL.
-`cloudflared` / `qrcode-terminal` are loaded only when the option is on. See
+`cloudflared` / `qrcode-terminal` are loaded only when the option is on. While
+the tunnel is active the plugin also adds `.trycloudflare.com` to Vite's
+`server.allowedHosts` so the random per-run hostname isn't rejected. See
 "Run on a real phone" in the README.

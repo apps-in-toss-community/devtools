@@ -125,6 +125,15 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
     // listening. unplugin passes this through to Vite's plugin object; other
     // bundlers ignore it.
     vite: {
+      config() {
+        if (!shouldTunnel) return;
+        // Vite blocks requests whose Host header isn't in `server.allowedHosts`
+        // (defaults to localhost only). The quick-tunnel hostname is random per
+        // run, so allow the whole `.trycloudflare.com` suffix while the tunnel
+        // is on. (A leading `.` makes Vite match the domain and its subdomains.)
+        return { server: { allowedHosts: ['.trycloudflare.com'] } };
+      },
+
       configureServer(server: import('vite').ViteDevServer) {
         if (!shouldTunnel) return;
         let tunnel: { stop: () => void } | null = null;

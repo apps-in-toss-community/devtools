@@ -17,6 +17,7 @@ type RawHooks = {
   resolveId: (id: string) => string | null | undefined;
   transformInclude: (id: string) => boolean;
   transform: (code: string) => string | null | undefined;
+  vite: { config: () => { server?: { allowedHosts?: string[] } } | undefined };
 };
 
 function getRawHooks(options?: Parameters<typeof aitDevtoolsPlugin.raw>[0]): RawHooks {
@@ -173,6 +174,26 @@ describe('unplugin: transformInclude - 추가 케이스', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
     expect(hooks.transformInclude('src/App.tsx')).toBeTruthy();
+  });
+});
+
+describe('unplugin: tunnel - vite.config()', () => {
+  it('tunnel이 켜진 dev 모드에서 .trycloudflare.com을 allowedHosts에 추가한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ tunnel: true });
+    expect(hooks.vite.config()).toEqual({ server: { allowedHosts: ['.trycloudflare.com'] } });
+  });
+
+  it('tunnel이 꺼져 있으면 config를 건드리지 않는다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    expect(hooks.vite.config()).toBeUndefined();
+  });
+
+  it('production에서는 tunnel:true여도 config를 건드리지 않는다', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const hooks = getRawHooks({ tunnel: true, forceEnable: true });
+    expect(hooks.vite.config()).toBeUndefined();
   });
 });
 
