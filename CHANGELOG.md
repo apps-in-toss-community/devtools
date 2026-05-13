@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.19
+
+### Patch Changes
+
+- aef97d8: feat(panel): full ko/en internationalization
+
+  DevTools panel and consent toast now render in Korean or English based on `navigator.language` (`/^ko\b/i` → ko, else en), persisted under `localStorage['__ait_locale']`. Environment tab gains a Language toggle; switching locales remounts the panel via the new `__ait:localechange` event. Strings are sourced from a typed catalog under `src/i18n/`; missing keys fall back to the key string. Internal devtools chrome (Load / Show / Clear / Apply / Lat / Lng / Send / Cancel) is intentionally left in English in both locales.
+
+- 7ed86f5: unplugin: add a `tunnel` option (Vite dev only) that exposes the dev server via a
+  Cloudflare quick tunnel (`*.trycloudflare.com`, no account) and prints the public
+  URL + an ASCII QR in the terminal. Pair it with the new launcher PWA at
+  `https://devtools.aitc.dev/launcher/` to run the dev app full-screen on a real
+  phone — scan/paste the URL once per session; the launcher remembers the last URL.
+  `cloudflared` / `qrcode-terminal` are loaded only when the option is on. While
+  the tunnel is active the plugin also adds `.trycloudflare.com` to Vite's
+  `server.allowedHosts` so the random per-run hostname isn't rejected. See
+  "Run on a real phone" in the README.
+
 ## 0.1.18
 
 ### Patch Changes
