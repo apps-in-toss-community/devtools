@@ -215,33 +215,76 @@ if (process.env.NODE_ENV !== 'production') {
 
 데스크톱 크롬에서 잘 돌던 미니앱을 **실제 폰**에서 보고 싶을 때. Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, **계정 불필요**)로 노출하고, 폰에는 고정 URL의 launcher PWA를 한 번만 추가해 그 안에서 매번의 tunnel URL을 띄웁니다.
 
-1. unplugin에 `tunnel: true` 추가:
-   ```ts
-   // vite.config.ts
-   plugins: [aitDevtools.vite({ tunnel: true })]
-   ```
-2. `pnpm dev` (= `vite`) 실행. dev 서버가 listen하면 터미널에 공개 URL + ASCII QR이 출력됩니다. (첫 실행 시 `cloudflared` 바이너리를 자동 다운로드합니다.)
-3. 폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가** (iOS Safari "공유 → 홈 화면에 추가", Android Chrome "앱 설치"). 이걸 한 번만 하면 됩니다 — launcher 자체는 URL이 바뀌지 않습니다.
-4. launcher 아이콘으로 실행 → 카메라로 2번의 QR을 스캔(또는 URL을 붙여넣기) → dev 앱이 주소창 없는 풀스크린으로 뜹니다.
-5. 다음 세션엔 `pnpm dev` → 새 URL 스캔만 하면 됩니다. launcher는 마지막 URL을 기억하고, "Rescan" 버튼으로 언제든 교체할 수 있습니다.
+셋업은 세 갈래입니다:
+
+- **프로젝트당 1회** — `vite.config`에 옵션 + `package.json`에 pnpm 설정 + (선택) `dev:phone` 스크립트
+- **폰당 1회** — launcher PWA를 홈 화면에 추가
+- **매 세션** — `pnpm dev:phone` (또는 `AIT_TUNNEL=1 pnpm dev`) 한 줄
+
+### 1. 프로젝트당 1회 셋업
+
+(a) **`vite.config.ts`에 `tunnel` 옵션 추가** — 항상 켜져 있어 매번 cloudflared가 떠도 괜찮으면 `tunnel: true`, 평소엔 끄고 명시할 때만 켜고 싶으면 env-gate 권장:
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import aitDevtools from '@ait-co/devtools/unplugin';
+
+export default defineConfig({
+  plugins: [
+    aitDevtools.vite({
+      tunnel: !!process.env.AIT_TUNNEL, // 평소 OFF, AIT_TUNNEL=1 일 때만 ON
+    }),
+  ],
+});
+```
+
+> `process.env.AIT_TUNNEL`은 `vite.config.ts`를 로드하는 시점(= vite 프로세스 기동 시)에 평가됩니다. 따라서 env 변수는 **vite를 띄우기 전에** 설정되어 있어야 합니다 (아래 (c)의 `dev:phone` 스크립트가 이를 자동으로 해결합니다).
+
+(b) **`package.json`에 pnpm 10+ 빌드 스크립트 허용** — pnpm은 보안상 dependency의 postinstall을 기본 차단합니다. `cloudflared`는 postinstall에서 바이너리(~38 MB)를 받으므로 명시 허용 필요:
+
+```json
+{
+  "pnpm": {
+    "onlyBuiltDependencies": ["cloudflared"]
+  }
+}
+```
+
+> 명시하지 않아도 동작은 됩니다 — `tunnel.ts`가 첫 기동 시 `cloudflared.install()`을 lazy로 호출. 다만 `pnpm install`마다 "Ignored build scripts" 경고가 남고, 바이너리 다운로드가 첫 `pnpm dev` 시점으로 미뤄집니다. 참고: [`sdk-example#60`](https://github.com/apps-in-toss-community/sdk-example/pull/60).
+
+(c) **(선택) `dev:phone` 스크립트** — env 변수 매번 타기 귀찮으면:
+
+```json
+{
+  "scripts": {
+    "dev": "vite",
+    "dev:phone": "AIT_TUNNEL=1 vite"
+  }
+}
+```
+
+### 2. 폰당 1회 셋업
+
+폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가**합니다 (iOS Safari "공유 → 홈 화면에 추가", Android Chrome "앱 설치"). launcher 자체는 URL이 바뀌지 않으니 한 번만 하면 됩니다.
+
+### 3. 매 세션
+
+1. 데스크톱에서 `pnpm dev:phone`을 실행합니다 (1-(c) 스크립트를 추가하지 않았다면 `AIT_TUNNEL=1 pnpm dev`). 터미널에 `https://*.trycloudflare.com` URL + ASCII QR이 출력됩니다.
+2. 폰의 launcher 아이콘 실행 → 카메라로 QR 스캔(또는 URL 붙여넣기) → 주소창 없는 풀스크린으로 dev 앱이 뜹니다.
+3. 다음 세션엔 새 URL을 스캔만 하면 됩니다. launcher는 마지막 URL을 기억하고, "Rescan" 버튼으로 언제든 교체할 수 있습니다.
+
+### 배경
 
 > **왜 launcher를 거치나요?** quick tunnel URL은 매 실행마다 바뀌므로 그 URL 자체를 PWA로 설치하면 다음 세션엔 죽은 링크가 됩니다. cross-origin으로 페이지를 전환하면 iOS/Android 모두 standalone(크롬리스)이 깨집니다. → 고정 URL의 launcher를 한 번 설치하고, 그 안의 `<iframe>`으로 그날의 dev 앱을 full-bleed로 보여주는 구조입니다.
 >
 > quick tunnel은 **인증이 없고**, **URL이 매 실행마다 바뀌며**, **프로덕션용이 아닙니다**. (계정·도메인이 있다면 named tunnel로 고정 hostname을 받는 방식은 추후 `tunnel: { hostname }` 옵션으로 확장 여지를 남겨뒀습니다.)
 >
 > `tunnel` 옵션은 Vite dev 모드에서만 동작합니다 — production 빌드는 `forceEnable`이어도 터널을 띄우지 않습니다. 다른 번들러(Webpack/Rspack 등)에서는 무시됩니다. 이 옵션을 켜면 `cloudflared` / `qrcode-terminal`가 동적 import로만 로드되므로, 끄면 번들 그래프에 들어오지 않습니다.
->
-> **pnpm 10+ 사용자**: pnpm은 보안상 의존성의 build script(postinstall)를 기본 차단합니다. `cloudflared` 패키지의 postinstall이 cloudflared 바이너리(~38 MB)를 다운로드하므로, 차단된 채로 두면 `pnpm install` 시 `Ignored build scripts: ... cloudflared@...` 경고가 뜨고 바이너리 다운로드가 첫 `pnpm dev` 시점(터널 활성 시 lazy fallback)으로 미뤄집니다. 동작 자체는 됩니다만 깔끔하게 잡으려면 프로젝트 `package.json`에 추가하세요:
->
-> ```json
-> {
->   "pnpm": {
->     "onlyBuiltDependencies": ["cloudflared"]
->   }
-> }
-> ```
->
-> 그러면 `pnpm install` 시점에 바이너리가 캐시되어 첫 터널 기동이 즉시입니다. 참고: [`sdk-example#60`](https://github.com/apps-in-toss-community/sdk-example/pull/60).
+
+### 한 줄 셋업 (예정)
+
+위 "프로젝트당 1회" 단계(vite.config 패치 + `onlyBuiltDependencies` + `dev:phone` 스크립트)는 향후 [`agent-plugin`](https://github.com/apps-in-toss-community/agent-plugin)이 `/ait setup phone` 같은 단일 명령으로 흡수할 예정입니다 (명령 이름은 잠정). 이 README가 그 자동화의 명세서 역할을 하므로, 수동 셋업 단계가 줄어들어도 동작 모델 자체는 동일합니다.
 
 ## Device API 모드 시스템
 
