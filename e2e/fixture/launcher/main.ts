@@ -72,7 +72,12 @@ function normalizeUrl(raw: string): string | null {
   } catch {
     return null;
   }
-  return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.toString() : null;
+  if (parsed.protocol === 'https:') return parsed.toString();
+  // Allow http: only when the launcher itself is served over http: (local dev) —
+  // an http: iframe inside an https: page is mixed-content-blocked and fails
+  // silently. Quick-tunnel URLs are always https:, so this never bites them.
+  if (parsed.protocol === 'http:' && location.protocol === 'http:') return parsed.toString();
+  return null;
 }
 
 function stopScanner(): void {
@@ -127,7 +132,10 @@ async function startScanner(): Promise<void> {
 openBtn.addEventListener('click', () => {
   const url = normalizeUrl(urlInput.value);
   if (!url) {
-    msg.textContent = 'Enter a valid http(s) URL.';
+    msg.textContent =
+      location.protocol === 'https:'
+        ? 'Enter a valid https:// URL (the tunnel URL from your terminal).'
+        : 'Enter a valid http(s):// URL.';
     return;
   }
   showLive(url);

@@ -126,6 +126,9 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
       const found = parseTrycloudflareUrl(line);
       if (!found) return;
       clearTimeout(timer);
+      // Stop scanning further output once we have the URL.
+      tunnel.off('stdout', onUrl);
+      tunnel.off('stderr', onUrl);
       resolve({ url: found, stop });
     };
 
