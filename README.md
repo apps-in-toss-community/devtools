@@ -166,11 +166,13 @@ module.exports = {
 | `panel` | `boolean` | `true` | DevTools Panel 자동 주입 여부 |
 | `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
+| `tunnel` | `boolean \| { port?: number; qr?: boolean }` | `false` | Vite dev 서버를 Cloudflare quick tunnel로 노출 (실기기 미리보기, [아래](#run-on-a-real-phone-실기기-미리보기) 참고). **Vite dev 모드 전용** |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
 aitDevtools.vite({ forceEnable: true }); // production에서도 활성화 (mock 기본 OFF, panel ON)
 aitDevtools.vite({ forceEnable: true, mock: true }); // production에서 mock도 활성화
+aitDevtools.vite({ tunnel: true }); // dev 서버를 *.trycloudflare.com으로 노출
 ```
 
 ## Production 빌드
@@ -208,6 +210,26 @@ if (process.env.NODE_ENV !== 'production') {
 ```
 
 > Next.js 설정은 위의 [Next.js (Webpack)](#nextjs-webpack) 및 [Next.js (Turbopack)](#nextjs-turbopack) 섹션을 참고하세요.
+
+## Run on a real phone (실기기 미리보기)
+
+데스크톱 크롬에서 잘 돌던 미니앱을 **실제 폰**에서 보고 싶을 때. Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, **계정 불필요**)로 노출하고, 폰에는 고정 URL의 launcher PWA를 한 번만 추가해 그 안에서 매번의 tunnel URL을 띄웁니다.
+
+1. unplugin에 `tunnel: true` 추가:
+   ```ts
+   // vite.config.ts
+   plugins: [aitDevtools.vite({ tunnel: true })]
+   ```
+2. `pnpm dev` (= `vite`) 실행. dev 서버가 listen하면 터미널에 공개 URL + ASCII QR이 출력됩니다. (첫 실행 시 `cloudflared` 바이너리를 자동 다운로드합니다.)
+3. 폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가** (iOS Safari "공유 → 홈 화면에 추가", Android Chrome "앱 설치"). 이걸 한 번만 하면 됩니다 — launcher 자체는 URL이 바뀌지 않습니다.
+4. launcher 아이콘으로 실행 → 카메라로 2번의 QR을 스캔(또는 URL을 붙여넣기) → dev 앱이 주소창 없는 풀스크린으로 뜹니다.
+5. 다음 세션엔 `pnpm dev` → 새 URL 스캔만 하면 됩니다. launcher는 마지막 URL을 기억하고, "Rescan" 버튼으로 언제든 교체할 수 있습니다.
+
+> **왜 launcher를 거치나요?** quick tunnel URL은 매 실행마다 바뀌므로 그 URL 자체를 PWA로 설치하면 다음 세션엔 죽은 링크가 됩니다. cross-origin으로 페이지를 전환하면 iOS/Android 모두 standalone(크롬리스)이 깨집니다. → 고정 URL의 launcher를 한 번 설치하고, 그 안의 `<iframe>`으로 그날의 dev 앱을 full-bleed로 보여주는 구조입니다.
+>
+> quick tunnel은 **인증이 없고**, **URL이 매 실행마다 바뀌며**, **프로덕션용이 아닙니다**. (계정·도메인이 있다면 named tunnel로 고정 hostname을 받는 방식은 추후 `tunnel: { hostname }` 옵션으로 확장 여지를 남겨뒀습니다.)
+>
+> `tunnel` 옵션은 Vite dev 모드에서만 동작합니다 — production 빌드는 `forceEnable`이어도 터널을 띄우지 않습니다. 다른 번들러(Webpack/Rspack 등)에서는 무시됩니다. 이 옵션을 켜면 `cloudflared` / `qrcode-terminal`가 동적 import로만 로드되므로, 끄면 번들 그래프에 들어오지 않습니다.
 
 ## Device API 모드 시스템
 
