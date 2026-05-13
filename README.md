@@ -230,6 +230,18 @@ if (process.env.NODE_ENV !== 'production') {
 > quick tunnel은 **인증이 없고**, **URL이 매 실행마다 바뀌며**, **프로덕션용이 아닙니다**. (계정·도메인이 있다면 named tunnel로 고정 hostname을 받는 방식은 추후 `tunnel: { hostname }` 옵션으로 확장 여지를 남겨뒀습니다.)
 >
 > `tunnel` 옵션은 Vite dev 모드에서만 동작합니다 — production 빌드는 `forceEnable`이어도 터널을 띄우지 않습니다. 다른 번들러(Webpack/Rspack 등)에서는 무시됩니다. 이 옵션을 켜면 `cloudflared` / `qrcode-terminal`가 동적 import로만 로드되므로, 끄면 번들 그래프에 들어오지 않습니다.
+>
+> **pnpm 10+ 사용자**: pnpm은 보안상 의존성의 build script(postinstall)를 기본 차단합니다. `cloudflared` 패키지의 postinstall이 cloudflared 바이너리(~38 MB)를 다운로드하므로, 차단된 채로 두면 `pnpm install` 시 `Ignored build scripts: ... cloudflared@...` 경고가 뜨고 바이너리 다운로드가 첫 `pnpm dev` 시점(터널 활성 시 lazy fallback)으로 미뤄집니다. 동작 자체는 됩니다만 깔끔하게 잡으려면 프로젝트 `package.json`에 추가하세요:
+>
+> ```json
+> {
+>   "pnpm": {
+>     "onlyBuiltDependencies": ["cloudflared"]
+>   }
+> }
+> ```
+>
+> 그러면 `pnpm install` 시점에 바이너리가 캐시되어 첫 터널 기동이 즉시입니다. 참고: [`sdk-example#60`](https://github.com/apps-in-toss-community/sdk-example/pull/60).
 
 ## Device API 모드 시스템
 
