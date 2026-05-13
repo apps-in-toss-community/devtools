@@ -783,3 +783,7 @@ import '@ait-co/devtools/panel';
 ## 라이센스
 
 BSD 3-Clause
+
+---
+
+커뮤니티 오픈소스 프로젝트입니다.
