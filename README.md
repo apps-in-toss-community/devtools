@@ -2,6 +2,8 @@
 
 **한국어** · [English](./README.en.md)
 
+[![npm](https://img.shields.io/npm/v/@ait-co/devtools)](https://www.npmjs.com/package/@ait-co/devtools) [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](./LICENSE)
+
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
 `@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
@@ -15,10 +17,6 @@
 - **모든 번들러 지원** — [unplugin](https://github.com/unjs/unplugin) 기반 Vite, Webpack, Rspack, esbuild, Rollup 통합
 
 라이브 데모: <https://devtools.aitc.dev/> (이 repo의 `e2e/fixture/`를 GitHub Pages에 그대로 배포한 self-contained 데모).
-
-## Reference consumer
-
-[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example)이 devtools의 reference consumer다. 모든 SDK API를 인터랙티브하게 실행해볼 수 있는 카탈로그 앱으로, 웹 데모는 <https://sdk-example.aitc.dev/>에서 바로 확인할 수 있다. 새 mock을 추가하면 sdk-example의 카드에서 그대로 동작하는 게 1차 sanity check. 단, 이 repo의 E2E suite는 sdk-example을 clone하지 않고 **내부 자기완결 fixture(`e2e/fixture/`)** 로 운영한다 — sdk-example이 깨져도 devtools CI는 영향받지 않는다.
 
 ## 설치
 
@@ -35,6 +33,10 @@ pnpm add -D @ait-co/devtools
 > 않은 API를 호출하면 런타임에 에러가 발생합니다 — "devtools에서는 잘 되는데 실제 SDK에서는
 > 안 되는" 상황을 방지하기 위한 의도적 동작입니다. 누락된 API는
 > [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
+
+## Reference consumer
+
+[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example)이 devtools의 reference consumer다. 모든 SDK API를 인터랙티브하게 실행해볼 수 있는 카탈로그 앱으로, 웹 데모는 <https://sdk-example.aitc.dev/>에서 바로 확인할 수 있다. 새 mock을 추가하면 sdk-example의 카드에서 그대로 동작하는 게 1차 sanity check. 단, 이 repo의 E2E suite는 sdk-example을 clone하지 않고 **내부 자기완결 fixture(`e2e/fixture/`)** 로 운영한다 — sdk-example이 깨져도 devtools CI는 영향받지 않는다.
 
 ## 번들러 설정
 

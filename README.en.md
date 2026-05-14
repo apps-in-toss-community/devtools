@@ -2,6 +2,8 @@
 
 [한국어](./README.md) · **English**
 
+[![npm](https://img.shields.io/npm/v/@ait-co/devtools)](https://www.npmjs.com/package/@ait-co/devtools) [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](./LICENSE)
+
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
 A mock library for the `@apps-in-toss/web-framework` SDK. Imports of `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` are also mocked.
@@ -15,10 +17,6 @@ Lets you develop and test Apps in Toss mini-apps in a **regular browser** — wi
 - **All bundlers supported** — [unplugin](https://github.com/unjs/unplugin)-based Vite, Webpack, Rspack, esbuild, and Rollup integration
 
 Live demo: <https://devtools.aitc.dev/> (the `e2e/fixture/` from this repo deployed to GitHub Pages as a self-contained demo).
-
-## Reference consumer
-
-[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example) is the reference consumer of devtools. It's a catalog app where every SDK API can be run interactively, and the web demo is live at <https://sdk-example.aitc.dev/>. When you add a new mock, confirming that it works on the sdk-example card is the first sanity check. That said, this repo's E2E suite runs against an **internal self-contained fixture (`e2e/fixture/`)** without cloning sdk-example — so a broken sdk-example won't affect devtools CI.
 
 ## Install
 
@@ -35,6 +33,10 @@ pnpm add -D @ait-co/devtools
 > devtools has not yet mocked will throw a runtime error — this is intentional to prevent the
 > "works in devtools but fails with the real SDK" type of production incident. For missing APIs,
 > please [file an issue](https://github.com/apps-in-toss-community/devtools/issues).
+
+## Reference consumer
+
+[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example) is the reference consumer of devtools. It's a catalog app where every SDK API can be run interactively, and the web demo is live at <https://sdk-example.aitc.dev/>. When you add a new mock, confirming that it works on the sdk-example card is the first sanity check. That said, this repo's E2E suite runs against an **internal self-contained fixture (`e2e/fixture/`)** without cloning sdk-example — so a broken sdk-example won't affect devtools CI.
 
 ## Bundler setup
 
