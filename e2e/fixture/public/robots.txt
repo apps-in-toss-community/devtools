@@ -1,0 +1,21 @@
+User-agent: *
+Allow: /
+Disallow: /launcher/
+
+# AI crawlers — all allowed
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://devtools.aitc.dev/sitemap.xml
