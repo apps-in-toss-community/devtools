@@ -80,7 +80,12 @@
     "mini-app",
     "devtools",
     "mock",
-    "sdk"
+    "sdk",
+    "miniapp",
+    "simulator",
+    "testing",
+    "vite-plugin",
+    "webpack-plugin"
   ],
   "packageManager": "pnpm@10.33.0",
   "license": "BSD-3-Clause",
@@ -91,7 +96,7 @@
     "type": "git",
     "url": "https://github.com/apps-in-toss-community/devtools"
   },
-  "homepage": "https://www.npmjs.com/package/@ait-co/devtools",
+  "homepage": "https://devtools.aitc.dev/",
   "bugs": {
     "url": "https://github.com/apps-in-toss-community/devtools/issues"
   }
