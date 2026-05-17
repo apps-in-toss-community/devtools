@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.1.20
+
+### Patch Changes
+
+- 38db1ce: docs(fixture): SEO/AEO on devtools.aitc.dev — JSON-LD, canonical, sitemap, llms.txt
+
+  Make the live fixture demo (`devtools.aitc.dev`) discoverable:
+
+  - `e2e/fixture/index.html`: descriptive title, meta description, canonical,
+    Open Graph + Twitter Card meta with og:image, and a `SoftwareApplication`
+    JSON-LD block listing the SDK mock + multi-bundler unplugin + DevTools
+    panel.
+  - `e2e/fixture/launcher/index.html`: `noindex,nofollow` (the launcher is a
+    user-only PWA chrome, not a search target).
+  - `e2e/fixture/public/{robots.txt,sitemap.xml,llms.txt}`: standard SEO
+    surface + `llmstxt.org` overview for AI answer engines. AI crawlers
+    (GPTBot, ClaudeBot, anthropic-ai, PerplexityBot, Applebot-Extended)
+    explicitly allowed per org policy; `/launcher/` excluded from crawls.
+  - `e2e/fixture/public/og/image.png`: 1200×630 OG image.
+
+- 697870f: feat(telemetry): multi-tier consent — Tier 0 panel-mount ping + Tier 1 retained
+
+  Tier 0 opt-out daily ping (panel mount, fire-and-forget, no anon_id). Tier 1 events
+  retain existing behaviour with explicit `tier: 1` field. policy_version bumped to
+  `2026-05-18`; existing granted users regress to undecided for re-consent.
+
+- 41add94: docs(npm): add npm/license badges, expand keywords, refresh homepage
+
+  - README.md / README.en.md: add npm version + license badges below the
+    lang toggle, move "Reference consumer" section below Install so first-
+    paint shows the install command.
+  - package.json: extend `keywords` (`miniapp`, `simulator`, `testing`,
+    `vite-plugin`, `webpack-plugin`) for better npm discovery; point
+    `homepage` at https://devtools.aitc.dev/ instead of the npm page so
+    the registry "homepage" link goes to the live demo.
+
 ## 0.1.19
 
 ### Patch Changes
