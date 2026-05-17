@@ -827,6 +827,33 @@ import '@ait-co/devtools/panel';
 | `@ait-co/devtools/panel` | Floating DevTools Panel (auto-mounts on import) |
 | `@ait-co/devtools/unplugin` | Bundler plugin (.vite, .webpack, .rspack, .esbuild, .rollup) |
 
+## Telemetry
+
+devtools uses a two-tier telemetry model.
+
+### Tier 0 — anonymous usage signal (ON by default, opt-out)
+
+Sends a one-time anonymous ping per calendar day when the panel is opened.
+
+Collected fields: `source`, `version`, `ts` — no PII, no `anon_id`. The server generates an IP+UA daily hash but never stores it.
+
+How to opt out:
+- Panel Environment tab → "Anonymous usage signal (Tier 0)" toggle OFF
+- `localStorage.setItem('__ait_telemetry:t0_off', '1')` (from the browser console)
+- Environment variable: `AITC_TELEMETRY=off`
+
+### Tier 1 — extended telemetry (OFF by default, opt-in)
+
+A consent toast appears on first panel use. Data is only collected if you accept.
+
+Collected fields: `panel_open`, `tab_view`, `session_duration` events + an anonymous UUID (`anon_id`).
+
+How to opt out:
+- Panel Environment tab → "Extended telemetry (Tier 1)" toggle OFF
+- Delete collected data: Panel Environment tab → "Delete my data"
+
+Privacy policy: <https://docs.aitc.dev/privacy>
+
 ## License
 
 BSD 3-Clause

@@ -53,7 +53,15 @@ export const en: Record<StringKey, string> = {
 
   // Environment > Telemetry section
   'env.telemetry.section': 'Telemetry',
-  'env.telemetry.row': 'Telemetry',
+  // Tier 0 — opt-out anonymous signal
+  'env.telemetry.t0Row': 'Anonymous usage signal (Tier 0)',
+  'env.telemetry.t0On': 'On',
+  'env.telemetry.t0Off': 'Off',
+  'env.telemetry.t0TurnOn': 'Turn on',
+  'env.telemetry.t0TurnOff': 'Turn off',
+  'env.telemetry.t0Desc': 'Version + date only, no PII. Once per day. Helps improve the package.',
+  // Tier 1 — opt-in extended telemetry
+  'env.telemetry.row': 'Extended telemetry (Tier 1)',
   'env.telemetry.on': 'On',
   'env.telemetry.off': 'Off',
   'env.telemetry.turnOn': 'Turn on',
@@ -66,7 +74,7 @@ export const en: Record<StringKey, string> = {
   'env.telemetry.deleted': 'Deleted',
   'env.telemetry.deleteFailedRetry': 'Delete failed (please retry)',
   'env.telemetry.deleteFailed': 'Delete failed',
-  'env.telemetry.privacyLink': 'Privacy policy',
+  'env.telemetry.privacyLink': 'Privacy policy →',
 
   // Environment > Language toggle (new)
   'env.section.language': 'Language',

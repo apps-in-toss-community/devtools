@@ -54,7 +54,15 @@ export const ko = {
 
   // Environment > Telemetry section
   'env.telemetry.section': 'Telemetry',
-  'env.telemetry.row': 'Telemetry',
+  // Tier 0 — opt-out anonymous signal
+  'env.telemetry.t0Row': '익명 사용 신호 (Tier 0)',
+  'env.telemetry.t0On': 'On',
+  'env.telemetry.t0Off': 'Off',
+  'env.telemetry.t0TurnOn': 'Turn on',
+  'env.telemetry.t0TurnOff': 'Turn off',
+  'env.telemetry.t0Desc': '버전·날짜만 수집, PII 없음. 하루 1회. 패키지 개선에 사용됩니다.',
+  // Tier 1 — opt-in extended telemetry
+  'env.telemetry.row': '확장 텔레메트리 (Tier 1)',
   'env.telemetry.on': 'On',
   'env.telemetry.off': 'Off',
   'env.telemetry.turnOn': 'Turn on',
@@ -67,7 +75,7 @@ export const ko = {
   'env.telemetry.deleted': '삭제 완료',
   'env.telemetry.deleteFailedRetry': '삭제 실패 (다시 시도해주세요)',
   'env.telemetry.deleteFailed': '삭제 실패',
-  'env.telemetry.privacyLink': '개인정보 처리방침',
+  'env.telemetry.privacyLink': '개인정보 처리방침 →',
 
   // Environment > Language toggle (new)
   'env.section.language': 'Language',
