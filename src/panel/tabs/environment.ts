@@ -2,7 +2,13 @@ import { getLocale, type Locale, setLocale, t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import type { NetworkStatus, OperationalEnvironment, PlatformOS } from '../../mock/types.js';
 import { TELEMETRY_ENDPOINT } from '../../telemetry/index.js';
-import { deleteMyData, readConsentState, setConsentViaToggle } from '../../telemetry/state.js';
+import {
+  deleteMyData,
+  isTier0Enabled,
+  readConsentState,
+  setConsentViaToggle,
+  setTier0Enabled,
+} from '../../telemetry/state.js';
 import { h, inputRow, monitoringNotice, selectRow } from '../helpers.js';
 
 export function renderEnvironmentTab(): HTMLElement {
@@ -99,10 +105,40 @@ function buildLanguageSection(): HTMLElement {
 }
 
 function buildTelemetrySection(): HTMLElement {
+  // --- Tier 0 row ---
+  const t0Enabled = isTier0Enabled();
+  const t0StatusLabel = h(
+    'span',
+    {
+      style: `font-size:12px;font-weight:600;color:${t0Enabled ? '#4ade80' : '#888'}`,
+    },
+    t0Enabled ? t('env.telemetry.t0On') : t('env.telemetry.t0Off'),
+  );
+  const t0ToggleBtn = h(
+    'button',
+    { className: 'ait-btn ait-btn-sm', style: 'font-size:11px' },
+    t0Enabled ? t('env.telemetry.t0TurnOff') : t('env.telemetry.t0TurnOn'),
+  );
+  t0ToggleBtn.addEventListener('click', () => {
+    setTier0Enabled(!t0Enabled);
+    window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
+  });
+  const t0Row = h(
+    'div',
+    { className: 'ait-row' },
+    h('label', {}, t('env.telemetry.t0Row')),
+    h('span', { style: 'display:flex;align-items:center;gap:8px' }, t0StatusLabel, t0ToggleBtn),
+  );
+  const t0Desc = h(
+    'div',
+    { style: 'font-size:11px;color:#666;margin-bottom:6px' },
+    t('env.telemetry.t0Desc'),
+  );
+
+  // --- Tier 1 row ---
   const consent = readConsentState();
   const isGranted = consent === 'granted';
 
-  // Status label
   const statusLabel = h(
     'span',
     {
@@ -111,7 +147,6 @@ function buildTelemetrySection(): HTMLElement {
     isGranted ? t('env.telemetry.on') : t('env.telemetry.off'),
   );
 
-  // Toggle button
   const toggleBtn = h(
     'button',
     { className: 'ait-btn ait-btn-sm', style: 'font-size:11px' },
@@ -119,7 +154,6 @@ function buildTelemetrySection(): HTMLElement {
   );
   toggleBtn.addEventListener('click', () => {
     setConsentViaToggle(!isGranted);
-    // Re-render the environment tab
     window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
   });
 
@@ -187,6 +221,8 @@ function buildTelemetrySection(): HTMLElement {
     'div',
     { className: 'ait-section' },
     h('div', { className: 'ait-section-title' }, t('env.telemetry.section')),
+    t0Row,
+    t0Desc,
     statusRow,
     h('div', { style: 'margin-bottom:6px' }, anonIdEl),
     h(
