@@ -827,6 +827,33 @@ import '@ait-co/devtools/panel';
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
 
+## 텔레메트리
+
+devtools는 두 단계의 텔레메트리를 사용합니다.
+
+### Tier 0 — 익명 사용 신호 (기본 ON, opt-out)
+
+패널이 열릴 때 하루 1회 익명 ping을 전송합니다.
+
+수집 항목: `source`, `version`, `ts` — PII 없음, `anon_id` 없음. 서버가 IP+UA 기반 daily hash를 생성하지만 저장하지 않습니다.
+
+끄는 방법:
+- 패널 Environment 탭 → "익명 사용 신호 (Tier 0)" 토글 OFF
+- `localStorage.setItem('__ait_telemetry:t0_off', '1')` (콘솔에서 직접)
+- 환경 변수: `AITC_TELEMETRY=off`
+
+### Tier 1 — 확장 텔레메트리 (기본 OFF, opt-in)
+
+패널 최초 실행 시 동의 토스트로 묻습니다. 동의한 경우에만 수집됩니다.
+
+수집 항목: `panel_open`, `tab_view`, `session_duration` 이벤트 + 익명 UUID(`anon_id`).
+
+끄는 방법:
+- 패널 Environment 탭 → "확장 텔레메트리 (Tier 1)" 토글 OFF
+- 수집된 데이터 삭제: 패널 Environment 탭 → "내 데이터 삭제"
+
+개인정보 처리방침: <https://docs.aitc.dev/privacy>
+
 ## 라이센스
 
 BSD 3-Clause
