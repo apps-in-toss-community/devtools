@@ -23,6 +23,7 @@ const frame = document.getElementById('frame') as HTMLIFrameElement;
 const rescanBtn = document.getElementById('rescan') as HTMLButtonElement;
 const installHint = document.getElementById('install-hint') as HTMLElement;
 const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
+const setupTools = document.getElementById('setup-tools') as HTMLElement;
 
 let scanner: QrScanner | null = null;
 
@@ -40,11 +41,35 @@ function isStandalone(): boolean {
   );
 }
 
-// Nudge users who opened the launcher in a normal browser tab to install it
-// first — that's what makes it chromeless and stable across sessions.
+// http:// localhost / 127.0.0.1 — used by the bundled e2e fixture and local dev.
+// PWA install criteria require https, so we relax gating in this context so the
+// fixture remains usable in a normal browser tab.
+function isLocalDev(): boolean {
+  if (location.protocol === 'http:') return true;
+  const h = location.hostname;
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+}
+
+// On hosts without `beforeinstallprompt` (Safari, Firefox) we never get an
+// in-page install button — only the OS share-sheet flow ("Add to Home Screen").
+function canShowInstallPrompt(): boolean {
+  return 'BeforeInstallPromptEvent' in window || 'onbeforeinstallprompt' in window;
+}
+
+// Hide the input + scanner controls until the launcher is installed. The page
+// is meant to run as a chromeless PWA shell — letting a browser tab also drive
+// the iframe defeats the point (no standalone display, cross-origin tunnel URL
+// leaks the launcher's address bar). Local dev keeps the controls visible so
+// the fixture can be exercised without installing anything.
+function applyPwaGate(): void {
+  const gated = !isStandalone() && !isLocalDev();
+  setupTools.style.display = gated ? 'none' : '';
+  installHint.classList.toggle('show', !isStandalone());
+}
+
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
-if (!isStandalone()) {
-  installHint.classList.add('show');
+applyPwaGate();
+if (!isStandalone() && canShowInstallPrompt()) {
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredInstallPrompt = e as BeforeInstallPromptEvent;
@@ -61,6 +86,7 @@ if (!isStandalone()) {
 window.addEventListener('appinstalled', () => {
   installHint.classList.remove('show');
   installBtn.classList.remove('show');
+  applyPwaGate();
 });
 
 function normalizeUrl(raw: string): string | null {
@@ -159,10 +185,26 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/launcher/sw.js', { scope: '/launcher/' }).catch(() => {});
 }
 
-// Auto-resume the last session, otherwise show the setup screen.
-const last = localStorage.getItem(STORAGE_KEY);
-if (last && normalizeUrl(last)) {
-  showLive(last);
+// Deep-link entry: QR codes that the unplugin prints embed
+// `…/launcher/?url=<tunnel>` so the PWA can open the tunnel without a manual
+// scan/paste step. The query is consumed (history.replaceState) so a refresh
+// inside the live view falls back to localStorage / setup, not a re-deep-link.
+function consumeDeepLinkUrl(): string | null {
+  const param = new URLSearchParams(location.search).get('url');
+  if (!param) return null;
+  const url = normalizeUrl(param);
+  history.replaceState(null, '', location.pathname);
+  return url;
+}
+
+const deepLinked = consumeDeepLinkUrl();
+if (deepLinked) {
+  showLive(deepLinked);
 } else {
-  showSetup();
+  const last = localStorage.getItem(STORAGE_KEY);
+  if (last && normalizeUrl(last)) {
+    showLive(last);
+  } else {
+    showSetup();
+  }
 }
