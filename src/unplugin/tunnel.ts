@@ -37,23 +37,37 @@ export interface PrintTunnelBannerOptions {
 const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
 
 /**
+ * Build the deep-link URL that QR codes encode: when the launcher PWA is
+ * already on the phone's home screen, scanning this opens it directly into the
+ * live view for `tunnelUrl` (the launcher consumes `?url=` and clears it).
+ * Plain-text raw URL is no longer enough — the launcher gates its setup UI to
+ * the installed PWA, so a raw tunnel URL opened in a normal browser tab would
+ * land on a "please install" screen.
+ */
+export function buildLauncherDeepLink(tunnelUrl: string): string {
+  return `${LAUNCHER_URL}?url=${encodeURIComponent(tunnelUrl)}`;
+}
+
+/**
  * Print the terminal banner announcing the live tunnel: the public URL, an ASCII
- * QR encoding it, and a one-line note that quick tunnels are ephemeral,
- * unauthenticated and not for production. Pure w.r.t. side effects other than
- * the injected `log` sink and `qrcode-terminal` — unit-tested.
+ * QR encoding a launcher deep-link, and a one-line note that quick tunnels are
+ * ephemeral, unauthenticated and not for production. Pure w.r.t. side effects
+ * other than the injected `log` sink and `qrcode-terminal` — unit-tested.
  */
 export async function printTunnelBanner(
   url: string,
   opts: PrintTunnelBannerOptions = {},
 ): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(m));
+  const deepLink = buildLauncherDeepLink(url);
   const lines: string[] = [
     '',
     '  ┌─ @ait-co/devtools · live tunnel ────────────────────────────',
     `  │  ${url}`,
     '  │',
-    `  │  Open the launcher on your phone:  ${LAUNCHER_URL}`,
-    '  │  Scan the QR below from there (or paste the URL).',
+    `  │  Install the launcher PWA once:  ${LAUNCHER_URL}`,
+    '  │  Then scan the QR below — it opens the launcher directly',
+    '  │  into this tunnel URL (no manual paste needed).',
     '  │  Quick tunnels are unauthenticated, change every run, and are',
     '  │  not for production use.',
     '  └──────────────────────────────────────────────────────────────',
@@ -66,7 +80,7 @@ export async function printTunnelBanner(
     // in src/qrcode-terminal.d.ts).
     const qrcode = (await import('qrcode-terminal')).default;
     await new Promise<void>((resolve) => {
-      qrcode.generate(url, { small: true }, (out) => {
+      qrcode.generate(deepLink, { small: true }, (out) => {
         log(out);
         resolve();
       });
