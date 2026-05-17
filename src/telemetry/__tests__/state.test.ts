@@ -5,10 +5,14 @@ import {
   deleteMyData,
   denyConsent,
   getOrCreateAnonId,
+  hasSentTier0Today,
+  isTier0Enabled,
+  markTier0Sent,
   readConsentState,
   readRepromptAfter,
   resolveEffectiveConsent,
   setConsentViaToggle,
+  setTier0Enabled,
   shouldShowToast,
 } from '../state.js';
 
@@ -273,5 +277,78 @@ describe('deleteMyData', () => {
     );
     expect(await deleteMyData('https://t.example.dev')).toBe(false);
     expect(localStorage.getItem(KEY_ANON_ID)).toBe('original-id');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// policy_version bump — 2026-05-12 → 2026-05-18: granted users regress to undecided
+// ---------------------------------------------------------------------------
+describe('policy_version bump regression (2026-05-18)', () => {
+  it('CURRENT_POLICY_VERSION is 2026-05-18', () => {
+    expect(CURRENT_POLICY_VERSION).toBe('2026-05-18');
+  });
+
+  it('user previously granted on 2026-05-12 → undecided after bump', () => {
+    localStorage.setItem(KEY_CONSENT, 'granted');
+    localStorage.setItem(KEY_POLICY_VERSION, '2026-05-12'); // old version
+    const result = resolveEffectiveConsent();
+    expect(result).toBe('undecided');
+    expect(localStorage.getItem(KEY_CONSENT)).toBeNull();
+    expect(localStorage.getItem(KEY_POLICY_VERSION)).toBeNull();
+  });
+
+  it('user previously denied on 2026-05-12 → stays denied (no re-prompt)', () => {
+    localStorage.setItem(KEY_CONSENT, 'denied');
+    localStorage.setItem(KEY_POLICY_VERSION, '2026-05-12');
+    expect(resolveEffectiveConsent()).toBe('denied');
+  });
+
+  it('user granted on current version → stays granted', () => {
+    localStorage.setItem(KEY_CONSENT, 'granted');
+    localStorage.setItem(KEY_POLICY_VERSION, CURRENT_POLICY_VERSION);
+    expect(resolveEffectiveConsent()).toBe('granted');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tier 0 helpers
+// ---------------------------------------------------------------------------
+describe('isTier0Enabled / setTier0Enabled', () => {
+  it('is enabled by default (no marker set)', () => {
+    expect(isTier0Enabled()).toBe(true);
+  });
+
+  it('returns false when t0_off=1 is set', () => {
+    localStorage.setItem('__ait_telemetry:t0_off', '1');
+    expect(isTier0Enabled()).toBe(false);
+  });
+
+  it('setTier0Enabled(false) sets the opt-out marker', () => {
+    setTier0Enabled(false);
+    expect(localStorage.getItem('__ait_telemetry:t0_off')).toBe('1');
+    expect(isTier0Enabled()).toBe(false);
+  });
+
+  it('setTier0Enabled(true) removes the opt-out marker', () => {
+    localStorage.setItem('__ait_telemetry:t0_off', '1');
+    setTier0Enabled(true);
+    expect(localStorage.getItem('__ait_telemetry:t0_off')).toBeNull();
+    expect(isTier0Enabled()).toBe(true);
+  });
+});
+
+describe('hasSentTier0Today / markTier0Sent', () => {
+  it('returns false when no marker is stored', () => {
+    expect(hasSentTier0Today()).toBe(false);
+  });
+
+  it('returns true after markTier0Sent()', () => {
+    markTier0Sent();
+    expect(hasSentTier0Today()).toBe(true);
+  });
+
+  it('returns false when marker is from a different date', () => {
+    localStorage.setItem('__ait_telemetry:t0_last_sent', '2000-01-01');
+    expect(hasSentTier0Today()).toBe(false);
   });
 });
