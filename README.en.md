@@ -443,7 +443,7 @@ When **Show frame** is toggled on:
 When **Show Apps in Toss nav bar** is toggled on (default on):
 - A 48px nav bar overlay simulating the Toss host's top nav bar (back / app icon+name / ⋯ / ×)
 - Positioned just below the status bar, after the safe area top
-- **Important**: these 48px are **not included** in `env(safe-area-inset-top)` or `SafeAreaInsets.get().top` (this matches the behavior of the official SDK). Official Toss examples compensate using the pattern `insets.top + 48`.
+- **Important**: these 48px are **not included** in `env(safe-area-inset-top)` or `SafeAreaInsets.get().top` (this matches the SDK behavior). Toss-side examples compensate using the pattern `insets.top + 48`.
 
 ### Console manipulation
 

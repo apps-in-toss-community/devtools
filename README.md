@@ -443,7 +443,7 @@ Landscape로 전환하면:
 **Show Apps in Toss nav bar** 토글(기본 on)을 켜면:
 - 토스 호스트의 상단 nav bar(뒤로가기 / 앱 아이콘·이름 / ⋯ / ×)를 48px 높이로 오버레이
 - status bar 바로 아래, safe area top 이후에 배치
-- **중요**: 이 48px는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (공식 SDK 동작). 토스 공식 예제들도 `insets.top + 48` 패턴으로 보정합니다.
+- **중요**: 이 48px는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (SDK 동작). 토스 측 예제들도 `insets.top + 48` 패턴으로 보정합니다.
 
 ### 콘솔에서 직접 조작
 
