@@ -268,15 +268,19 @@ export default defineConfig({
 }
 ```
 
-### 2. 폰당 1회 셋업
+### 2. 폰당 1회 셋업 (필수)
 
 폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가**합니다 (iOS Safari "공유 → 홈 화면에 추가", Android Chrome "앱 설치"). launcher 자체는 URL이 바뀌지 않으니 한 번만 하면 됩니다.
+
+launcher는 **PWA(홈 화면 앱)로 실행할 때만 동작**합니다. 일반 브라우저 탭에서 열면 설치 안내만 노출되고 입력/스캐너 UI는 숨겨집니다 — 크롬리스 standalone 디스플레이가 PWA 셸의 본질이라, 일반 탭에서의 동작은 의도적으로 막아둡니다.
 
 ### 3. 매 세션
 
 1. 데스크톱에서 `pnpm dev:phone`을 실행합니다 (1-(c) 스크립트를 추가하지 않았다면 `AIT_TUNNEL=1 pnpm dev`). 터미널에 `https://*.trycloudflare.com` URL + ASCII QR이 출력됩니다.
-2. 폰의 launcher 아이콘 실행 → 카메라로 QR 스캔(또는 URL 붙여넣기) → 주소창 없는 풀스크린으로 dev 앱이 뜹니다.
-3. 다음 세션엔 새 URL을 스캔만 하면 됩니다. launcher는 마지막 URL을 기억하고, "Rescan" 버튼으로 언제든 교체할 수 있습니다.
+2. 폰의 카메라(또는 launcher 아이콘 안의 "Scan QR")로 QR을 스캔합니다. QR은 `https://devtools.aitc.dev/launcher/?url=<tunnel>` 딥링크라 launcher PWA가 자동으로 열리고 그날의 dev 앱이 풀스크린으로 뜹니다 — URL 붙여넣기 단계가 필요 없습니다.
+3. 다음 세션엔 새 QR을 스캔만 하면 됩니다. launcher는 마지막 URL을 기억하고, "Rescan" 버튼으로 언제든 교체할 수 있습니다.
+
+> QR을 일반 카메라 앱으로 찍었을 때 Safari/Chrome이 일반 탭이 아닌 설치된 launcher PWA로 곧장 라우팅하는 동작은 Android Chrome에서 가장 안정적이고, iOS Safari는 버전에 따라 일반 탭으로 폴백할 수 있습니다. 그 경우 launcher 홈 화면 아이콘에서 한 번 열어주면 그 안의 QR 스캐너로 다시 시도할 수 있습니다.
 
 ### 배경
 

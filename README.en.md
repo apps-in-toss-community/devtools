@@ -268,15 +268,19 @@ export default defineConfig({
 }
 ```
 
-### 2. Per-phone setup
+### 2. Per-phone setup (required)
 
 Open `https://devtools.aitc.dev/launcher/` on your phone and **add it to your home screen** (iOS Safari: Share → Add to Home Screen; Android Chrome: Install app). The launcher URL never changes, so this is a one-time step.
+
+The launcher **only works when launched as an installed PWA from the home screen**. Opening it in a regular browser tab shows only the install hint — the URL input and scanner are hidden. The chrome-less standalone display is the whole point of the launcher shell, and a regular tab can't provide that.
 
 ### 3. Each session
 
 1. Run `pnpm dev:phone` on your desktop (or `AIT_TUNNEL=1 pnpm dev` if you skipped step 1-(c)). The terminal will print a `https://*.trycloudflare.com` URL along with an ASCII QR code.
-2. Open the launcher icon on your phone → scan the QR code with your camera (or paste the URL) → your dev app opens full-screen without an address bar.
-3. Next session, just scan the new URL. The launcher remembers the last URL and you can swap it any time with the "Rescan" button.
+2. Scan the QR code with your phone's camera (or with the "Scan QR" button inside the launcher). The QR encodes a `https://devtools.aitc.dev/launcher/?url=<tunnel>` deep-link, so the launcher PWA opens and auto-enters the day's dev app full-screen — no paste step required.
+3. Next session, just scan the new QR. The launcher remembers the last URL and you can swap it any time with the "Rescan" button.
+
+> Whether the OS camera routes the QR straight into the installed launcher PWA (instead of a regular browser tab) is most reliable on Android Chrome; iOS Safari versions may fall back to a normal tab. In that case, open the launcher from its home-screen icon and use its in-page "Scan QR" button.
 
 ### Background
 
