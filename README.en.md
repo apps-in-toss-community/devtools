@@ -270,7 +270,7 @@ export default defineConfig({
 
 ### 2. Per-phone setup (required)
 
-Open `https://devtools.aitc.dev/launcher/` on your phone and **add it to your home screen** (iOS Safari: Share → Add to Home Screen; Android Chrome: Install app). The launcher URL never changes, so this is a one-time step.
+Open `https://devtools.aitc.dev/launcher/` on your phone and **add it to your home screen**. The launcher shows an "Install launcher to your phone" button that triggers the platform-native install flow automatically — Android Chrome gets the in-app install prompt, iOS Safari gets a Share → Add to Home Screen illustration, and Firefox / Samsung Internet get a manual instruction card. The launcher URL never changes, so this is a one-time step per phone.
 
 The launcher **only works when launched as an installed PWA from the home screen**. Opening it in a regular browser tab shows only the install hint — the URL input and scanner are hidden. The chrome-less standalone display is the whole point of the launcher shell, and a regular tab can't provide that.
 

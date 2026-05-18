@@ -270,7 +270,7 @@ export default defineConfig({
 
 ### 2. 폰당 1회 셋업 (필수)
 
-폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가**합니다 (iOS Safari "공유 → 홈 화면에 추가", Android Chrome "앱 설치"). launcher 자체는 URL이 바뀌지 않으니 한 번만 하면 됩니다.
+폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가**합니다. launcher는 페이지 상단에 "Install launcher to your phone" 버튼을 띄우는데, 누르면 플랫폼별 네이티브 설치 흐름이 자동으로 안내됩니다 — Android Chrome은 인앱 설치 프롬프트, iOS Safari는 "공유 → 홈 화면에 추가" 일러스트, Firefox/Samsung Internet 등은 수동 안내 카드. launcher URL은 매번 동일하므로 폰당 한 번만 하면 됩니다.
 
 launcher는 **PWA(홈 화면 앱)로 실행할 때만 동작**합니다. 일반 브라우저 탭에서 열면 설치 안내만 노출되고 입력/스캐너 UI는 숨겨집니다 — 크롬리스 standalone 디스플레이가 PWA 셸의 본질이라, 일반 탭에서의 동작은 의도적으로 막아둡니다.
 
