@@ -9,6 +9,11 @@
 // chromeless and shows the chosen dev URL in a full-viewport <iframe>.
 
 import QrScanner from 'qr-scanner';
+// Side-effect import — registers the <pwa-install> custom element. The library
+// handles the cross-browser install dialog itself (Android Chrome
+// `beforeinstallprompt`, iOS share-sheet illustration, Firefox/Safari manual
+// fallback), which we previously approximated with a static text card.
+import '@khmyznikov/pwa-install';
 
 const STORAGE_KEY = 'aitc-launcher:last-url';
 
@@ -21,17 +26,13 @@ const scanBtn = document.getElementById('scan-btn') as HTMLButtonElement;
 const msg = document.getElementById('msg') as HTMLElement;
 const frame = document.getElementById('frame') as HTMLIFrameElement;
 const rescanBtn = document.getElementById('rescan') as HTMLButtonElement;
-const installHint = document.getElementById('install-hint') as HTMLElement;
-const installBtn = document.getElementById('install-btn') as HTMLButtonElement;
+const installPrompt = document.getElementById('pwa-install') as HTMLElement & {
+  showDialog: (forced?: boolean) => void;
+};
+const installCta = document.getElementById('install-cta') as HTMLButtonElement;
 const setupTools = document.getElementById('setup-tools') as HTMLElement;
 
 let scanner: QrScanner | null = null;
-
-// `beforeinstallprompt` is Chromium-only and not in lib.dom; minimal shape.
-interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  readonly userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
 
 function isStandalone(): boolean {
   return (
@@ -50,12 +51,6 @@ function isLocalDev(): boolean {
   return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
 }
 
-// On hosts without `beforeinstallprompt` (Safari, Firefox) we never get an
-// in-page install button — only the OS share-sheet flow ("Add to Home Screen").
-function canShowInstallPrompt(): boolean {
-  return 'BeforeInstallPromptEvent' in window || 'onbeforeinstallprompt' in window;
-}
-
 // Hide the input + scanner controls until the launcher is installed. The page
 // is meant to run as a chromeless PWA shell — letting a browser tab also drive
 // the iframe defeats the point (no standalone display, cross-origin tunnel URL
@@ -64,28 +59,13 @@ function canShowInstallPrompt(): boolean {
 function applyPwaGate(): void {
   const gated = !isStandalone() && !isLocalDev();
   setupTools.style.display = gated ? 'none' : '';
-  installHint.classList.toggle('show', !isStandalone());
+  // Install CTA only useful when the launcher isn't already standalone.
+  installCta.style.display = isStandalone() ? 'none' : '';
 }
 
-let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 applyPwaGate();
-if (!isStandalone() && canShowInstallPrompt()) {
-  window.addEventListener('beforeinstallprompt', (e) => {
-    e.preventDefault();
-    deferredInstallPrompt = e as BeforeInstallPromptEvent;
-    installBtn.classList.add('show');
-  });
-  installBtn.addEventListener('click', async () => {
-    if (!deferredInstallPrompt) return;
-    await deferredInstallPrompt.prompt();
-    await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-    installBtn.classList.remove('show');
-  });
-}
+installCta.addEventListener('click', () => installPrompt.showDialog(true));
 window.addEventListener('appinstalled', () => {
-  installHint.classList.remove('show');
-  installBtn.classList.remove('show');
   applyPwaGate();
 });
 
