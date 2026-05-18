@@ -7,17 +7,34 @@ import { expect, test } from '@playwright/test';
 // — the install criteria require https, so we intentionally don't gate here).
 
 test.describe('launcher PWA', () => {
-  test('shows the install hint and setup controls in a normal browser tab over http://localhost', async ({
+  test('shows the install CTA and setup controls in a normal browser tab over http://localhost', async ({
     page,
   }) => {
     await page.goto('/launcher/');
     // Setup screen is the initial state when no deep-link / saved URL.
     await expect(page.getByTestId('launcher-setup')).toBeVisible();
-    await expect(page.getByTestId('launcher-install-hint')).toBeVisible();
+    // <pwa-install> is rendered (the library decides visibility per platform).
+    await expect(page.getByTestId('launcher-install-prompt')).toHaveCount(1);
+    // The CTA button surfaces the install dialog for browsers without an
+    // in-page prompt (iOS Safari) and is the primary entry point everywhere.
+    await expect(page.getByTestId('launcher-install-cta')).toBeVisible();
     // Local-dev escape hatch: input + scan button still visible so the fixture
     // is usable without installing the PWA.
     await expect(page.getByTestId('launcher-setup-tools')).toBeVisible();
     await expect(page.getByTestId('launcher-url-input')).toBeVisible();
+  });
+
+  test('Install CTA opens the <pwa-install> dialog (forced)', async ({ page }) => {
+    await page.goto('/launcher/');
+    await page.getByTestId('launcher-install-cta').click();
+    // The library exposes `isDialogHidden` on the custom element. After
+    // showDialog(true) it must flip to false.
+    const dialogVisible = await page
+      .getByTestId('launcher-install-prompt')
+      .evaluate(
+        (el) => !((el as HTMLElement & { isDialogHidden: boolean }).isDialogHidden ?? true),
+      );
+    expect(dialogVisible).toBe(true);
   });
 
   test('auto-enters the live frame when ?url=<tunnel> is in the query string', async ({ page }) => {
