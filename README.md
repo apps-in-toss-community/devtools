@@ -780,7 +780,7 @@ Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 5. `src/__tests/`에 테스트 작성
 
 ```bash
-pnpm build       # tsup으로 빌드
+pnpm build       # tsdown으로 빌드
 pnpm typecheck   # 타입 호환성 검증
 pnpm test        # 전체 테스트 실행
 ```

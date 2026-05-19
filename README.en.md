@@ -780,7 +780,7 @@ Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 5. Write tests in `src/__tests__/`
 
 ```bash
-pnpm build       # build with tsup
+pnpm build       # build with tsdown
 pnpm typecheck   # verify type compatibility
 pnpm test        # run all tests
 ```

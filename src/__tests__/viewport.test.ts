@@ -65,10 +65,12 @@ describe('viewport presets', () => {
     );
   });
 
-  it('미출시 / 추정 프리셋은 라벨에 출시 상태를 표시한다', () => {
-    // iPhone Air: 미출시(추정값) → `(est)`
+  it('iPhone Air 프리셋이 존재하고 올바른 라벨을 가진다', () => {
+    // iPhone Air: 2026-04 출시 — `(est)` suffix 제거됨
     const iphoneAir = VIEWPORT_PRESETS.find((p) => p.id === 'iphone-air');
-    expect(iphoneAir?.label).toContain('(est)');
+    expect(iphoneAir).toBeDefined();
+    expect(iphoneAir?.label).toBe('iPhone Air');
+    expect(iphoneAir?.label).not.toContain('(est)');
   });
 
   it('Galaxy S26 시리즈는 출시된 spec(phone-simulator.com 측정치)을 사용한다', () => {
