@@ -832,6 +832,7 @@ import '@ait-co/devtools/panel';
 | `@ait-co/devtools` or `@ait-co/devtools/mock` | All mock exports (bundler alias target) |
 | `@ait-co/devtools/panel` | Floating DevTools Panel (auto-mounts on import) |
 | `@ait-co/devtools/unplugin` | Bundler plugin (.vite, .webpack, .rspack, .esbuild, .rollup) |
+| `@ait-co/devtools/in-app` | In-app debug attach — 3-layer gate + Chii target.js injection (dogfood builds only; active when `__DEBUG_BUILD__=true`) |
 
 ## Telemetry
 
