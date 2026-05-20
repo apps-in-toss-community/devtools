@@ -170,12 +170,14 @@ module.exports = {
 | `panel` | `boolean` | `true` | Auto-inject the DevTools Panel |
 | `forceEnable` | `boolean` | `false` | Enable devtools even in production |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | Enable mock alias |
+| `mcp` | `boolean` | `false` | Add an MCP state endpoint to the Vite dev server (Vite only — see [MCP Server](#mcp-server)) |
 | `tunnel` | `boolean \| { port?: number; qr?: boolean }` | `false` | Expose the Vite dev server via a Cloudflare quick tunnel for real-device preview (see [below](#run-on-a-real-phone)). **Vite dev mode only** |
 
 ```ts
 aitDevtools.vite({ panel: false }); // mock only, no panel
 aitDevtools.vite({ forceEnable: true }); // enable in production (mock OFF by default, panel ON)
 aitDevtools.vite({ forceEnable: true, mock: true }); // enable mock in production too
+aitDevtools.vite({ mcp: true }); // enable MCP endpoint for AI agents
 aitDevtools.vite({ tunnel: true }); // expose dev server at *.trycloudflare.com
 ```
 
@@ -825,6 +827,96 @@ Since Turbopack doesn't support unplugin, use `resolveAlias` in `next.config.js`
 import '@ait-co/devtools/panel';
 ```
 
+## MCP Server
+
+AI coding agents (Claude Code, Cursor, etc.) can observe a running mini-app directly via [MCP (Model Context Protocol)](https://modelcontextprotocol.io/). A single `devtools-mcp` binary provides two modes.
+
+| Mode | Invocation | Target | Tools |
+|---|---|---|---|
+| **debug** (default) | `devtools-mcp` | Production bundle on a phone or dev browser (CDP/Chii) | `list_console_messages`, `list_network_requests`, `list_pages` |
+| **dev** | `devtools-mcp --mode=dev` | Mock state from a running Vite dev server | `devtools_get_mock_state` |
+
+### Debug mode (CDP via Chii) — Phase 1
+
+> **Phase 1**: three read-only tools for console/network/page. Phone attach roundtrip requires a real-device dog-food step and is deferred to a later phase; the tool layer is CI-verified via a mockable injectable CDP connection.
+
+Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL, a QR code, and a secret token in the terminal. When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL and token, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
+
+```json
+{
+  "mcpServers": {
+    "ait-debug": {
+      "command": "pnpm",
+      "args": ["exec", "devtools-mcp"]
+    }
+  }
+}
+```
+
+| Tool | CDP backing | Description |
+|---|---|---|
+| `list_console_messages` | `Runtime.consoleAPICalled` | Recent console.log/warn/error messages (level, text, timestamp, args) |
+| `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | Recent XHR/fetch requests (url, method, status, timing) |
+| `list_pages` | Chii relay target list | Attached pages + tunnel status + wss URL |
+
+### Dev mode (mock state)
+
+`devtools-mcp --mode=dev` reads the mock state from a running browser.
+
+#### Architecture
+
+```
+Browser (aitState)
+  └─ POST /api/ait-devtools/state (auto-pushed by the panel on every state change)
+       └─ Vite dev server (unplugin with mcp: true)
+            └─ GET /api/ait-devtools/state
+                 └─ MCP stdio server (dist/mcp/server.js)
+                      └─ AI agent (devtools_get_mock_state tool)
+```
+
+#### Setup
+
+**1. Add `mcp: true` to the Vite plugin**
+
+```ts
+// vite.config.ts
+import aitDevtools from '@ait-co/devtools/unplugin';
+
+export default {
+  plugins: [aitDevtools.vite({ mcp: true })],
+};
+```
+
+**2. Configure your MCP client (e.g. Claude Code `.claude/settings.json`)**
+
+```json
+{
+  "mcpServers": {
+    "ait-devtools": {
+      "command": "pnpm",
+      "args": ["exec", "devtools-mcp", "--mode=dev"],
+      "env": {
+        "AIT_DEVTOOLS_URL": "http://localhost:5173"
+      }
+    }
+  }
+}
+```
+
+`AIT_DEVTOOLS_URL` defaults to `http://localhost:5173` — you can omit it if you're using the default port.
+
+**3. Open the app in your browser, then call the tool from your AI agent**
+
+```
+> devtools_get_mock_state
+```
+
+Returns the full current mock state (permissions, location, auth, network, IAP, etc.) as JSON.
+
+| Tool | Description |
+|---|---|
+| `devtools_get_mock_state` | Returns the current `AitDevtoolsState` snapshot (read-only) |
+
 ## Package export structure
 
 | Import path | Purpose |
@@ -832,6 +924,8 @@ import '@ait-co/devtools/panel';
 | `@ait-co/devtools` or `@ait-co/devtools/mock` | All mock exports (bundler alias target) |
 | `@ait-co/devtools/panel` | Floating DevTools Panel (auto-mounts on import) |
 | `@ait-co/devtools/unplugin` | Bundler plugin (.vite, .webpack, .rspack, .esbuild, .rollup) |
+| `@ait-co/devtools/mcp/server` | Dev-mode MCP stdio server function (Node.js) |
+| `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin entry point (debug / dev mode, Node.js) |
 | `@ait-co/devtools/in-app` | In-app debug attach — 3-layer gate + Chii target.js injection (dogfood builds only; active when `__DEBUG_BUILD__=true`) |
 
 ## Telemetry
