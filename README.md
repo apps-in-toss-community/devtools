@@ -747,13 +747,17 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)]
 
 | 모드 | 호출 | 대상 | tool |
 |---|---|---|---|
-| **debug** (기본값) | `devtools-mcp` | 폰 안 production 번들 또는 dev 브라우저 (CDP/Chii) | `list_console_messages`, `list_network_requests`, `list_pages` |
-| **dev** | `devtools-mcp --mode=dev` | 실행 중인 Vite dev server의 mock state | `devtools_get_mock_state` |
+| **debug** (기본값) | `devtools-mcp` | 폰 안 production 번들 또는 dev 브라우저 (CDP/Chii) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
+| **dev** | `devtools-mcp --mode=dev` | 실행 중인 Vite dev server의 mock state | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-### Debug 모드 (CDP via Chii) — Phase 1
+두 모드는 같은 `AIT.*` tool surface를 노출합니다 — debug 모드는 Chii 채널로, dev 모드는 dev server의
+mock-state HTTP endpoint로 백킹되어, 에이전트가 폰(debug)에 붙든 dev 브라우저(dev)에 붙든 동일한
+tool을 봅니다.
 
-> **Phase 1**: read-only console/network/page tool 3개. 폰 attach 라운드트립은 실기기 dog-food가 필요해
-> 후속 phase로 분리되어 있고, tool 계층은 주입 가능한 CDP 연결을 mock해 CI에서 검증됩니다.
+### Debug 모드 (CDP via Chii)
+
+> read-only tool만 노출합니다. 폰 attach 라운드트립은 실기기 dog-food가 필요해 후속 phase로 분리되어
+> 있고, tool 계층은 주입 가능한 CDP 연결 / AIT 소스를 mock해 CI에서 검증됩니다.
 
 `devtools-mcp`를 stdio로 실행하면 로컬 Chii 릴레이(:9100)를 띄우고 cloudflared quick tunnel로
 공개 `wss://*.trycloudflare.com` URL을 발급한 뒤 QR + secret token을 터미널에 출력합니다.
@@ -772,15 +776,25 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)]
 }
 ```
 
-| Tool | CDP 백킹 | 설명 |
+| Tool | CDP / AIT 백킹 | 설명 |
 |---|---|---|
 | `list_console_messages` | `Runtime.consoleAPICalled` | 최근 console.log/warn/error 메시지 (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | 최근 XHR/fetch 요청 (url, method, status, timing) |
 | `list_pages` | Chii 릴레이 target 목록 | attach된 페이지 + tunnel 상태 + wss URL |
+| `get_dom_document` | `DOM.getDocument` | DOM 트리 read (구조/레이아웃 회귀 진단) |
+| `take_snapshot` | `DOMSnapshot.captureSnapshot` | 페이지 스냅샷 (documents + interned strings, 시각 회귀 진단) |
+| `take_screenshot` | `Page.captureScreenshot` | 페이지 PNG 스크린샷 (MCP image content block 반환) |
+| `AIT.getSdkCallHistory` | AIT 도메인 | SDK 호출 trace (method, args, result/error, timestamp) |
+| `AIT.getMockState` | AIT 도메인 | mock state 스냅샷 (`window.__ait`) |
+| `AIT.getOperationalEnvironment` | AIT 도메인 | `getOperationalEnvironment()` + SDK 버전 |
+
+`AIT.*`는 raw CDP가 못 잡는 영역으로, 같은 MCP server가 CDP와 함께 forward합니다. debug 모드에서는
+in-app 측이 Chii 채널로 응답합니다(폰 통합은 후속 phase).
 
 ### Dev 모드 (mock state)
 
-`devtools-mcp --mode=dev`는 실행 중인 브라우저의 mock state를 읽습니다.
+`devtools-mcp --mode=dev`는 실행 중인 브라우저의 mock state를 읽습니다. Phase 3에서 debug 모드와
+같은 `AIT.*` tool surface로 정렬되었습니다.
 
 #### 구조
 
@@ -790,7 +804,7 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)]
        └─ Vite dev server (unplugin mcp: true 로 등록)
             └─ GET /api/ait-devtools/state
                  └─ MCP stdio server (dist/mcp/server.js)
-                      └─ AI 에이전트 (devtools_get_mock_state tool)
+                      └─ AI 에이전트 (AIT.getMockState tool)
 ```
 
 #### 설정
@@ -827,14 +841,17 @@ export default {
 **3. 앱을 브라우저에서 열고, AI 에이전트에서 tool 호출**
 
 ```
-> devtools_get_mock_state
+> AIT.getMockState
 ```
 
 현재 mock state 전체(권한, 위치, 인증, 네트워크, IAP 등)를 JSON으로 반환합니다.
 
 | Tool | 설명 |
 |---|---|
-| `devtools_get_mock_state` | 현재 `AitDevtoolsState` 스냅샷 반환 (read-only) |
+| `AIT.getMockState` | 현재 `AitDevtoolsState` 스냅샷 반환 (read-only) |
+| `AIT.getOperationalEnvironment` | mock state의 `environment` + `appVersion` 기반 환경/버전 |
+| `AIT.getSdkCallHistory` | dev 모드에서는 빈 목록 (HTTP endpoint가 trace를 기록하지 않음) |
+| `devtools_get_mock_state` | `AIT.getMockState`의 하위호환 alias (신규 설정은 `AIT.getMockState` 권장) |
 
 ## 패키지 Export 구조
 
