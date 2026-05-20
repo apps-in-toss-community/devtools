@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import { h, monitoringNotice, selectRow } from '../helpers.js';
 
@@ -7,11 +8,11 @@ export function renderEventsTab(): HTMLElement {
 
   if (disabled) container.appendChild(monitoringNotice());
 
-  const backBtn = h('button', { className: 'ait-btn' }, 'Trigger Back Event');
+  const backBtn = h('button', { className: 'ait-btn' }, t('events.btn.triggerBack'));
   backBtn.addEventListener('click', () => aitState.trigger('backEvent'));
   if (disabled) backBtn.disabled = true;
 
-  const homeBtn = h('button', { className: 'ait-btn' }, 'Trigger Home Event');
+  const homeBtn = h('button', { className: 'ait-btn' }, t('events.btn.triggerHome'));
   homeBtn.addEventListener('click', () => aitState.trigger('homeEvent'));
   if (disabled) homeBtn.disabled = true;
 
@@ -19,15 +20,15 @@ export function renderEventsTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Navigation Events'),
+      h('div', { className: 'ait-section-title' }, t('events.section.navigation')),
       h('div', { className: 'ait-row' }, backBtn, homeBtn),
     ),
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Login'),
+      h('div', { className: 'ait-section-title' }, t('events.section.login')),
       selectRow(
-        'Logged In',
+        t('events.row.loggedIn'),
         ['true', 'false'],
         String(aitState.state.auth.isLoggedIn),
         (v) => {
@@ -36,7 +37,7 @@ export function renderEventsTab(): HTMLElement {
         disabled,
       ),
       selectRow(
-        'Toss Login Integrated',
+        t('events.row.tossLoginIntegrated'),
         ['true', 'false'],
         String(aitState.state.auth.isTossLoginIntegrated),
         (v) => {

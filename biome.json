@@ -14,7 +14,8 @@
       "!node_modules",
       "!playwright-report",
       "!test-results",
-      "!.changeset"
+      "!.changeset",
+      "!.claude"
     ]
   },
   "formatter": {

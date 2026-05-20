@@ -1,3 +1,4 @@
+import { type StringKey, t } from '../../i18n/index.js';
 import { renderAdsTab } from './ads.js';
 import { renderAnalyticsTab } from './analytics.js';
 import { renderDeviceTab } from './device.js';
@@ -25,20 +26,26 @@ export type TabId =
   | 'device'
   | 'viewport';
 
-export const TABS: Array<{ id: TabId; label: string }> = [
-  { id: 'env', label: 'Environment' },
-  { id: 'presets', label: 'Presets' },
-  { id: 'viewport', label: 'Viewport' },
-  { id: 'permissions', label: 'Permissions' },
-  { id: 'notifications', label: 'Notifications' },
-  { id: 'location', label: 'Location' },
-  { id: 'device', label: 'Device' },
-  { id: 'iap', label: 'IAP' },
-  { id: 'ads', label: 'Ads' },
-  { id: 'events', label: 'Events' },
-  { id: 'analytics', label: 'Analytics' },
-  { id: 'storage', label: 'Storage' },
+// Tab ordering + label-key map. `label` is re-resolved through `t()` at each
+// mount so locale changes pick up the new translation.
+const TAB_DEFS: Array<{ id: TabId; labelKey: StringKey }> = [
+  { id: 'env', labelKey: 'panel.tab.env' },
+  { id: 'presets', labelKey: 'panel.tab.presets' },
+  { id: 'viewport', labelKey: 'panel.tab.viewport' },
+  { id: 'permissions', labelKey: 'panel.tab.permissions' },
+  { id: 'notifications', labelKey: 'panel.tab.notifications' },
+  { id: 'location', labelKey: 'panel.tab.location' },
+  { id: 'device', labelKey: 'panel.tab.device' },
+  { id: 'iap', labelKey: 'panel.tab.iap' },
+  { id: 'ads', labelKey: 'panel.tab.ads' },
+  { id: 'events', labelKey: 'panel.tab.events' },
+  { id: 'analytics', labelKey: 'panel.tab.analytics' },
+  { id: 'storage', labelKey: 'panel.tab.storage' },
 ];
+
+export function getTabs(): Array<{ id: TabId; label: string }> {
+  return TAB_DEFS.map((def) => ({ id: def.id, label: t(def.labelKey) }));
+}
 
 // storage tab receives refreshPanel because its clear button modifies localStorage
 // directly (not aitState), so it must trigger a re-render explicitly.

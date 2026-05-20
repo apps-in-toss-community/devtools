@@ -1,6 +1,6 @@
 {
   "name": "@ait-co/devtools",
-  "version": "0.1.18",
+  "version": "0.1.22",
   "description": "Development tools for Apps in Toss mini-apps — mock SDK, floating devtools panel, and universal bundler plugin",
   "type": "module",
   "engines": {
@@ -20,6 +20,10 @@
     "./panel": {
       "types": "./dist/panel/index.d.ts",
       "import": "./dist/panel/index.js"
+    },
+    "./in-app": {
+      "types": "./dist/in-app/index.d.ts",
+      "import": "./dist/in-app/index.js"
     },
     "./unplugin": {
       "types": "./dist/unplugin/index.d.ts",
@@ -77,9 +81,11 @@
     "@apps-in-toss/web-framework": "2.5.0",
     "@biomejs/biome": "2.4.15",
     "@changesets/cli": "^2.31.0",
+    "@khmyznikov/pwa-install": "^0.6.3",
     "@playwright/test": "^1.59.1",
     "@types/react": "^19.2.14",
     "jsdom": "^29.1.1",
+    "qr-scanner": "^1.4.2",
     "react": "^19.2.5",
     "satori": "^0.26.0",
     "sharp": "^0.34.5",
@@ -95,7 +101,12 @@
     "mini-app",
     "devtools",
     "mock",
-    "sdk"
+    "sdk",
+    "miniapp",
+    "simulator",
+    "testing",
+    "vite-plugin",
+    "webpack-plugin"
   ],
   "packageManager": "pnpm@10.33.0",
   "license": "BSD-3-Clause",
@@ -106,7 +117,7 @@
     "type": "git",
     "url": "https://github.com/apps-in-toss-community/devtools"
   },
-  "homepage": "https://www.npmjs.com/package/@ait-co/devtools",
+  "homepage": "https://devtools.aitc.dev/",
   "bugs": {
     "url": "https://github.com/apps-in-toss-community/devtools/issues"
   }

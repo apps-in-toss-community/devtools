@@ -12,3 +12,4 @@ playwright-report/
 .claude/settings.local.json
 .claude/*.lock
 .claude.lock
+.claude/worktrees/

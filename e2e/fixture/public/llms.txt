@@ -1,0 +1,25 @@
+# AITC DevTools
+
+> SDK mock + unplugin + DevTools panel for developing 앱인토스 mini-apps in a regular browser.
+
+AITC DevTools (`@ait-co/devtools`) is a community open-source library that lets developers build and test 앱인토스 mini-apps without the Toss app. It mocks `@apps-in-toss/web-framework` at the bundler level.
+
+## Components
+
+- **Mock library** — drop-in replacement for `@apps-in-toss/web-framework`. Covers auth, navigation, IAP, permissions, location, device, analytics, and more.
+- **Unplugin** — single plugin entry for Vite, Webpack, Rollup, Rspack, and Turbopack. Rewires the SDK import to the mock at build time.
+- **Floating DevTools panel** — in-browser inspector panel for reading and overriding mock state (environment, permissions, location, IAP, events, storage, analytics).
+- **Tunnel integration** — `cloudflared` quick-tunnel support for previewing the dev server on a real phone over HTTPS.
+- **Launcher PWA** (`/launcher/`) — installable shell app that opens the tunnel URL full-screen inside a same-origin iframe, avoiding cross-origin standalone-mode breakage.
+
+## Links
+
+- npm: https://www.npmjs.com/package/@ait-co/devtools
+- GitHub: https://github.com/apps-in-toss-community/devtools
+- Reference consumer (sdk-example): https://sdk-example.aitc.dev/
+- Org: https://aitc.dev/
+
+## Notes
+
+- The `/launcher/` route is a developer tool and is excluded from the sitemap.
+- This project is not affiliated with Toss or Viva Republica.

@@ -69,6 +69,20 @@ export interface AitDevtoolsOptions {
    * Vite 전용: webpack/rspack/esbuild/rollup 환경에서는 무시된다.
    */
   mcp?: boolean;
+  /**
+   * Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, 계정 불필요)로
+   * 외부 노출해 실제 폰에서 미리보기. **Vite dev 모드 전용** — production은
+   * `forceEnable`이어도 터널을 띄우지 않는다 (의도치 않은 노출 방지). 다른 번들러는
+   * 무시. `true`면 기본 동작, 객체로 세부 설정 가능.
+   */
+  tunnel?:
+    | boolean
+    | {
+        /** 노출할 포트 (미지정 시 dev 서버가 실제 listen한 포트 자동 감지). */
+        port?: number;
+        /** 터미널 ASCII QR 출력 (default: true). */
+        qr?: boolean;
+      };
 }
 
 const FRAMEWORK_ID = '@apps-in-toss/web-framework';
@@ -88,6 +102,12 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   // In-memory store for the last state snapshot pushed by the browser panel.
   // Only allocated when mcp: true to avoid any overhead in the common case.
   let lastState: string | null = null;
+
+  // Tunnel is dev-only and Vite-only. Never under production — even with
+  // forceEnable — so a production build can't accidentally expose itself.
+  const tunnelOpt = options?.tunnel;
+  const shouldTunnel = isDev && !!tunnelOpt;
+  const tunnelConfig = typeof tunnelOpt === 'object' ? tunnelOpt : {};
 
   return {
     name: 'ait-co-devtools',
@@ -121,64 +141,115 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
       return `import '@ait-co/devtools/panel';\n${code}`;
     },
 
-    // Vite-only: register the MCP state HTTP endpoint on the dev server.
+    // Vite-only: register the MCP state HTTP endpoint on the dev server, and
+    // optionally start a Cloudflare quick tunnel once the dev server is listening.
     // Non-Vite bundlers do not have a dev server concept so this is silently
     // skipped (unplugin passes `vite` key only when building for Vite).
-    vite: shouldMcp
-      ? {
-          configureServer(server) {
-            server.middlewares.use(MCP_STATE_PATH, (req, res) => {
-              // Allow Claude Code / AI agents (running locally) to read state
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-              res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    vite: {
+      config() {
+        if (!shouldTunnel) return;
+        // Vite blocks requests whose Host header isn't in `server.allowedHosts`
+        // (defaults to localhost only). The quick-tunnel hostname is random per
+        // run, so allow the whole `.trycloudflare.com` suffix while the tunnel
+        // is on. (A leading `.` makes Vite match the domain and its subdomains.)
+        return { server: { allowedHosts: ['.trycloudflare.com'] } };
+      },
 
-              if (req.method === 'OPTIONS') {
-                res.writeHead(204);
-                res.end();
+      configureServer(server: import('vite').ViteDevServer) {
+        // MCP state endpoint: browser panel POSTs state here, MCP stdio server GETs it.
+        if (shouldMcp) {
+          server.middlewares.use(MCP_STATE_PATH, (req, res) => {
+            // Allow Claude Code / AI agents (running locally) to read state
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+            if (req.method === 'OPTIONS') {
+              res.writeHead(204);
+              res.end();
+              return;
+            }
+
+            if (req.method === 'GET') {
+              if (lastState === null) {
+                res.writeHead(503, { 'Content-Type': 'application/json' });
+                res.end(
+                  JSON.stringify({
+                    error: 'No state received yet. Open the app in a browser first.',
+                  }),
+                );
                 return;
               }
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(lastState);
+              return;
+            }
 
-              if (req.method === 'GET') {
-                if (lastState === null) {
-                  res.writeHead(503, { 'Content-Type': 'application/json' });
-                  res.end(
-                    JSON.stringify({
-                      error: 'No state received yet. Open the app in a browser first.',
-                    }),
-                  );
-                  return;
+            if (req.method === 'POST') {
+              const chunks: Buffer[] = [];
+              req.on('data', (chunk: Buffer) => chunks.push(chunk));
+              req.on('end', () => {
+                try {
+                  const body = Buffer.concat(chunks).toString('utf-8');
+                  // Validate it's parseable JSON before caching
+                  JSON.parse(body);
+                  lastState = body;
+                  res.writeHead(204);
+                } catch {
+                  res.writeHead(400, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ error: 'Invalid JSON' }));
                 }
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(lastState);
-                return;
-              }
+                res.end();
+              });
+              return;
+            }
 
-              if (req.method === 'POST') {
-                const chunks: Buffer[] = [];
-                req.on('data', (chunk: Buffer) => chunks.push(chunk));
-                req.on('end', () => {
-                  try {
-                    const body = Buffer.concat(chunks).toString('utf-8');
-                    // Validate it's parseable JSON before caching
-                    JSON.parse(body);
-                    lastState = body;
-                    res.writeHead(204);
-                  } catch {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'Invalid JSON' }));
-                  }
-                  res.end();
-                });
-                return;
-              }
-
-              res.writeHead(405, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Method not allowed' }));
-            });
-          },
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+          });
         }
-      : undefined,
+
+        // Tunnel: start a Cloudflare quick tunnel once the dev server is listening.
+        if (shouldTunnel) {
+          let tunnel: { stop: () => void } | null = null;
+          const httpServer = server.httpServer;
+
+          httpServer?.once('listening', () => {
+            const address = httpServer?.address();
+            const port =
+              tunnelConfig.port ??
+              (address && typeof address === 'object' ? address.port : undefined);
+            if (!port) {
+              console.warn(
+                '[@ait-co/devtools] tunnel: could not determine the dev server port; skipping.',
+              );
+              return;
+            }
+            // Dynamic import keeps `cloudflared` / `qrcode-terminal` off the
+            // module graph unless the tunnel is actually used.
+            import('./tunnel.js')
+              .then(async ({ startQuickTunnel, printTunnelBanner }) => {
+                const t = await startQuickTunnel(port);
+                tunnel = t;
+                await printTunnelBanner(t.url, { qr: tunnelConfig.qr });
+              })
+              .catch((err: unknown) => {
+                console.warn(
+                  `[@ait-co/devtools] tunnel failed to start: ${
+                    err instanceof Error ? err.message : String(err)
+                  }`,
+                );
+              });
+          });
+
+          const cleanup = () => tunnel?.stop();
+          httpServer?.once('close', cleanup);
+          process.once('SIGINT', cleanup);
+          process.once('SIGTERM', cleanup);
+          process.once('exit', cleanup);
+        }
+      },
+    },
   };
 });
 

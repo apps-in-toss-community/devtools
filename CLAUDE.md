@@ -2,14 +2,18 @@
 
 ## 프로젝트 성격
 
-`apps-in-toss-community`는 **비공식(unofficial) 오픈소스 커뮤니티**다. 토스/앱인토스 팀과 제휴 없음, 공식 프로젝트 아님.
+`apps-in-toss-community`는 토스/앱인토스 팀과 제휴 관계가 없는 커뮤니티 오픈소스 프로젝트다.
 
 사용자에게 보여지는 모든 산출물(README, UI 카피, 패키지 설명, 커밋/PR 메시지, 코드 주석 등)에서 다음 표현 **금지**:
 
 - "공식(official)", "공식 플러그인/도구", "토스가 제공하는", "앱인토스에서 만든", "powered by Toss"
 - 토스와의 제휴/후원/인증을 암시하는 모든 표현
 
-대신 "커뮤니티(community)", "오픈소스", "비공식(unofficial)". 의심스러우면 빼라.
+대신 "커뮤니티(community)" 같은 자연스러운 표현. 의심스러우면 빼라.
+
+**톤 가이드** (방어적 disclaimer 금지): README 푸터에 한 줄로 1회만 명시 — ko `README.md`는 `커뮤니티 오픈소스 프로젝트입니다.`, en `README.en.md`는 `Community open-source project.`. "제휴 아님" 같은 방어적 표현 대신 "커뮤니티 오픈소스" 정체성만 자연스럽게. 헤더 직후의 `>` blockquote 박스, ⚠️ 아이콘, 굵은 글씨, `unofficial`/`비공식` 같은 강한 라벨은 쓰지 않는다. 한 파일 안에서 영/한 병기 금지(다중 언어는 ko/en 별도 파일로 분리). 기술적 caveat은 disclaimer에 묶지 않고 자연스러운 본문 섹션에 둔다.
+
+**README i18n**: `README.md`(한국어, GitHub default) + `README.en.md`(영어). 둘 다 상단 상호 link(`[한국어](./README.md)` / `[English](./README.en.md)`), 동등 정본 — 한 쪽 갱신 시 같은 PR에서 반대쪽도 갱신. 자세한 정책은 umbrella `CLAUDE.md` "i18n 정책" 섹션.
 
 이슈/제안은 GitHub Issues로.
 
@@ -123,6 +127,14 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite/.webpack/.rspack/.esbuild/.rollup) |
 
+## 실기기 미리보기 (tunnel + launcher)
+
+unplugin `tunnel` 옵션(Vite dev 전용, `src/unplugin/index.ts`의 `vite.configureServer` 분기 + `src/unplugin/tunnel.ts`)이 dev 서버가 listen하면 `cloudflared` quick tunnel(`*.trycloudflare.com`, 계정 불필요)을 띄우고 터미널에 URL + ASCII QR을 출력한다. production은 `forceEnable`이어도 터널을 안 띄운다 (의도치 않은 노출 방지). `cloudflared`/`qrcode-terminal`는 **동적 import**로만 로드 → 터널 미사용 시 그래프에 안 들어옴. 이 둘은 `dependencies`에 들어가는데, "외부 의존성 최소화" 원칙의 의도적 예외다 (런타임 코드 경로에서 필요, 동적 import로 비용 격리). `tunnel.ts`의 `parseTrycloudflareUrl`/`printTunnelBanner`는 순수 함수로 빼서 vitest로 검증하고, cloudflared spawn 자체는 jsdom 범위 밖이라 e2e/수동 검증 ("web 모드는 e2e"와 같은 정신).
+
+폰 쪽은 고정 URL(`https://devtools.aitc.dev/launcher/`)에 배포된 launcher PWA(`e2e/fixture/launcher/`)를 한 번 홈 화면에 추가하고, 그 안의 풀뷰포트 `<iframe>`으로 그날의 tunnel URL을 띄운다 (quick tunnel URL은 매 실행마다 바뀌어서 URL 자체를 PWA로 설치하면 죽은 링크가 되고, cross-origin 전환은 standalone이 깨짐 → launcher가 same-origin 크롬리스 셸 역할). launcher는 카메라 QR 스캔(`qr-scanner`, **devDependency** — launcher SPA에서만 쓰이고 npm 패키지엔 안 실림) + URL 붙여넣기 fallback + `localStorage` 마지막 URL 자동 로드 + "Rescan" 버튼. PWA 정적 파일(`manifest.webmanifest`/`sw.js`/아이콘)은 `e2e/fixture/public/launcher/`에 두면 vite가 `dist/launcher/`로 복사. `e2e/fixture/vite.config.ts`는 이 launcher 페이지 때문에 MPA(`rollupOptions.input`에 `index.html` + `launcher/index.html`)이고, 같은 config의 unplugin 호출에 `tunnel: !!process.env.AIT_TUNNEL`이 있어 `AIT_TUNNEL=1 pnpm exec vite --config e2e/fixture/vite.config.ts`로 수동 QA 가능. (named tunnel로 고정 hostname 받는 방식은 추후 `tunnel: { hostname }` 옵션으로 확장 여지.)
+
+pnpm 10+ 소비자에 대한 안내는 README에 있다: 프로젝트 `package.json`에 `"pnpm": { "onlyBuiltDependencies": ["cloudflared"] }`. pnpm이 기본으로 third-party build script를 차단해 `cloudflared` postinstall(바이너리 ~38 MB 다운로드)이 스킵되면 `pnpm install` 시 'Ignored build scripts' 경고가 남고 바이너리 캐싱이 첫 dev 기동까지 미뤄진다 — 동작은 됨 (`tunnel.ts`가 `cloudflared.install()`을 lazy로 호출). 참조: [sdk-example#60](https://github.com/apps-in-toss-community/sdk-example/pull/60).
+
 ## E2E 테스트 플로우
 
 이 repo 내부 자기완결 fixture(`e2e/fixture/`)를 쓴다. 외부 repo 의존 없음. 로컬은 `pnpm test:e2e` 한 줄. `playwright.config.ts`의 `webServer`가 `pnpm build` → fixture vite build → vite preview(:4173)를 자동 수행한다. CI는 `.github/workflows/ci.yml`의 `e2e` job이 동일 절차 실행, Playwright 브라우저는 `@playwright/test` 버전 키로 캐싱. 머지 게이트로 묶으려면 branch protection에서 `e2e` 체크 required로 추가 (job 이름 안정 유지).
@@ -155,4 +167,4 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 
 워크플로: `pnpm build && pnpm exec vite build --config e2e/fixture/vite.config.ts && pnpm exec vite preview --config e2e/fixture/vite.config.ts --port 4173` → `http://localhost:4173/` 접속 → snapshot/screenshot/console 확인 → 인터랙션 시뮬레이션.
 
-확인할 핵심 동작: AIT 버튼 → 9개 탭(Environment/Permissions/Location/Device/Viewport/IAP/Events/Analytics/Storage) 전환, Events 탭에서 Trigger Back/Home → fixture의 Granite Events 수신 표시, Storage setItem/getItem 왕복, Login → authorizationCode 반환, Location/IAP/Analytics 등 각 섹션 버튼 무에러.
+확인할 핵심 동작: AIT 버튼 → 12개 탭(Environment/Presets/Viewport/Permissions/Notifications/Location/Device/IAP/Ads/Events/Analytics/Storage) 전환, Events 탭에서 Trigger Back/Home → fixture의 Granite Events 수신 표시, Storage setItem/getItem 왕복, Login → authorizationCode 반환, Location/IAP/Analytics 등 각 섹션 버튼 무에러.
