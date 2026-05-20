@@ -12,11 +12,74 @@ const KEY_REPROMPT_AFTER = '__ait_telemetry:reprompt_after';
 const KEY_POLICY_VERSION = '__ait_telemetry:policy_version';
 const KEY_ANON_ID = '__ait_telemetry:anon_id';
 
+// Tier 0 keys
+export const KEY_T0_LAST_SENT = '__ait_telemetry:t0_last_sent';
+export const KEY_T0_OFF = '__ait_telemetry:t0_off';
+
+// ---------------------------------------------------------------------------
+// Tier 0 opt-out helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true if Tier 0 ping is enabled.
+ * Disabled when `localStorage.__ait_telemetry:t0_off = '1'`
+ * or `process.env.AITC_TELEMETRY === 'off'`.
+ */
+export function isTier0Enabled(): boolean {
+  if (typeof process !== 'undefined' && process.env.AITC_TELEMETRY === 'off') return false;
+  try {
+    return localStorage.getItem(KEY_T0_OFF) !== '1';
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Sets or clears the Tier 0 opt-out marker.
+ */
+export function setTier0Enabled(enabled: boolean): void {
+  try {
+    if (enabled) {
+      localStorage.removeItem(KEY_T0_OFF);
+    } else {
+      localStorage.setItem(KEY_T0_OFF, '1');
+    }
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/**
+ * Returns true if Tier 0 has already been sent today (YYYY-MM-DD).
+ */
+export function hasSentTier0Today(): boolean {
+  try {
+    const stored = localStorage.getItem(KEY_T0_LAST_SENT);
+    if (!stored) return false;
+    const today = new Date().toISOString().slice(0, 10);
+    return stored === today;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Records that Tier 0 was sent today.
+ */
+export function markTier0Sent(): void {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem(KEY_T0_LAST_SENT, today);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 /**
  * Current policy version. Bump this string whenever the privacy policy changes.
  * Users who previously granted on an older version will be re-prompted once.
  */
-export const CURRENT_POLICY_VERSION = '2026-05-12';
+export const CURRENT_POLICY_VERSION = '2026-05-18';
 
 /** 30 days in milliseconds */
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;

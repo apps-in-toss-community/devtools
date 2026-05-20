@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { IAP } from '../../mock/iap/index.js';
 import { aitState } from '../../mock/state.js';
 import type { IapNextResult } from '../../mock/types.js';
@@ -33,13 +34,17 @@ export function renderIapTab(): HTMLElement {
   const pendingSection = h(
     'div',
     { className: 'ait-section' },
-    h('div', { className: 'ait-section-title' }, `Pending Orders (${pendingOrders.length})`),
+    h(
+      'div',
+      { className: 'ait-section-title' },
+      t('iap.section.pending', { count: pendingOrders.length }),
+    ),
   );
   if (pendingOrders.length === 0) {
-    pendingSection.appendChild(h('div', { className: 'ait-log-entry' }, '(no pending orders)'));
+    pendingSection.appendChild(h('div', { className: 'ait-log-entry' }, t('iap.empty.pending')));
   } else {
     for (const o of pendingOrders) {
-      const completeBtn = h('button', { className: 'ait-btn ait-btn-sm' }, 'Complete');
+      const completeBtn = h('button', { className: 'ait-btn ait-btn-sm' }, t('iap.btn.complete'));
       if (disabled) completeBtn.disabled = true;
       completeBtn.addEventListener('click', () => {
         IAP.completeProductGrant({ params: { orderId: o.orderId } }).catch((err) =>
@@ -50,7 +55,7 @@ export function renderIapTab(): HTMLElement {
         h(
           'div',
           { className: 'ait-log-entry' },
-          h('span', { className: 'ait-log-type' }, 'PENDING'),
+          h('span', { className: 'ait-log-type' }, t('iap.label.pending')),
           `${o.sku} (${shortOrderId(o.orderId)}) · ${formatTimestamp(o.paymentCompletedDate)} `,
           completeBtn,
         ),
@@ -62,10 +67,16 @@ export function renderIapTab(): HTMLElement {
   const completedSection = h(
     'div',
     { className: 'ait-section' },
-    h('div', { className: 'ait-section-title' }, `Completed Orders (${completedOrders.length})`),
+    h(
+      'div',
+      { className: 'ait-section-title' },
+      t('iap.section.completed', { count: completedOrders.length }),
+    ),
   );
   if (completedOrders.length === 0) {
-    completedSection.appendChild(h('div', { className: 'ait-log-entry' }, '(no completed orders)'));
+    completedSection.appendChild(
+      h('div', { className: 'ait-log-entry' }, t('iap.empty.completed')),
+    );
   } else {
     for (const o of completedOrders) {
       completedSection.appendChild(
@@ -83,9 +94,9 @@ export function renderIapTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'IAP Simulator'),
+      h('div', { className: 'ait-section-title' }, t('iap.section.simulator')),
       selectRow(
-        'Next Purchase Result',
+        t('iap.row.nextResult'),
         results,
         s.iap.nextResult,
         (v) => {
@@ -97,9 +108,9 @@ export function renderIapTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'TossPay'),
+      h('div', { className: 'ait-section-title' }, t('iap.section.tossPay')),
       selectRow(
-        'Next Payment Result',
+        t('iap.row.tossPayResult'),
         ['success', 'fail'],
         s.payment.nextResult,
         (v) => {

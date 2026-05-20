@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import { h, monitoringNotice } from '../helpers.js';
 
@@ -14,7 +15,11 @@ export function renderStorageTab(refreshPanel: () => void): HTMLElement {
     }
   }
 
-  const clearBtn = h('button', { className: 'ait-btn ait-btn-sm ait-btn-danger' }, 'Clear All');
+  const clearBtn = h(
+    'button',
+    { className: 'ait-btn ait-btn-sm ait-btn-danger' },
+    t('storage.btn.clearAll'),
+  );
   if (disabled) clearBtn.disabled = true;
   clearBtn.addEventListener('click', () => {
     for (const [key] of entries) {
@@ -30,11 +35,15 @@ export function renderStorageTab(refreshPanel: () => void): HTMLElement {
       h(
         'div',
         { className: 'ait-row' },
-        h('div', { className: 'ait-section-title' }, `Storage (${entries.length} items)`),
+        h(
+          'div',
+          { className: 'ait-section-title' },
+          t('storage.section.title', { count: entries.length }),
+        ),
         clearBtn,
       ),
       entries.length === 0
-        ? h('div', { style: 'color:#555;font-size:12px' }, 'No items in storage')
+        ? h('div', { style: 'color:#555;font-size:12px' }, t('storage.empty'))
         : h(
             'div',
             {},

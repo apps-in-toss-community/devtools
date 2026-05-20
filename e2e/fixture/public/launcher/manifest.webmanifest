@@ -1,0 +1,25 @@
+{
+  "name": "AITC DevTools Launcher",
+  "short_name": "AITC Launcher",
+  "description": "Open an Apps In Toss dev server tunnel full-screen on a real phone. Community project — unaffiliated with Toss.",
+  "start_url": "/launcher/",
+  "scope": "/launcher/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": [
+    {
+      "src": "/launcher/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/launcher/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

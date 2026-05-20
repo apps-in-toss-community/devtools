@@ -1,9 +1,12 @@
 import { defineConfig, type Options } from 'tsdown';
 import pkg from './package.json' with { type: 'json' };
 
-// __VERSION__ is defined in all entries so any source file can reference it
+// __VERSION__ is defined in all entries so any source file can reference it.
+// __DEBUG_BUILD__ defaults to false (release); dogfood tag-gated workflows
+// pass RELEASE_CHANNEL=dogfood and override this to `true` at build time.
 const define = {
   __VERSION__: JSON.stringify(pkg.version),
+  __DEBUG_BUILD__: 'false',
 };
 
 // `package.json` exports expect `.js` (ESM) and `.cjs` (CJS) extensions,
@@ -36,8 +39,23 @@ export default defineConfig([
     format: ['esm'],
   },
   {
+    // Browser-only ESM entry for the in-app debug gate.
+    // When __DEBUG_BUILD__ is false (the default), the bundler dead-code-
+    // eliminates all gate logic and Chii imports from downstream release bundles.
+    ...common,
+    entry: { 'in-app/index': 'src/in-app/index.ts' },
+    format: ['esm'],
+  },
+  {
     ...common,
     entry: { 'unplugin/index': 'src/unplugin/index.ts' },
+    format: ['esm', 'cjs'],
+  },
+  {
+    // Lazy-loaded by unplugin/index only when the `tunnel` option is on, so the
+    // cloudflared / qrcode-terminal deps stay off the graph otherwise.
+    ...common,
+    entry: { 'unplugin/tunnel': 'src/unplugin/tunnel.ts' },
     format: ['esm', 'cjs'],
   },
   {

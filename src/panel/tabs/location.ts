@@ -1,3 +1,4 @@
+import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import { h, inputRow, monitoringNotice } from '../helpers.js';
 
@@ -12,9 +13,9 @@ export function renderLocationTab(): HTMLElement {
     h(
       'div',
       { className: 'ait-section' },
-      h('div', { className: 'ait-section-title' }, 'Current Location'),
+      h('div', { className: 'ait-section-title' }, t('location.section.current')),
       inputRow(
-        'Latitude',
+        t('location.row.latitude'),
         String(s.location.coords.latitude),
         (v) => {
           const coords = { ...s.location.coords, latitude: Number(v) };
@@ -23,7 +24,7 @@ export function renderLocationTab(): HTMLElement {
         disabled,
       ),
       inputRow(
-        'Longitude',
+        t('location.row.longitude'),
         String(s.location.coords.longitude),
         (v) => {
           const coords = { ...s.location.coords, longitude: Number(v) };
@@ -32,7 +33,7 @@ export function renderLocationTab(): HTMLElement {
         disabled,
       ),
       inputRow(
-        'Accuracy',
+        t('location.row.accuracy'),
         String(s.location.coords.accuracy),
         (v) => {
           const coords = { ...s.location.coords, accuracy: Number(v) };
