@@ -28,15 +28,19 @@ export function parseMode(argv: readonly string[]): Mode {
       return normalizeMode(arg.slice('--mode='.length));
     }
     if (arg === '--mode') {
-      return normalizeMode(argv[i + 1]);
+      const next = argv[i + 1];
+      if (next === undefined) {
+        throw new Error("--mode requires a value: 'debug' (default) or 'dev'.");
+      }
+      return normalizeMode(next);
     }
   }
   return 'debug';
 }
 
-function normalizeMode(value: string | undefined): Mode {
+function normalizeMode(value: string): Mode {
   if (value === 'dev') return 'dev';
-  if (value === 'debug' || value === undefined) return 'debug';
+  if (value === 'debug') return 'debug';
   throw new Error(`Unknown --mode '${value}'. Expected 'debug' (default) or 'dev'.`);
 }
 

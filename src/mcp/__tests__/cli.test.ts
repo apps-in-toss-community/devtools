@@ -21,4 +21,8 @@ describe('parseMode', () => {
   it('throws on an unknown mode', () => {
     expect(() => parseMode(['--mode=bogus'])).toThrow(/Unknown --mode/);
   });
+
+  it('throws on a dangling --mode with no value', () => {
+    expect(() => parseMode(['--mode'])).toThrow(/--mode requires a value/);
+  });
 });
