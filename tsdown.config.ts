@@ -50,4 +50,18 @@ export default defineConfig([
     // Re-add via banner so `node dist/mcp/server.js` works without explicit node invocation.
     banner: { js: '#!/usr/bin/env node' },
   },
+  {
+    ...common,
+    // `devtools-mcp` bin: debug mode (CDP/Chii) by default, `--mode=dev` for the
+    // dev-mode mock-state server. Node-only — `chii`/`cloudflared`/`ws` are Node
+    // deps and must never reach the browser/in-app bundles.
+    platform: 'node',
+    entry: { 'mcp/cli': 'src/mcp/cli.ts' },
+    format: ['esm'],
+    // Keep heavy/native Node deps external so they resolve from node_modules at
+    // runtime rather than being bundled (chii ships CJS + Koa; cloudflared spawns
+    // a downloaded binary).
+    external: ['chii', 'cloudflared', 'ws'],
+    banner: { js: '#!/usr/bin/env node' },
+  },
 ]);

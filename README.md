@@ -166,7 +166,7 @@ module.exports = {
 | `panel` | `boolean` | `true` | DevTools Panel 자동 주입 여부 |
 | `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
-| `mcp` | `boolean` | `false` | Vite dev server에 MCP state endpoint 추가 (Vite 전용, [MCP 섹션](#mcp-server-spike) 참조) |
+| `mcp` | `boolean` | `false` | Vite dev server에 MCP state endpoint 추가 (Vite 전용, [MCP 섹션](#mcp-server) 참조) |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
@@ -740,15 +740,49 @@ Turbopack은 unplugin을 지원하지 않으므로, `next.config.js`에서 `reso
 import '@ait-co/devtools/panel';
 ```
 
-## MCP Server (spike)
+## MCP Server
 
-> **Spike 상태**: `devtools_get_mock_state` 1개 tool만 구현된 최소 검증 버전입니다.
-> 사용 피드백이 확인되면 write path + 추가 tool을 후속 릴리즈에서 확장할 예정입니다.
+AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)](https://modelcontextprotocol.io/)를
+통해 실행 중인 미니앱을 직접 관측할 수 있습니다. 단일 `devtools-mcp` bin이 두 모드를 제공합니다.
 
-AI 코딩 에이전트(Claude Code, Cursor 등)가 실행 중인 브라우저의 mock state를
-[MCP(Model Context Protocol)](https://modelcontextprotocol.io/)를 통해 직접 읽을 수 있습니다.
+| 모드 | 호출 | 대상 | tool |
+|---|---|---|---|
+| **debug** (기본값) | `devtools-mcp` | 폰 안 production 번들 또는 dev 브라우저 (CDP/Chii) | `list_console_messages`, `list_network_requests`, `list_pages` |
+| **dev** | `devtools-mcp --mode=dev` | 실행 중인 Vite dev server의 mock state | `devtools_get_mock_state` |
 
-### 구조
+### Debug 모드 (CDP via Chii) — Phase 1
+
+> **Phase 1**: read-only console/network/page tool 3개. 폰 attach 라운드트립은 실기기 dog-food가 필요해
+> 후속 phase로 분리되어 있고, tool 계층은 주입 가능한 CDP 연결을 mock해 CI에서 검증됩니다.
+
+`devtools-mcp`를 stdio로 실행하면 로컬 Chii 릴레이(:9100)를 띄우고 cloudflared quick tunnel로
+공개 `wss://*.trycloudflare.com` URL을 발급한 뒤 QR + secret token을 터미널에 출력합니다.
+폰이 dogfood 진입 시 in-app attach UI가 그 URL + token으로 릴레이에 붙으면, 에이전트가
+`chrome-devtools-mcp` 호환 tool로 console/network/page 상태를 read합니다. 사람이 폰을 지켜볼
+필요 없이 회귀를 단독 진단하는 것이 목표입니다.
+
+```json
+{
+  "mcpServers": {
+    "ait-debug": {
+      "command": "pnpm",
+      "args": ["exec", "devtools-mcp"]
+    }
+  }
+}
+```
+
+| Tool | CDP 백킹 | 설명 |
+|---|---|---|
+| `list_console_messages` | `Runtime.consoleAPICalled` | 최근 console.log/warn/error 메시지 (level, text, timestamp, args) |
+| `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | 최근 XHR/fetch 요청 (url, method, status, timing) |
+| `list_pages` | Chii 릴레이 target 목록 | attach된 페이지 + tunnel 상태 + wss URL |
+
+### Dev 모드 (mock state)
+
+`devtools-mcp --mode=dev`는 실행 중인 브라우저의 mock state를 읽습니다.
+
+#### 구조
 
 ```
 브라우저 (aitState)
@@ -759,7 +793,7 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 실행 중인 브라우저의
                       └─ AI 에이전트 (devtools_get_mock_state tool)
 ```
 
-### 설정
+#### 설정
 
 **1. Vite 플러그인에 `mcp: true` 추가**
 
@@ -778,8 +812,8 @@ export default {
 {
   "mcpServers": {
     "ait-devtools": {
-      "command": "node",
-      "args": ["node_modules/@ait-co/devtools/dist/mcp/server.js"],
+      "command": "pnpm",
+      "args": ["exec", "devtools-mcp", "--mode=dev"],
       "env": {
         "AIT_DEVTOOLS_URL": "http://localhost:5173"
       }
@@ -798,8 +832,6 @@ export default {
 
 현재 mock state 전체(권한, 위치, 인증, 네트워크, IAP 등)를 JSON으로 반환합니다.
 
-### 구현된 tool
-
 | Tool | 설명 |
 |---|---|
 | `devtools_get_mock_state` | 현재 `AitDevtoolsState` 스냅샷 반환 (read-only) |
@@ -811,7 +843,8 @@ export default {
 | `@ait-co/devtools` 또는 `@ait-co/devtools/mock` | 모든 mock export (번들러 alias 대상) |
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
-| `@ait-co/devtools/mcp/server` | MCP stdio server (Node.js, `dist/mcp/server.js`) |
+| `@ait-co/devtools/mcp/server` | dev-mode MCP stdio server 함수 (Node.js) |
+| `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
 
 ## 라이센스
 
