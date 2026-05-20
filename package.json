@@ -21,6 +21,10 @@
       "types": "./dist/panel/index.d.ts",
       "import": "./dist/panel/index.js"
     },
+    "./in-app": {
+      "types": "./dist/in-app/index.d.ts",
+      "import": "./dist/in-app/index.js"
+    },
     "./unplugin": {
       "types": "./dist/unplugin/index.d.ts",
       "import": "./dist/unplugin/index.js",
