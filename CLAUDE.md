@@ -126,6 +126,9 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 | `@ait-co/devtools` (= `/mock`) | 번들러 alias 대상, 모든 mock export |
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite/.webpack/.rspack/.esbuild/.rollup) |
+| `@ait-co/devtools/mcp/server` | dev-mode MCP stdio server 함수 (Node.js) |
+| `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
+| `@ait-co/devtools/in-app` | In-app debug attach — 3-layer gate + Chii target.js 주입 (dogfood 빌드 전용, `__DEBUG_BUILD__=true` 시에만 활성) |
 
 ## 실기기 미리보기 (tunnel + launcher)
 

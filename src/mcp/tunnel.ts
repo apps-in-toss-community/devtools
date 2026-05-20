@@ -5,8 +5,8 @@
  * tunnel to the local Chii relay so the phone can attach over a public wss URL,
  * then prints that URL + a secret token + an ASCII QR to the terminal. The
  * phone scans the QR (or pastes the URL) to attach; the in-app side passes the
- * token back. Phase 1 only generates + displays the token and makes it
- * available — full ACL enforcement is a later phase.
+ * token back. The token is generated + displayed for the phone to pass on
+ * attach; full ACL enforcement (token validation at the relay) is a later phase.
  *
  * Node-only: spawns the cloudflared binary and writes to stdout/stderr.
  */
