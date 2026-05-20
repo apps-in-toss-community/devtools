@@ -493,7 +493,7 @@ The bottom of the Viewport tab shows the currently applied values in real time:
 ### Known limitations
 
 - **Body becomes the scroll container** — while the viewport is active, scrolling happens on `document.body` rather than `window`. `window.addEventListener('scroll', ...)` or `IntersectionObserver` attached to the root may behave differently from a real device. If your mini-app handles scrolling, verify it against `body` as well.
-- **Estimated presets** — iPhone Air is labeled `(est)` (not yet released) and will be updated when it ships. Galaxy S26 series is based on published spec (phone-simulator.com measurements), but safe area values are temporarily from S25 — pixel-accurate QA should be verified on a real device.
+- **Estimated safe area** — Galaxy S26 series is based on published spec (phone-simulator.com measurements), but safe area values are temporarily from S25 — pixel-accurate QA should be verified on a real device.
 
 ## `window.__ait` console API
 
