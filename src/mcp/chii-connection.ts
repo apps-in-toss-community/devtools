@@ -77,6 +77,8 @@ export class ChiiCdpConnection implements CdpConnection {
 
   private ws: WebSocket | null = null;
   private nextCommandId = 1;
+  /** In-flight enableDomains() promise — concurrent callers share it. */
+  private enablingPromise: Promise<void> | null = null;
 
   constructor(options: ChiiCdpConnectionOptions) {
     this.relayBaseUrl = options.relayBaseUrl.replace(/\/$/, '');
@@ -117,7 +119,16 @@ export class ChiiCdpConnection implements CdpConnection {
    */
   async enableDomains(): Promise<void> {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+    // If a connect attempt is already in-flight, await it rather than racing
+    // to open a second websocket that would overwrite `this.ws` and leak the first.
+    if (this.enablingPromise) return this.enablingPromise;
+    this.enablingPromise = this._doEnableDomains().finally(() => {
+      this.enablingPromise = null;
+    });
+    return this.enablingPromise;
+  }
 
+  private async _doEnableDomains(): Promise<void> {
     const targets = await this.refreshTargets();
     const target = targets[0];
     if (!target) {

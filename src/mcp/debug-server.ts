@@ -148,14 +148,16 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     getTunnelStatus: () => tunnelStatus,
   });
 
+  const transport = new StdioServerTransport();
+
   const shutdown = () => {
     connection.close();
     tunnel?.stop();
     void relay.close();
+    void server.close();
   };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
 
-  const transport = new StdioServerTransport();
   await server.connect(transport);
 }
