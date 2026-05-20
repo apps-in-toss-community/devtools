@@ -832,6 +832,7 @@ import '@ait-co/devtools/panel';
 | `@ait-co/devtools` 또는 `@ait-co/devtools/mock` | 모든 mock export (번들러 alias 대상) |
 | `@ait-co/devtools/panel` | Floating DevTools Panel (import 시 자동 마운트) |
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
+| `@ait-co/devtools/in-app` | In-app debug attach — 3-layer gate + Chii target.js 주입 (dogfood 빌드 전용, `__DEBUG_BUILD__=true` 시에만 활성) |
 
 ## 텔레메트리
 
