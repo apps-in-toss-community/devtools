@@ -833,12 +833,14 @@ AI coding agents (Claude Code, Cursor, etc.) can observe a running mini-app dire
 
 | Mode | Invocation | Target | Tools |
 |---|---|---|---|
-| **debug** (default) | `devtools-mcp` | Production bundle on a phone or dev browser (CDP/Chii) | `list_console_messages`, `list_network_requests`, `list_pages` |
-| **dev** | `devtools-mcp --mode=dev` | Mock state from a running Vite dev server | `devtools_get_mock_state` |
+| **debug** (default) | `devtools-mcp` | Production bundle on a phone or dev browser (CDP/Chii) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
+| **dev** | `devtools-mcp --mode=dev` | Mock state from a running Vite dev server | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-### Debug mode (CDP via Chii) — Phase 1
+Both modes expose the same `AIT.*` tool surface — debug mode backed by the Chii channel, dev mode by the dev server's mock-state HTTP endpoint — so an agent sees the same tools whether attached to a phone (debug) or a dev browser (dev).
 
-> **Phase 1**: three read-only tools for console/network/page. Phone attach roundtrip requires a real-device dog-food step and is deferred to a later phase; the tool layer is CI-verified via a mockable injectable CDP connection.
+### Debug mode (CDP via Chii)
+
+> Read-only tools only. The phone attach roundtrip requires a real-device dog-food step and is deferred to a later phase; the tool layer is CI-verified via mockable injectable CDP connection / AIT source.
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL, a QR code, and a secret token in the terminal. When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL and token, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
@@ -853,15 +855,23 @@ Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` an
 }
 ```
 
-| Tool | CDP backing | Description |
+| Tool | CDP / AIT backing | Description |
 |---|---|---|
 | `list_console_messages` | `Runtime.consoleAPICalled` | Recent console.log/warn/error messages (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | Recent XHR/fetch requests (url, method, status, timing) |
 | `list_pages` | Chii relay target list | Attached pages + tunnel status + wss URL |
+| `get_dom_document` | `DOM.getDocument` | DOM tree read (structural/layout regression diagnosis) |
+| `take_snapshot` | `DOMSnapshot.captureSnapshot` | Page snapshot (documents + interned strings, visual regression) |
+| `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |
+| `AIT.getSdkCallHistory` | AIT domain | SDK call trace (method, args, result/error, timestamp) |
+| `AIT.getMockState` | AIT domain | Mock state snapshot (`window.__ait`) |
+| `AIT.getOperationalEnvironment` | AIT domain | `getOperationalEnvironment()` + SDK version |
+
+`AIT.*` covers what raw CDP cannot; the same MCP server forwards it alongside CDP. In debug mode the in-app side answers over the Chii channel (phone integration is a later phase).
 
 ### Dev mode (mock state)
 
-`devtools-mcp --mode=dev` reads the mock state from a running browser.
+`devtools-mcp --mode=dev` reads the mock state from a running browser. Phase 3 aligned it on the same `AIT.*` tool surface as debug mode.
 
 #### Architecture
 
@@ -871,7 +881,7 @@ Browser (aitState)
        └─ Vite dev server (unplugin with mcp: true)
             └─ GET /api/ait-devtools/state
                  └─ MCP stdio server (dist/mcp/server.js)
-                      └─ AI agent (devtools_get_mock_state tool)
+                      └─ AI agent (AIT.getMockState tool)
 ```
 
 #### Setup
@@ -908,14 +918,17 @@ export default {
 **3. Open the app in your browser, then call the tool from your AI agent**
 
 ```
-> devtools_get_mock_state
+> AIT.getMockState
 ```
 
 Returns the full current mock state (permissions, location, auth, network, IAP, etc.) as JSON.
 
 | Tool | Description |
 |---|---|
-| `devtools_get_mock_state` | Returns the current `AitDevtoolsState` snapshot (read-only) |
+| `AIT.getMockState` | Returns the current `AitDevtoolsState` snapshot (read-only) |
+| `AIT.getOperationalEnvironment` | Environment + version derived from the mock state's `environment` + `appVersion` |
+| `AIT.getSdkCallHistory` | Empty in dev mode (the HTTP endpoint records no trace) |
+| `devtools_get_mock_state` | Backward-compatible alias of `AIT.getMockState` (prefer `AIT.getMockState` in new configs) |
 
 ## Package export structure
 

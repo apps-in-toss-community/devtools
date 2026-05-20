@@ -1,18 +1,19 @@
 /**
- * @ait-co/devtools debug-mode MCP server (stdio) — Phase 1.
+ * @ait-co/devtools debug-mode MCP server (stdio) — Phase 1–3.
  *
  * Lets an AI coding agent attach to a running mini-app (real Toss WebView, or a
- * browser in dev mode) and read its console + network over CDP, without a human
- * watching a phone. Transport is CDP-via-Chii: a local Chii relay :9100 exposed
- * through a cloudflared quick tunnel; the phone attaches over the public wss URL.
+ * browser in dev mode) and read its console/network/DOM/screenshot over CDP plus
+ * the AIT.* domain, without a human watching a phone. Transport is CDP-via-Chii:
+ * a local Chii relay :9100 exposed through a cloudflared quick tunnel; the phone
+ * attaches over the public wss URL.
  *
  *   AI host  --stdio-->  this server  --CDP client WS-->  Chii relay :9100
  *                                                          ^-- target WS -- phone
  *
- * The tool layer reads from an injectable `CdpConnection`, so the three Phase 1
- * tools are unit-testable with a fake (no phone). This module wires the live
- * pieces (relay + tunnel + production connection); the phone roundtrip itself is
- * phone-gated and deferred.
+ * The tool layer reads from an injectable `CdpConnection` (CDP) and `AitSource`
+ * (AIT.*), so every tool is unit-testable with a fake (no phone). This module
+ * wires the live pieces (relay + tunnel + production connection); the phone
+ * roundtrip itself is phone-gated and deferred.
  *
  * Node-only.
  */
@@ -20,16 +21,25 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ChiiAitSource } from './ait-chii-source.js';
+import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import {
   DEBUG_TOOL_DEFINITIONS,
+  getDomDocument,
+  getMockState,
+  getOperationalEnvironment,
+  getSdkCallHistory,
+  isAitToolName,
   isDebugToolName,
   listConsoleMessages,
   listNetworkRequests,
   listPages,
   type TunnelStatus,
+  takeScreenshot,
+  takeSnapshot,
 } from './tools.js';
 import {
   generateAttachToken,
@@ -41,17 +51,19 @@ import {
 /** Live infra the connection reads tunnel status from. */
 export interface DebugServerDeps {
   connection: CdpConnection;
+  /** AIT.* domain source — forwarded over the same Chii channel in production. */
+  aitSource: AitSource;
   /** Returns current tunnel status (URL changes per spawn). */
   getTunnelStatus(): TunnelStatus;
 }
 
 /**
- * Builds the debug-mode MCP server around an injected connection + tunnel
- * status getter. Pure wiring — does not start a relay or tunnel, which is what
- * makes the tool surface unit-testable.
+ * Builds the debug-mode MCP server around an injected CDP connection + AIT
+ * source + tunnel status getter. Pure wiring — does not start a relay or
+ * tunnel, which is what makes the tool surface unit-testable.
  */
 export function createDebugServer(deps: DebugServerDeps): Server {
-  const { connection, getTunnelStatus } = deps;
+  const { connection, aitSource, getTunnelStatus } = deps;
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
@@ -69,6 +81,27 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         content: [{ type: 'text', text: `Unknown tool: ${name}` }],
         isError: true,
       };
+    }
+
+    // AIT.* tools are served by the AIT source. In production it rides the same
+    // Chii websocket as CDP, so the connection must be attached first; the AIT
+    // source's sendCommand rejects with a clear message if no page is attached.
+    if (isAitToolName(name)) {
+      try {
+        await connection.enableDomains();
+        switch (name) {
+          case 'AIT.getSdkCallHistory':
+            return jsonResult(await getSdkCallHistory(aitSource));
+          case 'AIT.getMockState':
+            return jsonResult(await getMockState(aitSource));
+          case 'AIT.getOperationalEnvironment':
+            return jsonResult(await getOperationalEnvironment(aitSource));
+          default:
+            return unknownTool(name);
+        }
+      } catch (err) {
+        return errorResult(err, name);
+      }
     }
 
     try {
@@ -92,13 +125,29 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       };
     }
 
-    switch (name) {
-      case 'list_console_messages':
-        return jsonResult(listConsoleMessages(connection));
-      case 'list_network_requests':
-        return jsonResult(listNetworkRequests(connection));
-      case 'list_pages':
-        return jsonResult(listPages(connection, getTunnelStatus()));
+    try {
+      switch (name) {
+        case 'list_console_messages':
+          return jsonResult(listConsoleMessages(connection));
+        case 'list_network_requests':
+          return jsonResult(listNetworkRequests(connection));
+        case 'list_pages':
+          return jsonResult(listPages(connection, getTunnelStatus()));
+        case 'get_dom_document':
+          return jsonResult(await getDomDocument(connection));
+        case 'take_snapshot':
+          return jsonResult(await takeSnapshot(connection));
+        case 'take_screenshot': {
+          const shot = await takeScreenshot(connection);
+          return {
+            content: [{ type: 'image' as const, data: shot.data, mimeType: shot.mimeType }],
+          };
+        }
+        default:
+          return unknownTool(name);
+      }
+    } catch (err) {
+      return errorResult(err, name);
     }
   });
 
@@ -107,6 +156,23 @@ export function createDebugServer(deps: DebugServerDeps): Server {
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
+}
+
+function unknownTool(name: string) {
+  return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
+}
+
+function errorResult(err: unknown, name: string) {
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: `${name} failed: ${message}\nCall list_pages to confirm a mini-app has attached over the relay.`,
+      },
+    ],
+    isError: true,
+  };
 }
 
 export interface RunDebugServerOptions {
@@ -119,7 +185,7 @@ export interface RunDebugServerOptions {
  *   1. start the Chii relay,
  *   2. open a cloudflared quick tunnel to it,
  *   3. print QR + secret token,
- *   4. expose the three Phase 1 tools backed by a `ChiiCdpConnection`.
+ *   4. expose the debug tools backed by a `ChiiCdpConnection` + `ChiiAitSource`.
  */
 export async function runDebugServer(options: RunDebugServerOptions = {}): Promise<void> {
   const relayPort = options.relayPort ?? 9100;
@@ -143,8 +209,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   }
 
   const connection = new ChiiCdpConnection({ relayBaseUrl: relay.baseUrl });
+  // AIT.* methods ride the same Chii channel as CDP commands.
+  const aitSource = new ChiiAitSource(connection);
   const server = createDebugServer({
     connection,
+    aitSource,
     getTunnelStatus: () => tunnelStatus,
   });
 

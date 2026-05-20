@@ -14,7 +14,14 @@
 
 import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
-import type { CdpConnection, CdpEventMap, CdpEventName, CdpTarget } from './cdp-connection.js';
+import type {
+  CdpCommandMap,
+  CdpCommandName,
+  CdpConnection,
+  CdpEventMap,
+  CdpEventName,
+  CdpTarget,
+} from './cdp-connection.js';
 
 /** Max events retained per domain ring buffer. */
 const DEFAULT_BUFFER_SIZE = 500;
@@ -79,6 +86,11 @@ export class ChiiCdpConnection implements CdpConnection {
   private nextCommandId = 1;
   /** In-flight enableDomains() promise — concurrent callers share it. */
   private enablingPromise: Promise<void> | null = null;
+  /** Pending request→response commands keyed by CDP message id. */
+  private readonly pending = new Map<
+    number,
+    { resolve: (result: unknown) => void; reject: (err: Error) => void }
+  >();
 
   constructor(options: ChiiCdpConnectionOptions) {
     this.relayBaseUrl = options.relayBaseUrl.replace(/\/$/, '');
@@ -149,19 +161,68 @@ export class ChiiCdpConnection implements CdpConnection {
 
     ws.on('message', (data: WebSocket.RawData) => this.handleMessage(data.toString()));
 
-    this.send('Runtime.enable');
-    this.send('Network.enable');
+    this.sendFireAndForget('Runtime.enable');
+    this.sendFireAndForget('Network.enable');
+    // DOM/Page domains back the Phase 2 command tools; Chii answers their
+    // request→response commands once enabled.
+    this.sendFireAndForget('DOM.enable');
+    this.sendFireAndForget('Page.enable');
   }
 
-  private send(method: string, params: Record<string, unknown> = {}): void {
+  /** Fire-and-forget CDP message (used for `*.enable`, no result awaited). */
+  private sendFireAndForget(method: string, params: Record<string, unknown> = {}): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const id = this.nextCommandId++;
     this.ws.send(JSON.stringify({ id, method, params }));
   }
 
+  /**
+   * Issue a CDP command and resolve with its result (Phase 2). Rejects on a CDP
+   * error frame or when no websocket is open (no page attached yet).
+   */
+  send<M extends CdpCommandName>(
+    method: M,
+    params?: CdpCommandMap[M]['params'],
+  ): Promise<CdpCommandMap[M]['result']> {
+    return this.sendCommand(method, params ?? {}) as Promise<CdpCommandMap[M]['result']>;
+  }
+
+  /**
+   * Issue an arbitrary request→response command over the relay and resolve with
+   * its raw result. Both the typed CDP {@link send} and the AIT domain (Phase 3
+   * `AIT.*` methods, forwarded over the same Chii channel) build on this.
+   */
+  sendCommand(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(
+        new Error('No mini-app page attached to the Chii relay yet. Call enableDomains() first.'),
+      );
+    }
+    const id = this.nextCommandId++;
+    const ws = this.ws;
+    return new Promise<unknown>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
   private handleMessage(raw: string): void {
     const message = parseInbound(raw);
-    if (!message || typeof message.method !== 'string') return;
+    if (!message) return;
+
+    // Command response (has an id matching a pending request).
+    if (typeof message.id === 'number' && this.pending.has(message.id)) {
+      const waiter = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      if (waiter) {
+        if (message.error) waiter.reject(new Error(message.error.message));
+        else waiter.resolve(message.result);
+      }
+      return;
+    }
+
+    // Event (buffered for the Phase 1 stream tools).
+    if (typeof message.method !== 'string') return;
     if (!this.buffers.has(message.method as CdpEventName)) return;
     const event = message.method as CdpEventName;
     const buffer = this.buffers.get(event);
@@ -181,9 +242,13 @@ export class ChiiCdpConnection implements CdpConnection {
     return () => this.emitter.off(event, listener as (payload: unknown) => void);
   }
 
-  /** Close the relay client websocket. */
+  /** Close the relay client websocket and reject any in-flight commands. */
   close(): void {
     this.ws?.close();
     this.ws = null;
+    for (const waiter of this.pending.values()) {
+      waiter.reject(new Error('Chii relay connection closed.'));
+    }
+    this.pending.clear();
   }
 }

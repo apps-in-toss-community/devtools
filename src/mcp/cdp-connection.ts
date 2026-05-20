@@ -8,8 +8,13 @@
  * `ChiiCdpConnection` (see `chii-connection.ts`); tests inject a fake that
  * emits canned `Runtime.consoleAPICalled` / `Network.*` events.
  *
- * Only the slice of the Chrome DevTools Protocol that Phase 1 needs is typed
- * here. Later phases (DOM/snapshot, evaluate_script, AIT.* domain) extend this.
+ * Phase 2 adds CDP *commands* (request→response): `DOM.getDocument`,
+ * `DOMSnapshot.captureSnapshot`, `Page.captureScreenshot`. Unlike Phase 1's
+ * event streams these need a `send(method, params)` round-trip, so the
+ * connection grows a typed `send`. The fake returns canned command results.
+ *
+ * Only the slice of the Chrome DevTools Protocol the tools need is typed here.
+ * Phase 6 (`Runtime.evaluate` write tools) will extend the command map again.
  */
 
 /** A target (page) the Chii relay currently sees attached. */
@@ -86,6 +91,65 @@ export interface CdpEventMap {
 
 export type CdpEventName = keyof CdpEventMap;
 
+/* -------------------------------------------------------------------------- */
+/* Phase 2 — CDP commands (request → response)                                */
+/* -------------------------------------------------------------------------- */
+
+/** A `DOM.Node` subset (recursive) returned by `DOM.getDocument`. */
+export interface CdpDomNode {
+  nodeId: number;
+  /** CDP node type (1 = element, 3 = text, 9 = document, …). */
+  nodeType: number;
+  nodeName: string;
+  /** Tag/local name for elements. */
+  localName?: string;
+  nodeValue?: string;
+  /** Flattened attribute list: `[name, value, name, value, …]`. */
+  attributes?: string[];
+  childNodeCount?: number;
+  children?: CdpDomNode[];
+  documentURL?: string;
+  baseURL?: string;
+}
+
+/** Result of `DOM.getDocument`. */
+export interface DomGetDocumentResult {
+  root: CdpDomNode;
+}
+
+/** Result of `DOMSnapshot.captureSnapshot` (subset we surface). */
+export interface DomSnapshotResult {
+  documents: unknown[];
+  strings: string[];
+}
+
+/** Result of `Page.captureScreenshot`. */
+export interface PageCaptureScreenshotResult {
+  /** Base64-encoded image bytes (PNG by default). */
+  data: string;
+}
+
+/**
+ * Map of CDP command method → params/result shape. Keeps `send` typed so a
+ * `DOM.getDocument` call resolves to a `DomGetDocumentResult`, etc.
+ */
+export interface CdpCommandMap {
+  'DOM.getDocument': {
+    params: { depth?: number; pierce?: boolean };
+    result: DomGetDocumentResult;
+  };
+  'DOMSnapshot.captureSnapshot': {
+    params: { computedStyles?: string[] };
+    result: DomSnapshotResult;
+  };
+  'Page.captureScreenshot': {
+    params: { format?: 'png' | 'jpeg' | 'webp'; quality?: number };
+    result: PageCaptureScreenshotResult;
+  };
+}
+
+export type CdpCommandName = keyof CdpCommandMap;
+
 /**
  * The connection the tool layer reads from. The production implementation
  * wraps the Chii relay's CDP websocket; tests inject a fake.
@@ -109,4 +173,14 @@ export interface CdpConnection {
 
   /** Subscribe to live events. Returns an unsubscribe function. */
   on<E extends CdpEventName>(event: E, listener: (payload: CdpEventMap[E]) => void): () => void;
+
+  /**
+   * Issue a CDP command (request → response). Phase 2's DOM/snapshot/screenshot
+   * tools use this; resolves with the typed result or rejects on a CDP error.
+   * Implementations must have called {@link enableDomains} first.
+   */
+  send<M extends CdpCommandName>(
+    method: M,
+    params?: CdpCommandMap[M]['params'],
+  ): Promise<CdpCommandMap[M]['result']>;
 }
