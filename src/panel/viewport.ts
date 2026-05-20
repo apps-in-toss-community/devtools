@@ -26,9 +26,9 @@ export const VIEWPORT_STORAGE_KEY = '__ait_viewport';
 export const VIEWPORT_CUSTOM_MAX = 4096;
 
 /**
- * Apps in Toss의 host nav bar 높이 (CSS px). 공식 docs에는 명시되어 있지 않지만
- * Toss 공식 예제(`with-contacts-viral`, `random-balls`)가 safeArea.top에 `+ 48`을
- * 추가하는 패턴을 쓴다. SafeAreaInsets에는 포함되지 않으므로 별도 상수로 관리.
+ * Apps in Toss의 host nav bar 높이 (CSS px). 문서화돼 있지 않지만 앱인토스 샘플
+ * 앱(`with-contacts-viral`, `random-balls`)이 safeArea.top에 `+ 48`을 추가하는
+ * 패턴을 쓴다. SafeAreaInsets에는 포함되지 않으므로 별도 상수로 관리.
  */
 export const AIT_NAV_BAR_HEIGHT = 48;
 
@@ -330,7 +330,7 @@ function removeNavBarElement(): void {
  *   우측 `⋯` + 구분선 + `×`.
  * - `game`: 투명 배경, 게임 캔버스를 가리지 않도록 우측 `⋯` + 구분선 + `×`만.
  *
- * `env(safe-area-inset-top)`에는 이 높이가 포함되지 않으므로 (공식 SDK 확인),
+ * `env(safe-area-inset-top)`에는 이 높이가 포함되지 않으므로 (SDK 동작 확인),
  * 오버레이는 preset.safeAreaTop만큼 아래로 내려서 그린다.
  *
  * 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출한다.

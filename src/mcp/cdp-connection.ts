@@ -13,8 +13,8 @@
  * event streams these need a `send(method, params)` round-trip, so the
  * connection grows a typed `send`. The fake returns canned command results.
  *
- * Only the slice of the Chrome DevTools Protocol the tools need is typed here.
- * Phase 6 (`Runtime.evaluate` write tools) will extend the command map again.
+ * Only the slice of the Chrome DevTools Protocol the tools need is typed here;
+ * future write tools (e.g. `Runtime.evaluate`) will extend the command map.
  */
 
 /** A target (page) the Chii relay currently sees attached. */
