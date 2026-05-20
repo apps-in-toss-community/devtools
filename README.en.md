@@ -13,7 +13,7 @@ Lets you develop and test Apps in Toss mini-apps in a **regular browser** — wi
 - **60+ SDK API mocks** — auth, payments, IAP, location, camera, storage, and more
 - **Device API mode system** — switch between mock / web / prompt modes for device APIs
 - **Device simulation** — iPhone/Galaxy presets + orientation toggle to simulate a mobile viewport in your desktop browser
-- **Floating DevTools Panel** — control SDK state in real time from the browser (10 tabs, mock state preset library included)
+- **Floating DevTools Panel** — control SDK state in real time from the browser (12 tabs, mock state preset library included)
 - **All bundlers supported** — [unplugin](https://github.com/unjs/unplugin)-based Vite, Webpack, Rspack, esbuild, and Rollup integration
 
 Live demo: <https://devtools.aitc.dev/> (the `e2e/fixture/` from this repo deployed to GitHub Pages as a self-contained demo).
@@ -336,7 +336,7 @@ Camera and album APIs return dummy images in mock mode.
 
 When using the plugin, the panel is auto-injected into your entry point file. Click the **'AIT' button** in the bottom-right corner of the screen to toggle it.
 
-### 10 tabs
+### 12 tabs
 
 | Tab | Description |
 |---|---|
@@ -344,9 +344,11 @@ When using the plugin, the panel is auto-injected into your entry point file. Cl
 | **Presets** | Apply/remove common QA scenarios (permission denied, offline, logged out, etc.) with one click. Save and delete user presets |
 | **Viewport** | Simulate a mobile viewport using device presets (iPhone/Galaxy) + orientation toggle |
 | **Permissions** | Control camera, photos, geolocation, clipboard, contacts, and microphone permission states (allowed/denied/notDetermined) |
+| **Notifications** | Choose the next result of the notification-consent flow (new agreement / already agreed / rejected) |
 | **Location** | Set latitude, longitude, and accuracy |
 | **Device** | Switch API modes (mock/web/prompt), manage dummy images (add/remove/reset to defaults) |
 | **IAP** | Choose the next purchase result (success/cancel/error, etc.), TossPay payment result, completed order history (last 5) |
+| **Ads** | Trigger full-screen ad load/show and view the last ad event log |
 | **Events** | Trigger Back/Home navigation events, toggle login state |
 | **Analytics** | Real-time log viewer for recorded analytics events (last 30 entries, with timestamp/type/parameters) |
 | **Storage** | View and clear items stored via the `Storage` API |

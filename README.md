@@ -13,7 +13,7 @@
 - **60+ SDK API mock** — 인증, 결제, IAP, 위치, 카메라, 스토리지 등
 - **Device API 모드 시스템** — mock / web / prompt 세 가지 모드로 디바이스 API 동작 전환
 - **Device simulation** — iPhone/Galaxy 프리셋 + orientation 토글로 데스크탑 브라우저에서 모바일 뷰포트 시뮬레이션
-- **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (10개 탭, mock state preset library 포함)
+- **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (12개 탭, mock state preset library 포함)
 - **모든 번들러 지원** — [unplugin](https://github.com/unjs/unplugin) 기반 Vite, Webpack, Rspack, esbuild, Rollup 통합
 
 라이브 데모: <https://devtools.aitc.dev/> (이 repo의 `e2e/fixture/`를 GitHub Pages에 그대로 배포한 self-contained 데모).
@@ -336,7 +336,7 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 플러그인 사용 시 진입점 파일에 패널이 자동 주입됩니다. 화면 우하단의 **'AIT' 버튼**을 클릭하면 토글됩니다.
 
-### 10개 탭
+### 12개 탭
 
 | 탭 | 설명 |
 |---|---|
@@ -344,9 +344,11 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 | **Presets** | 자주 쓰는 QA 시나리오(권한 거부, offline, 미로그인 등)를 한 클릭으로 적용/해제. 사용자 preset 저장/삭제 가능 |
 | **Viewport** | 디바이스 프리셋(iPhone/Galaxy) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **Permissions** | camera, photos, geolocation, clipboard, contacts, microphone 권한 상태 제어 (allowed/denied/notDetermined) |
+| **Notifications** | 알림 동의 흐름의 다음 결과 선택 (신규 동의 / 이미 동의함 / 거부) |
 | **Location** | 위도, 경도, 정확도 설정 |
 | **Device** | API 모드 전환 (mock/web/prompt), 더미 이미지 관리 (추가/제거/기본값/초기화) |
 | **IAP** | 다음 구매 결과 선택 (success/취소/에러 등), TossPay 결제 결과, 완료된 주문 내역 (최근 5건) |
+| **Ads** | 전면 광고 load/show 트리거 및 마지막 광고 이벤트 로그 |
 | **Events** | Back/Home 네비게이션 이벤트 트리거, 로그인 상태 토글 |
 | **Analytics** | 기록된 분석 이벤트 실시간 로그 뷰어 (최근 30건, 타임스탬프/타입/파라미터) |
 | **Storage** | `Storage` API로 저장된 항목 조회 및 초기화 |
