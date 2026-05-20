@@ -5,12 +5,13 @@
  * 외부 의존성 없이 vanilla DOM으로 구현.
  */
 
+import { LOCALE_CHANGE_EVENT, t } from '../i18n/index.js';
 import { type AitDevtoolsState, aitState } from '../mock/state.js';
 import { telemetry } from '../telemetry/index.js';
 import { h } from './helpers.js';
 import { PANEL_FULLSCREEN_BREAKPOINT, PANEL_HEIGHT, PANEL_STYLES, PANEL_WIDTH } from './styles.js';
 import { setDeviceRefreshPanel } from './tabs/device.js';
-import { createTabRenderers, TABS, type TabId } from './tabs/index.js';
+import { createTabRenderers, getTabs, type TabId } from './tabs/index.js';
 import { disposeViewport, initViewport } from './viewport.js';
 
 /** MCP endpoint registered by the unplugin when `mcp: true` is set */
@@ -209,6 +210,7 @@ let injectedStyle: HTMLStyleElement | null = null;
 let panelSwitchTabHandler: ((e: Event) => void) | null = null;
 let resizeHandler: (() => void) | null = null;
 let aitStateUnsubscribe: (() => void) | null = null;
+let localeChangeHandler: (() => void) | null = null;
 
 // Lazy-initialized after refreshPanel is defined
 let tabRenderers: Record<TabId, () => HTMLElement> | null = null;
@@ -222,7 +224,7 @@ function refreshPanel() {
   } catch (err) {
     console.error(`[@ait-co/devtools] Error rendering tab "${currentTab}":`, err);
     bodyEl.appendChild(
-      h('div', { className: 'ait-panel-tab-error' }, `Error rendering "${currentTab}" tab.`),
+      h('div', { className: 'ait-panel-tab-error' }, t('panel.tabError', { tab: currentTab })),
     );
   }
 
@@ -247,14 +249,18 @@ function mount() {
   document.head.appendChild(injectedStyle);
 
   // Toggle button
-  const toggle = h('button', { className: 'ait-panel-toggle', title: 'AIT DevTools' }, 'AIT');
+  const toggle = h(
+    'button',
+    { className: 'ait-panel-toggle', title: t('panel.toggle.title') },
+    'AIT',
+  );
   toggleEl = toggle;
   restoreButtonPosition(toggle);
 
   // Panel
   panelEl = h('div', { className: 'ait-panel' });
 
-  const closeBtn = h('button', { className: 'ait-panel-close', title: 'Close' }, '\u00d7');
+  const closeBtn = h('button', { className: 'ait-panel-close', title: t('panel.close') }, '\u00d7');
   closeBtn.addEventListener('click', () => {
     isOpen = false;
     panelEl!.classList.remove('open');
@@ -265,15 +271,17 @@ function mount() {
     'span',
     {
       className: `ait-mock-badge ${aitState.state.panelEditable ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`,
-      title: 'Toggle panel edit mode',
+      title: t('panel.editMode.toggleTitle'),
     },
-    aitState.state.panelEditable ? 'EDIT' : 'READ-ONLY',
+    aitState.state.panelEditable ? t('panel.editMode.on') : t('panel.editMode.off'),
   );
 
   mockBadge.addEventListener('click', () => {
     aitState.update({ panelEditable: !aitState.state.panelEditable });
     mockBadge.className = `ait-mock-badge ${aitState.state.panelEditable ? 'ait-mock-badge-on' : 'ait-mock-badge-off'}`;
-    mockBadge.textContent = aitState.state.panelEditable ? 'EDIT' : 'READ-ONLY';
+    mockBadge.textContent = aitState.state.panelEditable
+      ? t('panel.editMode.on')
+      : t('panel.editMode.off');
     refreshPanel();
   });
 
@@ -287,12 +295,12 @@ function mount() {
   const header = h(
     'div',
     { className: 'ait-panel-header' },
-    h('span', {}, 'AIT DevTools'),
+    h('span', {}, t('panel.title')),
     headerRight,
   );
 
   tabsEl = h('div', { className: 'ait-panel-tabs' });
-  for (const tab of TABS) {
+  for (const tab of getTabs()) {
     const tabEl = h('button', { className: 'ait-panel-tab', 'data-tab': tab.id }, tab.label);
     tabEl.addEventListener('click', () => {
       currentTab = tab.id;
@@ -377,6 +385,31 @@ function mount() {
   };
   window.addEventListener('__ait:panel-switch-tab', panelSwitchTabHandler);
 
+  // Locale change → tear down the panel and re-mount so every string in the
+  // tree re-evaluates against the new catalog. The mount path is already
+  // idempotent (`document.querySelector('.ait-panel-toggle')` guard), so
+  // dispose+mount is the simplest "re-render whole panel" hook.
+  localeChangeHandler = () => {
+    // disposePanel() resets currentTab to 'env' and isOpen to false. Capture
+    // them first so the user stays on the same tab and the panel doesn't
+    // close out from under them mid-interaction.
+    const savedTab = currentTab;
+    const savedOpen = isOpen;
+    disposePanel();
+    try {
+      mount();
+      currentTab = savedTab;
+      if (savedOpen && panelEl) {
+        isOpen = true;
+        panelEl.classList.add('open');
+      }
+      refreshPanel();
+    } catch (err) {
+      console.error('[@ait-co/devtools] Failed to re-mount after locale change:', err);
+    }
+  };
+  window.addEventListener(LOCALE_CHANGE_EVENT, localeChangeHandler);
+
   refreshPanel();
 
   // Telemetry: check consent state, show toast if needed, fire panel_mount if granted.
@@ -400,6 +433,9 @@ function disposePanel(): void {
   if (resizeHandler && typeof window !== 'undefined') {
     window.removeEventListener('resize', resizeHandler);
   }
+  if (localeChangeHandler && typeof window !== 'undefined') {
+    window.removeEventListener(LOCALE_CHANGE_EVENT, localeChangeHandler);
+  }
   if (aitStateUnsubscribe) aitStateUnsubscribe();
 
   toggleEl?.remove();
@@ -411,6 +447,7 @@ function disposePanel(): void {
 
   panelSwitchTabHandler = null;
   resizeHandler = null;
+  localeChangeHandler = null;
   aitStateUnsubscribe = null;
   toggleEl = null;
   panelEl = null;

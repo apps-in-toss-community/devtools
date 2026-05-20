@@ -40,7 +40,16 @@ export default defineConfig({
   //                is unreliable under Vite 8 production build with rolldown)
   // The plugin is kept in the list so forceEnable=true is honoured if rolldown
   // is fixed and these options are re-enabled in the future without other changes.
-  plugins: [aitDevtools.vite({ panel: false, mock: false, forceEnable: true })],
+  plugins: [
+    aitDevtools.vite({
+      panel: false,
+      mock: false,
+      forceEnable: true,
+      // Manual QA toggle only — `AIT_TUNNEL=1 pnpm exec vite --config
+      // e2e/fixture/vite.config.ts`. No effect on CI / normal builds.
+      tunnel: !!process.env.AIT_TUNNEL,
+    }),
+  ],
   preview: {
     port: 4173,
     strictPort: true,
@@ -48,5 +57,13 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        // MPA: the panel fixture (existing e2e + Pages root) plus the launcher
+        // PWA shipped at /launcher/.
+        index: path.resolve(__dirname, 'index.html'),
+        launcher: path.resolve(__dirname, 'launcher/index.html'),
+      },
+    },
   },
 });

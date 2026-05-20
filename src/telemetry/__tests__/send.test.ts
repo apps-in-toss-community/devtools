@@ -13,7 +13,7 @@ function clearAll(): void {
 
 function grantConsent(): void {
   localStorage.setItem(KEY_CONSENT, 'granted');
-  localStorage.setItem(KEY_POLICY_VERSION, '2026-05-12');
+  localStorage.setItem(KEY_POLICY_VERSION, '2026-05-18');
   localStorage.setItem(KEY_ANON_ID, 'test-anon-id');
 }
 
@@ -132,6 +132,7 @@ describe('send: payload shape', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(capturedBody).toMatchObject({
+      tier: 1,
       source: 'devtools',
       event: 'tab_view',
       anon_id: 'test-anon-id',

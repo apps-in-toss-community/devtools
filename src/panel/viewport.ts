@@ -56,7 +56,7 @@ const CUSTOM_PRESET: ViewportPreset = {
 
 /**
  * Device presets (2026). CSS viewport 크기는 실제 기기의 `window.innerWidth/innerHeight`.
- * iPhone 17 시리즈는 2025-09 출시. iPhone Air는 2026-04 기준 미출시 추정(`(est)` 라벨).
+ * iPhone 17 시리즈는 2025-09 출시. iPhone Air는 2026-04 출시.
  * Galaxy S26 시리즈는 2026-03-11 출시 — viewport 값은 phone-simulator.com에서 보고된
  * 측정치를 사용. safe area는 토스 호스트 환경 실측 필요 — S25 값으로 잠정.
  *
@@ -98,7 +98,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
   },
   {
     id: 'iphone-air',
-    label: 'iPhone Air (est)',
+    label: 'iPhone Air',
     width: 420,
     height: 912,
     dpr: 3,

@@ -15,6 +15,7 @@ import {
   resolveEffectiveConsent,
   shouldShowToast,
 } from './state.js';
+import { sendTier0Ping } from './tier0.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,12 +83,15 @@ export type TabId = string;
 
 /**
  * Call once after panel mounts.
- * Handles: consent check, optional toast, panel_mount event, pagehide wiring.
+ * Handles: Tier 0 ping, consent check, optional toast, panel_mount event, pagehide wiring.
  */
 function init(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 
   wirePagehide();
+
+  // Tier 0: fire-and-forget daily ping (opt-out, no consent needed).
+  void sendTier0Ping(getVersion());
 
   const effectiveConsent = resolveEffectiveConsent();
 

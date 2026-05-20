@@ -3,7 +3,42 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>devtools E2E fixture</title>
+    <title>AITC DevTools — SDK mock &amp; DevTools panel</title>
+    <meta name="description" content="@apps-in-toss/web-framework SDK mock + Vite/Webpack unplugin + Floating DevTools panel. 미니앱을 토스 앱 없이 일반 브라우저에서 개발·테스트." />
+    <link rel="canonical" href="https://devtools.aitc.dev/" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Apps In Toss Community" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta property="og:title" content="AITC DevTools — SDK mock &amp; DevTools panel" />
+    <meta property="og:description" content="@apps-in-toss/web-framework SDK mock + Vite/Webpack unplugin + Floating DevTools panel. 미니앱을 토스 앱 없이 일반 브라우저에서 개발·테스트." />
+    <meta property="og:url" content="https://devtools.aitc.dev/" />
+    <meta property="og:image" content="https://devtools.aitc.dev/og/image.png" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AITC DevTools — SDK mock &amp; DevTools panel" />
+    <meta name="twitter:description" content="@apps-in-toss/web-framework SDK mock + Vite/Webpack unplugin + Floating DevTools panel. 미니앱을 토스 앱 없이 일반 브라우저에서 개발·테스트." />
+    <meta name="twitter:image" content="https://devtools.aitc.dev/og/image.png" />
+
+    <!-- JSON-LD -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "AITC DevTools",
+      "description": "@apps-in-toss/web-framework SDK mock + Vite/Webpack/Rollup/Rspack/Turbopack unplugin + Floating DevTools panel. 미니앱을 토스 앱 없이 일반 브라우저에서 개발·테스트.",
+      "url": "https://devtools.aitc.dev/",
+      "operatingSystem": "Web Browser",
+      "applicationCategory": "DeveloperApplication",
+      "sameAs": [
+        "https://www.npmjs.com/package/@ait-co/devtools",
+        "https://github.com/apps-in-toss-community/devtools"
+      ]
+    }
+    </script>
+
     <style>
       body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 16px; max-width: 640px; }
       section { border-top: 1px solid #eee; padding: 12px 0; }
@@ -17,7 +52,7 @@
     </style>
   </head>
   <body>
-    <h1>devtools E2E fixture</h1>
+    <h1>AITC DevTools</h1>
     <div id="app"></div>
     <script type="module" src="./main.ts"></script>
   </body>

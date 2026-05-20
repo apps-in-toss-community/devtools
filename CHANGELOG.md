@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.1.22
+
+### Patch Changes
+
+- b8c7e92: launcher의 정적 설치 안내 카드를 `@khmyznikov/pwa-install` Web Component로 교체했습니다. "Install launcher to your phone" 버튼 하나로 Android Chrome 인앱 프롬프트, iOS Safari "공유 → 홈 화면에 추가" 일러스트, Firefox/Samsung Internet 수동 안내까지 플랫폼별 네이티브 흐름이 자동으로 안내됩니다 — `beforeinstallprompt` 직접 처리나 플랫폼 분기 코드 없이.
+
+  Replace the launcher's hand-rolled install hint card with the `@khmyznikov/pwa-install` Web Component. A single "Install launcher to your phone" CTA now triggers the platform-native flow automatically — Android Chrome's in-app install prompt, iOS Safari's Share → Add to Home Screen illustration, and Firefox/Samsung Internet's manual instruction card — without us needing to handle `beforeinstallprompt` or branch on user-agent ourselves.
+
+## 0.1.21
+
+### Patch Changes
+
+- bbf2659: launcher PWA를 홈 화면 설치 상태에서만 동작하도록 게이팅하고, 터널 QR을 `…/launcher/?url=<tunnel>` 딥링크로 인코딩해 스캔 한 번으로 자동 진입하도록 변경했습니다. 로컬 dev(`http://localhost`)에서는 게이팅이 풀려 e2e 픽스처가 그대로 동작합니다.
+
+  Gate the launcher PWA to its installed home-screen context (browser-tab visitors now see only the install hint, with the input and scanner hidden) and encode the tunnel QR as a `…/launcher/?url=<tunnel>` deep-link so a single scan auto-opens the dev URL. The gate is relaxed on `http://localhost` so the bundled e2e fixture keeps working in a normal tab.
+
+## 0.1.20
+
+### Patch Changes
+
+- 38db1ce: docs(fixture): SEO/AEO on devtools.aitc.dev — JSON-LD, canonical, sitemap, llms.txt
+
+  Make the live fixture demo (`devtools.aitc.dev`) discoverable:
+
+  - `e2e/fixture/index.html`: descriptive title, meta description, canonical,
+    Open Graph + Twitter Card meta with og:image, and a `SoftwareApplication`
+    JSON-LD block listing the SDK mock + multi-bundler unplugin + DevTools
+    panel.
+  - `e2e/fixture/launcher/index.html`: `noindex,nofollow` (the launcher is a
+    user-only PWA chrome, not a search target).
+  - `e2e/fixture/public/{robots.txt,sitemap.xml,llms.txt}`: standard SEO
+    surface + `llmstxt.org` overview for AI answer engines. AI crawlers
+    (GPTBot, ClaudeBot, anthropic-ai, PerplexityBot, Applebot-Extended)
+    explicitly allowed per org policy; `/launcher/` excluded from crawls.
+  - `e2e/fixture/public/og/image.png`: 1200×630 OG image.
+
+- 697870f: feat(telemetry): multi-tier consent — Tier 0 panel-mount ping + Tier 1 retained
+
+  Tier 0 opt-out daily ping (panel mount, fire-and-forget, no anon_id). Tier 1 events
+  retain existing behaviour with explicit `tier: 1` field. policy_version bumped to
+  `2026-05-18`; existing granted users regress to undecided for re-consent.
+
+- 41add94: docs(npm): add npm/license badges, expand keywords, refresh homepage
+
+  - README.md / README.en.md: add npm version + license badges below the
+    lang toggle, move "Reference consumer" section below Install so first-
+    paint shows the install command.
+  - package.json: extend `keywords` (`miniapp`, `simulator`, `testing`,
+    `vite-plugin`, `webpack-plugin`) for better npm discovery; point
+    `homepage` at https://devtools.aitc.dev/ instead of the npm page so
+    the registry "homepage" link goes to the live demo.
+
+## 0.1.19
+
+### Patch Changes
+
+- aef97d8: feat(panel): full ko/en internationalization
+
+  DevTools panel and consent toast now render in Korean or English based on `navigator.language` (`/^ko\b/i` → ko, else en), persisted under `localStorage['__ait_locale']`. Environment tab gains a Language toggle; switching locales remounts the panel via the new `__ait:localechange` event. Strings are sourced from a typed catalog under `src/i18n/`; missing keys fall back to the key string. Internal devtools chrome (Load / Show / Clear / Apply / Lat / Lng / Send / Cancel) is intentionally left in English in both locales.
+
+- 7ed86f5: unplugin: add a `tunnel` option (Vite dev only) that exposes the dev server via a
+  Cloudflare quick tunnel (`*.trycloudflare.com`, no account) and prints the public
+  URL + an ASCII QR in the terminal. Pair it with the new launcher PWA at
+  `https://devtools.aitc.dev/launcher/` to run the dev app full-screen on a real
+  phone — scan/paste the URL once per session; the launcher remembers the last URL.
+  `cloudflared` / `qrcode-terminal` are loaded only when the option is on. While
+  the tunnel is active the plugin also adds `.trycloudflare.com` to Vite's
+  `server.allowedHosts` so the random per-run hostname isn't rejected. See
+  "Run on a real phone" in the README.
+
 ## 0.1.18
 
 ### Patch Changes

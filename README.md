@@ -1,5 +1,9 @@
 # @ait-co/devtools
 
+**한국어** · [English](./README.en.md)
+
+[![npm](https://img.shields.io/npm/v/@ait-co/devtools)](https://www.npmjs.com/package/@ait-co/devtools) [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](./LICENSE)
+
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
 `@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
@@ -9,14 +13,10 @@
 - **60+ SDK API mock** — 인증, 결제, IAP, 위치, 카메라, 스토리지 등
 - **Device API 모드 시스템** — mock / web / prompt 세 가지 모드로 디바이스 API 동작 전환
 - **Device simulation** — iPhone/Galaxy 프리셋 + orientation 토글로 데스크탑 브라우저에서 모바일 뷰포트 시뮬레이션
-- **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (10개 탭, mock state preset library 포함)
+- **Floating DevTools Panel** — 브라우저에서 SDK 상태를 실시간으로 제어 (12개 탭, mock state preset library 포함)
 - **모든 번들러 지원** — [unplugin](https://github.com/unjs/unplugin) 기반 Vite, Webpack, Rspack, esbuild, Rollup 통합
 
 라이브 데모: <https://devtools.aitc.dev/> (이 repo의 `e2e/fixture/`를 GitHub Pages에 그대로 배포한 self-contained 데모).
-
-## Reference consumer
-
-[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example)이 devtools의 reference consumer다. 모든 SDK API를 인터랙티브하게 실행해볼 수 있는 카탈로그 앱으로, 웹 데모는 <https://sdk-example.aitc.dev/>에서 바로 확인할 수 있다. 새 mock을 추가하면 sdk-example의 카드에서 그대로 동작하는 게 1차 sanity check. 단, 이 repo의 E2E suite는 sdk-example을 clone하지 않고 **내부 자기완결 fixture(`e2e/fixture/`)** 로 운영한다 — sdk-example이 깨져도 devtools CI는 영향받지 않는다.
 
 ## 설치
 
@@ -33,6 +33,10 @@ pnpm add -D @ait-co/devtools
 > 않은 API를 호출하면 런타임에 에러가 발생합니다 — "devtools에서는 잘 되는데 실제 SDK에서는
 > 안 되는" 상황을 방지하기 위한 의도적 동작입니다. 누락된 API는
 > [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
+
+## Reference consumer
+
+[`sdk-example`](https://github.com/apps-in-toss-community/sdk-example)이 devtools의 reference consumer다. 모든 SDK API를 인터랙티브하게 실행해볼 수 있는 카탈로그 앱으로, 웹 데모는 <https://sdk-example.aitc.dev/>에서 바로 확인할 수 있다. 새 mock을 추가하면 sdk-example의 카드에서 그대로 동작하는 게 1차 sanity check. 단, 이 repo의 E2E suite는 sdk-example을 clone하지 않고 **내부 자기완결 fixture(`e2e/fixture/`)** 로 운영한다 — sdk-example이 깨져도 devtools CI는 영향받지 않는다.
 
 ## 번들러 설정
 
@@ -167,12 +171,14 @@ module.exports = {
 | `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
 | `mcp` | `boolean` | `false` | Vite dev server에 MCP state endpoint 추가 (Vite 전용, [MCP 섹션](#mcp-server) 참조) |
+| `tunnel` | `boolean \| { port?: number; qr?: boolean }` | `false` | Vite dev 서버를 Cloudflare quick tunnel로 노출 (실기기 미리보기, [아래](#run-on-a-real-phone-실기기-미리보기) 참고). **Vite dev 모드 전용** |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
 aitDevtools.vite({ forceEnable: true }); // production에서도 활성화 (mock 기본 OFF, panel ON)
 aitDevtools.vite({ forceEnable: true, mock: true }); // production에서 mock도 활성화
 aitDevtools.vite({ mcp: true }); // AI 에이전트용 MCP endpoint 활성화
+aitDevtools.vite({ tunnel: true }); // dev 서버를 *.trycloudflare.com으로 노출
 ```
 
 ## Production 빌드
@@ -210,6 +216,85 @@ if (process.env.NODE_ENV !== 'production') {
 ```
 
 > Next.js 설정은 위의 [Next.js (Webpack)](#nextjs-webpack) 및 [Next.js (Turbopack)](#nextjs-turbopack) 섹션을 참고하세요.
+
+## Run on a real phone (실기기 미리보기)
+
+데스크톱 크롬에서 잘 돌던 미니앱을 **실제 폰**에서 보고 싶을 때. Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, **계정 불필요**)로 노출하고, 폰에는 고정 URL의 launcher PWA를 한 번만 추가해 그 안에서 매번의 tunnel URL을 띄웁니다.
+
+셋업은 세 갈래입니다:
+
+- **프로젝트당 1회** — `vite.config`에 옵션 + `package.json`에 pnpm 설정 + (선택) `dev:phone` 스크립트
+- **폰당 1회** — launcher PWA를 홈 화면에 추가
+- **매 세션** — `pnpm dev:phone` (또는 `AIT_TUNNEL=1 pnpm dev`) 한 줄
+
+### 1. 프로젝트당 1회 셋업
+
+(a) **`vite.config.ts`에 `tunnel` 옵션 추가** — 항상 켜져 있어 매번 cloudflared가 떠도 괜찮으면 `tunnel: true`, 평소엔 끄고 명시할 때만 켜고 싶으면 env-gate 권장:
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import aitDevtools from '@ait-co/devtools/unplugin';
+
+export default defineConfig({
+  plugins: [
+    aitDevtools.vite({
+      tunnel: !!process.env.AIT_TUNNEL, // 평소 OFF, AIT_TUNNEL=1 일 때만 ON
+    }),
+  ],
+});
+```
+
+> `process.env.AIT_TUNNEL`은 `vite.config.ts`를 로드하는 시점(= vite 프로세스 기동 시)에 평가됩니다. 따라서 env 변수는 **vite를 띄우기 전에** 설정되어 있어야 합니다 (아래 (c)의 `dev:phone` 스크립트가 이를 자동으로 해결합니다).
+
+(b) **`package.json`에 pnpm 10+ 빌드 스크립트 허용** — pnpm은 보안상 dependency의 postinstall을 기본 차단합니다. `cloudflared`는 postinstall에서 바이너리(~38 MB)를 받으므로 명시 허용 필요:
+
+```json
+{
+  "pnpm": {
+    "onlyBuiltDependencies": ["cloudflared"]
+  }
+}
+```
+
+> 명시하지 않아도 동작은 됩니다 — `tunnel.ts`가 첫 기동 시 `cloudflared.install()`을 lazy로 호출. 다만 `pnpm install`마다 "Ignored build scripts" 경고가 남고, 바이너리 다운로드가 첫 `pnpm dev` 시점으로 미뤄집니다. 참고: [`sdk-example#60`](https://github.com/apps-in-toss-community/sdk-example/pull/60).
+
+(c) **(선택) `dev:phone` 스크립트** — env 변수 매번 타기 귀찮으면:
+
+```json
+{
+  "scripts": {
+    "dev": "vite",
+    "dev:phone": "AIT_TUNNEL=1 vite"
+  }
+}
+```
+
+### 2. 폰당 1회 셋업 (필수)
+
+폰에서 `https://devtools.aitc.dev/launcher/`를 열고 **홈 화면에 추가**합니다. launcher는 페이지 상단에 "Install launcher to your phone" 버튼을 띄우는데, 누르면 플랫폼별 네이티브 설치 흐름이 자동으로 안내됩니다 — Android Chrome은 인앱 설치 프롬프트, iOS Safari는 "공유 → 홈 화면에 추가" 일러스트, Firefox/Samsung Internet 등은 수동 안내 카드. launcher URL은 매번 동일하므로 폰당 한 번만 하면 됩니다.
+
+launcher는 **PWA(홈 화면 앱)로 실행할 때만 동작**합니다. 일반 브라우저 탭에서 열면 설치 안내만 노출되고 입력/스캐너 UI는 숨겨집니다 — 크롬리스 standalone 디스플레이가 PWA 셸의 본질이라, 일반 탭에서의 동작은 의도적으로 막아둡니다.
+
+### 3. 매 세션
+
+1. 데스크톱에서 `pnpm dev:phone`을 실행합니다 (1-(c) 스크립트를 추가하지 않았다면 `AIT_TUNNEL=1 pnpm dev`). 터미널에 `https://*.trycloudflare.com` URL + ASCII QR이 출력됩니다.
+2. 폰의 카메라(또는 launcher 아이콘 안의 "Scan QR")로 QR을 스캔합니다. QR은 `https://devtools.aitc.dev/launcher/?url=<tunnel>` 딥링크라 launcher PWA가 자동으로 열리고 그날의 dev 앱이 풀스크린으로 뜹니다 — URL 붙여넣기 단계가 필요 없습니다.
+3. 다음 세션엔 새 QR을 스캔만 하면 됩니다. launcher는 마지막 URL을 기억하고, "Rescan" 버튼으로 언제든 교체할 수 있습니다.
+
+> QR을 일반 카메라 앱으로 찍었을 때 Safari/Chrome이 일반 탭이 아닌 설치된 launcher PWA로 곧장 라우팅하는 동작은 Android Chrome에서 가장 안정적이고, iOS Safari는 버전에 따라 일반 탭으로 폴백할 수 있습니다. 그 경우 launcher 홈 화면 아이콘에서 한 번 열어주면 그 안의 QR 스캐너로 다시 시도할 수 있습니다.
+
+### 배경
+
+> **왜 launcher를 거치나요?** quick tunnel URL은 매 실행마다 바뀌므로 그 URL 자체를 PWA로 설치하면 다음 세션엔 죽은 링크가 됩니다. cross-origin으로 페이지를 전환하면 iOS/Android 모두 standalone(크롬리스)이 깨집니다. → 고정 URL의 launcher를 한 번 설치하고, 그 안의 `<iframe>`으로 그날의 dev 앱을 full-bleed로 보여주는 구조입니다.
+>
+> quick tunnel은 **인증이 없고**, **URL이 매 실행마다 바뀌며**, **프로덕션용이 아닙니다**. (계정·도메인이 있다면 named tunnel로 고정 hostname을 받는 방식은 추후 `tunnel: { hostname }` 옵션으로 확장 여지를 남겨뒀습니다.)
+>
+> `tunnel` 옵션은 Vite dev 모드에서만 동작합니다 — production 빌드는 `forceEnable`이어도 터널을 띄우지 않습니다. 다른 번들러(Webpack/Rspack 등)에서는 무시됩니다. 이 옵션을 켜면 `cloudflared` / `qrcode-terminal`가 동적 import로만 로드되므로, 끄면 번들 그래프에 들어오지 않습니다.
+
+### 한 줄 셋업 (예정)
+
+위 "프로젝트당 1회" 단계(vite.config 패치 + `onlyBuiltDependencies` + `dev:phone` 스크립트)는 향후 [`agent-plugin`](https://github.com/apps-in-toss-community/agent-plugin)이 `/ait setup phone` 같은 단일 명령으로 흡수할 예정입니다 (명령 이름은 잠정). 이 README가 그 자동화의 명세서 역할을 하므로, 수동 셋업 단계가 줄어들어도 동작 모델 자체는 동일합니다.
 
 ## Device API 모드 시스템
 
@@ -253,7 +338,7 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 플러그인 사용 시 진입점 파일에 패널이 자동 주입됩니다. 화면 우하단의 **'AIT' 버튼**을 클릭하면 토글됩니다.
 
-### 10개 탭
+### 12개 탭
 
 | 탭 | 설명 |
 |---|---|
@@ -261,9 +346,11 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 | **Presets** | 자주 쓰는 QA 시나리오(권한 거부, offline, 미로그인 등)를 한 클릭으로 적용/해제. 사용자 preset 저장/삭제 가능 |
 | **Viewport** | 디바이스 프리셋(iPhone/Galaxy) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **Permissions** | camera, photos, geolocation, clipboard, contacts, microphone 권한 상태 제어 (allowed/denied/notDetermined) |
+| **Notifications** | 알림 동의 흐름의 다음 결과 선택 (신규 동의 / 이미 동의함 / 거부) |
 | **Location** | 위도, 경도, 정확도 설정 |
 | **Device** | API 모드 전환 (mock/web/prompt), 더미 이미지 관리 (추가/제거/기본값/초기화) |
 | **IAP** | 다음 구매 결과 선택 (success/취소/에러 등), TossPay 결제 결과, 완료된 주문 내역 (최근 5건) |
+| **Ads** | 전면 광고 load/show 트리거 및 마지막 광고 이벤트 로그 |
 | **Events** | Back/Home 네비게이션 이벤트 트리거, 로그인 상태 토글 |
 | **Analytics** | 기록된 분석 이벤트 실시간 로그 뷰어 (최근 30건, 타임스탬프/타입/파라미터) |
 | **Storage** | `Storage` API로 저장된 항목 조회 및 초기화 |
@@ -364,7 +451,7 @@ Landscape로 전환하면:
 **Show Apps in Toss nav bar** 토글(기본 on)을 켜면:
 - 토스 호스트의 상단 nav bar(뒤로가기 / 앱 아이콘·이름 / ⋯ / ×)를 48px 높이로 오버레이
 - status bar 바로 아래, safe area top 이후에 배치
-- **중요**: 이 48px는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (공식 SDK 동작). 토스 공식 예제들도 `insets.top + 48` 패턴으로 보정합니다.
+- **중요**: 이 48px는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (SDK 동작). 토스 측 예제들도 `insets.top + 48` 패턴으로 보정합니다.
 
 ### 콘솔에서 직접 조작
 
@@ -410,7 +497,7 @@ Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 ### Known limitations
 
 - **Body가 스크롤 컨테이너가 됩니다** — 뷰포트 활성화 중에는 스크롤이 `window`가 아닌 `document.body`에서 발생합니다. `window.addEventListener('scroll', ...)`나 root에 붙은 `IntersectionObserver`는 실 디바이스와 다른 동작을 보일 수 있습니다. 미니앱 코드에서 스크롤을 다룬다면 `body`도 함께 검증하세요.
-- **추정 프리셋** — iPhone Air는 `(est)` 라벨(미출시)로 표시되며, 실제 출시 후 갱신 예정입니다. Galaxy S26 시리즈는 출시 spec(phone-simulator.com 측정치) 기반이지만 safe area는 S25 값을 잠정 사용 — 픽셀 단위 정확도가 필요한 QA는 실 기기 확인을 권장합니다.
+- **추정 safe area** — Galaxy S26 시리즈는 출시 spec(phone-simulator.com 측정치) 기반이지만 safe area는 S25 값을 잠정 사용합니다 — 픽셀 단위 정확도가 필요한 QA는 실 기기 확인을 권장합니다.
 
 ## `window.__ait` 콘솔 API
 
@@ -697,7 +784,7 @@ Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 5. `src/__tests/`에 테스트 작성
 
 ```bash
-pnpm build       # tsup으로 빌드
+pnpm build       # tsdown으로 빌드
 pnpm typecheck   # 타입 호환성 검증
 pnpm test        # 전체 테스트 실행
 ```
@@ -845,7 +932,39 @@ export default {
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite, .webpack, .rspack, .esbuild, .rollup) |
 | `@ait-co/devtools/mcp/server` | dev-mode MCP stdio server 함수 (Node.js) |
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
+| `@ait-co/devtools/in-app` | In-app debug attach — 3-layer gate + Chii target.js 주입 (dogfood 빌드 전용, `__DEBUG_BUILD__=true` 시에만 활성) |
+
+## 텔레메트리
+
+devtools는 두 단계의 텔레메트리를 사용합니다.
+
+### Tier 0 — 익명 사용 신호 (기본 ON, opt-out)
+
+패널이 열릴 때 하루 1회 익명 ping을 전송합니다.
+
+수집 항목: `source`, `version`, `ts` — PII 없음, `anon_id` 없음. 서버가 IP+UA 기반 daily hash를 생성하지만 저장하지 않습니다.
+
+끄는 방법:
+- 패널 Environment 탭 → "익명 사용 신호 (Tier 0)" 토글 OFF
+- `localStorage.setItem('__ait_telemetry:t0_off', '1')` (콘솔에서 직접)
+- 환경 변수: `AITC_TELEMETRY=off`
+
+### Tier 1 — 확장 텔레메트리 (기본 OFF, opt-in)
+
+패널 최초 실행 시 동의 토스트로 묻습니다. 동의한 경우에만 수집됩니다.
+
+수집 항목: `panel_open`, `tab_view`, `session_duration` 이벤트 + 익명 UUID(`anon_id`).
+
+끄는 방법:
+- 패널 Environment 탭 → "확장 텔레메트리 (Tier 1)" 토글 OFF
+- 수집된 데이터 삭제: 패널 Environment 탭 → "내 데이터 삭제"
+
+개인정보 처리방침: <https://docs.aitc.dev/privacy>
 
 ## 라이센스
 
 BSD 3-Clause
+
+---
+
+커뮤니티 오픈소스 프로젝트입니다.

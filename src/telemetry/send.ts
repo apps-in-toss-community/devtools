@@ -17,6 +17,7 @@ import { getOrCreateAnonId, readConsentState } from './state.js';
 export type TelemetryEvent = 'panel_mount' | 'panel_open' | 'tab_view' | 'session_duration';
 
 export interface EventPayload {
+  tier: 1;
   source: 'devtools';
   event: TelemetryEvent;
   anon_id: string;
@@ -73,6 +74,7 @@ export async function send(
   if (readConsentState() !== 'granted') return;
 
   const payload: EventPayload = {
+    tier: 1,
     source: 'devtools',
     event,
     anon_id: getOrCreateAnonId(),
@@ -106,6 +108,7 @@ export function sendBeaconEvent(
   if (readConsentState() !== 'granted') return;
 
   const payload: EventPayload = {
+    tier: 1,
     source: 'devtools',
     event,
     anon_id: getOrCreateAnonId(),
