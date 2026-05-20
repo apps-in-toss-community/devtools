@@ -8,10 +8,10 @@
  * means both domains share one transport (spec: "the same MCP server forwards
  * both CDP and AIT domains").
  *
- * The in-app `AIT.*` handler is a downstream concern (Phase 4 sdk-example
- * integration). Here we build the MCP-server-side forwarding + the injectable
- * seam; tests inject a fake `AitSource` returning canned responses, so this
- * forwarding layer needs no phone.
+ * The in-app `AIT.*` handler lives downstream in sdk-example. Here we build
+ * the MCP-server-side forwarding + the injectable seam; tests inject a fake
+ * `AitSource` returning canned responses, so this forwarding layer needs no
+ * phone.
  *
  * Node-only (wraps the relay websocket connection).
  */
