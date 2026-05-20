@@ -45,7 +45,7 @@ export interface TunnelStatus {
   wssUrl: string | null;
 }
 
-/** Static MCP tool descriptors (name + JSONSchema) for the Phase 1 surface. */
+/** Static MCP tool descriptors (name + JSONSchema) for the full debug tool surface. */
 export const DEBUG_TOOL_DEFINITIONS = [
   {
     name: 'list_console_messages',
