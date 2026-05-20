@@ -493,7 +493,7 @@ Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 ### Known limitations
 
 - **Body가 스크롤 컨테이너가 됩니다** — 뷰포트 활성화 중에는 스크롤이 `window`가 아닌 `document.body`에서 발생합니다. `window.addEventListener('scroll', ...)`나 root에 붙은 `IntersectionObserver`는 실 디바이스와 다른 동작을 보일 수 있습니다. 미니앱 코드에서 스크롤을 다룬다면 `body`도 함께 검증하세요.
-- **추정 프리셋** — iPhone Air는 `(est)` 라벨(미출시)로 표시되며, 실제 출시 후 갱신 예정입니다. Galaxy S26 시리즈는 출시 spec(phone-simulator.com 측정치) 기반이지만 safe area는 S25 값을 잠정 사용 — 픽셀 단위 정확도가 필요한 QA는 실 기기 확인을 권장합니다.
+- **추정 safe area** — Galaxy S26 시리즈는 출시 spec(phone-simulator.com 측정치) 기반이지만 safe area는 S25 값을 잠정 사용합니다 — 픽셀 단위 정확도가 필요한 QA는 실 기기 확인을 권장합니다.
 
 ## `window.__ait` 콘솔 API
 
