@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.1.23
+
+### Patch Changes
+
+- e42730a: debug-mode MCP transport을 `devtools-mcp` bin에 추가 (Debugging MCP Phase 1).
+
+  단일 `devtools-mcp` 진입점이 `--mode`로 transport을 분기합니다. 기본(debug) 모드는
+  로컬 Chii 릴레이 + cloudflared quick tunnel을 띄워 폰 안 미니앱에 CDP로 attach하고,
+  `list_console_messages` / `list_network_requests` / `list_pages` 세 read-only tool을
+  `chrome-devtools-mcp` 호환 형태로 노출합니다. `--mode=dev`는 기존 dev-server mock state
+  surface(`devtools_get_mock_state`)를 그대로 사용합니다.
+
+  CDP 연결은 주입 가능한 `CdpConnection` 인터페이스 뒤에 있어 tool 계층이 mock으로
+  단위 테스트됩니다. 폰 attach 라운드트립은 실기기 검증이 필요해 후속 phase로 분리.
+
+- b8c093f: debug-mode MCP에 DOM/스냅샷/스크린샷 + AIT 도메인 tool 추가 (Debugging MCP Phase 2·3).
+
+  Phase 2 — CDP 커맨드(요청→응답) 기반 read-only tool 3개: `get_dom_document`(`DOM.getDocument`),
+  `take_snapshot`(`DOMSnapshot.captureSnapshot`), `take_screenshot`(`Page.captureScreenshot`,
+  PNG를 MCP image content block으로 반환). Phase 1의 이벤트 스트림과 달리 요청→응답이라
+  `CdpConnection`에 `send(method, params)`를 추가했습니다.
+
+  Phase 3 — CDP가 못 잡는 영역을 위한 AIT 도메인 tool 3개: `AIT.getSdkCallHistory`,
+  `AIT.getMockState`, `AIT.getOperationalEnvironment`. debug 모드에서는 Chii 채널로,
+  dev 모드에서는 dev server의 mock-state HTTP endpoint로 같은 tool surface를 노출합니다.
+  dev 모드(`devtools-mcp --mode=dev`)가 이제 `AIT.*` tool을 노출하며,
+  기존 `devtools_get_mock_state`는 `AIT.getMockState`의 하위호환 alias로 유지됩니다.
+
+  모든 tool은 주입 가능한 `CdpConnection` / `AitSource` 뒤에 있어 fake로 단위 테스트됩니다.
+  폰 attach 라운드트립(실기기 검증)은 후속 phase로 분리되어 있고, tool 계층은 CI에서 검증됩니다.
+
+- 57bef90: feat(in-app): wire Chii target.js injection — Phase 1 browser-side attach (gate → script inject)
+- a46c1ae: feat(in-app): add 3-layer debug activation gate — Phase 1 of Debugging MCP Server (spec 2026-05-18)
+- e7e6950: feat(mcp): add stdio MCP server spike with `devtools_get_mock_state` tool
+
+  Adds a minimal MCP (Model Context Protocol) server that exposes the live browser
+  mock state to AI coding agents. This is a spike implementation to validate the
+  surface and establish the extensibility pattern before adding more tools.
+
+  **What's included:**
+
+  - `src/mcp/server.ts` — Node.js stdio MCP server (`dist/mcp/server.js`)
+    Implements `devtools_get_mock_state` tool: fetches a JSON snapshot of the
+    current `AitDevtoolsState` from the Vite dev server endpoint.
+  - Unplugin option `mcp: true` — registers `GET /api/ait-devtools/state` and
+    `POST /api/ait-devtools/state` on the Vite dev server (no-op for other
+    bundlers).
+  - Panel auto-push — on every `aitState` change the panel silently POSTs the
+    current state to the endpoint (fire-and-forget, only active when the endpoint
+    exists).
+
+  **Usage:**
+
+  ```js
+  // vite.config.ts
+  import aitDevtools from "@ait-co/devtools/unplugin";
+  export default { plugins: [aitDevtools.vite({ mcp: true })] };
+  ```
+
+  ```json
+  // MCP client config (e.g. Claude Desktop / Claude Code)
+  {
+    "mcpServers": {
+      "ait-devtools": {
+        "command": "node",
+        "args": ["node_modules/@ait-co/devtools/dist/mcp/server.js"],
+        "env": { "AIT_DEVTOOLS_URL": "http://localhost:5173" }
+      }
+    }
+  }
+  ```
+
+  The `AIT_DEVTOOLS_URL` env var defaults to `http://localhost:5173`.
+
+- be23475: docs/config: 2026-05-19 refactor sweep — iPhone Air (est) 라벨에서 (est) 제거 (2026-04 출시 확정), CLAUDE.md 탭 수 9→12 정정, README build tool tsup→tsdown 수정, biome.json·vitest.config.ts에서 .claude/ 워크트리 제외
+
 ## 0.1.22
 
 ### Patch Changes
