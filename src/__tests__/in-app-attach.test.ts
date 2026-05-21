@@ -26,9 +26,7 @@ function passResult(relayUrl = 'wss://abc.trycloudflare.com/'): GateResult {
 }
 
 /** A gate result that should block attachment. */
-function blockResult(
-  reason: 'build' | 'entry' | 'opt-in' | 'invalid-relay' = 'opt-in',
-): GateResult {
+function blockResult(reason: 'entry' | 'opt-in' | 'invalid-relay' = 'opt-in'): GateResult {
   return { attach: false, reason };
 }
 
@@ -112,11 +110,6 @@ describe('maybeAttach', () => {
 
   it('does NOT append a script when gate blocks (opt-in)', () => {
     maybeAttach(blockResult('opt-in'));
-    expect(document.head.querySelectorAll('script')).toHaveLength(0);
-  });
-
-  it('does NOT append a script when gate blocks (build)', () => {
-    maybeAttach(blockResult('build'));
     expect(document.head.querySelectorAll('script')).toHaveLength(0);
   });
 

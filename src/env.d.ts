@@ -1,16 +1,10 @@
 /** Injected by tsdown at build time from package.json version */
 declare const __VERSION__: string;
 
-/**
- * Injected by tsdown at build time. `true` for dogfood builds, `false` for
- * release builds. When `false`, all code that branches on this constant is
- * dead-code-eliminated by the bundler so the in-app debug surface is never
- * included in release bundles.
- *
- * Set via tsdown `define: { __DEBUG_BUILD__: 'true' | 'false' }`.
- * Vitest overrides it in `vitest.config.ts` for unit tests.
- */
-declare const __DEBUG_BUILD__: boolean;
+// Note: no `__DEBUG_BUILD__` global is declared here. That is a CONSUMER-build
+// constant — the consumer guards `import('@ait-co/devtools/in-app')` with
+// `if (__DEBUG_BUILD__)`. This package's own source never references it; the
+// in-app gate evaluates only the runtime layers (see src/in-app/gate.ts).
 
 interface Window {
   __ait?: import('./mock/state.js').AitStateManager;

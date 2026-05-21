@@ -940,7 +940,7 @@ Returns the full current mock state (permissions, location, auth, network, IAP, 
 | `@ait-co/devtools/unplugin` | Bundler plugin (.vite, .webpack, .rspack, .esbuild, .rollup) |
 | `@ait-co/devtools/mcp/server` | Dev-mode MCP stdio server function (Node.js) |
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin entry point (debug / dev mode, Node.js) |
-| `@ait-co/devtools/in-app` | In-app debug attach — 3-layer gate + Chii target.js injection (dogfood builds only; active when `__DEBUG_BUILD__=true`) |
+| `@ait-co/devtools/in-app` | In-app debug attach — runtime gate (layers B/C) + Chii target.js injection. The consumer wraps the import in `if (__DEBUG_BUILD__)` so it is DCE'd from release builds — dogfood builds only |
 
 ## Telemetry
 

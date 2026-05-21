@@ -1,9 +1,13 @@
 /**
- * Unit tests for the 3-layer debug activation gate.
+ * Unit tests for the runtime debug activation gate (Layers B and C).
  *
  * Covers every row of the decision matrix from
  * docs/superpowers/specs/2026-05-18-in-app-debug-mcp.md plus edge cases.
  * No real device, no Chii, no WebSocket — pure logic only.
+ *
+ * Layer A (build-time) is intentionally NOT tested here: it is enforced by the
+ * consumer's `if (__DEBUG_BUILD__)` guard around the import site, not by
+ * `evaluateDebugGate`. See src/in-app/gate.ts for the rationale.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -23,39 +27,12 @@ const VALID_PARAMS = params(
 );
 
 // ---------------------------------------------------------------------------
-// Layer A — build-time gate
-// ---------------------------------------------------------------------------
-
-describe('Layer A — build-time gate', () => {
-  it('blocks when isDebugBuild=false, regardless of query params', () => {
-    const result = evaluateDebugGate({ isDebugBuild: false, searchParams: VALID_PARAMS });
-    expect(result.attach).toBe(false);
-    if (!result.attach) expect(result.reason).toBe('build');
-  });
-
-  it('blocks even with all correct params if isDebugBuild=false', () => {
-    const result = evaluateDebugGate({
-      isDebugBuild: false,
-      searchParams: params('_deploymentId=uuid&debug=1&relay=wss://relay.example.com/'),
-    });
-    expect(result.attach).toBe(false);
-    if (!result.attach) expect(result.reason).toBe('build');
-  });
-
-  it('does not block when isDebugBuild=true and other layers pass', () => {
-    const result = evaluateDebugGate({ isDebugBuild: true, searchParams: VALID_PARAMS });
-    expect(result.attach).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
 // Layer B — runtime entry gate (_deploymentId)
 // ---------------------------------------------------------------------------
 
 describe('Layer B — runtime entry gate (_deploymentId)', () => {
   it('blocks when _deploymentId is absent', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('debug=1&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -64,7 +41,6 @@ describe('Layer B — runtime entry gate (_deploymentId)', () => {
 
   it('blocks when _deploymentId is an empty string', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=&debug=1&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -72,18 +48,22 @@ describe('Layer B — runtime entry gate (_deploymentId)', () => {
   });
 
   it('blocks when query string is entirely empty', () => {
-    const result = evaluateDebugGate({ isDebugBuild: true, searchParams: params('') });
+    const result = evaluateDebugGate({ searchParams: params('') });
     expect(result.attach).toBe(false);
     if (!result.attach) expect(result.reason).toBe('entry');
   });
 
   it('passes when _deploymentId is a UUID-style value', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params(
         '_deploymentId=019e3b40-abcd-1234-efgh-000000000001&debug=1&relay=wss://r.example.com/',
       ),
     });
+    expect(result.attach).toBe(true);
+  });
+
+  it('passes the canonical valid param set', () => {
+    const result = evaluateDebugGate({ searchParams: VALID_PARAMS });
     expect(result.attach).toBe(true);
   });
 });
@@ -95,7 +75,6 @@ describe('Layer B — runtime entry gate (_deploymentId)', () => {
 describe('Layer C — opt-in gate (debug=1)', () => {
   it('blocks when debug param is absent', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -104,7 +83,6 @@ describe('Layer C — opt-in gate (debug=1)', () => {
 
   it('blocks when debug=0', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=0&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -113,7 +91,6 @@ describe('Layer C — opt-in gate (debug=1)', () => {
 
   it('blocks when debug is an empty string', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -122,7 +99,6 @@ describe('Layer C — opt-in gate (debug=1)', () => {
 
   it('blocks when debug=true (string, not "1")', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=true&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -137,7 +113,6 @@ describe('Layer C — opt-in gate (debug=1)', () => {
 describe('Layer C — relay URL validation', () => {
   it('blocks when relay param is absent', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1'),
     });
     expect(result.attach).toBe(false);
@@ -146,7 +121,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('blocks when relay is an empty string', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay='),
     });
     expect(result.attach).toBe(false);
@@ -155,7 +129,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('blocks when relay is not a valid URL', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=not-a-url'),
     });
     expect(result.attach).toBe(false);
@@ -164,7 +137,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('blocks when relay uses http: scheme', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=http://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -173,7 +145,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('blocks when relay uses https: scheme', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=https://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -182,7 +153,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('blocks when relay uses plain ws: (no TLS)', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=ws://relay.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -191,7 +161,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('blocks when relay is a random word', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=foobar'),
     });
     expect(result.attach).toBe(false);
@@ -200,7 +169,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('passes when relay uses wss: scheme', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=wss://relay.example.com/'),
     });
     expect(result.attach).toBe(true);
@@ -208,7 +176,6 @@ describe('Layer C — relay URL validation', () => {
 
   it('accepts a trycloudflare wss URL (typical Phase 1 value)', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=019e3b40&debug=1&relay=wss://abc-def.trycloudflare.com/'),
     });
     expect(result.attach).toBe(true);
@@ -225,7 +192,6 @@ describe('Layer C — relay URL validation', () => {
 describe('GateResultAttach field values', () => {
   it('exposes relayUrl as the normalised wss URL', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params(
         '_deploymentId=deploy-123&debug=1&relay=wss%3A%2F%2Frelay.example.com%2Fpath',
       ),
@@ -238,7 +204,6 @@ describe('GateResultAttach field values', () => {
 
   it('exposes deploymentId from the _deploymentId param', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=019e3b40-the-real-id&debug=1&relay=wss://r.example.com/'),
     });
     expect(result.attach).toBe(true);
@@ -249,7 +214,6 @@ describe('GateResultAttach field values', () => {
 
   it('tolerates extra unrelated query params', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params(
         '_deploymentId=uuid&debug=1&relay=wss://r.example.com/&foo=bar&extra=123',
       ),
@@ -263,15 +227,14 @@ describe('GateResultAttach field values', () => {
 // ---------------------------------------------------------------------------
 
 describe('Full decision matrix', () => {
-  it('row: release / any / any → BLOCKED (build)', () => {
-    const result = evaluateDebugGate({ isDebugBuild: false, searchParams: VALID_PARAMS });
-    expect(result.attach).toBe(false);
-    if (!result.attach) expect(result.reason).toBe('build');
-  });
+  // The `release / any / any → code absent` row is Layer A. It is not a row
+  // of this function — `evaluateDebugGate` only ever runs in a debug build,
+  // because the consumer's `if (__DEBUG_BUILD__)` guard DCEs the import out of
+  // release bundles. There is nothing to assert about it here; the guarantee
+  // is the absence of code, verified by the consumer's bundle output.
 
   it('row: dogfood / _deploymentId absent / any → BLOCKED (entry)', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('debug=1&relay=wss://r.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -280,7 +243,6 @@ describe('Full decision matrix', () => {
 
   it('row: dogfood / _deploymentId present / debug absent → BLOCKED (opt-in)', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&relay=wss://r.example.com/'),
     });
     expect(result.attach).toBe(false);
@@ -289,7 +251,6 @@ describe('Full decision matrix', () => {
 
   it('row: dogfood / _deploymentId present / debug=1 / relay absent → BLOCKED (invalid-relay)', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1'),
     });
     expect(result.attach).toBe(false);
@@ -298,7 +259,6 @@ describe('Full decision matrix', () => {
 
   it('row: dogfood / _deploymentId present / debug=1 / valid wss relay → ATTACH', () => {
     const result = evaluateDebugGate({
-      isDebugBuild: true,
       searchParams: params('_deploymentId=uuid&debug=1&relay=wss://r.example.com/'),
     });
     expect(result.attach).toBe(true);
