@@ -42,7 +42,7 @@ git config core.hooksPath .githooks
 
 - **tsdown** — 빌드 (ESM + CJS for unplugin)
 - **vitest** — 테스트 (jsdom 환경, 아래 "jsdom 제약" 섹션 주의)
-- **unplugin** — 모든 번들러 지원 (유일한 runtime dependency)
+- **unplugin** — 모든 번들러 지원. runtime dependency는 unplugin 외에 `chii`·`ws`·`cloudflared`·`qrcode-terminal`·`@modelcontextprotocol/sdk` (in-app debug MCP surface가 쓴다)
 - ESM only (`"type": "module"`)
 
 ## 배포

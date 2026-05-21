@@ -2,8 +2,8 @@
  * 3-layer activation gate for the in-app debug surface.
  *
  * Spec: docs/superpowers/specs/2026-05-18-in-app-debug-mcp.md
- * "3-layer activation gate" — Phase 1 implementation (gate logic only).
- * Chii client, WebSocket transport, and QR UI are later phases.
+ * "3-layer activation gate". This is the pure gate decision; the Chii client,
+ * WebSocket transport, MCP server, and CLI that consume it live in src/mcp/.
  *
  * Decision matrix:
  *
