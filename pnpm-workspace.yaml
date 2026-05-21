@@ -1,0 +1,7 @@
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+ignoredBuiltDependencies:
+  - "@sentry/cli"
+  - "@swc/core"
+  - protobufjs
