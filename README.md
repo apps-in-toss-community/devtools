@@ -843,8 +843,8 @@ tool을 봅니다.
 
 ### Debug 모드 (CDP via Chii)
 
-> read-only tool만 노출합니다. 폰 attach 라운드트립은 실기기 dog-food가 필요해 후속 phase로 분리되어
-> 있고, tool 계층은 주입 가능한 CDP 연결 / AIT 소스를 mock해 CI에서 검증됩니다.
+read-only tool만 노출합니다. 폰 attach 라운드트립은 fully wired 상태이며 남은 것은 실기기 acceptance
+한 번뿐입니다. tool 계층은 주입 가능한 CDP 연결 / AIT 소스를 mock해 CI에서 검증됩니다.
 
 `devtools-mcp`를 stdio로 실행하면 로컬 Chii 릴레이(:9100)를 띄우고 cloudflared quick tunnel로
 공개 `wss://*.trycloudflare.com` URL을 발급한 뒤 QR + secret token을 터미널에 출력합니다.
@@ -877,12 +877,12 @@ tool을 봅니다.
 | `AIT.getOperationalEnvironment` | AIT 도메인 | `getOperationalEnvironment()` + SDK 버전 |
 
 `AIT.*`는 raw CDP가 못 잡는 영역으로, 같은 MCP server가 CDP와 함께 forward합니다. debug 모드에서는
-in-app 측이 Chii 채널로 응답합니다(폰 통합은 후속 phase).
+in-app 측이 Chii 채널로 응답합니다.
 
 ### Dev 모드 (mock state)
 
-`devtools-mcp --mode=dev`는 실행 중인 브라우저의 mock state를 읽습니다. Phase 3에서 debug 모드와
-같은 `AIT.*` tool surface로 정렬되었습니다.
+`devtools-mcp --mode=dev`는 실행 중인 브라우저의 mock state를 읽습니다. debug 모드와 같은 `AIT.*`
+tool surface를 공유합니다.
 
 #### 구조
 
