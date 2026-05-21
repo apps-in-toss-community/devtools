@@ -840,7 +840,7 @@ Both modes expose the same `AIT.*` tool surface — debug mode backed by the Chi
 
 ### Debug mode (CDP via Chii)
 
-> Read-only tools only. The phone attach roundtrip requires a real-device dog-food step and is deferred to a later phase; the tool layer is CI-verified via mockable injectable CDP connection / AIT source.
+Read-only tools only. The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL, a QR code, and a secret token in the terminal. When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL and token, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
@@ -868,11 +868,11 @@ Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` an
 | `AIT.getMockState` | AIT domain | Mock state snapshot (`window.__ait`) |
 | `AIT.getOperationalEnvironment` | AIT domain | `getOperationalEnvironment()` + SDK version |
 
-`AIT.*` covers what raw CDP cannot; the same MCP server forwards it alongside CDP. In debug mode the in-app side answers over the Chii channel (phone integration is a later phase).
+`AIT.*` covers what raw CDP cannot; the same MCP server forwards it alongside CDP. In debug mode the in-app side answers over the Chii channel.
 
 ### Dev mode (mock state)
 
-`devtools-mcp --mode=dev` reads the mock state from a running browser. Phase 3 aligned it on the same `AIT.*` tool surface as debug mode.
+`devtools-mcp --mode=dev` reads the mock state from a running browser. It shares the same `AIT.*` tool surface as debug mode.
 
 #### Architecture
 
