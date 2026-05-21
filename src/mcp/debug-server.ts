@@ -1,5 +1,5 @@
 /**
- * @ait-co/devtools debug-mode MCP server (stdio) — Phase 1–3.
+ * @ait-co/devtools debug-mode MCP server (stdio).
  *
  * Lets an AI coding agent attach to a running mini-app (real Toss WebView, or a
  * browser in dev mode) and read its console/network/DOM/screenshot over CDP plus
@@ -13,7 +13,7 @@
  * The tool layer reads from an injectable `CdpConnection` (CDP) and `AitSource`
  * (AIT.*), so every tool is unit-testable with a fake (no phone). This module
  * wires the live pieces (relay + tunnel + production connection); the phone
- * roundtrip itself is phone-gated and deferred.
+ * roundtrip is fully wired and pending only on-device acceptance.
  *
  * Node-only.
  */
