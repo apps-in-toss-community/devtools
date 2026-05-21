@@ -17,13 +17,23 @@
  * `false` and could never pass. Layer A is the consumer guard; B and C are
  * here.
  *
+ * Layer B has two parts. Both must pass:
+ *   B1 — host allowlist: `hostname` must be a `*.private-apps.tossmini.com`
+ *        subdomain. The Toss app serves dogfood / private mini-apps from a
+ *        separate `private-apps` host; a production (`intoss://`) entry is
+ *        served from `*.apps.tossmini.com` WITHOUT the `private-apps` segment.
+ *        This is the security gate against a dogfood build that somehow lands
+ *        on a production entry — see the comment on {@link isPrivateAppsHost}.
+ *   B2 — entry query: `_deploymentId` must be present and non-empty.
+ *
  * Decision matrix (the gate only ever runs in a debug build — Layer A already
  * passed by the time this code is reachable):
  *
- *   _deploymentId | debug=1 | result
- *   absent        | (any)   | BLOCKED  (Layer B — entry gate)
- *   present       | absent  | BLOCKED  (Layer C — opt-in gate)
- *   present       | present | ATTACH
+ *   private-apps host | _deploymentId | debug=1 | result
+ *   no                | (any)         | (any)   | BLOCKED  (Layer B1 — host)
+ *   yes               | absent        | (any)   | BLOCKED  (Layer B2 — entry)
+ *   yes               | present       | absent  | BLOCKED  (Layer C  — opt-in)
+ *   yes               | present       | present | ATTACH
  */
 
 /** Shape returned when the gate allows attachment. */
@@ -39,14 +49,15 @@ export interface GateResultAttach {
 export interface GateResultBlocked {
   readonly attach: false;
   /**
-   * - `'entry'`        Layer B: `_deploymentId` param is absent or empty.
+   * - `'host'`         Layer B1: `hostname` is not a `*.private-apps.tossmini.com` host.
+   * - `'entry'`        Layer B2: `_deploymentId` param is absent or empty.
    * - `'opt-in'`       Layer C: `debug=1` param is absent.
    * - `'invalid-relay'` Layer C: `relay` param is absent, empty, or not a `wss:` URL.
    *
    * There is no `'build'` reason: Layer A is enforced by the consumer's
    * `if (__DEBUG_BUILD__)` guard, not by this function.
    */
-  readonly reason: 'entry' | 'opt-in' | 'invalid-relay';
+  readonly reason: 'host' | 'entry' | 'opt-in' | 'invalid-relay';
 }
 
 export type GateResult = GateResultAttach | GateResultBlocked;
@@ -54,24 +65,57 @@ export type GateResult = GateResultAttach | GateResultBlocked;
 /**
  * Input for {@link evaluateDebugGate}.
  *
- * Keeping the field explicit makes the function trivially testable without
- * needing to manipulate `window.location`.
+ * Both fields are explicit so the function is trivially testable without
+ * touching `window`.
  */
 export interface GateInput {
   /**
-   * The URL search params to inspect for gate signals.
+   * The host the page is served from — `window.location.hostname`.
+   *
+   * This is the Layer B1 security signal. Why hostname and not the entry
+   * scheme: the Toss SDK normalises `intoss-private://` to `intoss://` in
+   * `getSchemeUri()`, and `getOperationalEnvironment()` / `getWebViewType()`
+   * return the same value (`"toss"` / `"partner"`) for both dogfood and
+   * production entries — none of them distinguish a dogfood entry. The host
+   * does: a dogfood / private-apps entry is served from
+   * `*.private-apps.tossmini.com`, a production entry is not. This was
+   * confirmed live over CDP against mini-app 31146 (see spec open question 2).
+   */
+  readonly hostname: string;
+
+  /**
+   * The URL search params to inspect for gate signals (Layers B2 and C).
    *
    * Prefer `URLSearchParams` so callers can pass `new URLSearchParams(location.search)`
    * without coupling the pure function to `window`.
-   *
-   * Layer B open seam (spec open question 2): if the Toss SDK ever exposes
-   * `getEntryScheme()` or a similar API that reliably signals a dogfood entry,
-   * that signal should be checked before `_deploymentId` here. For now only the
-   * `_deploymentId` query param fallback is implemented. Pass a custom
-   * `URLSearchParams` to inject the SDK signal at the call site without
-   * modifying this function.
    */
   readonly searchParams: URLSearchParams;
+}
+
+/**
+ * The host suffix the Toss app uses to serve dogfood / private mini-apps.
+ *
+ * A `intoss-private://` (dogfood) entry maps to a host such as
+ * `aitc-sdk-example.private-apps.tossmini.com`. A production `intoss://`
+ * entry is served from `*.apps.tossmini.com` — the `.private-apps.` segment
+ * is absent. Confirmed live over CDP for mini-app 31146; the exact production
+ * host is to be re-confirmed once 31146 passes review (spec open question 2).
+ */
+const PRIVATE_APPS_HOST_SUFFIX = '.private-apps.tossmini.com';
+
+/**
+ * Returns whether `hostname` is a `*.private-apps.tossmini.com` subdomain —
+ * the host the Toss app reserves for dogfood / private mini-app entries.
+ *
+ * The match is an exact suffix check, not a substring `.includes()`: a
+ * substring test would also accept an attacker-controlled host like
+ * `private-apps.tossmini.com.evil.example`, which ends in `.example`, not in
+ * `.tossmini.com`. Requiring the string to END with the suffix closes that.
+ * The leading `.` in the suffix also forces a real subdomain label, so a
+ * bare `private-apps.tossmini.com` (no mini-app subdomain) does not match.
+ */
+export function isPrivateAppsHost(hostname: string): boolean {
+  return hostname.endsWith(PRIVATE_APPS_HOST_SUFFIX);
 }
 
 /**
@@ -87,6 +131,7 @@ export interface GateInput {
  * @example
  * ```ts
  * const result = evaluateDebugGate({
+ *   hostname: window.location.hostname,
  *   searchParams: new URLSearchParams(window.location.search),
  * });
  * if (result.attach) {
@@ -95,16 +140,21 @@ export interface GateInput {
  * ```
  */
 export function evaluateDebugGate(input: GateInput): GateResult {
-  // Layer B — runtime entry scheme gate.
+  // Layer B1 — host allowlist (the security gate).
+  // The page must be served from a `*.private-apps.tossmini.com` host. A
+  // production `intoss://` entry is served from `*.apps.tossmini.com` and is
+  // rejected here. This is what stops a dogfood build that somehow reaches a
+  // production entry from attaching: Layer A keeps debug code out of release
+  // bundles, and this layer keeps a dogfood bundle that lands on a production
+  // host from attaching even though its code is present.
+  if (!isPrivateAppsHost(input.hostname)) {
+    return { attach: false, reason: 'host' };
+  }
+
+  // Layer B2 — runtime entry query gate.
   // `_deploymentId` must be present and non-empty. The `intoss-private://`
   // scheme used for dogfood entries includes this param; general user entry
   // paths do not.
-  //
-  // Open seam (spec open question 2): if the Toss SDK exposes getEntryScheme()
-  // or similar, that should be the 1st-priority signal checked here, with
-  // `_deploymentId` as fallback. Extend this check at the call site by
-  // pre-populating `searchParams` with the SDK signal, or add an optional
-  // `entryScheme` field to `GateInput` in a later phase.
   const deploymentId = input.searchParams.get('_deploymentId') ?? '';
   if (deploymentId === '') {
     return { attach: false, reason: 'entry' };

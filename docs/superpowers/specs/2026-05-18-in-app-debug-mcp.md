@@ -35,22 +35,24 @@ debug surface는 **dogfood/staging 진입에만 활성**, 일반 사용자에겐
 | Layer | 메커니즘 | 차단 위협 | 통과 조건 |
 |---|---|---|---|
 | **A. Build-time** | tag-gated workflow에 `RELEASE_CHANNEL=dogfood\|release` 분기. release 빌드는 `__DEBUG_BUILD__` 상수 false → in-app 코드 + Chii import가 dead code elimination | release 번들 코드에 debug surface 부재. 코드 추출당해도 attach 불가 | `v1.2.3-dogfood` 태그 (release tag는 미포함) |
-| **B. Runtime entry scheme** | `_deploymentId` query param 존재 확인. intoss-private:// URL은 dogfood 진입에만 있고 일반 진입 경로엔 없음 | dogfood 빌드가 잘못 일반 entry로 노출돼도 attach 거부 | URL에 `_deploymentId=<uuid>` 존재 |
+| **B1. Runtime host allowlist** | `location.hostname`이 `*.private-apps.tossmini.com` 서브도메인인지 확인 (exact suffix). 토스 앱이 dogfood/private 미니앱을 별도 host로 서빙 | dogfood 빌드가 잘못 프로덕션 entry(`intoss://`, `*.apps.tossmini.com`)로 진입해도 attach 거부 | host가 `.private-apps.tossmini.com`으로 끝남 |
+| **B2. Runtime entry query** | `_deploymentId` query param 존재 확인. intoss-private:// URL은 dogfood 진입에만 있고 일반 진입 경로엔 없음 | dogfood entry라도 `_deploymentId` 없는 비정상 진입 거부 | URL에 `_deploymentId=<uuid>` 존재 |
 | **C. Explicit query opt-in** | `?debug=1&relay=<wss-url>` 명시 | 운영자가 모르고 dogfood URL 열어도 attach 안 됨 (의도적 선택만) | `debug=1` + 유효 relay URL |
 
-세 layer 결정 매트릭스:
+네 layer 결정 매트릭스:
 
 ```
-build channel | _deploymentId | debug=1 | 결과
-release       | (무관)         | (무관)  | attach 불가 (코드 자체 부재)
-dogfood       | 부재           | (무관)  | attach 거부 (entry gate B)
-dogfood       | 있음           | 없음    | attach 거부 (opt-in gate C)
-dogfood       | 있음           | 있음    | attach
+build channel | private-apps host | _deploymentId | debug=1 | 결과
+release       | (무관)            | (무관)         | (무관)  | attach 불가 (코드 자체 부재)
+dogfood       | 아님              | (무관)         | (무관)  | attach 거부 (host gate B1)
+dogfood       | 맞음              | 부재           | (무관)  | attach 거부 (entry gate B2)
+dogfood       | 맞음              | 있음           | 없음    | attach 거부 (opt-in gate C)
+dogfood       | 맞음              | 있음           | 있음    | attach
 ```
 
-Layer B의 신뢰성: 토스 SDK가 `getEntryScheme()` 같은 API를 노출하면 그것을 1순위 시그널로 쓰고 `_deploymentId`는 fallback. Phase 1에서 SDK surface 확인 후 결정 (open question 6).
+Layer B의 신뢰성: SDK API(`getSchemeUri`/`getOperationalEnvironment`/`getWebViewType`)는 모두 dogfood/프로덕션을 구별 못 함을 CDP 라이브 조사로 확인 (open question 2). `location.hostname`의 `.private-apps.` 서브도메인이 유일한 결정적 신호라 B1으로 채택.
 
-**Layer A의 강제 위치 (구현 노트)**: Layer A는 `evaluateDebugGate` 같은 런타임 함수가 다시 검사하는 게 아니다. 강제는 전적으로 **소비자(예: sdk-example)의 `if (__DEBUG_BUILD__) { import('@ait-co/devtools/in-app') }` 가드**가 한다 — `__DEBUG_BUILD__`는 소비자 빌드 타임 상수라 release 빌드에서 `false`로 fold되며 in-app import 전체가 DCE된다. `@ait-co/devtools`는 pre-built npm 패키지이므로 자신의 publish 시점에 이미 상수가 박힌다 — 패키지 안에서 소비자의 빌드 채널을 다시 알 길이 없다. 따라서 `evaluateDebugGate`/`checkDebugGate`는 런타임 layer B·C만 평가하고, `reason: 'build'`는 존재하지 않는다. 매트릭스의 `release` 행("코드 자체 부재")이 바로 이 소비자-가드 DCE 모델이다.
+**Layer A의 강제 위치 (구현 노트)**: Layer A는 `evaluateDebugGate` 같은 런타임 함수가 다시 검사하는 게 아니다. 강제는 전적으로 **소비자(예: sdk-example)의 `if (__DEBUG_BUILD__) { import('@ait-co/devtools/in-app') }` 가드**가 한다 — `__DEBUG_BUILD__`는 소비자 빌드 타임 상수라 release 빌드에서 `false`로 fold되며 in-app import 전체가 DCE된다. `@ait-co/devtools`는 pre-built npm 패키지이므로 자신의 publish 시점에 이미 상수가 박힌다 — 패키지 안에서 소비자의 빌드 채널을 다시 알 길이 없다. 따라서 `evaluateDebugGate`/`checkDebugGate`는 런타임 layer B(B1 host + B2 query)·C만 평가하고, `reason: 'build'`는 존재하지 않는다. 매트릭스의 `release` 행("코드 자체 부재")이 바로 이 소비자-가드 DCE 모델이다. `checkDebugGate()`는 `window.location.hostname`(B1)과 `window.location.search`(B2·C)를 읽어 순수 함수 `evaluateDebugGate`에 넘긴다 — 소비자는 인자 없이 호출하므로 B1 추가에도 호출부 변경이 없다.
 
 ## 목표 (우선순위 순)
 
@@ -98,7 +100,7 @@ AI가 단독으로 회귀를 진단·고치고 검증하는 한 사이클:
 
 ```
 @ait-co/devtools/in-app   (NEW — production 번들이 dogfood 빌드에서만 import)
-  ├─ Gate check (build flag + _deploymentId + ?debug=1)
+  ├─ Gate check (build flag + private-apps host + _deploymentId + ?debug=1)
   ├─ Chii client 동적 import (CDP target — chobitsu 기반)
   └─ Optional AIT meta channel: SDK call trace, mock state 등 CDP가 못 잡는 영역만
 
@@ -203,7 +205,7 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 **목표**: AI host가 `~/.mcp.json` 한 줄 등록으로 폰 production 번들에 read-only attach. CDP의 `Runtime.consoleAPICalled` + `Page.frameNavigated`만으로 v0.1.1 swipe-back 류 회귀 단독 진단.
 
 산출물:
-- `@ait-co/devtools/in-app` 신규 entry. 3-layer gate (build flag + `_deploymentId` + `?debug=1`) 통과 시 Chii client 동적 import. 폰 attach UI (QR 스캐너 + paste fallback).
+- `@ait-co/devtools/in-app` 신규 entry. 3-layer gate (build flag + private-apps host + `_deploymentId` + `?debug=1`) 통과 시 Chii client 동적 import. 폰 attach UI (QR 스캐너 + paste fallback).
 - `@ait-co/devtools/mcp` MCP server bin (`devtools-mcp`). spawn 시 Chii server :9100 + cloudflared quick tunnel + QR/token 출력. CDP 메시지를 `chrome-devtools-mcp` 호환 tool로 wrap.
 - 빌드 채널 분기: tag-gated workflow가 `RELEASE_CHANNEL=dogfood|release` 받아 `__DEBUG_BUILD__` 상수 주입.
 - secret token으로 attach 인증 (quick tunnel URL 노출돼도 token 없으면 거부).
@@ -254,7 +256,8 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 | 위협 | 대응 |
 |---|---|
 | Release 사용자에게 debug surface 노출 | **Layer A (build-time)**. `RELEASE_CHANNEL=release` 빌드는 `__DEBUG_BUILD__=false` 상수로 in-app entry + Chii import가 dead code elimination. 번들에 코드 자체가 부재. |
-| dogfood 빌드가 잘못 일반 entry로 노출 | **Layer B (runtime entry scheme)**. `_deploymentId` query 부재 시 attach 즉시 거부. intoss-private:// URL은 콘솔 Deploy Key로만 발급, 일반 사용자 진입 경로 없음. |
+| dogfood 빌드가 잘못 프로덕션 entry로 노출 | **Layer B1 (runtime host allowlist)**. `location.hostname`이 `*.private-apps.tossmini.com`이 아니면 attach 즉시 거부. 프로덕션 `intoss://` 진입은 `*.apps.tossmini.com`(`.private-apps.` 없음)으로 서빙되므로 dogfood 빌드가 그쪽에 실려도 attach 불가. SDK API(scheme/env/webViewType)는 모두 정규화돼 dogfood/프로덕션 구별 불가 — host가 유일한 신호 (open question 2). |
+| dogfood entry에 `_deploymentId` 없는 비정상 진입 | **Layer B2 (runtime entry query)**. `_deploymentId` query 부재 시 attach 즉시 거부. intoss-private:// URL은 콘솔 Deploy Key로만 발급, 일반 사용자 진입 경로 없음. |
 | 운영자가 모르고 dogfood URL 열어 attach | **Layer C (explicit opt-in)**. `?debug=1` 명시 + 유효 relay URL이 있어야만 attach 시도. 운영자의 의도적 액션 필요. |
 | Quick tunnel URL leak (`*.trycloudflare.com`) | URL 노출만으론 attach 불가. **secret token** (32-byte hex, MCP server spawn 시 생성)을 폰이 QR로 직접 받아 첫 attach 시 서버에 제출, mismatch 시 WS 거부. token은 MCP host에만 머묾. |
 | Chii WebSocket 도청 | wss:// 강제 (cloudflared quick tunnel 기본 TLS). secret token 노출 시 token rotate (devtools-mcp 재spawn). relay는 stateless — server-side 영구 저장 0. |
@@ -265,7 +268,13 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 ## Open questions
 
 1. **Chii internal CDP target id 안정성** — Chii는 자체 chobitsu CDP 구현이므로 target id 형식·메시지 schema가 chrome-devtools-mcp의 기대와 어디까지 호환되는지 Phase 1 spike에서 확인. mismatch 발견 시 MCP server adapter가 translation layer 흡수. 회귀 대비 Chii 버전 핀 + smoke test.
-2. **Entry scheme 시그널 — `_deploymentId` query vs SDK API** — Layer B는 `_deploymentId` query 존재로 판단. 토스 SDK가 `getEntryScheme()` 또는 동급 API를 노출한다면 그게 1순위 시그널이 되어야 함 (query는 사용자가 직접 만질 수 있는 surface). Phase 1 SDK surface 확인 후 우선순위 결정. fallback은 query.
+2. **Entry scheme 시그널 — `_deploymentId` query vs SDK API** — **(2026-05-22 확정)** Layer B를 `host allowlist + _deploymentId query` 2단계로 강화했다 (B1 host, B2 query). CDP로 dogfood 미니앱 31146에 직접 attach해 SDK 시그널을 라이브 조사한 결과:
+   - `getSchemeUri()` — `intoss-private://` 진입을 `intoss://`로 **정규화**한다. raw 값(`__CONSTANT_HANDLER_MAP.getSchemeUri`)도 `intoss://aitc-sdk-example?…`. scheme prefix로는 dogfood/프로덕션 구별 불가.
+   - `getOperationalEnvironment()` — dogfood 진입에서 `"toss"` 반환. `"sandbox"`는 토스 샌드박스 앱 전용이라 프로덕션 진입도 `"toss"` → 구별 불가.
+   - `getWebViewType()` — `"partner"`. partner 미니앱이면 프로덕션도 동일 → 구별 불가.
+   - `location.hostname` — dogfood 진입은 `*.private-apps.tossmini.com` (관측값 `aitc-sdk-example.private-apps.tossmini.com`). 토스 앱이 dogfood/private 미니앱을 별도 host로 서빙한다. **이게 유일한 결정적 신호.**
+
+   따라서 `getEntryScheme()` 같은 SDK API는 채택하지 않는다 (존재하지 않거나, 존재해도 위 셋처럼 정규화될 가능성). Layer B1은 `hostname`이 `.private-apps.tossmini.com`으로 끝나는지(exact suffix 검사 — substring 아님, `…tossmini.com.evil.example` 우회 차단)를 확인한다. 프로덕션 `intoss://` 진입은 `*.apps.tossmini.com`(`.private-apps.` 없음)으로 서빙될 것으로 추정되며, 정확한 프로덕션 host는 31146이 review 통과해 정식 진입 가능해진 뒤 1회 재확인한다. `_deploymentId` query는 B2로 유지 (Deploy Key로만 발급되는 intoss-private:// URL에만 존재).
 3. **폰 attach UI 배치** — `?debug=1`로 진입한 미니앱에서 attach UI를 어디 둘 것인가: (a) in-app 자체 floating 버튼 (어느 페이지든 보임), (b) sdk-example의 별도 EnvironmentPage 진입점, (c) overlay 라이브러리 부착 시 그 overlay의 sub-panel. Phase 1 MVP는 (a) — 회귀 진단이 페이지 진입과 무관하게 가능해야 함.
 4. **MCP host에서의 session 라우팅** — `~/.mcp.json` 한 줄 등록만으로 자동 활용되는가, 아니면 Claude Code에서 명시적 `attach <token>` step 필요한가. MVP는 env (`AITC_DEBUG_SESSION` token) + 첫 tool 호출 시 implicit attach. Phase 5에서 share-link UX.
 5. **Console hook 위치** — `console.log` 자체를 proxy로 감싸면 사용자 코드 stack trace에 frame 1개 추가됨. Chii가 기본 wrapping을 제공하므로 우리 쪽 추가 hook은 최소화. AIT 도메인의 SDK call trace만 별도 proxy + ring buffer.
