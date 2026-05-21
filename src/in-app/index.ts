@@ -7,9 +7,19 @@
  * WebSocket relay, QR/paste UI, and AI-host MCP bin are later phases that
  * require real-device validation and are not included here.
  *
- * This thin entry reads `__DEBUG_BUILD__` and `window.location`, then calls
- * the pure {@link evaluateDebugGate} function. All testable logic lives in
- * `./gate.ts` and `./attach.ts`, not here.
+ * This thin entry reads `window.location` and calls the pure
+ * {@link evaluateDebugGate} function. All testable logic lives in `./gate.ts`
+ * and `./attach.ts`, not here.
+ *
+ * Layer A of the activation gate (build-time) is NOT enforced in this module.
+ * It is the consumer's responsibility: the consumer wraps its
+ * `import('@ait-co/devtools/in-app')` call site in `if (__DEBUG_BUILD__) { … }`
+ * (see sdk-example `src/main.tsx`), where `__DEBUG_BUILD__` is a
+ * consumer-build-time constant. A release consumer build folds that constant
+ * to `false` and dead-code-eliminates this whole module. This package is
+ * pre-built and ships with `__DEBUG_BUILD__` already resolved at devtools'
+ * publish time, so it could never re-evaluate the consumer's build channel —
+ * which is exactly why Layer A lives at the consumer guard, not here.
  */
 
 import { evaluateDebugGate, type GateResult } from './gate.js';
@@ -19,17 +29,18 @@ export type { GateInput, GateResult, GateResultAttach, GateResultBlocked } from 
 export { evaluateDebugGate } from './gate.js';
 
 /**
- * Evaluates the 3-layer debug activation gate against the current page URL.
+ * Evaluates the runtime debug activation layers (B and C) against the current
+ * page URL.
  *
  * Returns the gate result. Callers can check `result.attach` to decide whether
  * to proceed with debug surface attachment.
  *
- * This function reads `window.location` and the `__DEBUG_BUILD__` compile-time
- * constant. It has no other side effects.
+ * This function reads `window.location` only. Layer A (build-time) is enforced
+ * by the consumer's `if (__DEBUG_BUILD__)` guard around the import site, not
+ * here — see the file-level comment.
  */
 export function checkDebugGate(): GateResult {
   return evaluateDebugGate({
-    isDebugBuild: __DEBUG_BUILD__,
     searchParams: new URLSearchParams(window.location.search),
   });
 }

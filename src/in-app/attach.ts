@@ -52,9 +52,8 @@ let attached = false;
  * guard — in practice this always runs in a real WebView).
  *
  * @param gateResult - Optional pre-evaluated gate result for testability.
- *   Defaults to `checkDebugGate()` which reads the current page URL and the
- *   `__DEBUG_BUILD__` compile-time constant. Passing a custom value avoids
- *   the need to manipulate `window.location` in tests.
+ *   Defaults to `checkDebugGate()` which reads the current page URL. Passing a
+ *   custom value avoids the need to manipulate `window.location` in tests.
  */
 export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
   if (!gateResult.attach) {

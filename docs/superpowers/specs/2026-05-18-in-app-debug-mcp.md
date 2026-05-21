@@ -50,6 +50,8 @@ dogfood       | 있음           | 있음    | attach
 
 Layer B의 신뢰성: 토스 SDK가 `getEntryScheme()` 같은 API를 노출하면 그것을 1순위 시그널로 쓰고 `_deploymentId`는 fallback. Phase 1에서 SDK surface 확인 후 결정 (open question 6).
 
+**Layer A의 강제 위치 (구현 노트)**: Layer A는 `evaluateDebugGate` 같은 런타임 함수가 다시 검사하는 게 아니다. 강제는 전적으로 **소비자(예: sdk-example)의 `if (__DEBUG_BUILD__) { import('@ait-co/devtools/in-app') }` 가드**가 한다 — `__DEBUG_BUILD__`는 소비자 빌드 타임 상수라 release 빌드에서 `false`로 fold되며 in-app import 전체가 DCE된다. `@ait-co/devtools`는 pre-built npm 패키지이므로 자신의 publish 시점에 이미 상수가 박힌다 — 패키지 안에서 소비자의 빌드 채널을 다시 알 길이 없다. 따라서 `evaluateDebugGate`/`checkDebugGate`는 런타임 layer B·C만 평가하고, `reason: 'build'`는 존재하지 않는다. 매트릭스의 `release` 행("코드 자체 부재")이 바로 이 소비자-가드 DCE 모델이다.
+
 ## 목표 (우선순위 순)
 
 1. **AI 자율 검증 피드백 루프**. AI 에이전트가 회귀 가설을 코드로 옮긴 뒤, 사람 개입 없이 폰 안 production 번들의 상태(history, console, network)를 read해서 가설을 검증한다. v0.1.1 swipe-back처럼 "폰에서만 재현"되는 회귀에 대한 사이클 시간을 사람-루프(5–10분) → AI-루프(<1분)로 단축.

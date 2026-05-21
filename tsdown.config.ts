@@ -2,11 +2,15 @@ import { defineConfig, type Options } from 'tsdown';
 import pkg from './package.json' with { type: 'json' };
 
 // __VERSION__ is defined in all entries so any source file can reference it.
-// __DEBUG_BUILD__ defaults to false (release); dogfood tag-gated workflows
-// pass RELEASE_CHANNEL=dogfood and override this to `true` at build time.
+//
+// Note: there is no `__DEBUG_BUILD__` define here. That constant belongs to
+// the CONSUMER's build, not this package's. The consumer guards its
+// `import('@ait-co/devtools/in-app')` call site with `if (__DEBUG_BUILD__)`,
+// and its own bundler folds the constant + DCEs the import for release builds.
+// A `__DEBUG_BUILD__` define in this config would bake a fixed value into the
+// shipped package and is therefore meaningless — see src/in-app/gate.ts.
 const define = {
   __VERSION__: JSON.stringify(pkg.version),
-  __DEBUG_BUILD__: 'false',
 };
 
 // `package.json` exports expect `.js` (ESM) and `.cjs` (CJS) extensions,
@@ -39,9 +43,9 @@ export default defineConfig([
     format: ['esm'],
   },
   {
-    // Browser-only ESM entry for the in-app debug gate.
-    // When __DEBUG_BUILD__ is false (the default), the bundler dead-code-
-    // eliminates all gate logic and Chii imports from downstream release bundles.
+    // Browser-only ESM entry for the in-app debug gate (runtime layers B/C).
+    // The build-time Layer A is the consumer's `if (__DEBUG_BUILD__)` guard,
+    // which DCEs this whole entry from downstream release bundles.
     ...common,
     entry: { 'in-app/index': 'src/in-app/index.ts' },
     format: ['esm'],
