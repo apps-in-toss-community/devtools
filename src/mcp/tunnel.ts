@@ -3,10 +3,10 @@
  *
  * On spawn, the debug server opens an accountless `*.trycloudflare.com` quick
  * tunnel to the local Chii relay so the phone can attach over a public wss URL,
- * then prints that URL + a secret token + an ASCII QR to the terminal. The
+ * then prints that URL + an attach token + an ASCII QR to the terminal. The
  * phone scans the QR (or pastes the URL) to attach; the in-app side passes the
- * token back. The token is generated + displayed for the phone to pass on
- * attach; full ACL enforcement (token validation at the relay) is a later phase.
+ * token back. The token is generated + displayed as a pairing hint; relay-side
+ * validation (ACL enforcement) is a later phase.
  *
  * Node-only: spawns the cloudflared binary and writes to stdout/stderr.
  */
@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { bin, install, Tunnel } from 'cloudflared';
 import qrcode from 'qrcode-terminal';
 
-/** Generates a 32-byte hex secret token used to gate attach. */
+/** Generates a 32-byte hex attach token shown as a pairing hint (relay-side validation is a later phase). */
 export function generateAttachToken(): string {
   return randomBytes(32).toString('hex');
 }
@@ -93,8 +93,9 @@ export async function renderAttachBanner(input: AttachBannerInput): Promise<stri
     '',
     'AIT debug — attach a mini-app to this session',
     '',
-    `  relay (wss): ${input.wssUrl}`,
-    `  token:       ${input.token}`,
+    `  relay (wss):   ${input.wssUrl}`,
+    `  attach token:  ${input.token}`,
+    `  (token is a pairing hint — relay-side validation lands in a later phase)`,
     '',
     '  Open the dogfood mini-app with ?debug=1, then scan the QR',
     '  (or paste the relay URL + token in the in-app attach form):',

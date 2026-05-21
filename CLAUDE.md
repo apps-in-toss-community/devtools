@@ -75,7 +75,7 @@ src/
 │   └── index.ts       # 통합 re-export (번들러 alias 대상)
 ├── panel/             # Floating DevTools Panel (vanilla DOM)
 │   ├── index.ts helpers.ts styles.ts viewport.ts
-│   └── tabs/          # environment, permissions, location, device, viewport, iap, events, analytics, storage
+│   └── tabs/          # environment, presets, viewport, permissions, notifications, location, device, iap, ads, events, analytics, storage
 ├── unplugin/          # Vite/Webpack/Rspack/esbuild/Rollup
 ├── __tests__/         # vitest
 └── __typecheck.ts     # 원본 SDK 대비 타입 호환성 (빌드 미포함)

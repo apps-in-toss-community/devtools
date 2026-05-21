@@ -126,6 +126,7 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
 
   return new Promise<QuickTunnel>((resolve, reject) => {
     const timer = setTimeout(() => {
+      cleanup();
       stop();
       reject(
         new Error(
@@ -141,9 +142,13 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
       if (!found) return;
       clearTimeout(timer);
       // Stop scanning further output once we have the URL.
+      cleanup();
+      resolve({ url: found, stop });
+    };
+
+    const cleanup = () => {
       tunnel.off('stdout', onUrl);
       tunnel.off('stderr', onUrl);
-      resolve({ url: found, stop });
     };
 
     // The library emits a parsed `url` event; we also scan raw stdout/stderr in
@@ -153,12 +158,14 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
     tunnel.on('stderr', onUrl);
     tunnel.once('error', (err: Error) => {
       clearTimeout(timer);
+      cleanup();
       stop();
       reject(err);
     });
     tunnel.once('exit', (code: number | null) => {
       if (stopped) return;
       clearTimeout(timer);
+      cleanup();
       reject(
         new Error(
           `[@ait-co/devtools] cloudflared exited (code ${code ?? 'null'}) before reporting a tunnel URL.`,
