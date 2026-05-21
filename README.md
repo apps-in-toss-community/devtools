@@ -868,6 +868,7 @@ tool을 봅니다.
 | `list_console_messages` | `Runtime.consoleAPICalled` | 최근 console.log/warn/error 메시지 (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | 최근 XHR/fetch 요청 (url, method, status, timing) |
 | `list_pages` | Chii 릴레이 target 목록 | attach된 페이지 + tunnel 상태 + wss URL |
+| `build_attach_url` | (순수 합성) | `ait deploy --scheme-only` URL에 `debug=1`+릴레이 URL을 끼워 self-attach 딥링크 생성 (QR 스캔 불필요) |
 | `get_dom_document` | `DOM.getDocument` | DOM 트리 read (구조/레이아웃 회귀 진단) |
 | `take_snapshot` | `DOMSnapshot.captureSnapshot` | 페이지 스냅샷 (documents + interned strings, 시각 회귀 진단) |
 | `take_screenshot` | `Page.captureScreenshot` | 페이지 PNG 스크린샷 (MCP image content block 반환) |
