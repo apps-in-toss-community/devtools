@@ -860,6 +860,7 @@ Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` an
 | `list_console_messages` | `Runtime.consoleAPICalled` | Recent console.log/warn/error messages (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | Recent XHR/fetch requests (url, method, status, timing) |
 | `list_pages` | Chii relay target list | Attached pages + tunnel status + wss URL |
+| `build_attach_url` | (pure synthesis) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL to make a self-attaching deep link (no QR scan) |
 | `get_dom_document` | `DOM.getDocument` | DOM tree read (structural/layout regression diagnosis) |
 | `take_snapshot` | `DOMSnapshot.captureSnapshot` | Page snapshot (documents + interned strings, visual regression) |
 | `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |

@@ -27,6 +27,7 @@ import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import {
+  buildAttachUrl,
   DEBUG_TOOL_DEFINITIONS,
   getDomDocument,
   getMockState,
@@ -99,6 +100,23 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           default:
             return unknownTool(name);
         }
+      } catch (err) {
+        return errorResult(err, name);
+      }
+    }
+
+    // build_attach_url is pure synthesis (scheme URL + relay URL → deep link).
+    // It works before any page attaches, so it must not require enableDomains.
+    if (name === 'build_attach_url') {
+      const schemeUrl = request.params.arguments?.scheme_url;
+      if (typeof schemeUrl !== 'string' || schemeUrl === '') {
+        return {
+          content: [{ type: 'text', text: 'build_attach_url requires a non-empty scheme_url.' }],
+          isError: true,
+        };
+      }
+      try {
+        return jsonResult(buildAttachUrl(schemeUrl, getTunnelStatus()));
       } catch (err) {
         return errorResult(err, name);
       }

@@ -36,6 +36,7 @@ import type {
   NetworkRequestWillBeSentEvent,
   NetworkResponseReceivedEvent,
 } from './cdp-connection.js';
+import { buildDeepLinkAttachUrl } from './deeplink.js';
 
 /** Tunnel state surfaced by `list_pages`. */
 export interface TunnelStatus {
@@ -70,6 +71,25 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'cloudflared tunnel is up and the public wss relay URL the phone uses to attach. ' +
       'Call this first to confirm a page is attached before reading console/network.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'build_attach_url',
+    description:
+      'Turns an `ait deploy --scheme-only` URL (intoss-private://…?_deploymentId=<uuid>) into a ' +
+      'self-attaching deep link by splicing in debug=1 and the live relay URL for this session. ' +
+      'Opening the result on the phone (e.g. `adb shell am start -d "<url>"`) attaches the mini-app ' +
+      'to this debug session with no QR scan. Requires the tunnel to be up — call list_pages first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scheme_url: {
+          type: 'string',
+          description:
+            'The intoss-private:// scheme URL from `ait deploy --scheme-only` (must carry _deploymentId).',
+        },
+      },
+      required: ['scheme_url'],
+    },
   },
   {
     name: 'get_dom_document',
@@ -211,6 +231,32 @@ export interface ListPagesResult {
 
 export function listPages(connection: CdpConnection, tunnel: TunnelStatus): ListPagesResult {
   return { pages: connection.listTargets(), tunnel };
+}
+
+/** A `build_attach_url` result: the spliced deep link the phone should open. */
+export interface BuildAttachUrlResult {
+  /** The scheme URL with `debug=1&relay=<wss>` spliced in. */
+  attachUrl: string;
+  /** The relay URL that was spliced in (this session's quick tunnel). */
+  relayUrl: string;
+}
+
+/**
+ * Builds a self-attaching dogfood deep link from an `ait deploy --scheme-only`
+ * URL plus this session's live relay. Throws if the tunnel is not up yet (no
+ * relay URL to splice in) — the caller surfaces that as a tool error.
+ */
+export function buildAttachUrl(schemeUrl: string, tunnel: TunnelStatus): BuildAttachUrlResult {
+  if (!tunnel.up || tunnel.wssUrl === null) {
+    throw new Error(
+      'No relay URL yet — the cloudflared quick tunnel is not up. ' +
+        'Call list_pages to check tunnel status.',
+    );
+  }
+  return {
+    attachUrl: buildDeepLinkAttachUrl(schemeUrl, tunnel.wssUrl),
+    relayUrl: tunnel.wssUrl,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

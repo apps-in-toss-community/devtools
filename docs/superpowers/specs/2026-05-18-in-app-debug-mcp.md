@@ -267,7 +267,7 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 3. **폰 attach UI 배치** — `?debug=1`로 진입한 미니앱에서 attach UI를 어디 둘 것인가: (a) in-app 자체 floating 버튼 (어느 페이지든 보임), (b) sdk-example의 별도 EnvironmentPage 진입점, (c) overlay 라이브러리 부착 시 그 overlay의 sub-panel. Phase 1 MVP는 (a) — 회귀 진단이 페이지 진입과 무관하게 가능해야 함.
 4. **MCP host에서의 session 라우팅** — `~/.mcp.json` 한 줄 등록만으로 자동 활용되는가, 아니면 Claude Code에서 명시적 `attach <token>` step 필요한가. MVP는 env (`AITC_DEBUG_SESSION` token) + 첫 tool 호출 시 implicit attach. Phase 5에서 share-link UX.
 5. **Console hook 위치** — `console.log` 자체를 proxy로 감싸면 사용자 코드 stack trace에 frame 1개 추가됨. Chii가 기본 wrapping을 제공하므로 우리 쪽 추가 hook은 최소화. AIT 도메인의 SDK call trace만 별도 proxy + ring buffer.
-6. **사람-탭 단계의 자동화** — Phase 1 success metric은 "사람 폰 관찰 0"이지만, deploy 후 push 알림 탭은 v1에서 사람 1회 클릭 남음. dev 폰 ADB / iOS 자동화로 탭 자동화는 별도 phase (1.0 범위 밖).
+6. **사람-탭 단계의 자동화** — 사람 개입은 두 매듭이었다: (a) attach UI에서 QR 스캔/URL paste, (b) deploy 후 push 알림 탭/딥링크 발사. **(a)는 해소**: `build_attach_url` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1`+이 세션의 relay wss URL을 끼워 self-attach 딥링크를 만든다 — gate(`src/in-app/gate.ts`)가 이미 `relay` query를 읽어 QR 없이 attach하므로 그 딥링크를 폰에서 여는 순간 자동 연결된다. token은 gate 검증 대상이 아니라(pairing hint) 딥링크에 불필요. 전제 두 가지(딥링크 query 전파 O, WebView CSP가 외부 `target.js` 로드 차단 X)는 확인됨. **(b) 딥링크 발사는 device-control 레이어**(Android `adb shell am start -d "<url>"` / iOS 자동화)로 별도 phase — `build_attach_url` 출력을 그대로 `am start`에 넘기면 진입+attach가 한 번에 닫힌다. 네이티브 제스처 회귀 재현(swipe 등)도 같은 device-control 레이어.
 7. **`Runtime.evaluate` ACL UX** — Phase 6에서 write 권한 열 때 per-call 폰 prompt vs session-wide write token vs 둘 다. AI-loop 자율성 vs 사용자 통제 trade-off — 현재 안은 session-wide write token + 첫 발급 시 폰 1회 prompt. Phase 6 spec에서 확정.
 
 ## 검증 계획
