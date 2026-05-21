@@ -26,7 +26,7 @@ import { evaluateDebugGate, type GateResult } from './gate.js';
 
 export { deriveTargetScriptUrl, maybeAttach } from './attach.js';
 export type { GateInput, GateResult, GateResultAttach, GateResultBlocked } from './gate.js';
-export { evaluateDebugGate } from './gate.js';
+export { evaluateDebugGate, isPrivateAppsHost } from './gate.js';
 
 /**
  * Evaluates the runtime debug activation layers (B and C) against the current
@@ -35,12 +35,16 @@ export { evaluateDebugGate } from './gate.js';
  * Returns the gate result. Callers can check `result.attach` to decide whether
  * to proceed with debug surface attachment.
  *
- * This function reads `window.location` only. Layer A (build-time) is enforced
- * by the consumer's `if (__DEBUG_BUILD__)` guard around the import site, not
- * here — see the file-level comment.
+ * This function reads `window.location` only — both the hostname (Layer B1
+ * host allowlist) and the search params (Layers B2 and C). Layer A
+ * (build-time) is enforced by the consumer's `if (__DEBUG_BUILD__)` guard
+ * around the import site, not here — see the file-level comment. Consumers
+ * call this with no arguments, so the Layer B1 host check is picked up with
+ * no change at the call site.
  */
 export function checkDebugGate(): GateResult {
   return evaluateDebugGate({
+    hostname: window.location.hostname,
     searchParams: new URLSearchParams(window.location.search),
   });
 }
