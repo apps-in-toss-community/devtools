@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * `devtools-mcp` bin entry.
  *
