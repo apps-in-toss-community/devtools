@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.30
+
+### Patch Changes
+
+- 090d02f: SDK 2.6.0 지원: openPDFViewer·fetchAlbumItems mock 추가
+
 ## 0.1.29
 
 ### Patch Changes
