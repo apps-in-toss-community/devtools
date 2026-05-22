@@ -68,8 +68,10 @@ export default defineConfig([
     platform: 'node',
     entry: { 'mcp/server': 'src/mcp/server.ts' },
     format: ['esm'],
-    // Shebang is preserved in the source; tsdown strips it during transform.
-    // Re-add via banner so `node dist/mcp/server.js` works without explicit node invocation.
+    // The banner is the single source of the shebang — the entry source MUST NOT
+    // carry its own `#!/usr/bin/env node`, or the build emits a doubled shebang
+    // (line 2 then parses as invalid syntax and the bin fails to start). tsdown
+    // no longer strips a source shebang during transform, so rely on the banner only.
     banner: { js: '#!/usr/bin/env node' },
   },
   {
@@ -84,6 +86,8 @@ export default defineConfig([
     // runtime rather than being bundled (chii ships CJS + Koa; cloudflared spawns
     // a downloaded binary).
     external: ['chii', 'cloudflared', 'ws'],
+    // Shebang via banner only — see the mcp/server entry's note. The source
+    // src/mcp/cli.ts must not carry its own shebang or the build doubles it.
     banner: { js: '#!/usr/bin/env node' },
   },
 ]);
