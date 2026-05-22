@@ -20,6 +20,7 @@ export {
 // --- 디바이스 기능 ---
 export {
   Accuracy,
+  fetchAlbumItems,
   fetchAlbumPhotos,
   fetchContacts,
   generateHapticFeedback,
@@ -27,6 +28,7 @@ export {
   getCurrentLocation,
   getDefaultPlaceholderImages,
   openCamera,
+  openPDFViewer,
   Storage,
   saveBase64Data,
   setClipboardText,

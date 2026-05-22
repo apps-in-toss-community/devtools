@@ -1,11 +1,15 @@
 /**
- * Camera & Album Photos mock
+ * Camera & Album Photos & Album Items mock
  * mock/web/prompt 모드 지원
  */
 
 import { checkPermission, withPermission } from '../permissions.js';
 import { aitState } from '../state.js';
 import { getMockImages, waitForPromptResponse } from './_helpers.js';
+
+// --- 타입 ---
+
+export type AlbumItemType = 'PHOTO' | 'VIDEO';
 
 // --- Camera ---
 
@@ -133,3 +137,90 @@ const _fetchAlbumPhotos = async (options?: {
   return fetchAlbumPhotosMock(maxCount);
 };
 export const fetchAlbumPhotos = withPermission(_fetchAlbumPhotos, 'photos');
+
+// --- Album Items (사진·동영상 복합 선택) ---
+
+export interface FetchAlbumItemsOptions {
+  types?: AlbumItemType[];
+  maxCount?: number;
+  maxWidth?: number;
+  base64?: boolean;
+}
+
+export interface AlbumItemResponse {
+  id: string;
+  dataUri: string;
+  type: AlbumItemType;
+}
+
+async function fetchAlbumItemsMock(
+  maxCount: number,
+  types: AlbumItemType[],
+): Promise<AlbumItemResponse[]> {
+  const images = getMockImages();
+  return images
+    .slice(0, maxCount)
+    .filter(() => types.includes('PHOTO'))
+    .map((dataUri) => ({ id: crypto.randomUUID(), dataUri, type: 'PHOTO' as AlbumItemType }));
+}
+
+async function fetchAlbumItemsWeb(
+  maxCount: number,
+  types: AlbumItemType[],
+): Promise<AlbumItemResponse[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = types.includes('VIDEO') ? 'image/*,video/*' : 'image/*';
+    input.multiple = true;
+    let settled = false;
+    input.onchange = async () => {
+      settled = true;
+      const files = Array.from(input.files ?? []).slice(0, maxCount);
+      if (files.length === 0) {
+        resolve([]);
+        return;
+      }
+      const results = await Promise.all(
+        files.map(
+          (file) =>
+            new Promise<AlbumItemResponse>((res, rej) => {
+              const itemType: AlbumItemType = file.type.startsWith('video/') ? 'VIDEO' : 'PHOTO';
+              const reader = new FileReader();
+              reader.onload = () =>
+                res({ id: crypto.randomUUID(), dataUri: reader.result as string, type: itemType });
+              reader.onerror = () => rej(new Error('Failed to read file'));
+              reader.readAsDataURL(file);
+            }),
+        ),
+      );
+      resolve(results);
+    };
+    const onFocus = () => {
+      setTimeout(() => {
+        if (!settled) resolve([]);
+        window.removeEventListener('focus', onFocus);
+      }, 300);
+    };
+    window.addEventListener('focus', onFocus);
+    input.click();
+  });
+}
+
+async function fetchAlbumItemsPrompt(maxCount: number): Promise<AlbumItemResponse[]> {
+  const dataUris = await waitForPromptResponse<string[]>('photos');
+  return dataUris
+    .slice(0, maxCount)
+    .map((dataUri) => ({ id: crypto.randomUUID(), dataUri, type: 'PHOTO' as AlbumItemType }));
+}
+
+const _fetchAlbumItems = async (options?: FetchAlbumItemsOptions): Promise<AlbumItemResponse[]> => {
+  checkPermission('photos', 'fetchAlbumItems');
+  const maxCount = options?.maxCount ?? 10;
+  const types = options?.types ?? ['PHOTO'];
+  const mode = aitState.state.deviceModes.photos;
+  if (mode === 'web') return fetchAlbumItemsWeb(maxCount, types);
+  if (mode === 'prompt') return fetchAlbumItemsPrompt(maxCount);
+  return fetchAlbumItemsMock(maxCount, types);
+};
+export const fetchAlbumItems = withPermission(_fetchAlbumItems, 'photos');

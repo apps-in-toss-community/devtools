@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   Accuracy,
+  fetchAlbumItems,
   generateHapticFeedback,
   getClipboardText,
   getCurrentLocation,
   getDefaultPlaceholderImages,
   getNetworkStatusByMode,
   openCamera,
+  openPDFViewer,
   saveBase64Data,
   setClipboardText,
   startUpdateLocation,
@@ -186,6 +188,76 @@ describe('Device mock', () => {
           vi.useRealTimers();
         }
       });
+    });
+  });
+
+  describe('fetchAlbumItems', () => {
+    beforeEach(() => {
+      aitState.reset();
+      aitState.patch('permissions', { photos: 'allowed' });
+      aitState.patch('deviceModes', { photos: 'mock' });
+    });
+
+    it('mock 모드에서 AlbumItemResponse 배열을 반환한다', async () => {
+      const items = await fetchAlbumItems();
+      expect(Array.isArray(items)).toBe(true);
+      items.forEach((item) => {
+        expect(typeof item.id).toBe('string');
+        expect(typeof item.dataUri).toBe('string');
+        expect(item.type).toBe('PHOTO');
+      });
+    });
+
+    it('maxCount를 지정하면 해당 개수 이하로 반환한다', async () => {
+      const items = await fetchAlbumItems({ maxCount: 1 });
+      expect(items.length).toBeLessThanOrEqual(1);
+    });
+
+    it('options 없이 호출하면 기본값(maxCount=10)으로 동작한다', async () => {
+      const items = await fetchAlbumItems();
+      expect(items.length).toBeLessThanOrEqual(10);
+    });
+
+    it('types에 PHOTO만 있으면 PHOTO 타입 항목만 반환한다', async () => {
+      const items = await fetchAlbumItems({ types: ['PHOTO'] });
+      items.forEach((item) => {
+        expect(item.type).toBe('PHOTO');
+      });
+    });
+
+    it('photos 권한이 denied이면 에러를 throw한다', async () => {
+      aitState.patch('permissions', { photos: 'denied' });
+      await expect(fetchAlbumItems()).rejects.toThrow();
+    });
+
+    it('prompt 모드에서 타임아웃 시 reject한다', async () => {
+      vi.useFakeTimers();
+      aitState.patch('deviceModes', { photos: 'prompt' });
+
+      try {
+        const promise = fetchAlbumItems();
+        vi.advanceTimersByTime(30_000);
+        await expect(promise).rejects.toThrow();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('openPDFViewer', () => {
+    it('"CLOSE"를 반환한다', async () => {
+      const result = await openPDFViewer({ data: 'JVBERi0xLjQK' });
+      expect(result).toBe('CLOSE');
+    });
+
+    it('filename 없이도 동작한다', async () => {
+      const result = await openPDFViewer({ data: 'JVBERi0xLjQK' });
+      expect(result).toBe('CLOSE');
+    });
+
+    it('빈 data 문자열로 호출해도 "CLOSE"를 반환한다 (mock은 실 SDK보다 엄격하지 않음)', async () => {
+      const result = await openPDFViewer({ data: '' });
+      expect(result).toBe('CLOSE');
     });
   });
 });

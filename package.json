@@ -60,7 +60,7 @@
     "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test && pnpm build:og"
   },
   "peerDependencies": {
-    "@apps-in-toss/web-framework": ">=2.5.0 <2.6.0"
+    "@apps-in-toss/web-framework": ">=2.6.0 <2.7.0"
   },
   "peerDependenciesMeta": {
     "@apps-in-toss/web-framework": {
@@ -78,7 +78,7 @@
   "devDependencies": {
     "@types/qrcode-terminal": "^0.12.2",
     "@types/ws": "^8.18.0",
-    "@apps-in-toss/web-framework": "2.5.0",
+    "@apps-in-toss/web-framework": "2.6.0",
     "@biomejs/biome": "2.4.15",
     "@changesets/cli": "^2.31.0",
     "@khmyznikov/pwa-install": "^0.6.3",
