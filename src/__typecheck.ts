@@ -81,9 +81,13 @@ type _GetAppsInTossGlobals = Assert<
 >;
 
 // --- 디바이스: 카메라/앨범/연락처 ---
+type _FetchAlbumItems = Assert<typeof Mock.fetchAlbumItems, typeof Original.fetchAlbumItems>;
 type _FetchAlbumPhotos = Assert<typeof Mock.fetchAlbumPhotos, typeof Original.fetchAlbumPhotos>;
 type _FetchContacts = Assert<typeof Mock.fetchContacts, typeof Original.fetchContacts>;
 type _OpenCamera = Assert<typeof Mock.openCamera, typeof Original.openCamera>;
+
+// --- 디바이스: PDF ---
+type _OpenPDFViewer = Assert<typeof Mock.openPDFViewer, typeof Original.openPDFViewer>;
 
 // --- 디바이스: 위치 ---
 type _Accuracy = Assert<typeof Mock.Accuracy, typeof Original.Accuracy>;
