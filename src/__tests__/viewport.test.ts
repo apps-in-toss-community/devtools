@@ -73,6 +73,21 @@ describe('viewport presets', () => {
     expect(iphoneAir?.label).not.toContain('(est)');
   });
 
+  it('iPhone 15 Pro 프리셋이 존재하고 실 기기 spec(393×852, dpr3, Dynamic Island)을 가진다', () => {
+    const p = VIEWPORT_PRESETS.find((preset) => preset.id === 'iphone-15-pro');
+    expect(p).toMatchObject({
+      label: 'iPhone 15 Pro',
+      width: 393,
+      height: 852,
+      dpr: 3,
+      notch: 'dynamic-island',
+      safeAreaTop: 59,
+      safeAreaBottom: 34,
+    });
+    // 17 시리즈(402×874)와 CSS viewport가 달라야 한다 — 15 Pro로 17을 대신 쓸 수 없다.
+    expect(p?.width).not.toBe(getPreset('iphone-17-pro').width);
+  });
+
   it('Galaxy S26 시리즈는 출시된 spec(phone-simulator.com 측정치)을 사용한다', () => {
     const s26 = VIEWPORT_PRESETS.find((p) => p.id === 'galaxy-s26');
     expect(s26).toMatchObject({ label: 'Galaxy S26', width: 360, height: 773, dpr: 3 });

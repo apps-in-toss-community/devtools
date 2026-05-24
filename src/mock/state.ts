@@ -192,7 +192,10 @@ const DEFAULT_STATE: AitDevtoolsState = {
     accessLocation: 'FINE',
   },
 
-  safeAreaInsets: { top: 47, bottom: 34, left: 0, right: 0 },
+  // default는 iphone-15-pro preset의 OS-level insets와 정합 (Dynamic Island top 59).
+  // preset이 'none'/'custom'이면 syncSafeAreaFromViewport가 건드리지 않으므로 이 값이
+  // SafeAreaInsets.get()의 out-of-box 계약값으로 남는다. preset을 고르면 그 값으로 sync됨.
+  safeAreaInsets: { top: 59, bottom: 34, left: 0, right: 0 },
 
   contacts: [
     { name: '홍길동', phoneNumber: '010-1234-5678' },

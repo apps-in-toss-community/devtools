@@ -95,6 +95,7 @@ export interface SafeAreaInsets {
 export type ViewportPresetId =
   | 'none'
   | 'iphone-se-3'
+  | 'iphone-15-pro'
   | 'iphone-16e'
   | 'iphone-17'
   | 'iphone-air'

@@ -77,6 +77,16 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     safeAreaBottom: 0,
   },
   {
+    id: 'iphone-15-pro',
+    label: 'iPhone 15 Pro',
+    width: 393,
+    height: 852,
+    dpr: 3,
+    notch: 'dynamic-island',
+    safeAreaTop: 59,
+    safeAreaBottom: 34,
+  },
+  {
     id: 'iphone-16e',
     label: 'iPhone 16e',
     width: 390,
