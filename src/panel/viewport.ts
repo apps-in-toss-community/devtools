@@ -18,6 +18,7 @@ import type {
   ViewportPresetId,
   ViewportState,
 } from '../mock/types.js';
+import { revertDeviceEmulation, syncDeviceEmulation } from './device-emulation.js';
 import { h } from './helpers.js';
 
 export const VIEWPORT_STORAGE_KEY = '__ait_viewport';
@@ -467,6 +468,7 @@ export function disposeViewport(): void {
   removeNotchElement();
   removeHomeIndicator();
   removeNavBarElement();
+  revertDeviceEmulation();
   bodyScrollHintEmitted = false;
 }
 
@@ -490,6 +492,7 @@ export function applyViewport(state: ViewportState): void {
     removeNotchElement();
     removeHomeIndicator();
     removeNavBarElement();
+    syncDeviceEmulation(null, false);
     return;
   }
 
@@ -506,6 +509,9 @@ export function applyViewport(state: ViewportState): void {
 
   const preset = state.preset === 'custom' ? null : getPreset(state.preset);
   const landscape = effectiveOrientation(state) === 'landscape';
+
+  // 기기 preset이면 UA/DPR/screen/platform을 그 기기와 정합 (custom은 치수만 강제).
+  syncDeviceEmulation(preset, landscape);
 
   // Dynamic per-preset values only — static rules live in styles.ts.
   style.textContent = /* css */ `

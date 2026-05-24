@@ -492,12 +492,13 @@ Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 - 뷰포트는 `document.body`에 `max-width`/`max-height` + `margin:auto`로 적용됩니다. iframe을 쓰지 않으므로 앱 JS/CSS가 그대로 실행되고, 콘솔·DevTools도 정상 접근 가능합니다.
 - body에 `isolation: isolate`를 적용해 노치/nav bar/홈 인디케이터의 z-index가 stacking context 밖으로 새지 않습니다 (DevTools 패널이 그 위에 떠 있음).
 - 패널을 동적으로 제거하고 싶다면 `disposeViewport()`를 export로 제공합니다.
-- User-Agent spoofing / touch event emulation / network throttling은 하지 않습니다 (Chrome DevTools가 이미 제공).
+- **기기 프리셋이 active일 때(= `none`/`custom` 아님) 브라우저 특성을 그 기기와 정합시킵니다**: `navigator.userAgent`(토스 WebView 형태 — `… AppsInToss TossApp/<appVersion>`), `navigator.platform`, `window.devicePixelRatio`(preset DPR), `screen.width`/`height`(CSS px × DPR), 그리고 `getPlatformOS()`가 읽는 `platform`(Apple→`ios` / Galaxy→`android`)을 모두 그 기기 값으로 override합니다. 특정 기기 frame을 제공하는 이상 UA/DPR만 호스트 데스크톱 값으로 남으면 비일관적이기 때문입니다. `none`/`custom`에선 override를 걸지 않아 일반 dev의 호스트 환경을 건드리지 않습니다.
 
 ### Known limitations
 
 - **Body가 스크롤 컨테이너가 됩니다** — 뷰포트 활성화 중에는 스크롤이 `window`가 아닌 `document.body`에서 발생합니다. `window.addEventListener('scroll', ...)`나 root에 붙은 `IntersectionObserver`는 실 디바이스와 다른 동작을 보일 수 있습니다. 미니앱 코드에서 스크롤을 다룬다면 `body`도 함께 검증하세요.
 - **추정 safe area** — Galaxy S26 시리즈는 출시 spec(phone-simulator.com 측정치) 기반이지만 safe area는 S25 값을 잠정 사용합니다 — 픽셀 단위 정확도가 필요한 QA는 실 기기 확인을 권장합니다.
+- **기기 특성 override는 JS 읽기값만 바꿉니다** — 프리셋이 거는 `navigator.userAgent`·`devicePixelRatio`·`screen.*` override는 page-JS가 읽는 값만 그 기기로 보이게 합니다. 실 CSS media query(`@media (resolution)`, `@media (pointer)`), 실제 터치 이벤트, 엔진 레벨 레이아웃 단위는 호스트 브라우저 값이 그대로입니다 (프리셋 frame이 시각적 width/height는 이미 강제하므로 레이아웃은 근사됩니다). 픽셀·입력 단위까지 완전한 emulation이 필요하면 Chrome DevTools device-mode(또는 CDP)를 쓰세요.
 
 ## `window.__ait` 콘솔 API
 
