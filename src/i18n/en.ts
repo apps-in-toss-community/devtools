@@ -50,6 +50,13 @@ export const en: Record<StringKey, string> = {
   'env.section.safeArea': 'Safe Area Insets',
   'env.row.safeArea.top': 'Top',
   'env.row.safeArea.bottom': 'Bottom',
+  'env.section.navigation': 'Navigation',
+  'env.row.iosSwipeGesture': 'iOS swipe-back',
+  'env.value.iosSwipeGesture.unset': 'not called',
+  'env.value.iosSwipeGesture.enabled': 'enabled',
+  'env.value.iosSwipeGesture.disabled': 'disabled',
+  'env.hint.iosSwipeGesture':
+    'Last value passed to setIosSwipeGestureEnabled. Switching Environment to toss lets a toss-gated guard toggle this.',
 
   // Environment > Telemetry section
   'env.telemetry.section': 'Telemetry',

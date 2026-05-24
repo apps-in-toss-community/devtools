@@ -27,9 +27,15 @@ export const VIEWPORT_STORAGE_KEY = '__ait_viewport';
 export const VIEWPORT_CUSTOM_MAX = 4096;
 
 /**
- * Apps in Toss의 host nav bar 높이 (CSS px). 문서화돼 있지 않지만 앱인토스 샘플
- * 앱(`with-contacts-viral`, `random-balls`)이 safeArea.top에 `+ 48`을 추가하는
- * 패턴을 쓴다. SafeAreaInsets에는 포함되지 않으므로 별도 상수로 관리.
+ * Apps in Toss host nav bar 높이 (CSS px). 공식 문서에 픽셀 값이 명시돼 있지 않아,
+ * 앱인토스 샘플 앱(`with-contacts-viral`, `random-balls`)이 safeArea.top에 `+ 48`을
+ * 더하는 패턴에서 역산한 추정치다 (호스트 실측으로 확정 예정 — devtools#190).
+ * nav bar 높이는 SafeAreaInsets에 포함되지 않으므로 별도 상수로 관리한다.
+ *
+ * 주의: 이 보정은 `webViewProps.type === 'partner'`에 한정된다. `game` type은 nav bar가
+ * 투명 오버레이라 콘텐츠를 밀어내지 않고(인게임 full-screen이 출시 요건), `external`은
+ * 아직 시뮬레이션하지 않는다. 현재 renderNavBar는 두 type 모두 같은 오프셋으로 그리는데,
+ * game이 정말 콘텐츠를 밀어내지 않는지는 실측 후 보정한다.
  */
 export const AIT_NAV_BAR_HEIGHT = 48;
 

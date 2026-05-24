@@ -72,6 +72,13 @@ export interface AitDevtoolsState {
   // 네트워크
   networkStatus: NetworkStatus;
 
+  // 네비게이션 동작 — real은 native bridge로 발화하는 no-op API들의 마지막 호출값을
+  // 관측 가능한 state로 mirror (real ground-truth: devtools#171 on-device relay).
+  // null = 앱이 아직 호출 안 함(real 기본 동작 = iOS 엣지 스와이프 뒤로가기 enabled).
+  navigation: {
+    iosSwipeGestureEnabled: boolean | null;
+  };
+
   // 권한
   permissions: Record<PermissionName, PermissionStatus>;
 
@@ -169,6 +176,11 @@ const DEFAULT_STATE: AitDevtoolsState = {
   },
 
   networkStatus: 'WIFI',
+
+  // null = 앱이 setIosSwipeGestureEnabled를 아직 호출 안 함.
+  navigation: {
+    iosSwipeGestureEnabled: null,
+  },
 
   permissions: {
     clipboard: 'allowed',

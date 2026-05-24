@@ -344,13 +344,18 @@ function mount() {
   };
   window.addEventListener('resize', resizeHandler);
 
-  // 상태 변경 시 자동 갱신 (analytics, storage, device, viewport, iap 탭)
+  // 상태 변경 시 자동 갱신 (env, analytics, storage, device, viewport, iap 탭)
   // Defense-in-depth: outer catch complements refreshPanel's inner tab-rendering catch.
+  // env 탭은 Navigation 섹션이 setIosSwipeGestureEnabled 같은 SDK no-op API의 호출값을
+  // read-only로 비추므로, 앱이 그 API를 호출하면 패널이 실시간 반영해야 한다. 이 탭의
+  // 입력 필드(appVersion/locale/safeArea)는 모두 'change'(blur/Enter) 커밋이라
+  // 재렌더가 입력 중 데이터를 잃지 않는다 — viewport 탭과 동일한 트레이드오프.
   aitStateUnsubscribe = aitState.subscribe(() => {
     try {
       if (
         isOpen &&
-        (currentTab === 'analytics' ||
+        (currentTab === 'env' ||
+          currentTab === 'analytics' ||
           currentTab === 'storage' ||
           currentTab === 'device' ||
           currentTab === 'viewport' ||

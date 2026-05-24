@@ -342,7 +342,7 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 | 탭 | 설명 |
 |---|---|
-| **Environment** | 플랫폼 OS (ios/android), 앱 버전, 환경 (toss/sandbox), 로케일, 네트워크 상태, Safe Area Insets |
+| **Environment** | 플랫폼 OS (ios/android), 앱 버전, 환경 (toss/sandbox), 로케일, 네트워크 상태, Safe Area Insets, Navigation (SDK no-op API 호출값 관측) |
 | **Presets** | 자주 쓰는 QA 시나리오(권한 거부, offline, 미로그인 등)를 한 클릭으로 적용/해제. 사용자 preset 저장/삭제 가능 |
 | **Viewport** | 디바이스 프리셋(iPhone/Galaxy) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **Permissions** | camera, photos, geolocation, clipboard, contacts, microphone 권한 상태 제어 (allowed/denied/notDetermined) |
@@ -356,6 +356,16 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 | **Storage** | `Storage` API로 저장된 항목 조회 및 초기화 |
 
 > **prompt 모드 자동 열림**: prompt 모드로 설정된 API가 호출되면, Panel이 자동으로 Device 탭을 열고 사용자 입력 UI를 표시합니다.
+
+### toss-gated 동작을 dev에서 시험하기 (Environment + Navigation)
+
+실 토스 WebView에서 native bridge로만 발화하던 일부 no-op API(예: `setIosSwipeGestureEnabled`)는 mock에서 그 **마지막 호출값**을 관측 가능한 state로 비춥니다. Environment 탭의 **Navigation** 섹션이 이 값을 read-only로 표시합니다.
+
+이로써 `getOperationalEnvironment() === 'toss'`로 게이트된 코드 경로를 토스 앱 없이 검증할 수 있습니다:
+
+1. Environment 탭에서 **환경(Environment)** 을 `toss`로 전환 (기본은 `sandbox` — toss 진입은 명시적 opt-in).
+2. 앱의 toss-gated 가드(예: sdk-example `useDisableIosSwipeGestureInToss`)가 실행되며 `setIosSwipeGestureEnabled({ isEnabled: false })`를 호출.
+3. Navigation 섹션의 `iOS swipe-back` 값이 `미호출` → `disabled`로 실시간 전환되는 것을 패널에서 확인. `AIT.getMockState()`로도 `navigation.iosSwipeGestureEnabled`를 대조할 수 있습니다.
 
 ### Mock state preset library (Presets 탭)
 
@@ -449,9 +459,11 @@ Landscape로 전환하면:
 - 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출 — 실제 SDK 이벤트 플러밍을 패널에서 직접 검증할 수 있습니다.
 
 **Show Apps in Toss nav bar** 토글(기본 on)을 켜면:
-- 토스 호스트의 상단 nav bar(뒤로가기 / 앱 아이콘·이름 / ⋯ / ×)를 48px 높이로 오버레이
+- 토스 호스트의 상단 nav bar를 약 48px 높이로 오버레이. `Nav bar type`에 따라 모양이 다릅니다:
+  - `partner` (비게임 기본): 흰 배경 + 뒤로가기 / 앱 아이콘·이름 / ⋯ / ×. 콘텐츠를 nav bar 높이만큼 아래로 밀어냅니다.
+  - `game`: 투명 배경 + ⋯ / × 만. 게임 캔버스 위에 떠 있어 콘텐츠를 밀어내지 않습니다 — 인게임 화면은 full-screen이 [출시 요건](https://developers-apps-in-toss.toss.im/checklist/app-game.html).
 - status bar 바로 아래, safe area top 이후에 배치
-- **중요**: 이 48px는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (SDK 동작). 토스 측 예제들도 `insets.top + 48` 패턴으로 보정합니다.
+- nav bar 높이는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (SDK 동작). 따라서 `partner` 앱은 콘텐츠 상단을 `insets.top + navBarHeight`로 보정해야 합니다. nav bar 높이 48px은 토스 예제(`with-contacts-viral`·`random-balls`)에서 역산한 추정치로, 공식 문서에 명시된 값이 아닙니다 — 호스트 실측으로 확정 예정 ([devtools#190](https://github.com/apps-in-toss-community/devtools/issues/190)). SDK의 `webViewProps.type`은 `partner` / `game` 외에 `external`도 있습니다 (현재 패널은 앞 둘만 시뮬레이션).
 
 ### 콘솔에서 직접 조작
 
