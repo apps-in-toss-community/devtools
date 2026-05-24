@@ -31,6 +31,33 @@ mock의 환경 기본값이 real과 달라서, 환경으로 분기하는 코드 
 
 ---
 
+## 0.5. Safe area insets · 기기 특성 (viewport 모델)
+
+토스 앱 WebView는 실 기기의 노치/Dynamic Island/홈 인디케이터에 따라 `safe-area-inset-*`와 CSS viewport·DPR이 정해진다. devtools는 이걸 **두 갈래**로 모델한다 — 둘이 어긋날 수 있는 게 fidelity gap의 한 축이다:
+
+1. **`safeAreaInsets` state slice** (`SafeAreaInsets.get()` / `.subscribe()`가 읽는 SDK 계약값) — default `{top:47, bottom:34, left:0, right:0}` (`state.ts`). 패널 Environment 탭에서 top/bottom 직접 편집(`panel/tabs/environment.ts:66-73`).
+2. **viewport preset** (devtools 전용 화면 시뮬레이션, SDK와 무관) — `VIEWPORT_PRESETS`(`panel/viewport.ts`)가 기기별 `width/height/dpr/notch/safeAreaTop/safeAreaBottom`을 정의. preset이 `none`/`custom`이 **아닐 때만** `syncSafeAreaFromViewport`가 preset 값을 ① slice로 동기화(orientation·landscapeSide 반영). default는 `preset:'none'`이라 **동기화 안 됨** → slice의 `{47,34}` 정적 추정값이 그대로 남는다.
+
+### gap
+
+| 항목 | mock | real (연결 기기 = iPhone 15 Pro) | 분류 | gap |
+|---|---|---|---|---|
+| `safeAreaInsets` default | `{top:47, bottom:34, left:0, right:0}` (정적) | iPhone 15 Pro Dynamic Island: `top≈59`, home indicator `bottom≈34` | 🟡 partial | default top(47)이 15 Pro의 실측 top(≈59)과 다름 — Dynamic Island 기기인데 notch(16e) 수치를 default로 씀. preset 미선택 시 어긋난 채 유지. |
+| `left`/`right` insets | 항상 0 (portrait) | landscape에서 ≠0 (노치 쪽) | 🟡 partial | preset 선택 + landscape일 때만 `computeSafeAreaInsets`가 채움. slice 단독으론 portrait 0 고정. |
+| viewport preset 목록 | SE3 / 16e / 17 / Air / 17 Pro / 17 Pro Max + Galaxy | **iPhone 15 Pro preset 없음** | 🔴 inert | 연결 기기(15 Pro)에 **정확히 맞는 preset이 없다**. 가장 가까운 `iphone-17`(402×874)도 CSS viewport가 다름 — 15 Pro는 **393×852, DPR 3, Dynamic Island, top 59 / bottom 34**. 17 Pro로 대신 잡으면 width 9px·height 22px 어긋남. |
+| `DPR` (`devicePixelRatio`) | preset의 `dpr` (시각 시뮬용) | 15 Pro = 3 | 🟡 partial | preset이 화면 프레임 스케일에만 쓰이고 `window.devicePixelRatio` 자체를 못 바꾼다 (브라우저 read-only). DPR-분기 코드는 브라우저 실 DPR을 봄. |
+| slice ↔ preset 일관성 | preset 선택 시 sync (`none`/`custom` 제외) | 실 기기는 단일 ground truth | 🟡 partial | 두 모델이 분리돼 있어, slice를 손으로 바꾸고 preset도 고르면 둘이 불일치 가능. `none`/`custom`에선 sync 자체가 꺼짐. |
+
+iPhone 15 Pro 실 web-relevant 스펙(참고): CSS viewport **393×852**(portrait), DPR **3**, notch = **Dynamic Island**, `env(safe-area-inset-top)` **≈59px** / `-bottom` **≈34px**. 단, 토스 호스트 nav bar를 제외한 OS-level 값인지 포함인지는 호스트 실측이 필요 — 기존 preset들이 `safeArea*`를 "Apps in Toss nav bar 제외"로 정의(`panel/viewport.ts` ViewportPreset 주석)한 것과 같은 기준을 따라야 한다.
+
+### 후속(이 카탈로그 범위 밖, #190 구현 PR 후보)
+
+- **iPhone 15 Pro preset 추가** — `393×852 / dpr 3 / dynamic-island / top 59 / bottom 34`. 현행 17 시리즈와 별도 행. (15/15 Pro는 393×852, 15 Plus/Pro Max는 430×932 — 라인업 확장 시 함께.)
+- **default `safeAreaInsets`를 default 기기와 정합** — 기본 시뮬 기기를 정하고(예: 가장 흔한 Dynamic Island 기기) slice default를 그 top 값으로. 또는 첫 mount 시 default preset을 골라 sync를 태운다.
+- **호스트 실측** — Galaxy 계열 `safeArea*`는 이미 "S25 placeholder, ground truth 아님"으로 표기됨(`panel/viewport.ts`). iPhone 15 Pro 토스 호스트 실측값도 relay 세션에서 `env(safe-area-inset-*)`를 읽어 확정한다.
+
+---
+
 ## 1. Navigation / 환경 / 이벤트 (`navigation/index.ts`)
 
 | API | mock 동작 | real 동작 | 분류 | 관측? | gap |
@@ -188,8 +215,9 @@ mock의 환경 기본값이 real과 달라서, 환경으로 분기하는 코드 
 1. **`environment` 기본값 + toss 진입 story** (§0) — gate 전체의 뿌리. #190 acceptance 2번.
 2. **`setIosSwipeGestureEnabled` → state 토글** (§1) — `setDeviceOrientation` 패턴 mirror. #190 acceptance 3번, 명시적 1순위.
 3. **나머지 navigation no-op** (`setScreenAwakeMode`, `setSecureScreen`, `requestReview`) → "요청됨" state 기록.
-4. **`appsInTossEvent` / `partner.*accessoryButton`** — 이벤트 발화 경로 연결(현재 완전 끊김).
-5. **UA/host 단서 흉내** (§0) — host-gated 코드 경로를 브라우저에서 시험 (#190 범위 4, 검토 단계).
+4. **safe area · 기기 특성 정합** (§0.5) — iPhone 15 Pro preset 추가(393×852/dpr3/dynamic-island/top59/bottom34) + default `safeAreaInsets`를 default 기기와 정합 + 호스트 실측. 연결 기기에 맞는 preset이 없는 게 당장의 gap.
+5. **`appsInTossEvent` / `partner.*accessoryButton`** — 이벤트 발화 경로 연결(현재 완전 끊김).
+6. **UA/host 단서 흉내** (§0) — host-gated 코드 경로를 브라우저에서 시험 (#190 범위 4, 검토 단계).
 
 `🟡 partial`은 대부분 실용에 충분 — native 런타임 의존(카메라 취소 감지, 실 결제 UI)이나 의도된 간소화(SafeAreaInsets 과호출)라 #190 비목표에 가깝다. `🟢 faithful`은 손댈 필요 없음.
 
