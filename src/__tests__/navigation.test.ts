@@ -150,6 +150,28 @@ describe('Navigation mock', () => {
     await expect(setIosSwipeGestureEnabled({ isEnabled: true })).resolves.toBeUndefined();
   });
 
+  describe('setIosSwipeGestureEnabled → navigation slice', () => {
+    it('reset 직후 기본값은 null(미호출)이다', () => {
+      expect(aitState.state.navigation.iosSwipeGestureEnabled).toBeNull();
+    });
+
+    it('호출하면 마지막 호출값을 navigation.iosSwipeGestureEnabled에 mirror한다', async () => {
+      await setIosSwipeGestureEnabled({ isEnabled: false });
+      expect(aitState.state.navigation.iosSwipeGestureEnabled).toBe(false);
+
+      await setIosSwipeGestureEnabled({ isEnabled: true });
+      expect(aitState.state.navigation.iosSwipeGestureEnabled).toBe(true);
+    });
+
+    it('상태 변경 시 구독자에게 통지한다 (패널 실시간 반영용)', async () => {
+      const listener = vi.fn();
+      const unsub = aitState.subscribe(listener);
+      await setIosSwipeGestureEnabled({ isEnabled: false });
+      expect(listener).toHaveBeenCalled();
+      unsub();
+    });
+  });
+
   it('setDeviceOrientation: 에러 없이 실행된다', async () => {
     await expect(setDeviceOrientation({ type: 'landscape' })).resolves.toBeUndefined();
   });
@@ -207,13 +229,14 @@ describe('Navigation mock', () => {
   });
 
   it('getSafeAreaInsets (deprecated): top 값을 반환한다', () => {
-    expect(getSafeAreaInsets()).toBe(47);
+    // default는 iPhone 15 Pro partner WebView 실측과 정합 (nav bar top 54).
+    expect(getSafeAreaInsets()).toBe(54);
   });
 
   describe('SafeAreaInsets', () => {
     it('get: 현재 safe area insets를 반환한다', () => {
       const insets = SafeAreaInsets.get();
-      expect(insets).toEqual({ top: 47, bottom: 34, left: 0, right: 0 });
+      expect(insets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
     });
 
     it('subscribe: 상태 변경 시 콜백이 호출되고 unsubscribe 후 호출되지 않는다', () => {

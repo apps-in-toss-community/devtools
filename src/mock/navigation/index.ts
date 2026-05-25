@@ -28,8 +28,12 @@ export async function getTossShareLink(path: string, _ogImageUrl?: string): Prom
   return `https://toss.im/share/mock${path}`;
 }
 
-export async function setIosSwipeGestureEnabled(_options: { isEnabled: boolean }): Promise<void> {
-  console.log('[@ait-co/devtools] setIosSwipeGestureEnabled:', _options.isEnabled);
+export async function setIosSwipeGestureEnabled(options: { isEnabled: boolean }): Promise<void> {
+  console.log('[@ait-co/devtools] setIosSwipeGestureEnabled:', options.isEnabled);
+  // real(토스 WebView)에선 이 호출이 native bridge로 발화한다(devtools#171 실측). mock은
+  // 그 "마지막 호출값"을 관측 가능한 state로 mirror해, toss-gated 가드(예: sdk-example
+  // useDisableIosSwipeGestureInToss)가 실제로 돌았는지를 AIT.getMockState로 대조할 수 있게 한다.
+  aitState.patch('navigation', { iosSwipeGestureEnabled: options.isEnabled });
 }
 
 export async function setDeviceOrientation(options: {

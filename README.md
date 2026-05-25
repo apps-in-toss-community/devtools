@@ -342,7 +342,7 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 
 | 탭 | 설명 |
 |---|---|
-| **Environment** | 플랫폼 OS (ios/android), 앱 버전, 환경 (toss/sandbox), 로케일, 네트워크 상태, Safe Area Insets |
+| **Environment** | 플랫폼 OS (ios/android), 앱 버전, 환경 (toss/sandbox), 로케일, 네트워크 상태, Safe Area Insets, Navigation (SDK no-op API 호출값 관측) |
 | **Presets** | 자주 쓰는 QA 시나리오(권한 거부, offline, 미로그인 등)를 한 클릭으로 적용/해제. 사용자 preset 저장/삭제 가능 |
 | **Viewport** | 디바이스 프리셋(iPhone/Galaxy) + orientation 토글로 모바일 뷰포트 시뮬레이션 |
 | **Permissions** | camera, photos, geolocation, clipboard, contacts, microphone 권한 상태 제어 (allowed/denied/notDetermined) |
@@ -356,6 +356,16 @@ mock 모드에서 카메라/앨범 API는 더미 이미지를 반환합니다.
 | **Storage** | `Storage` API로 저장된 항목 조회 및 초기화 |
 
 > **prompt 모드 자동 열림**: prompt 모드로 설정된 API가 호출되면, Panel이 자동으로 Device 탭을 열고 사용자 입력 UI를 표시합니다.
+
+### toss-gated 동작을 dev에서 시험하기 (Environment + Navigation)
+
+실 토스 WebView에서 native bridge로만 발화하던 일부 no-op API(예: `setIosSwipeGestureEnabled`)는 mock에서 그 **마지막 호출값**을 관측 가능한 state로 비춥니다. Environment 탭의 **Navigation** 섹션이 이 값을 read-only로 표시합니다.
+
+이로써 `getOperationalEnvironment() === 'toss'`로 게이트된 코드 경로를 토스 앱 없이 검증할 수 있습니다:
+
+1. Environment 탭에서 **환경(Environment)** 을 `toss`로 전환 (기본은 `sandbox` — toss 진입은 명시적 opt-in).
+2. 앱의 toss-gated 가드(예: sdk-example `useDisableIosSwipeGestureInToss`)가 실행되며 `setIosSwipeGestureEnabled({ isEnabled: false })`를 호출.
+3. Navigation 섹션의 `iOS swipe-back` 값이 `미호출` → `disabled`로 실시간 전환되는 것을 패널에서 확인. `AIT.getMockState()`로도 `navigation.iosSwipeGestureEnabled`를 대조할 수 있습니다.
 
 ### Mock state preset library (Presets 탭)
 
@@ -427,7 +437,9 @@ mount();          // 깨끗한 상태로 다시 마운트. 중복 <style>·liste
 - **CSS viewport** (portrait `width × height`)
 - **DPR** (devicePixelRatio: 2, 3, 3.5 등)
 - **Notch** 종류 (`none` / `notch` / `dynamic-island` / `punch-hole-center`)
-- **OS-level safe area insets** (status bar / 홈 인디케이터 / 노치 회전에 따른 좌우 인셋)
+- **notch inset** (OS 노치/status bar — landscape 좌우 인셋 + 시각 노치용, 기기별)
+- **nav bar height** (토스 호스트 nav bar — `partner` portrait의 `SafeAreaInsets.get().top`, 실측 54px)
+- **home-indicator inset** (`safeAreaBottom`, 기기별)
 
 ### Orientation
 
@@ -443,15 +455,17 @@ Landscape로 전환하면:
 
 **Show frame** 토글을 켜면:
 - 디바이스 베젤을 모사하는 border-radius + box-shadow
-- Notch / Dynamic Island / punch-hole 오버레이 (body 상단에 절대 배치)
+- Notch / Dynamic Island / punch-hole 오버레이 — WebView(body) **밖** 위쪽 status bar 영역에 그립니다. 실기기에서 OS 노치는 WebView 뷰포트 바깥이라 `env(safe-area-inset-top)`이 0이기 때문입니다.
 - 홈 인디케이터 pill (iPhone 등 `safeAreaBottom > 0` 디바이스에 한정, body 하단에 배치)
 - 앱 이름은 `aitState.brand.displayName`을 사용 (Environment 탭에서 변경 가능, 자동 갱신)
 - 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출 — 실제 SDK 이벤트 플러밍을 패널에서 직접 검증할 수 있습니다.
 
 **Show Apps in Toss nav bar** 토글(기본 on)을 켜면:
-- 토스 호스트의 상단 nav bar(뒤로가기 / 앱 아이콘·이름 / ⋯ / ×)를 48px 높이로 오버레이
-- status bar 바로 아래, safe area top 이후에 배치
-- **중요**: 이 48px는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (SDK 동작). 토스 측 예제들도 `insets.top + 48` 패턴으로 보정합니다.
+- 토스 호스트의 상단 nav bar를 54px 높이로 오버레이. `Nav bar type`에 따라 모양이 다릅니다:
+  - `partner` (비게임 기본): 흰 배경 + 뒤로가기 / 앱 아이콘·이름 / ⋯ / ×. 콘텐츠를 nav bar 높이만큼 아래로 밀어냅니다.
+  - `game`: 투명 배경 + ⋯ / × 만. 게임 캔버스 위에 떠 있어 콘텐츠를 밀어내지 않습니다 — 인게임 화면은 full-screen이 [출시 요건](https://developers-apps-in-toss.toss.im/checklist/app-game.html).
+- nav bar는 WebView(body) 좌표계의 **최상단(top 0)**에 앉습니다. 실기기에서 OS 노치는 WebView 밖(위쪽 status bar)이라 `env(safe-area-inset-top)`이 0이고, 콘텐츠 영역은 nav bar 바로 아래(= `SafeAreaInsets.get().top`)에서 시작하기 때문입니다 — 시뮬레이터는 이 스택(노치 status bar → nav bar → 콘텐츠)을 그대로 재현합니다.
+- `partner` WebView에서는 **이 nav bar 높이가 곧 `SafeAreaInsets.get().top`** 입니다. iPhone 15 Pro on-device relay 실측([devtools#190](https://github.com/apps-in-toss-community/devtools/issues/190))에서 `env(safe-area-inset-top)`은 0(노치는 WebView 뷰포트 밖)이고 `SafeAreaInsets.get().top`은 54px이었으며, 그 54px가 호스트 nav bar 높이였습니다. 즉 `partner` 앱은 콘텐츠 상단을 `insets.top`만큼만 보정하면 됩니다(별도 `+ navBarHeight` 불필요). `game`은 콘텐츠를 밀어내지 않으므로 top inset이 0입니다. 이 54px는 iOS partner에서 실측됐고 Android nav bar 높이는 같은 값을 잠정 적용합니다. SDK의 `webViewProps.type`은 `partner` / `game` 외에 `external`도 있습니다 (현재 패널은 앞 둘만 시뮬레이션).
 
 ### 콘솔에서 직접 조작
 
@@ -482,8 +496,8 @@ __ait.patch('viewport', { preset: 'none' });
 
 Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 - **CSS / physical**: `402×874@3x | 1206×2622 portrait (auto)`
-- **Safe area**: `T59 R0 B34 L0`
-- **AIT nav bar**: `48px (excl. SafeArea)`
+- **Safe area**: `T54 R0 B34 L0` (partner nav bar 기준 — top이 곧 nav bar 높이)
+- **AIT nav bar**: `54px → SafeArea top · partner`
 
 ### 영속성 + 기술 세부
 
@@ -492,12 +506,13 @@ Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 - 뷰포트는 `document.body`에 `max-width`/`max-height` + `margin:auto`로 적용됩니다. iframe을 쓰지 않으므로 앱 JS/CSS가 그대로 실행되고, 콘솔·DevTools도 정상 접근 가능합니다.
 - body에 `isolation: isolate`를 적용해 노치/nav bar/홈 인디케이터의 z-index가 stacking context 밖으로 새지 않습니다 (DevTools 패널이 그 위에 떠 있음).
 - 패널을 동적으로 제거하고 싶다면 `disposeViewport()`를 export로 제공합니다.
-- User-Agent spoofing / touch event emulation / network throttling은 하지 않습니다 (Chrome DevTools가 이미 제공).
+- **기기 프리셋이 active일 때(= `none`/`custom` 아님) 브라우저 특성을 그 기기와 정합시킵니다**: `navigator.userAgent`(토스 WebView 형태 — `… AppsInToss TossApp/<appVersion>`), `navigator.platform`, `window.devicePixelRatio`(preset DPR), `screen.width`/`height`(CSS px × DPR), 그리고 `getPlatformOS()`가 읽는 `platform`(Apple→`ios` / Galaxy→`android`)을 모두 그 기기 값으로 override합니다. 특정 기기 frame을 제공하는 이상 UA/DPR만 호스트 데스크톱 값으로 남으면 비일관적이기 때문입니다. `none`/`custom`에선 override를 걸지 않아 일반 dev의 호스트 환경을 건드리지 않습니다.
 
 ### Known limitations
 
 - **Body가 스크롤 컨테이너가 됩니다** — 뷰포트 활성화 중에는 스크롤이 `window`가 아닌 `document.body`에서 발생합니다. `window.addEventListener('scroll', ...)`나 root에 붙은 `IntersectionObserver`는 실 디바이스와 다른 동작을 보일 수 있습니다. 미니앱 코드에서 스크롤을 다룬다면 `body`도 함께 검증하세요.
 - **추정 safe area** — Galaxy S26 시리즈는 출시 spec(phone-simulator.com 측정치) 기반이지만 safe area는 S25 값을 잠정 사용합니다 — 픽셀 단위 정확도가 필요한 QA는 실 기기 확인을 권장합니다.
+- **기기 특성 override는 JS 읽기값만 바꿉니다** — 프리셋이 거는 `navigator.userAgent`·`devicePixelRatio`·`screen.*` override는 page-JS가 읽는 값만 그 기기로 보이게 합니다. 실 CSS media query(`@media (resolution)`, `@media (pointer)`), 실제 터치 이벤트, 엔진 레벨 레이아웃 단위는 호스트 브라우저 값이 그대로입니다 (프리셋 frame이 시각적 width/height는 이미 강제하므로 레이아웃은 근사됩니다). 픽셀·입력 단위까지 완전한 emulation이 필요하면 Chrome DevTools device-mode(또는 CDP)를 쓰세요.
 
 ## `window.__ait` 콘솔 API
 

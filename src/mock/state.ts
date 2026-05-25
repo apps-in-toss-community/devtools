@@ -72,6 +72,13 @@ export interface AitDevtoolsState {
   // 네트워크
   networkStatus: NetworkStatus;
 
+  // 네비게이션 동작 — real은 native bridge로 발화하는 no-op API들의 마지막 호출값을
+  // 관측 가능한 state로 mirror (real ground-truth: devtools#171 on-device relay).
+  // null = 앱이 아직 호출 안 함(real 기본 동작 = iOS 엣지 스와이프 뒤로가기 enabled).
+  navigation: {
+    iosSwipeGestureEnabled: boolean | null;
+  };
+
   // 권한
   permissions: Record<PermissionName, PermissionStatus>;
 
@@ -170,6 +177,11 @@ const DEFAULT_STATE: AitDevtoolsState = {
 
   networkStatus: 'WIFI',
 
+  // null = 앱이 setIosSwipeGestureEnabled를 아직 호출 안 함.
+  navigation: {
+    iosSwipeGestureEnabled: null,
+  },
+
   permissions: {
     clipboard: 'allowed',
     contacts: 'allowed',
@@ -192,7 +204,12 @@ const DEFAULT_STATE: AitDevtoolsState = {
     accessLocation: 'FINE',
   },
 
-  safeAreaInsets: { top: 47, bottom: 34, left: 0, right: 0 },
+  // iPhone 15 Pro relay 실측값(devtools#190)과 정합: partner WebView portrait에서
+  // SafeAreaInsets.get()이 반환한 top=54(토스 nav bar 높이), bottom=34(home indicator).
+  // env(safe-area-inset-top)는 0이었으므로 OS 노치는 이 top에 들어가지 않는다.
+  // preset이 'none'/'custom'이면 syncSafeAreaFromViewport가 건드리지 않으므로 이 값이
+  // SafeAreaInsets.get()의 out-of-box 계약값으로 남는다. preset을 고르면 그 값으로 sync됨.
+  safeAreaInsets: { top: 54, bottom: 34, left: 0, right: 0 },
 
   contacts: [
     { name: '홍길동', phoneNumber: '010-1234-5678' },

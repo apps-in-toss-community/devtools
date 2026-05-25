@@ -51,6 +51,13 @@ export const ko = {
   'env.section.safeArea': 'Safe Area Insets',
   'env.row.safeArea.top': 'Top',
   'env.row.safeArea.bottom': 'Bottom',
+  'env.section.navigation': 'Navigation',
+  'env.row.iosSwipeGesture': 'iOS swipe-back',
+  'env.value.iosSwipeGesture.unset': '미호출',
+  'env.value.iosSwipeGesture.enabled': 'enabled',
+  'env.value.iosSwipeGesture.disabled': 'disabled',
+  'env.hint.iosSwipeGesture':
+    'setIosSwipeGestureEnabled의 마지막 호출값. Environment를 toss로 바꾸면 toss-gated 가드가 이 값을 토글합니다.',
 
   // Environment > Telemetry section
   'env.telemetry.section': 'Telemetry',
@@ -129,7 +136,7 @@ export const ko = {
   'viewport.status.cssPhysical': 'CSS / physical',
   'viewport.status.safeArea': 'Safe area',
   'viewport.status.aitNavBar': 'AIT nav bar',
-  'viewport.status.aitNavBarValue': '{height}px (excl. SafeArea) · {type}',
+  'viewport.status.aitNavBarValue': '{height}px → SafeArea top · {type}',
   'viewport.orientation.autoSuffix': '{orient} (auto)',
 
   // IAP tab

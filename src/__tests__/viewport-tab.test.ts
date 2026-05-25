@@ -28,7 +28,8 @@ describe('renderViewportTab', () => {
     expect(text).toContain('402×874@3x');
     expect(text).toContain('1206×2622');
     expect(text).toContain('Safe area');
-    expect(text).toContain('T59');
+    // partner WebView portrait: top = nav bar 54 (실측 모델), 노치 59 아님.
+    expect(text).toContain('T54');
     expect(text).toContain('AIT nav bar');
   });
 
