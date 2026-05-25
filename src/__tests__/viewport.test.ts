@@ -310,10 +310,31 @@ describe('applyViewport (DOM)', () => {
     expect(document.querySelector('.ait-navbar.ait-navbar-game')).not.toBeNull();
   });
 
-  it('nav bar는 preset.notchInset만큼 아래로 이동한다 (시각상 노치 아래)', () => {
+  it('nav bar는 WebView(body) 최상단(top 0)에 앉고 인라인 오프셋을 주지 않는다', () => {
+    // 실기기에서 OS notch는 WebView 밖(env top=0)이라 nav bar 바닥이 콘텐츠 top.
+    // top 0은 정적 CSS(.ait-navbar)가 담당하므로 인라인 style.top은 비어 있어야 한다.
     applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true }));
     const navBar = document.getElementById('__ait-viewport-navbar') as HTMLElement | null;
-    expect(navBar?.style.top).toBe('59px');
+    expect(navBar?.style.top).toBe('');
+  });
+
+  it('partner nav bar는 body를 navBarHeight만큼 밀어낸다 (콘텐츠가 nav bar 아래서 시작)', () => {
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, aitNavBarType: 'partner' }));
+    const style = document.getElementById('__ait-viewport-style');
+    // iphone-17 navBarHeight = 54 (partner).
+    expect(style?.textContent).toContain('padding-top: 54px');
+  });
+
+  it('game nav bar는 콘텐츠를 밀지 않는다 (투명 오버레이, padding-top 0)', () => {
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: true, aitNavBarType: 'game' }));
+    const style = document.getElementById('__ait-viewport-style');
+    expect(style?.textContent).toContain('padding-top: 0px');
+  });
+
+  it('nav bar 미표시면 콘텐츠를 밀지 않는다 (padding-top 0)', () => {
+    applyViewport(makeState({ preset: 'iphone-17', aitNavBar: false }));
+    const style = document.getElementById('__ait-viewport-style');
+    expect(style?.textContent).toContain('padding-top: 0px');
   });
 
   it('nav bar는 brand.displayName을 사용한다 (textContent로 안전하게, XSS 방지)', () => {

@@ -445,14 +445,16 @@ When switching to landscape:
 
 When **Show frame** is toggled on:
 - Border-radius + box-shadow to mimic the device bezel
-- Notch / Dynamic Island / punch-hole overlay (absolutely positioned at the top of body)
+- Notch / Dynamic Island / punch-hole overlay — drawn in the status-bar area *above* the WebView (body), because on a real device the OS notch sits outside the WebView viewport (that's why `env(safe-area-inset-top)` is 0).
 - Home indicator pill (only on devices with `safeAreaBottom > 0`, positioned at the bottom of body)
 - App name uses `aitState.brand.displayName` (editable in the Environment tab, auto-updates)
 - The back button triggers `__ait:backEvent` and the X button calls `closeView()` — you can verify actual SDK event plumbing directly from the panel
 
 When **Show Apps in Toss nav bar** is toggled on (default on):
-- A 54px nav bar overlay simulating the Toss host's top nav bar (back / app icon+name / ⋯ / ×)
-- Positioned below the OS status bar (notch), offset by the preset's notch inset
+- A 54px nav bar overlay simulating the Toss host's top nav bar. Its shape depends on `Nav bar type`:
+  - `partner` (default for non-games): white background + back / app icon+name / ⋯ / ×. Pushes content down by the nav bar height.
+  - `game`: transparent background, ⋯ / × only. Floats over the game canvas without pushing content — an in-game screen is full-screen per the [launch checklist](https://developers-apps-in-toss.toss.im/checklist/app-game.html).
+- The nav bar sits at the **top (0)** of the WebView (body) coordinate space. On a real device the OS notch is outside the WebView (in the status bar above), so `env(safe-area-inset-top)` is 0 and content starts right below the nav bar (= `SafeAreaInsets.get().top`) — the simulator reproduces this stack (notch status bar → nav bar → content).
 - For a `partner` WebView this nav bar height **is** `SafeAreaInsets.get().top`. Relay measurement of an iPhone 15 Pro (sandbox, portrait) showed `env(safe-area-inset-top)` = 0 (the OS notch stays outside the WebView viewport) and `SafeAreaInsets.get().top` = 54 px — i.e. the SDK top inset reports the host nav bar, not the notch. So a `partner` app lays out using `insets.top` alone. A `game` WebView is a transparent overlay that does not push content (top 0). Measured on iOS `partner`; Android values are provisional and `external` is not simulated.
 
 ### Console manipulation

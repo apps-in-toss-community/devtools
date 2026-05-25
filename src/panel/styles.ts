@@ -14,6 +14,11 @@ export const VIEWPORT_FRAME_BEZEL_COLOR_INNER = '#1a1a2e';
 export const VIEWPORT_FRAME_BEZEL_COLOR_OUTER = '#3a3a5a';
 export const VIEWPORT_BG_COLOR = '#0a0a14';
 export const VIEWPORT_BODY_MARGIN = 24;
+// Status bar strip drawn above the WebView (body) when the frame is on. The OS
+// notch / Dynamic Island lives here, outside the WebView — matching the real
+// device where env(safe-area-inset-top) is 0 and the SDK top inset reports the
+// nav bar, not the notch. Tall enough to seat a Dynamic Island (37px) with margin.
+export const VIEWPORT_STATUS_BAR_HEIGHT = 50;
 
 export const PANEL_STYLES = /* css */ `
   .ait-panel-toggle {
@@ -440,28 +445,39 @@ export const PANEL_STYLES = /* css */ `
   }
   html.ait-viewport-framed body {
     border-radius: ${VIEWPORT_FRAME_BORDER_RADIUS}px;
+    /* Reserve the status bar strip above the WebView so the notch sits outside
+       the body (OS notch is outside the WebView; env top=0). */
+    margin-top: ${VIEWPORT_BODY_MARGIN + VIEWPORT_STATUS_BAR_HEIGHT}px;
     box-shadow:
       0 0 0 ${VIEWPORT_FRAME_BEZEL_INNER}px ${VIEWPORT_FRAME_BEZEL_COLOR_INNER},
       0 0 0 ${VIEWPORT_FRAME_BEZEL_OUTER}px ${VIEWPORT_FRAME_BEZEL_COLOR_OUTER},
       0 24px 48px rgba(0,0,0,0.5);
   }
 
-  /* Notch / Dynamic Island / punch-hole overlay (top of body) */
+  /* Notch / Dynamic Island / punch-hole — drawn in the status bar strip ABOVE
+     the WebView (negative top puts it in the reserved margin), so it never
+     overlaps the nav bar (which sits at the body's top edge). */
   .ait-notch {
     position: absolute;
-    top: 0;
     left: 50%;
     transform: translateX(-50%);
     background: #000;
     z-index: 10;
     pointer-events: none;
   }
-  .ait-notch-dynamic-island { top: 11px; width: 126px; height: 37px; border-radius: 20px; }
+  .ait-notch-dynamic-island {
+    top: -${VIEWPORT_STATUS_BAR_HEIGHT - 6}px;
+    width: 126px; height: 37px; border-radius: 20px;
+  }
   .ait-notch-pill {
+    top: -${VIEWPORT_STATUS_BAR_HEIGHT}px;
     width: 160px; height: 30px;
     border-bottom-left-radius: 20px; border-bottom-right-radius: 20px;
   }
-  .ait-notch-punch-hole { top: 10px; width: 12px; height: 12px; border-radius: 50%; }
+  .ait-notch-punch-hole {
+    top: -${VIEWPORT_STATUS_BAR_HEIGHT - 10}px;
+    width: 12px; height: 12px; border-radius: 50%;
+  }
 
   /* Home indicator pill (bottom of body, iPhones with safe-area bottom > 0) */
   .ait-home-indicator {
@@ -477,9 +493,13 @@ export const PANEL_STYLES = /* css */ `
     pointer-events: none;
   }
 
-  /* Apps in Toss host nav bar — sits directly below the OS status bar */
+  /* Apps in Toss host nav bar — sits at the top of the WebView (body). The OS
+     notch lives outside the WebView (env top=0), so the nav bar bottom is the
+     content's top edge; applyViewport gives body padding-top = nav bar height
+     so content starts exactly below it. */
   .ait-navbar {
     position: absolute;
+    top: 0;
     left: 0;
     right: 0;
     height: 54px; /* AIT_NAV_BAR_HEIGHT_PARTNER (relay 실측) */

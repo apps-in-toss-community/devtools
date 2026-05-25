@@ -455,7 +455,7 @@ Landscape로 전환하면:
 
 **Show frame** 토글을 켜면:
 - 디바이스 베젤을 모사하는 border-radius + box-shadow
-- Notch / Dynamic Island / punch-hole 오버레이 (body 상단에 절대 배치)
+- Notch / Dynamic Island / punch-hole 오버레이 — WebView(body) **밖** 위쪽 status bar 영역에 그립니다. 실기기에서 OS 노치는 WebView 뷰포트 바깥이라 `env(safe-area-inset-top)`이 0이기 때문입니다.
 - 홈 인디케이터 pill (iPhone 등 `safeAreaBottom > 0` 디바이스에 한정, body 하단에 배치)
 - 앱 이름은 `aitState.brand.displayName`을 사용 (Environment 탭에서 변경 가능, 자동 갱신)
 - 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출 — 실제 SDK 이벤트 플러밍을 패널에서 직접 검증할 수 있습니다.
@@ -464,7 +464,7 @@ Landscape로 전환하면:
 - 토스 호스트의 상단 nav bar를 54px 높이로 오버레이. `Nav bar type`에 따라 모양이 다릅니다:
   - `partner` (비게임 기본): 흰 배경 + 뒤로가기 / 앱 아이콘·이름 / ⋯ / ×. 콘텐츠를 nav bar 높이만큼 아래로 밀어냅니다.
   - `game`: 투명 배경 + ⋯ / × 만. 게임 캔버스 위에 떠 있어 콘텐츠를 밀어내지 않습니다 — 인게임 화면은 full-screen이 [출시 요건](https://developers-apps-in-toss.toss.im/checklist/app-game.html).
-- 시뮬레이터 프레임에서는 노치 오버레이 바로 아래에 배치
+- nav bar는 WebView(body) 좌표계의 **최상단(top 0)**에 앉습니다. 실기기에서 OS 노치는 WebView 밖(위쪽 status bar)이라 `env(safe-area-inset-top)`이 0이고, 콘텐츠 영역은 nav bar 바로 아래(= `SafeAreaInsets.get().top`)에서 시작하기 때문입니다 — 시뮬레이터는 이 스택(노치 status bar → nav bar → 콘텐츠)을 그대로 재현합니다.
 - `partner` WebView에서는 **이 nav bar 높이가 곧 `SafeAreaInsets.get().top`** 입니다. iPhone 15 Pro on-device relay 실측([devtools#190](https://github.com/apps-in-toss-community/devtools/issues/190))에서 `env(safe-area-inset-top)`은 0(노치는 WebView 뷰포트 밖)이고 `SafeAreaInsets.get().top`은 54px이었으며, 그 54px가 호스트 nav bar 높이였습니다. 즉 `partner` 앱은 콘텐츠 상단을 `insets.top`만큼만 보정하면 됩니다(별도 `+ navBarHeight` 불필요). `game`은 콘텐츠를 밀어내지 않으므로 top inset이 0입니다. 이 54px는 iOS partner에서 실측됐고 Android nav bar 높이는 같은 값을 잠정 적용합니다. SDK의 `webViewProps.type`은 `partner` / `game` 외에 `external`도 있습니다 (현재 패널은 앞 둘만 시뮬레이션).
 
 ### 콘솔에서 직접 조작

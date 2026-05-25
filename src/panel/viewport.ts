@@ -3,7 +3,8 @@
  *
  * Panel에서 선택한 디바이스 프리셋을 `document.body`에 적용한다. 정적 CSS는
  * `panel/styles.ts`에 정의되어 있고 (Panel mount 시 head에 주입), 여기서는 프리셋별
- * 동적 값(width/height, navbar top offset)만 별도 `<style>` 엘리먼트로 관리한다.
+ * 동적 값(width/height, 콘텐츠 push용 body padding-top)만 별도 `<style>` 엘리먼트로
+ * 관리한다.
  */
 
 import { closeView } from '../mock/navigation/index.js';
@@ -391,22 +392,23 @@ function removeNavBarElement(): void {
  *   우측 `⋯` + 구분선 + `×`.
  * - `game`: 투명 배경, 게임 캔버스를 가리지 않도록 우측 `⋯` + 구분선 + `×`만.
  *
- * 시뮬레이터 프레임에서는 노치 오버레이가 body 상단에 장식으로 그려지므로, nav bar는 그
- * 아래(`preset.notchInset`만큼 내려간 위치)에 둬서 시각적으로 노치 → nav bar 순서를 맞춘다.
- * 이 시각 오프셋은 SDK가 반환하는 inset 값(`navBarHeight`)과 별개다 — 후자는
- * `computeSafeAreaInsets`가 따로 계산한다.
+ * nav bar는 WebView(body) 좌표계의 최상단(top 0)에 앉는다 — 실기기에서 OS notch는
+ * WebView 밖(status bar)이라 `env(safe-area-inset-top)`이 0이고, WebView 콘텐츠 영역은
+ * nav bar 바로 아래(= SDK `SafeAreaInsets.get().top` = `navBarHeight`)에서 시작한다.
+ * 콘텐츠를 그만큼 밀어내는 건 `applyViewport`의 body `padding-top`이 담당하므로, nav bar
+ * 바닥과 콘텐츠 시작이 정확히 맞물린다. 시각 notch 오버레이는 body 밖 위쪽(status bar
+ * 영역)에 따로 그린다(`renderNotchOverlay`) — body 안이 아니다.
  *
  * 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출한다.
  * 실제 SDK 이벤트 플러밍을 한 곳에서 검증할 수 있다.
  */
-function renderNavBar(preset: ViewportPreset, displayName: string, type: AitNavBarType): void {
+function renderNavBar(displayName: string, type: AitNavBarType): void {
   removeNavBarElement();
   const el = h('div', {
     id: NAV_BAR_ELEMENT_ID,
     className: `ait-navbar ait-navbar-${type}`,
     'aria-hidden': 'true',
   });
-  el.style.top = `${preset.notchInset}px`;
 
   const moreBtn = h('button', {
     className: 'ait-navbar-btn',
@@ -565,6 +567,20 @@ export function applyViewport(state: ViewportState): void {
   // 기기 preset이면 UA/DPR/screen/platform을 그 기기와 정합 (custom은 치수만 강제).
   syncDeviceEmulation(preset, landscape);
 
+  // partner nav bar는 실기기 토스 호스트처럼 콘텐츠를 밀어낸다 — body padding-top으로
+  // 재현한다. game은 투명 오버레이라 안 밀고(0), nav bar 미표시·landscape도 0. 미는 양은
+  // SDK `SafeAreaInsets.get().top`과 같은 값이라 computeSafeAreaInsets의 top을 단일 진실로
+  // 쓴다 (오버레이로만 얹으면 nav bar가 콘텐츠 첫 픽셀을 덮어 실기기와 어긋난다).
+  const contentTop = preset
+    ? computeSafeAreaInsets(
+        preset,
+        landscape,
+        state.landscapeSide,
+        state.aitNavBar,
+        state.aitNavBarType,
+      ).top
+    : 0;
+
   // Dynamic per-preset values only — static rules live in styles.ts.
   style.textContent = /* css */ `
     html.ait-viewport-active body {
@@ -572,6 +588,7 @@ export function applyViewport(state: ViewportState): void {
       max-width: ${size.width}px;
       min-height: ${size.height}px;
       max-height: ${size.height}px;
+      padding-top: ${contentTop}px;
     }
   `;
 
@@ -584,7 +601,7 @@ export function applyViewport(state: ViewportState): void {
   else removeHomeIndicator();
 
   if (preset && state.aitNavBar && !landscape) {
-    renderNavBar(preset, aitState.state.brand.displayName, state.aitNavBarType);
+    renderNavBar(aitState.state.brand.displayName, state.aitNavBarType);
   } else {
     removeNavBarElement();
   }
