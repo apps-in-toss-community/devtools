@@ -116,13 +116,14 @@ iPhone 15 Pro 실 web-relevant 스펙(참고): CSS viewport **393×852**(portrai
 
 | API | mock 동작 | real 동작 | 분류 | 관측? | gap |
 |---|---|---|---|---|---|
-| `GoogleAdMob.loadAppsInTossAdMob` | 200ms 후 `forceNoFill`이면 error, 아니면 `isLoaded=true` + `loaded` 이벤트 | 실 AdMob 로드 | 🟢 faithful | ✓ | 패널 `forceNoFill` 토글로 no-fill 시험. |
-| `GoogleAdMob.showAppsInTossAdMob` | `isLoaded` 체크 후 requested→show→impression→reward→dismissed 시퀀스 emit | 실 광고 노출 + 리워드 | 🟢 faithful | ✓ | 이벤트 타임라인 재현. reward는 `coins/10` 고정. |
-| `GoogleAdMob.isAppsInTossAdMobLoaded` | `ads.isLoaded` 반환 | 실 로드 상태 | 🟢 faithful | ✓ | 상태 기반. |
-| `TossAds.initialize` | log | 실 SDK 초기화 | 🟡 partial | ✗ | no-op이나 init은 부수효과 적어 실용 충분. |
-| `TossAds.attach` / `attachBanner` | DOM에 placeholder div 삽입 | 실 광고 렌더 | 🟡 partial | ✗ | 시각적 placeholder. 실 광고 콘텐츠 아님. `attachBanner`는 `{destroy}` 반환. |
-| `TossAds.destroy` / `destroyAll` | no-op | 실 광고 해제 | 🟡 partial | ✗ | placeholder는 제거 안 함. |
-| `loadFullScreenAd` / `showFullScreenAd` | AdMob과 동일 패턴(`isLoaded` 공유) | 실 전면 광고 | 🟢 faithful | ✓ | `ads.isLoaded` 공유 — load 없이 show하면 error. |
+| `GoogleAdMob.loadAppsInTossAdMob` | 200ms 후 `forceNoFill`이면 error, 아니면 `isLoaded=true` + `loaded` 이벤트 | 실 AdMob 로드 | 🟢 faithful | ✓ sdkCallLog | 패널 `forceNoFill` 토글로 no-fill 시험. |
+| `GoogleAdMob.showAppsInTossAdMob` | `isLoaded` 체크 후 requested→show→impression→reward→dismissed 시퀀스 emit | 실 광고 노출 + 리워드 | 🟢 faithful | ✓ sdkCallLog | 이벤트 타임라인 재현. reward는 `state.ads.rewardUnitType`/`rewardAmount`로 파라미터화 (#196). |
+| `GoogleAdMob.isAppsInTossAdMobLoaded` | `ads.isLoaded` 반환 | 실 로드 상태 | 🟢 faithful | ✓ sdkCallLog | 상태 기반. |
+| `TossAds.initialize` | `onInitialized` 발화. `forceNoFill=true`이면 `onInitializationFailed` 발화 (#196) | 실 SDK 초기화 | 🟢 faithful | ✓ sdkCallLog | 콜백 발화 완성. 패널 Load 버튼이 initialize를 통해 `isLoaded=true` + `loaded` 이벤트 기록. |
+| `TossAds.attach` | DOM에 placeholder div 삽입 | 실 광고 렌더 | 🟡 partial | ✓ sdkCallLog | 시각적 placeholder. 실 광고 콘텐츠 아님. |
+| `TossAds.attachBanner` | DOM에 placeholder 삽입 + `BannerSlotCallbacks` 발화(onAdRendered/onAdImpression 기본; forceNoFill이면 onNoFill/onAdFailedToRender). AttachBannerOptions(theme/tone/variant) 스타일 반영. 반환 `{destroy}`가 실제 `el.remove()` (#196) | 실 광고 렌더 + 콜백 | 🟢 faithful | ✓ sdkCallLog | 패널 TossAds 배너 섹션에서 Render/No-fill/Click/Destroy 버튼으로 결정론적 발화. |
+| `TossAds.destroy` / `destroyAll` | slot 레지스트리(`Map<string, HTMLElement>`)로 placeholder 추적 → 실제 `el.remove()` 수행 (#196) | 실 광고 해제 | 🟢 faithful | ✓ sdkCallLog | 누수 수정. `destroyAll`은 등록된 모든 슬롯 제거. |
+| `loadFullScreenAd` / `showFullScreenAd` | AdMob과 동일 패턴(`isLoaded` 공유) | 실 전면 광고 | 🟢 faithful | ✓ sdkCallLog | `ads.isLoaded` 공유 — load 없이 show하면 error. |
 
 ---
 
