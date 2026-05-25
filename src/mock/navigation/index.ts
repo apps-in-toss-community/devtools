@@ -3,6 +3,7 @@
  */
 
 import { getNetworkStatusByMode } from '../device/index.js';
+import { observe } from '../observe.js';
 import { aitState } from '../state.js';
 import type { NetworkStatus } from '../types.js';
 
@@ -53,24 +54,30 @@ export async function setDeviceOrientation(options: {
   );
 }
 
-export async function setScreenAwakeMode(options: {
-  enabled: boolean;
-}): Promise<{ enabled: boolean }> {
-  console.log('[@ait-co/devtools] setScreenAwakeMode:', options.enabled);
-  return { enabled: options.enabled };
-}
+export const setScreenAwakeMode = observe(
+  'setScreenAwakeMode',
+  'inert',
+  async (options: { enabled: boolean }): Promise<{ enabled: boolean }> => {
+    console.log('[@ait-co/devtools] setScreenAwakeMode:', options.enabled);
+    return { enabled: options.enabled };
+  },
+);
 
-export async function setSecureScreen(options: {
-  enabled: boolean;
-}): Promise<{ enabled: boolean }> {
-  console.log('[@ait-co/devtools] setSecureScreen:', options.enabled);
-  return { enabled: options.enabled };
-}
+export const setSecureScreen = observe(
+  'setSecureScreen',
+  'inert',
+  async (options: { enabled: boolean }): Promise<{ enabled: boolean }> => {
+    console.log('[@ait-co/devtools] setSecureScreen:', options.enabled);
+    return { enabled: options.enabled };
+  },
+);
 
-export async function requestReview(): Promise<void> {
+const _requestReviewImpl = observe('requestReview', 'inert', async (): Promise<void> => {
   console.log('[@ait-co/devtools] requestReview called');
-}
-(requestReview as unknown as { isSupported: () => boolean }).isSupported = () => true;
+});
+export const requestReview: typeof _requestReviewImpl & { isSupported: () => boolean } =
+  _requestReviewImpl as typeof _requestReviewImpl & { isSupported: () => boolean };
+requestReview.isSupported = () => true;
 
 // --- 환경 정보 ---
 

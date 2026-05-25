@@ -3,6 +3,7 @@
  * DevTools Panel과 mock 구현체가 이 상태를 공유한다.
  */
 
+import type { AitSdkCall } from '../mcp/ait-source.js';
 import type {
   AnalyticsLogEntry,
   DeviceModes,
@@ -21,6 +22,7 @@ import type {
   ViewportState,
 } from './types.js';
 
+export type { AitSdkCall, AitSdkCallFidelity } from '../mcp/ait-source.js';
 export type {
   AitNavBarType,
   AnalyticsLogEntry,
@@ -50,6 +52,9 @@ export type {
 } from './types.js';
 
 type Listener = () => void;
+
+/** SDK 호출 로그 ring buffer 상한 */
+const SDK_CALL_LOG_MAX = 200;
 
 export interface AitDevtoolsState {
   // 환경
@@ -145,6 +150,9 @@ export interface AitDevtoolsState {
 
   // 분석 로그
   analyticsLog: AnalyticsLogEntry[];
+
+  // SDK 호출 로그 (ring buffer, 상한 SDK_CALL_LOG_MAX)
+  sdkCallLog: AitSdkCall[];
 
   // 디바이스 API 모드
   deviceModes: DeviceModes;
@@ -261,6 +269,8 @@ const DEFAULT_STATE: AitDevtoolsState = {
   },
 
   analyticsLog: [],
+
+  sdkCallLog: [],
 
   deviceModes: {
     camera: 'mock',
@@ -381,6 +391,17 @@ export class AitStateManager {
       ...this._state,
       analyticsLog: [...this._state.analyticsLog, { ...entry, timestamp: Date.now() }],
     };
+    this._notify();
+  }
+
+  /**
+   * SDK 호출 로그 추가 (ring buffer, 상한 SDK_CALL_LOG_MAX).
+   * `observe()`가 호출하고, proxy의 KNOWN_UNIMPLEMENTED 경로도 직접 호출한다.
+   */
+  logSdkCall(entry: AitSdkCall) {
+    const log = this._state.sdkCallLog;
+    const next = log.length >= SDK_CALL_LOG_MAX ? log.slice(1 - SDK_CALL_LOG_MAX) : log;
+    this._state = { ...this._state, sdkCallLog: [...next, entry] };
     this._notify();
   }
 

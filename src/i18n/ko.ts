@@ -162,6 +162,9 @@ export const ko = {
   // Analytics tab
   'analytics.section.log': 'Analytics Log ({count})',
   'analytics.btn.clear': 'Clear',
+  'analytics.calls.section': 'SDK Calls ({count})',
+  'analytics.calls.btn.clear': 'Clear',
+  'analytics.calls.empty': '(아직 SDK 호출 없음)',
 
   // Storage tab
   'storage.section.title': 'Storage ({count} items)',

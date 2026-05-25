@@ -14,6 +14,14 @@
  * no running dev server are needed in tests.
  */
 
+/**
+ * Mock fidelity grade of the SDK call.
+ * - `faithful` — mock faithfully reproduces the real SDK contract (🟢).
+ * - `partial`  — mock partially matches; edge cases may differ from real (🟡).
+ * - `inert`    — mock accepts the call but produces no observable effect (🔴).
+ */
+export type AitSdkCallFidelity = 'faithful' | 'partial' | 'inert';
+
 /** One entry of the SDK-call trace returned by `AIT.getSdkCallHistory`. */
 export interface AitSdkCall {
   /** SDK method name, e.g. `getOperationalEnvironment`, `saveBase64Data`. */
@@ -28,6 +36,8 @@ export interface AitSdkCall {
   result?: unknown;
   /** Error message when `status === 'rejected'`. */
   error?: string;
+  /** Mock fidelity grade — how closely this mock reproduces the real SDK behaviour. */
+  fidelity: AitSdkCallFidelity;
 }
 
 /** Result of `AIT.getSdkCallHistory`. */
