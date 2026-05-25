@@ -119,6 +119,12 @@ export const en: Record<StringKey, string> = {
   'device.prompt.send': 'Send',
   'device.prompt.cancel': 'Cancel',
 
+  // Device tab — Haptic section
+  'device.section.haptic': 'Haptic',
+  'device.haptic.lastCall': 'Last haptic',
+  'device.haptic.noneYet': '(none yet)',
+  'device.haptic.trigger': 'Trigger haptic',
+
   // Viewport tab
   'viewport.section.device': 'Device',
   'viewport.row.preset': 'Preset',
