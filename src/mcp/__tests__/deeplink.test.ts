@@ -76,4 +76,44 @@ describe('buildDeepLinkAttachUrl', () => {
     const scheme = 'intoss-private://m?_deploymentId=x';
     expect(() => buildDeepLinkAttachUrl(scheme, 'not a url')).toThrow(/valid URL/);
   });
+
+  // ---------------------------------------------------------------------------
+  // TOTP `at=` parameter (third argument)
+  // ---------------------------------------------------------------------------
+
+  it('appends `at=<totpCode>` when totpCode is provided', () => {
+    const scheme = 'intoss-private://m?_deploymentId=x';
+    const out = buildDeepLinkAttachUrl(scheme, RELAY, '123456');
+    expect(out).toContain('at=123456');
+    expect(out).toContain('debug=1');
+    expect(out).toContain(`relay=${encodeURIComponent(RELAY)}`);
+  });
+
+  it('does NOT append `at=` when totpCode is undefined', () => {
+    const scheme = 'intoss-private://m?_deploymentId=x';
+    const out = buildDeepLinkAttachUrl(scheme, RELAY, undefined);
+    expect(out).not.toContain('at=');
+  });
+
+  it('does NOT append `at=` when totpCode is an empty string', () => {
+    const scheme = 'intoss-private://m?_deploymentId=x';
+    const out = buildDeepLinkAttachUrl(scheme, RELAY, '');
+    expect(out).not.toContain('at=');
+  });
+
+  it('replaces a stale `at=` on re-run (idempotent)', () => {
+    const scheme = 'intoss-private://m?_deploymentId=x';
+    const first = buildDeepLinkAttachUrl(scheme, RELAY, '111111');
+    const second = buildDeepLinkAttachUrl(first, RELAY, '222222');
+    expect(second).toContain('at=222222');
+    expect(second).not.toContain('at=111111');
+    expect(second.match(/(^|&)at=/g)).toHaveLength(1);
+  });
+
+  it('removes a stale `at=` when totpCode is omitted on refresh', () => {
+    const scheme = 'intoss-private://m?_deploymentId=x&at=oldcode';
+    // Calling without a code removes the old `at=`.
+    const out = buildDeepLinkAttachUrl(scheme, RELAY);
+    expect(out).not.toContain('at=');
+  });
 });

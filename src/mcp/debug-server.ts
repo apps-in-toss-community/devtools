@@ -42,6 +42,7 @@ import {
   takeScreenshot,
   takeSnapshot,
 } from './tools.js';
+import { verifyTotp } from './totp.js';
 import {
   generateAttachToken,
   printAttachBanner,
@@ -199,25 +200,64 @@ export interface RunDebugServerOptions {
 }
 
 /**
+ * Reads `AIT_DEBUG_TOTP_SECRET` from `process.env` at runtime and builds a
+ * `verifyAuth` predicate for the Chii relay's WebSocket upgrade gate.
+ *
+ * The predicate checks the `at` query parameter against the current and
+ * adjacent TOTP time steps (±1 skew) using `verifyTotp`.
+ *
+ * Returns `undefined` when the env var is not set — callers treat that as
+ * "auth disabled" (no predicate registered on the relay).
+ *
+ * SECRET-HANDLING: The secret value read from env is captured in a closure and
+ * is NEVER written to any log, error message, or process output.
+ */
+export function buildRelayVerifyAuth():
+  | ((req: import('node:http').IncomingMessage) => boolean)
+  | undefined {
+  const secret = process.env.AIT_DEBUG_TOTP_SECRET;
+  if (!secret) return undefined;
+
+  return (req) => {
+    // Parse the `at` query param from the upgrade request URL.
+    // req.url is the raw request path + query, e.g. `/client/id?target=…&at=123456`
+    const rawUrl = req.url ?? '';
+    const qIndex = rawUrl.indexOf('?');
+    const queryStr = qIndex === -1 ? '' : rawUrl.slice(qIndex + 1);
+    const params = new URLSearchParams(queryStr);
+    const code = params.get('at') ?? '';
+
+    // Do NOT log `code`, `secret`, or any derived value here.
+    return verifyTotp(secret, code);
+  };
+}
+
+/**
  * Boots the live debug stack and serves it over stdio:
- *   1. start the Chii relay,
+ *   1. start the Chii relay (with TOTP auth if AIT_DEBUG_TOTP_SECRET is set),
  *   2. open a cloudflared quick tunnel to it,
- *   3. print QR + secret token,
+ *   3. print relay URL + attach instructions,
  *   4. expose the debug tools backed by a `ChiiCdpConnection` + `ChiiAitSource`.
  */
 export async function runDebugServer(options: RunDebugServerOptions = {}): Promise<void> {
   const relayPort = options.relayPort ?? 9100;
 
-  const relay = await startChiiRelay({ port: relayPort });
+  // Build the TOTP verifyAuth predicate from env at startup (runtime read).
+  const verifyAuth = buildRelayVerifyAuth();
+  const totpEnabled = verifyAuth !== undefined;
+
+  const relay = await startChiiRelay({ port: relayPort, verifyAuth });
 
   let tunnel: QuickTunnel | null = null;
   let tunnelStatus: TunnelStatus = { up: false, wssUrl: null };
-  const token = generateAttachToken();
+  // generateAttachToken is kept for legacy/non-TOTP token use, but we no
+  // longer print it in the banner to avoid accidental secret exposure.
+  const _token = generateAttachToken();
 
   try {
     tunnel = await startQuickTunnel(relayPort);
     tunnelStatus = { up: true, wssUrl: tunnel.wssUrl };
-    await printAttachBanner({ wssUrl: tunnel.wssUrl, token });
+    await printAttachBanner({ wssUrl: tunnel.wssUrl, totpEnabled });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(

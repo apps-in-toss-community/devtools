@@ -26,14 +26,38 @@
  *        on a production entry — see the comment on {@link isPrivateAppsHost}.
  *   B2 — entry query: `_deploymentId` must be present and non-empty.
  *
- * Decision matrix (the gate only ever runs in a debug build — Layer A already
- * passed by the time this code is reachable):
+ * Layer C — opt-in + relay + optional TOTP auth:
+ *   C1 — opt-in:       `debug=1` must be present.
+ *   C2 — relay URL:    `relay=<wss-url>` must be a valid `wss:` URL.
+ *   C3 — TOTP auth:    When `verifyTotpCode` is provided (consumer injected the
+ *                      baked secret at build time via `__DEBUG_TOTP_SECRET__`),
+ *                      `at=<code>` is checked. Invalid or absent code → BLOCKED.
+ *                      When no verifier is provided (TOTP disabled), `at` is
+ *                      ignored (backward compatible).
  *
- *   private-apps host | _deploymentId | debug=1 | result
- *   no                | (any)         | (any)   | BLOCKED  (Layer B1 — host)
- *   yes               | absent        | (any)   | BLOCKED  (Layer B2 — entry)
- *   yes               | present       | absent  | BLOCKED  (Layer C  — opt-in)
- *   yes               | present       | present | ATTACH
+ * Security note on baked secrets:
+ *   The TOTP secret baked in via `__DEBUG_TOTP_SECRET__` is present in the
+ *   dogfood bundle and is extractable by a determined reverse engineer.
+ *   The practical bar raised is: "URL leak" (Slack paste, QR screenshot) →
+ *   blocked; "URL + bundle extraction + live TOTP code" → not blocked.
+ *   This is the intended threat model. Do not overpromise on this guarantee.
+ *
+ * SECRET-HANDLING: `verifyTotpCode` is a black-box predicate. This module
+ *   does NOT log the secret, any code value, or pass/fail details beyond the
+ *   `'auth'` reason enum.
+ *
+ * Decision matrix (gate only runs in a debug build — Layer A already passed):
+ *
+ *   host ok | _deploymentId | debug=1 | relay ok | TOTP ok* | result
+ *   no      | (any)         | (any)   | (any)    | (any)    | BLOCKED (host)
+ *   yes     | absent        | (any)   | (any)    | (any)    | BLOCKED (entry)
+ *   yes     | present       | absent  | (any)    | (any)    | BLOCKED (opt-in)
+ *   yes     | present       | present | invalid  | (any)    | BLOCKED (invalid-relay)
+ *   yes     | present       | present | valid    | fail*    | BLOCKED (auth)
+ *   yes     | present       | present | valid    | pass/n/a | ATTACH
+ *
+ *   * "TOTP ok" column only applies when `verifyTotpCode` is provided.
+ *     When no verifier is injected, TOTP check is skipped entirely.
  */
 
 /** Shape returned when the gate allows attachment. */
@@ -49,15 +73,20 @@ export interface GateResultAttach {
 export interface GateResultBlocked {
   readonly attach: false;
   /**
-   * - `'host'`         Layer B1: `hostname` is not a `*.private-apps.tossmini.com` host.
-   * - `'entry'`        Layer B2: `_deploymentId` param is absent or empty.
-   * - `'opt-in'`       Layer C: `debug=1` param is absent.
-   * - `'invalid-relay'` Layer C: `relay` param is absent, empty, or not a `wss:` URL.
+   * - `'host'`          Layer B1: `hostname` is not a `*.private-apps.tossmini.com` host.
+   * - `'entry'`         Layer B2: `_deploymentId` param is absent or empty.
+   * - `'opt-in'`        Layer C1: `debug=1` param is absent.
+   * - `'invalid-relay'` Layer C2: `relay` param is absent, empty, or not a `wss:` URL.
+   * - `'auth'`          Layer C3: TOTP `at=` code is absent, invalid, or expired
+   *                     (only when a `verifyTotpCode` predicate is injected).
    *
    * There is no `'build'` reason: Layer A is enforced by the consumer's
    * `if (__DEBUG_BUILD__)` guard, not by this function.
+   *
+   * SECRET-HANDLING: `'auth'` is the only value surfaced for auth failures —
+   * no code value, expected value, or secret fragment is ever exposed.
    */
-  readonly reason: 'host' | 'entry' | 'opt-in' | 'invalid-relay';
+  readonly reason: 'host' | 'entry' | 'opt-in' | 'invalid-relay' | 'auth';
 }
 
 export type GateResult = GateResultAttach | GateResultBlocked;
@@ -65,7 +94,7 @@ export type GateResult = GateResultAttach | GateResultBlocked;
 /**
  * Input for {@link evaluateDebugGate}.
  *
- * Both fields are explicit so the function is trivially testable without
+ * All fields are explicit so the function is trivially testable without
  * touching `window`.
  */
 export interface GateInput {
@@ -90,6 +119,32 @@ export interface GateInput {
    * without coupling the pure function to `window`.
    */
   readonly searchParams: URLSearchParams;
+
+  /**
+   * Optional TOTP code verifier for Layer C3 auth gate.
+   *
+   * When provided, `evaluateDebugGate` reads the `at` query param and passes
+   * it to this predicate. Return `true` to allow, `false` to block with
+   * `reason: 'auth'`.
+   *
+   * Inject via the consumer's build define, e.g.:
+   * ```ts
+   * // dogfood build entry — consumer's build injects __DEBUG_TOTP_SECRET__
+   * declare const __DEBUG_TOTP_SECRET__: string | undefined;
+   * const verifyTotpCode = typeof __DEBUG_TOTP_SECRET__ !== 'undefined'
+   *   ? (code: string) => verifyTotp(__DEBUG_TOTP_SECRET__, code)
+   *   : undefined;
+   * maybeAttach(evaluateDebugGate({ ...params, verifyTotpCode }));
+   * ```
+   *
+   * Security note: this predicate is a black-box from the gate's perspective.
+   * The gate only surfaces pass/fail and the `'auth'` reason code — no code
+   * value or secret fragment is ever logged or returned.
+   *
+   * When `undefined` (TOTP disabled), `at=` is silently ignored and the gate
+   * proceeds to ATTACH if all other layers pass.
+   */
+  readonly verifyTotpCode?: (code: string) => boolean;
 }
 
 /**
@@ -185,6 +240,20 @@ export function evaluateDebugGate(input: GateInput): GateResult {
 
   if (relayUrl.protocol !== 'wss:') {
     return { attach: false, reason: 'invalid-relay' };
+  }
+
+  // Layer C3 — TOTP auth gate (fail-fast, only when a verifier is injected).
+  // The `at` query param carries the current TOTP code. Absent or invalid code
+  // → BLOCKED. When no verifier is provided (TOTP disabled), this check is
+  // skipped entirely for backward compatibility.
+  //
+  // SECRET-HANDLING: we do NOT log `code`, the verifier's result, or anything
+  // derived from the secret. Only the `'auth'` enum is surfaced on failure.
+  if (input.verifyTotpCode !== undefined) {
+    const code = input.searchParams.get('at') ?? '';
+    if (!input.verifyTotpCode(code)) {
+      return { attach: false, reason: 'auth' };
+    }
   }
 
   return { attach: true, relayUrl: relayUrl.href, deploymentId };

@@ -278,6 +278,115 @@ describe('GateResultAttach field values', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Layer C3 — TOTP auth gate (verifyTotpCode injected)
+// ---------------------------------------------------------------------------
+
+describe('Layer C3 — TOTP auth gate', () => {
+  /** A verifier that always passes (TOTP disabled / always accept). */
+  const alwaysPass = (_code: string) => true;
+  /** A verifier that always fails (simulates invalid/expired code). */
+  const alwaysFail = (_code: string) => false;
+  /** A verifier that only accepts the literal string '123456'. */
+  const acceptsOnly123456 = (code: string) => code === '123456';
+
+  it('passes when verifyTotpCode is undefined (TOTP disabled)', () => {
+    const result = gate(VALID_PARAMS);
+    expect(result.attach).toBe(true);
+  });
+
+  it('passes when verifyTotpCode accepts the code', () => {
+    const params_ = new URLSearchParams(
+      '_deploymentId=uuid&debug=1&relay=wss://r.example.com/&at=123456',
+    );
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: acceptsOnly123456,
+    });
+    expect(result.attach).toBe(true);
+  });
+
+  it('blocks when verifyTotpCode rejects the code (reason: auth)', () => {
+    const params_ = new URLSearchParams(
+      '_deploymentId=uuid&debug=1&relay=wss://r.example.com/&at=000000',
+    );
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: acceptsOnly123456,
+    });
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('blocks when `at` param is absent and verifyTotpCode is provided', () => {
+    // alwaysFail returns false for '' — same as any invalid code.
+    const params_ = new URLSearchParams('_deploymentId=uuid&debug=1&relay=wss://r.example.com/');
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: alwaysFail,
+    });
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('blocks when verifyTotpCode always fails (simulates expired code)', () => {
+    const params_ = new URLSearchParams(
+      '_deploymentId=uuid&debug=1&relay=wss://r.example.com/&at=999999',
+    );
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: alwaysFail,
+    });
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('auth check runs AFTER relay URL validation (invalid-relay still wins)', () => {
+    const params_ = new URLSearchParams(
+      '_deploymentId=uuid&debug=1&relay=http://r.example.com/&at=123456',
+    );
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: alwaysPass,
+    });
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('invalid-relay');
+  });
+
+  it('auth check runs AFTER opt-in check (opt-in still wins when debug absent)', () => {
+    const params_ = new URLSearchParams('_deploymentId=uuid&relay=wss://r.example.com/&at=123456');
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: alwaysPass,
+    });
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('opt-in');
+  });
+
+  it('does not surface the code value in any property of the blocked result', () => {
+    const params_ = new URLSearchParams(
+      '_deploymentId=uuid&debug=1&relay=wss://r.example.com/&at=SECRET_CODE',
+    );
+    const result = evaluateDebugGate({
+      hostname: VALID_HOST,
+      searchParams: params_,
+      verifyTotpCode: alwaysFail,
+    });
+    expect(result.attach).toBe(false);
+    // The reason must be an enum value, not contain any code fragment.
+    if (!result.attach) {
+      expect(result.reason).toBe('auth');
+      expect(JSON.stringify(result)).not.toContain('SECRET_CODE');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Full decision-matrix rows (explicit coverage)
 // ---------------------------------------------------------------------------
 
