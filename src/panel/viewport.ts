@@ -14,6 +14,7 @@ import type {
   AppOrientation,
   LandscapeSide,
   SafeAreaInsets,
+  SafeAreaProvenance,
   ViewportOrientation,
   ViewportPreset,
   ViewportPresetId,
@@ -69,6 +70,10 @@ const CUSTOM_PRESET: ViewportPreset = {
   safeAreaBottom: 0,
 };
 
+/** Shorthands used when building preset provenance entries. */
+const EXTRAPOLATED: SafeAreaProvenance = { source: 'extrapolated' };
+const PLACEHOLDER: SafeAreaProvenance = { source: 'placeholder' };
+
 /**
  * Device presets (2026). CSS viewport 크기는 실제 기기의 `window.innerWidth/innerHeight`.
  * iPhone 17 시리즈는 2025-09 출시. iPhone Air는 2026-04 출시.
@@ -89,6 +94,13 @@ const CUSTOM_PRESET: ViewportPreset = {
  *
  * iPhone 17과 17 Pro는 CSS viewport / DPR / safe area가 동일 — 이는 의도이며 카피-페이스트
  * 실수가 아니다. Apple의 17 lineup은 base와 Pro의 web-relevant 스펙이 같다.
+ *
+ * safeAreaProvenance: 각 preset의 safe-area 값 신뢰도 출처.
+ * - `measured` — relay 실기기 세션(measure_safe_area)으로 직접 확인한 값.
+ *   현재 iPhone 15 Pro portrait iOS partner만 해당 (devtools#190).
+ * - `extrapolated` — Apple 스펙/같은 시리즈 기기에서 유추한 값.
+ * - `placeholder` — 연결 기기 없이 추정한 값. QA ground truth로 쓰지 말 것.
+ *   `measure_safe_area` MCP 툴로 relay 세션에서 `measured`로 승급 필요.
  */
 export const VIEWPORT_PRESETS: ViewportPreset[] = [
   NONE_PRESET,
@@ -103,6 +115,9 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 20,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    // SE 3는 홈버튼 기기 — OS 노치 없고 home indicator도 없음. bottom=0은 확정.
+    // navBarHeight는 iOS partner 실측(54)에서 기기 무관 상수. extrapolated.
+    safeAreaProvenance: EXTRAPOLATED,
   },
   {
     id: 'iphone-15-pro',
@@ -114,6 +129,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 59,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
+    // devtools#190 relay 실측: iOS partner portrait에서 navBarHeight=54, bottom=34 확인.
+    safeAreaProvenance: { source: 'measured', device: 'iPhone 15 Pro', date: '2026-05-25' },
   },
   {
     id: 'iphone-16e',
@@ -125,6 +142,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 47,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
+    // 16e는 notch 기기. bottom 34는 Apple 스펙에서 유추. 실측 미진행.
+    safeAreaProvenance: EXTRAPOLATED,
   },
   {
     id: 'iphone-17',
@@ -136,6 +155,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 59,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
+    // 17 시리즈 Dynamic Island — bottom 34 Apple 스펙 유추. 실측 미진행.
+    safeAreaProvenance: EXTRAPOLATED,
   },
   {
     id: 'iphone-air',
@@ -147,6 +168,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 59,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
+    // iPhone Air (2026-04 출시) — Dynamic Island 유추. 실측 미진행.
+    safeAreaProvenance: EXTRAPOLATED,
   },
   {
     id: 'iphone-17-pro',
@@ -158,6 +181,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 59,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
+    // 17 Pro — 17와 web-relevant 스펙 동일. 유추.
+    safeAreaProvenance: EXTRAPOLATED,
   },
   {
     id: 'iphone-17-pro-max',
@@ -169,6 +194,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 62,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
+    // Pro Max — notchInset 62는 Apple 스펙 유추. 실측 미진행.
+    safeAreaProvenance: EXTRAPOLATED,
   },
   // Samsung
   //
@@ -186,6 +213,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 32,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    // Android safe-area는 relay 실측 없음. placeholder.
+    safeAreaProvenance: PLACEHOLDER,
   },
   {
     id: 'galaxy-s26-plus',
@@ -197,6 +226,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 32,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    safeAreaProvenance: PLACEHOLDER,
   },
   {
     id: 'galaxy-s26-ultra',
@@ -208,6 +238,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 40,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    safeAreaProvenance: PLACEHOLDER,
   },
   {
     id: 'galaxy-z-flip7',
@@ -219,6 +250,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 36,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    safeAreaProvenance: PLACEHOLDER,
   },
   {
     id: 'galaxy-z-fold7-folded',
@@ -230,6 +262,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 32,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    safeAreaProvenance: PLACEHOLDER,
   },
   {
     id: 'galaxy-z-fold7-unfolded',
@@ -241,6 +274,7 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 32,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
+    safeAreaProvenance: PLACEHOLDER,
   },
   CUSTOM_PRESET,
 ];

@@ -3,6 +3,7 @@ import { aitState } from '../../mock/state.js';
 import type {
   AitNavBarType,
   LandscapeSide,
+  SafeAreaProvenance,
   ViewportOrientation,
   ViewportPresetId,
 } from '../../mock/types.js';
@@ -15,6 +16,28 @@ import {
   resolveViewportSize,
   VIEWPORT_PRESETS,
 } from '../viewport.js';
+
+/**
+ * Renders a small inline provenance badge for safe-area values.
+ * - `measured`     — no badge (confirmed value)
+ * - `extrapolated` — "(추정치)" in muted gray
+ * - `placeholder`  — "(미측정)" in amber
+ */
+function provenanceBadge(provenance: SafeAreaProvenance | undefined): HTMLElement | null {
+  if (!provenance || provenance.source === 'measured') return null;
+  const text = provenance.source === 'placeholder' ? '(미측정)' : '(추정치)';
+  const color = provenance.source === 'placeholder' ? '#b45309' : '#888';
+  const badge = h('span', {
+    className: 'ait-provenance-badge',
+    title:
+      provenance.source === 'placeholder'
+        ? 'safe-area 값이 미실측 추정치입니다. relay 세션에서 measure_safe_area로 실측 후 승급하세요.'
+        : 'safe-area 값이 기기 스펙에서 유추한 추정치입니다. relay 세션에서 measure_safe_area로 확인하세요.',
+  });
+  badge.textContent = text;
+  badge.style.cssText = `font-size:10px;color:${color};margin-left:4px`;
+  return badge;
+}
 
 export function renderViewportTab(): HTMLElement {
   const s = aitState.state;
@@ -185,16 +208,19 @@ export function renderViewportTab(): HTMLElement {
         vp.aitNavBar,
         vp.aitNavBarType,
       );
+      const safeAreaValueEl = h(
+        'span',
+        { className: 'ait-status-value' },
+        `T${insets.top} R${insets.right} B${insets.bottom} L${insets.left}`,
+      );
+      const badge = provenanceBadge(preset.safeAreaProvenance);
+      if (badge) safeAreaValueEl.appendChild(badge);
       rows.push(
         h(
           'div',
           { className: 'ait-status-row' },
           h('span', {}, t('viewport.status.safeArea')),
-          h(
-            'span',
-            { className: 'ait-status-value' },
-            `T${insets.top} R${insets.right} B${insets.bottom} L${insets.left}`,
-          ),
+          safeAreaValueEl,
         ),
       );
     }
