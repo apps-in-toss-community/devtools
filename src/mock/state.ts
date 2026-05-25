@@ -140,6 +140,10 @@ export interface AitDevtoolsState {
       | 'userEarnedReward';
     forceNoFill: boolean;
     lastEvent: { type: string; timestamp: number } | null;
+    /** AdMob reward 단위 타입 (기본: 'coins') */
+    rewardUnitType: string;
+    /** AdMob reward 단위 수량 (기본: 10) */
+    rewardAmount: number;
   };
 
   // 게임
@@ -261,6 +265,8 @@ const DEFAULT_STATE: AitDevtoolsState = {
     nextEvent: 'loaded',
     forceNoFill: false,
     lastEvent: null,
+    rewardUnitType: 'coins',
+    rewardAmount: 10,
   },
 
   game: {

@@ -196,6 +196,13 @@ export const ko = {
   'ads.section.fullScreenAd': 'FullScreenAd',
   'ads.btn.load': 'Load',
   'ads.btn.show': 'Show',
+  'ads.section.tossAdsBanner': 'TossAds 배너',
+  'ads.row.rewardUnitType': '리워드 단위 타입',
+  'ads.row.rewardAmount': '리워드 수량',
+  'ads.btn.render': 'Render',
+  'ads.btn.noFill': 'No-fill',
+  'ads.btn.click': 'Click',
+  'ads.btn.destroy': 'Destroy',
 
   // Notifications tab
   'notifications.section.title': 'requestNotificationAgreement',

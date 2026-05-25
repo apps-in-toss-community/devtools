@@ -194,6 +194,13 @@ export const en: Record<StringKey, string> = {
   'ads.section.fullScreenAd': 'FullScreenAd',
   'ads.btn.load': 'Load',
   'ads.btn.show': 'Show',
+  'ads.section.tossAdsBanner': 'TossAds Banner',
+  'ads.row.rewardUnitType': 'Reward unit type',
+  'ads.row.rewardAmount': 'Reward amount',
+  'ads.btn.render': 'Render',
+  'ads.btn.noFill': 'No-fill',
+  'ads.btn.click': 'Click',
+  'ads.btn.destroy': 'Destroy',
 
   // Notifications tab
   'notifications.section.title': 'requestNotificationAgreement',
