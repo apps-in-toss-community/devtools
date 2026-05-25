@@ -5,13 +5,20 @@
  * URL that opens a dogfood bundle on a phone. The in-app debug gate
  * (`src/in-app/gate.ts`) already auto-attaches when the entry URL also carries
  * `debug=1` and `relay=<wss-url>` — no QR scan or paste needed. This helper
- * splices those two params into the scheme URL so opening the result (e.g. via
- * `adb shell am start -d "<url>"`) attaches the running mini-app to the live
- * Chii relay with zero human input.
+ * splices those params (plus `at=<code>` when TOTP is enabled) into the scheme
+ * URL so opening the result (e.g. via `adb shell am start -d "<url>"`) attaches
+ * the running mini-app to the live Chii relay with zero human input.
  *
  * The Toss app propagates extra query params from the entry deep link into the
  * mini-app WebView's `location.search` (confirmed behavior), so the gate reads
  * them at attach time.
+ *
+ * TOTP `at=` param:
+ *   When a TOTP secret is active, `buildDeepLinkAttachUrl` accepts an optional
+ *   `totpCode` argument and splices `at=<code>` alongside `debug` and `relay`.
+ *   The code must be computed by the caller at call time — do NOT pre-compute
+ *   and cache it, because the 30-second window expires quickly. The in-app gate
+ *   (`src/in-app/gate.ts` Layer C) validates this code against the baked secret.
  *
  * Why not `URL`/`URLSearchParams`: `intoss-private:` is a non-special scheme.
  * The WHATWG `URL` parser treats such schemes opaquely (no host/path/query
@@ -33,21 +40,29 @@ function stripExisting(query: string, key: string): string {
 }
 
 /**
- * Splices `debug=1` and `relay=<wssUrl>` into a scheme URL's query string,
- * preserving everything else (scheme, authority, path, hash, and the existing
- * `_deploymentId` param). If `debug` or `relay` is already present it is
- * replaced so the helper is idempotent.
+ * Splices `debug=1`, `relay=<wssUrl>`, and (optionally) `at=<totpCode>` into a
+ * scheme URL's query string, preserving everything else (scheme, authority,
+ * path, hash, and the existing `_deploymentId` param). If any of the spliced
+ * params is already present it is replaced so the helper is idempotent.
  *
  * @param schemeUrl - The `intoss-private://…?_deploymentId=<uuid>` URL printed
  *   by `ait deploy --scheme-only`. Must already carry `_deploymentId` (Layer B
  *   of the gate); this helper does not invent one.
  * @param wssUrl - The live relay URL (`wss://…trycloudflare.com`) from the
  *   running debug MCP server's quick tunnel.
- * @returns The same URL with `debug=1&relay=<encoded wssUrl>` appended.
+ * @param totpCode - Optional current TOTP code (6 digits). When provided, it
+ *   is spliced as `at=<totpCode>`. Must be computed at call time — it rotates
+ *   every 30 s. Pass `undefined` or omit when TOTP is disabled.
+ * @returns The same URL with `debug=1&relay=<encoded wssUrl>[&at=<totpCode>]`
+ *   appended.
  * @throws If `wssUrl` is not a `wss:` URL (the gate rejects anything else, so
  *   producing such a link would be a silent dead end).
  */
-export function buildDeepLinkAttachUrl(schemeUrl: string, wssUrl: string): string {
+export function buildDeepLinkAttachUrl(
+  schemeUrl: string,
+  wssUrl: string,
+  totpCode?: string,
+): string {
   let relay: URL;
   try {
     relay = new URL(wssUrl);
@@ -70,6 +85,17 @@ export function buildDeepLinkAttachUrl(schemeUrl: string, wssUrl: string): strin
     ['debug', '1'],
     ['relay', wssUrl],
   ];
+  // Only splice `at=` when a code is provided (TOTP enabled). Omitting it when
+  // TOTP is disabled preserves backward compatibility with gate deployments
+  // that do not yet evaluate the `at` param.
+  if (totpCode !== undefined && totpCode !== '') {
+    appended.push(['at', totpCode]);
+  }
+
+  // Always strip the `at` key from the existing query so a stale code from a
+  // previous run is removed even when the caller does not provide a fresh code.
+  query = stripExisting(query, 'at');
+
   for (const [key] of appended) {
     query = stripExisting(query, key);
   }
