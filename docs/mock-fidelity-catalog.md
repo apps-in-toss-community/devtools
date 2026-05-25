@@ -1,0 +1,224 @@
+# Mock ↔ Real fidelity 카탈로그
+
+`@ait-co/devtools`가 브라우저에서 제공하는 SDK **mock**과, 실제 토스 앱 WebView 안에서 도는 **real** 환경의 동작 차이를 한곳에 모은 표다. 목표는 "브라우저에서 통과한 코드가 실폰에서 다르게 동작"하는 회귀를 mock 단계에서 잡는 것 — gap을 먼저 가시화해야 어디부터 좁힐지 우선순위를 정할 수 있다.
+
+이 문서는 **카탈로그(survey)일 뿐 구현이 아니다.** 각 행의 gap을 실제로 좁히는 작업은 별도 PR로 나뉘며, 그 우선순위 근거가 이 표다. 추적: [devtools#190](https://github.com/apps-in-toss-community/devtools/issues/190).
+
+## 읽는 법
+
+- **분류(category)** — gap의 성격:
+  - `🔴 inert` — mock이 호출은 받지만 **상태를 전혀 안 바꿔** 호출 전/후를 구분할 수 없다. real은 환경을 바꾸므로 toss-gated 코드가 브라우저에서 영영 안 돌거나, 부수효과를 대조할 수 없다. **gap이 가장 큼.**
+  - `🟡 partial` — 동작은 하지만 real과 형태·타이밍·분기가 다르다. 보통 실용에 충분하나 edge case에서 갈린다.
+  - `🟢 faithful` — mock이 real의 계약(반환 shape·상태 전이)을 충실히 재현. 남은 차이는 native 런타임 자체(실제 결제 UI, 실제 카메라)뿐.
+- **관측 가능?** — 호출 결과가 `AIT.getMockState`(패널·MCP로 read)에 반영되는가. `AIT.getMockState`는 `aitState.state`를 그대로 반환하므로, **state slice에 쓰는 API만** 에이전트가 호출 후 환경 변화를 관측할 수 있다.
+- 코드 위치는 `src/mock/` 기준 상대 경로.
+
+이 표의 출발점은 [devtools#171](https://github.com/apps-in-toss-community/devtools/issues/171) on-device relay 세션(2026-05-25)에서 실폰(`AppsInToss TossApp/5.261.0`)에 attach해 실측한 분기들이다.
+
+---
+
+## 0. 환경 기본값 (전체 gate의 뿌리)
+
+mock의 환경 기본값이 real과 달라서, 환경으로 분기하는 코드 경로 전체가 브라우저에서 다르게 활성화된다. 개별 API 이전에 이 기본값들이 fidelity의 1차 변수다.
+
+| 항목 | mock 기본값 | real (실폰 실측) | 분류 | gap |
+|---|---|---|---|---|
+| `environment` (`getOperationalEnvironment`) | `'sandbox'` (`state.ts:157`) | `'toss'` (본 앱) | 🔴 inert | `=== 'toss'`로 gate되는 코드(예: sdk-example `useDisableIosSwipeGestureInToss`)가 브라우저에서 **영영 inert**. 패널 Environment row(`panel/tabs/environment.ts`의 `env.row.environment` selectRow)로 `'toss'` 전환은 가능하나 default가 sandbox라 dev가 의식적으로 안 켜면 toss 경로는 한 번도 안 돈다. |
+| `platform` (`getPlatformOS`) | `'ios'` | 디바이스에 따름 | 🟢 faithful | 패널에서 ios/android 토글. 상태 기반이라 관측·전환 정상. |
+| `appVersion` (`getTossAppVersion`) | `'5.240.0'` | 실 앱 버전(예: `5.261.0`) | 🟡 partial | `isMinVersionSupported`가 이 값으로 계산. default가 임의 고정값이라 실 버전 분기와 어긋날 수 있다. 패널에서 변경 가능. |
+| `deploymentId` (`env.getDeploymentId`) | `'mock-deployment-id'` | 실 배포 id(UUID) | 🟡 partial | 형태만 흉내. relay activation gate(B2)는 real host에서만 의미 있음. |
+| `host` / UA | 브라우저 origin · 브라우저 UA | `*.private-apps.tossmini.com` · `AppsInToss TossApp/x` | 🔴 inert | host/UA로 gate되는 코드는 브라우저에서 시험 불가. mock에 환경 단서 흉내 옵션 없음 (#190 범위 4). |
+
+---
+
+## 0.5. Safe area insets · 기기 특성 (viewport 모델)
+
+토스 앱 WebView는 실 기기의 노치/Dynamic Island/홈 인디케이터에 따라 `safe-area-inset-*`와 CSS viewport·DPR이 정해진다. devtools는 이걸 **두 갈래**로 모델한다 — 둘이 어긋날 수 있는 게 fidelity gap의 한 축이다:
+
+1. **`safeAreaInsets` state slice** (`SafeAreaInsets.get()` / `.subscribe()`가 읽는 SDK 계약값) — default `{top:47, bottom:34, left:0, right:0}` (`state.ts`). 패널 Environment 탭에서 top/bottom 직접 편집(`panel/tabs/environment.ts:66-73`).
+2. **viewport preset** (devtools 전용 화면 시뮬레이션, SDK와 무관) — `VIEWPORT_PRESETS`(`panel/viewport.ts`)가 기기별 `width/height/dpr/notch/safeAreaTop/safeAreaBottom`을 정의. preset이 `none`/`custom`이 **아닐 때만** `syncSafeAreaFromViewport`가 preset 값을 ① slice로 동기화(orientation·landscapeSide 반영). default는 `preset:'none'`이라 **동기화 안 됨** → slice의 `{47,34}` 정적 추정값이 그대로 남는다.
+
+### gap
+
+| 항목 | mock | real (연결 기기 = iPhone 15 Pro) | 분류 | gap |
+|---|---|---|---|---|
+| `safeAreaInsets` default | `{top:47, bottom:34, left:0, right:0}` (정적) | iPhone 15 Pro Dynamic Island: `top≈59`, home indicator `bottom≈34` | 🟡 partial | default top(47)이 15 Pro의 실측 top(≈59)과 다름 — Dynamic Island 기기인데 notch(16e) 수치를 default로 씀. preset 미선택 시 어긋난 채 유지. |
+| `left`/`right` insets | 항상 0 (portrait) | landscape에서 ≠0 (노치 쪽) | 🟡 partial | preset 선택 + landscape일 때만 `computeSafeAreaInsets`가 채움. slice 단독으론 portrait 0 고정. |
+| viewport preset 목록 | SE3 / 16e / 17 / Air / 17 Pro / 17 Pro Max + Galaxy | **iPhone 15 Pro preset 없음** | 🔴 inert | 연결 기기(15 Pro)에 **정확히 맞는 preset이 없다**. 가장 가까운 `iphone-17`(402×874)도 CSS viewport가 다름 — 15 Pro는 **393×852, DPR 3, Dynamic Island, top 59 / bottom 34**. 17 Pro로 대신 잡으면 width 9px·height 22px 어긋남. |
+| `DPR` (`devicePixelRatio`) | preset의 `dpr` (시각 시뮬용) | 15 Pro = 3 | 🟡 partial | preset이 화면 프레임 스케일에만 쓰이고 `window.devicePixelRatio` 자체를 못 바꾼다 (브라우저 read-only). DPR-분기 코드는 브라우저 실 DPR을 봄. |
+| slice ↔ preset 일관성 | preset 선택 시 sync (`none`/`custom` 제외) | 실 기기는 단일 ground truth | 🟡 partial | 두 모델이 분리돼 있어, slice를 손으로 바꾸고 preset도 고르면 둘이 불일치 가능. `none`/`custom`에선 sync 자체가 꺼짐. |
+
+iPhone 15 Pro 실 web-relevant 스펙(참고): CSS viewport **393×852**(portrait), DPR **3**, notch = **Dynamic Island**, `env(safe-area-inset-top)` **≈59px** / `-bottom` **≈34px**. 단, 토스 호스트 nav bar를 제외한 OS-level 값인지 포함인지는 호스트 실측이 필요 — 기존 preset들이 `safeArea*`를 "Apps in Toss nav bar 제외"로 정의(`panel/viewport.ts` ViewportPreset 주석)한 것과 같은 기준을 따라야 한다.
+
+### 후속(이 카탈로그 범위 밖, #190 구현 PR 후보)
+
+- **iPhone 15 Pro preset 추가** — `393×852 / dpr 3 / dynamic-island / top 59 / bottom 34`. 현행 17 시리즈와 별도 행. (15/15 Pro는 393×852, 15 Plus/Pro Max는 430×932 — 라인업 확장 시 함께.)
+- **default `safeAreaInsets`를 default 기기와 정합** — 기본 시뮬 기기를 정하고(예: 가장 흔한 Dynamic Island 기기) slice default를 그 top 값으로. 또는 첫 mount 시 default preset을 골라 sync를 태운다.
+- **호스트 실측** — Galaxy 계열 `safeArea*`는 이미 "S25 placeholder, ground truth 아님"으로 표기됨(`panel/viewport.ts`). iPhone 15 Pro 토스 호스트 실측값도 relay 세션에서 `env(safe-area-inset-*)`를 읽어 확정한다.
+
+---
+
+## 1. Navigation / 환경 / 이벤트 (`navigation/index.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `setIosSwipeGestureEnabled` | `console.log`만 (`navigation/index.ts:31`) | iOS 엣지 스와이프 뒤로가기 제스처를 실제 토글 | 🔴 inert | ✗ | 호출 후 mock state 변화 없음 → toss-gated 가드가 "걸렸는지"를 관측 불가. **#190 1순위** (pattern: `setDeviceOrientation` mirror). |
+| `setDeviceOrientation` | `viewport.appOrientation` 토글 (`auto`일 때만) | 화면 방향 강제 | 🟢 faithful | ✓ | 상태 기록·패널 반영. real과 가장 가까운 no-op→state 패턴의 모범. |
+| `setScreenAwakeMode` | log + 입력값 echo | 화면 슬립 방지 토글 | 🔴 inert | ✗ | `{enabled}` 반환만, state 미반영. |
+| `setSecureScreen` | log + 입력값 echo | 캡처 방지(보안 화면) | 🔴 inert | ✗ | 위와 동일. |
+| `requestReview` | log (`isSupported:()=>true`) | 앱스토어 리뷰 프롬프트 | 🔴 inert | ✗ | native UI라 브라우저 재현 불가. 최소한 "요청됨" state는 가능. |
+| `closeView` | `window.history.back()` | 미니앱 뷰 종료 | 🟡 partial | ✗ | 브라우저에선 히스토리 뒤로. 실제 종료(앱 컨테이너 dismiss)와 의미 다름. |
+| `openURL` | `window.open(_, '_blank')` | 외부 브라우저/딥링크 | 🟡 partial | ✗ | 새 탭. 토스 in-app 브라우저 동작과 다름. |
+| `share` | `navigator.share` 있으면 위임, 없으면 log | 네이티브 공유 시트 | 🟡 partial | ✗ | 브라우저 Web Share에 의존. |
+| `getTossShareLink` | `https://toss.im/share/mock<path>` 고정 | 실제 공유 단축 URL | 🟡 partial | ✗ | 형태만 흉내, 실 링크 아님. |
+| `getNetworkStatus` | mode-aware (`mock`/`web`) | 실 네트워크 상태 | 🟡 partial | ✓ | web mode는 `navigator.connection`으로 추정(`device/network.ts`). WIFI/5G/WWAN 감지 불가 — Network Information API 한계. |
+| `getServerTime` | `Date.now()` | 토스 서버 시각 | 🟡 partial | ✗ | 로컬 시각. 서버 시각 skew 미반영. |
+| `isMinVersionSupported` | `appVersion` state로 계산 | 실 앱 버전 비교 | 🟢 faithful | (state 의존) | 로직 충실. 입력값(`appVersion` default)에만 의존. |
+| `getPlatformOS` / `getLocale` / `getDeviceId` / `getGroupId` / `getSchemeUri` | state 반환 | 실 환경값 | 🟢 faithful | ✓ | 상태 기반 read. `deviceId` default는 빈 문자열. |
+| `getAppsInTossGlobals` | `brand.*` + `deploymentId` state 반환 | 실 브랜드/배포 메타 | 🟢 faithful | ✓ | 패널 brand slice로 편집 가능. |
+| `SafeAreaInsets.get` / `.subscribe` | state 반환 / `aitState.subscribe` 위임 | 실 insets + insets 변경 시 호출 | 🟡 partial | ✓ | `subscribe`가 **모든** state 변경에 콜백 (real은 insets 변경 시만) — 의도된 간소화(`navigation/index.ts` 주석). |
+| `graniteEvent.addEventListener` (`backEvent`/`homeEvent`) | `window` 커스텀 이벤트(`__ait:*`) 브리지 | 네이티브 back/home 하드웨어 이벤트 | 🟡 partial | ✗ | 패널/relay로 `__ait:backEvent` dispatch해 트리거. 실 하드웨어 버튼은 아님. |
+| `tdsEvent.addEventListener` (`navigationAccessoryEvent`) | `window` 커스텀 이벤트 브리지 | 네비 액세서리 버튼 탭 | 🟡 partial | ✗ | 위와 동일 패턴. |
+| `appsInTossEvent.addEventListener` | **빈 cleanup 반환 (완전 no-op)** (`navigation/index.ts`) | 실 앱 라이프사이클/커스텀 이벤트 | 🔴 inert | ✗ | 리스너 등록 자체가 무의미 — 어떤 이벤트도 발화 안 됨. |
+| `onVisibilityChangedByTransparentServiceWeb` | `document` visibilitychange 위임 | 투명 서비스웹 가시성 | 🟡 partial | ✗ | 브라우저 탭 가시성으로 근사. |
+
+---
+
+## 2. Auth / 로그인 (`auth/index.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `appLogin` | `mock-auth-<uuid>` + `environment` 따라 referrer | 실 OAuth authorization code | 🟡 partial | (env 의존) | 토큰은 가짜. referrer는 `'toss'→DEFAULT`/`else→SANDBOX`로 환경 반영. oidc-bridge 연동 시 실 code 필요. |
+| `getIsTossLoginIntegratedService` | `auth.isTossLoginIntegrated` state | 실 통합 여부 | 🟢 faithful | ✓ | 패널 토글. |
+| `getUserKeyForGame` | `auth.userKeyHash` 있으면 `{hash,HASH}`, 없으면 `undefined` | 실 사용자 키 해시 | 🟢 faithful | ✓ | 상태 기반. |
+| `getAnonymousKey` | `auth.anonymousKeyHash` 동일 패턴 | 실 익명 키 | 🟢 faithful | ✓ | 상태 기반. |
+| `appsInTossSignTossCert` | `console.log`만 (no-op) | 토스 인증서 서명 | 🔴 inert | ✗ | 호출만, 서명 결과·state 없음. |
+
+---
+
+## 3. IAP / 결제 (`iap/index.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `IAP.createOneTimePurchaseOrder` | 300ms 후 `iap.nextResult` 분기 → `processProductGrant` → `completedOrders`에 기록 | 실 결제 UI + 결제 | 🟢 faithful | ✓ | 계약 충실. 반환 cancel 함수는 no-op(실 SDK는 결제 UI 닫음). |
+| `IAP.createSubscriptionPurchaseOrder` | 위와 동일 흐름(구독) | 실 구독 결제 | 🟢 faithful | ✓ | 동일. |
+| `IAP.getProductItemList` | `iap.products` 반환(구독은 `renewalCycle` 보강) | 실 상품 카탈로그 | 🟢 faithful | ✓ | 패널 상품 편집. |
+| `IAP.getPendingOrders` | `iap.pendingOrders` 반환 | 실 미완료 주문 | 🟢 faithful | ✓ | 상태 기반. |
+| `IAP.getCompletedOrRefundedOrders` | `iap.completedOrders` (`hasNext:false`) | 실 주문 이력(페이지네이션) | 🟡 partial | ✓ | mock은 항상 단일 페이지. |
+| `IAP.completeProductGrant` | pending→completed 전이 | 실 grant 확정 | 🟢 faithful | ✓ | 상태 전이 충실. |
+| `IAP.getSubscriptionInfo` | 30일 후 만료 고정 ACTIVE | 실 구독 상태 | 🟡 partial | ✗ | 입력 무시, 항상 동일 더미. state 미반영. |
+| `checkoutPayment` (TossPay) | 300ms 후 `payment.nextResult` 분기 | 실 결제 토큰 검증 | 🟢 faithful | ✓ | 패널 payment slice로 success/fail 토글. |
+| `requestTossPayPaysBilling` | 위와 동일(`isSupported:()=>true`) | 실 빌링 인증 | 🟢 faithful | ✓ | 동일. |
+
+---
+
+## 4. Ads (`ads/index.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `GoogleAdMob.loadAppsInTossAdMob` | 200ms 후 `forceNoFill`이면 error, 아니면 `isLoaded=true` + `loaded` 이벤트 | 실 AdMob 로드 | 🟢 faithful | ✓ | 패널 `forceNoFill` 토글로 no-fill 시험. |
+| `GoogleAdMob.showAppsInTossAdMob` | `isLoaded` 체크 후 requested→show→impression→reward→dismissed 시퀀스 emit | 실 광고 노출 + 리워드 | 🟢 faithful | ✓ | 이벤트 타임라인 재현. reward는 `coins/10` 고정. |
+| `GoogleAdMob.isAppsInTossAdMobLoaded` | `ads.isLoaded` 반환 | 실 로드 상태 | 🟢 faithful | ✓ | 상태 기반. |
+| `TossAds.initialize` | log | 실 SDK 초기화 | 🟡 partial | ✗ | no-op이나 init은 부수효과 적어 실용 충분. |
+| `TossAds.attach` / `attachBanner` | DOM에 placeholder div 삽입 | 실 광고 렌더 | 🟡 partial | ✗ | 시각적 placeholder. 실 광고 콘텐츠 아님. `attachBanner`는 `{destroy}` 반환. |
+| `TossAds.destroy` / `destroyAll` | no-op | 실 광고 해제 | 🟡 partial | ✗ | placeholder는 제거 안 함. |
+| `loadFullScreenAd` / `showFullScreenAd` | AdMob과 동일 패턴(`isLoaded` 공유) | 실 전면 광고 | 🟢 faithful | ✓ | `ads.isLoaded` 공유 — load 없이 show하면 error. |
+
+---
+
+## 5. Game / 프로모션 (`game/index.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `grantPromotionReward` | log + `{key: mock-reward-<ts>}` | 실 리워드 지급 | 🟡 partial | ✗ | 항상 성공, state 미반영. 실제 지급/중복 방지 없음. |
+| `grantPromotionRewardForGame` | 위와 동일 | 실 게임 리워드 | 🟡 partial | ✗ | 동일. |
+| `submitGameCenterLeaderBoardScore` | `game.leaderboardScores`에 push + `SUCCESS` | 실 리더보드 제출 | 🟢 faithful | ✓ | 상태 기록. |
+| `getGameCenterGameProfile` | `game.profile` 있으면 SUCCESS, 없으면 `PROFILE_NOT_FOUND` | 실 게임 프로필 | 🟢 faithful | ✓ | 패널 profile 토글. |
+| `openGameCenterLeaderboard` | log (no-op in browser) | 네이티브 리더보드 UI | 🔴 inert | ✗ | native UI라 재현 불가. |
+| `contactsViral` | 500ms 후 `close`/`noReward` 이벤트 | 실 연락처 바이럴 시트 | 🟡 partial | ✗ | 항상 noReward로 닫힘. 실 바이럴 흐름 없음. |
+
+---
+
+## 6. Notification (`notification.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `requestNotificationAgreement` | microtask 후 `notification.nextResult`를 `onEvent`로 | 실 알림 동의 시트 | 🟢 faithful | (state 입력) | 패널에서 결과 토글(`agreementRejected` 포함). 계약 충실. |
+
+---
+
+## 7. Device — Storage (`device/storage.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `Storage.getItem` / `setItem` / `removeItem` / `clearItems` | `localStorage`에 `__ait_storage:` prefix로 격리 | 네이티브 KV 저장 | 🟢 faithful | ✗ | localStorage라 영속·격리 정상. 단 `AIT.getMockState`엔 안 보임(브라우저 storage). 용량/직렬화 제약은 브라우저 기준. |
+
+---
+
+## 8. Device — Location (`device/location.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `getCurrentLocation` | mode 분기: `mock`(state 좌표) / `web`(`navigator.geolocation`) / `prompt`(패널 입력) | 실 GPS | 🟢 faithful | ✓ | permission gate 부착(`checkPermission`). 3-mode로 실용성 높음. |
+| `startUpdateLocation` | mode 분기: `mock`(지터 추가 interval) / `web`(`watchPosition`) / `prompt` | 실 위치 스트림 | 🟢 faithful | ✓ | mock mode는 ±0.0001 무작위 드리프트. |
+| `Accuracy` (enum) | SDK와 동일 enum | 동일 | 🟢 faithful | — | 값 일치. |
+
+---
+
+## 9. Device — Camera / Photos (`device/camera.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `openCamera` | mode 분기: `mock`(더미 이미지) / `web`(`<input capture>`) / `prompt` | 실 카메라 | 🟡 partial | ✗ | web mode 파일 선택 취소 감지가 focus 휴리스틱이라 모바일/Safari에서 불안정(코드 주석). |
+| `fetchAlbumPhotos` | mode 분기: 더미 / `<input multiple>` / prompt | 실 앨범 다중 선택 | 🟡 partial | ✗ | 위와 동일 취소 감지 한계. |
+| `fetchAlbumItems` (PHOTO/VIDEO) | mode 분기. mock mode는 PHOTO만 | 실 사진·동영상 복합 선택 | 🟡 partial | ✗ | mock mode에서 VIDEO 더미 없음 — PHOTO만 반환. |
+
+---
+
+## 10. Device — Clipboard / Contacts / Haptic / PDF (`device/*.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `getClipboardText` / `setClipboardText` | mode 분기: `mock`(state) / `web`(`navigator.clipboard`, default) | 네이티브 클립보드 | 🟢 faithful | ✓ (mock mode) | web mode는 브라우저 권한 프롬프트·HTTPS 필요. permission gate 부착. |
+| `fetchContacts` | `contacts` state slice 페이지네이션 + `contains` 필터 | 실 주소록 | 🟢 faithful | ✓ | 패널 contacts 편집. offset/size/query 충실. |
+| `generateHapticFeedback` | log + `analyticsLog`에 기록 | 실 햅틱 진동 | 🟡 partial | ✓ | 진동 자체는 불가(브라우저)이나 호출이 analyticsLog로 관측됨 — no-op 중 드물게 관측 가능. |
+| `saveBase64Data` | `<a download>` 트리거(브라우저 다운로드) | 네이티브 파일 저장 | 🟡 partial | ✗ | 브라우저 다운로드로 근사. 저장 위치 다름. |
+| `openPDFViewer` | `await Promise.resolve()` 후 `'CLOSE'` | 네이티브 PDF 뷰어 | 🔴 inert | ✗ | 즉시 CLOSE 반환, 실제 뷰어 없음. 권한·모드 분기 없음. |
+
+---
+
+## 11. Permissions (`permissions.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `getPermission` | `permissions[name]` state 반환 | 실 권한 상태 | 🟢 faithful | ✓ | 패널 권한 토글. |
+| `openPermissionDialog` | `allowed`면 그대로, 아니면 `allowed`로 전환 후 반환 | 네이티브 권한 다이얼로그 | 🟡 partial | ✓ | 항상 allow로 귀결(denied 유지 불가). 실 다이얼로그의 거부 흐름 미재현. |
+| `requestPermission` | `openPermissionDialog` 위임 | 동일 | 🟡 partial | ✓ | 위와 동일. |
+| `checkPermission` (내부) | `denied`면 throw | — | 🟢 faithful | — | 각 device API가 호출. denied 시 명확한 에러. |
+
+---
+
+## 12. Analytics (`analytics/index.ts`) · Partner (`partner/index.ts`)
+
+| API | mock 동작 | real 동작 | 분류 | 관측? | gap |
+|---|---|---|---|---|---|
+| `Analytics.screen` / `impression` / `click` | `analyticsLog`에 기록 | 실 텔레메트리 전송 | 🟢 faithful | ✓ | 전송 대신 로컬 로그 — dev에선 더 유용(패널에서 관측). |
+| `eventLog` | `analyticsLog`에 `log_type`별 기록 | 실 이벤트 로그 전송 | 🟢 faithful | ✓ | 동일. |
+| `partner.addAccessoryButton` / `removeAccessoryButton` | `console.log`만 | 네비 액세서리 버튼 등록/제거 | 🔴 inert | ✗ | 호출만, state·DOM 변화 없음. `tdsEvent.navigationAccessoryEvent`와 짝이지만 mock에선 둘 다 끊겨 있음. |
+
+---
+
+## 요약 — gap 우선순위 (구현 PR 순서 후보)
+
+`🔴 inert`가 가장 시급하다 — 호출 전/후를 구분할 수 없어 회귀를 mock에서 못 잡는다. real에서 환경/관측 신호를 갖는 것부터 좁힌다.
+
+1. **`environment` 기본값 + toss 진입 story** (§0) — gate 전체의 뿌리. #190 acceptance 2번.
+2. **`setIosSwipeGestureEnabled` → state 토글** (§1) — `setDeviceOrientation` 패턴 mirror. #190 acceptance 3번, 명시적 1순위.
+3. **나머지 navigation no-op** (`setScreenAwakeMode`, `setSecureScreen`, `requestReview`) → "요청됨" state 기록.
+4. **safe area · 기기 특성 정합** (§0.5) — iPhone 15 Pro preset 추가(393×852/dpr3/dynamic-island/top59/bottom34) + default `safeAreaInsets`를 default 기기와 정합 + 호스트 실측. 연결 기기에 맞는 preset이 없는 게 당장의 gap.
+5. **`appsInTossEvent` / `partner.*accessoryButton`** — 이벤트 발화 경로 연결(현재 완전 끊김).
+6. **UA/host 단서 흉내** (§0) — host-gated 코드 경로를 브라우저에서 시험 (#190 범위 4, 검토 단계).
+
+`🟡 partial`은 대부분 실용에 충분 — native 런타임 의존(카메라 취소 감지, 실 결제 UI)이나 의도된 간소화(SafeAreaInsets 과호출)라 #190 비목표에 가깝다. `🟢 faithful`은 손댈 필요 없음.
+
+새 mock API를 추가하면 이 표에 행을 더한다 — 그게 fidelity 회귀를 막는 규약이다.
