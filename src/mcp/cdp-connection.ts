@@ -13,8 +13,12 @@
  * event streams these need a `send(method, params)` round-trip, so the
  * connection grows a typed `send`. The fake returns canned command results.
  *
- * Only the slice of the Chrome DevTools Protocol the tools need is typed here;
- * future write tools (e.g. `Runtime.evaluate`) will extend the command map.
+ * Phase 2 extension: `Runtime.evaluate` (read-only probe) added for the
+ * `measure_safe_area` tool — executes a JS snippet on the attached page and
+ * returns the result as a `RemoteObject`. The fake returns canned results for
+ * unit tests without a phone roundtrip.
+ *
+ * Only the slice of the Chrome DevTools Protocol the tools need is typed here.
  */
 
 /** A target (page) the Chii relay currently sees attached. */
@@ -130,6 +134,30 @@ export interface PageCaptureScreenshotResult {
 }
 
 /**
+ * Params for `Runtime.evaluate`.
+ * Covers the subset used by the `measure_safe_area` read-only probe.
+ */
+export interface RuntimeEvaluateParams {
+  /** JavaScript expression to evaluate in the page context. */
+  expression: string;
+  /** Return the result as a plain JSON value (vs. a handle). Default false. */
+  returnByValue?: boolean;
+  /** Await a returned Promise before resolving. Default false. */
+  awaitPromise?: boolean;
+}
+
+/** Result of `Runtime.evaluate`. */
+export interface RuntimeEvaluateResult {
+  /** The evaluation result. */
+  result: CdpRemoteObject;
+  /** Present when evaluation threw an uncaught exception. */
+  exceptionDetails?: {
+    text: string;
+    exception?: CdpRemoteObject;
+  };
+}
+
+/**
  * Map of CDP command method → params/result shape. Keeps `send` typed so a
  * `DOM.getDocument` call resolves to a `DomGetDocumentResult`, etc.
  */
@@ -145,6 +173,10 @@ export interface CdpCommandMap {
   'Page.captureScreenshot': {
     params: { format?: 'png' | 'jpeg' | 'webp'; quality?: number };
     result: PageCaptureScreenshotResult;
+  };
+  'Runtime.evaluate': {
+    params: RuntimeEvaluateParams;
+    result: RuntimeEvaluateResult;
   };
 }
 

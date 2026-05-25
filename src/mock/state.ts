@@ -45,6 +45,7 @@ export type {
   PermissionStatus,
   PlatformOS,
   SafeAreaInsets,
+  SafeAreaProvenance,
   ViewportOrientation,
   ViewportPreset,
   ViewportPresetId,

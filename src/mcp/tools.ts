@@ -1,5 +1,5 @@
 /**
- * Debug-mode MCP tools (Phase 1–3).
+ * Debug-mode MCP tools (Phase 1–3 + safe-area probe).
  *
  * Read-only tools that normalize CDP / AIT data into `chrome-devtools-mcp`-
  * compatible shapes. The tools never touch a websocket or HTTP endpoint
@@ -15,6 +15,7 @@
  *     - `get_dom_document`       ← DOM.getDocument
  *     - `take_snapshot`          ← DOMSnapshot.captureSnapshot
  *     - `take_screenshot`        ← Page.captureScreenshot
+ *     - `measure_safe_area`      ← Runtime.evaluate (safe-area probe)
  *   Phase 3 (AIT.* domain — CDP can't cover these):
  *     - `AIT.getSdkCallHistory`
  *     - `AIT.getMockState`
@@ -112,6 +113,17 @@ export const DEBUG_TOOL_DEFINITIONS = [
     description:
       'Captures a PNG screenshot of the attached mini-app page over CDP (Page.captureScreenshot) ' +
       'so the agent can see the phone screen directly. Read-only. Returns an image content block.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'measure_safe_area',
+    description:
+      'Runs a safe-area probe on the attached mini-app page via Runtime.evaluate and returns ' +
+      'normalized safe-area insets, viewport geometry, device pixel ratio, and User-Agent. ' +
+      'Read-only — does not modify page state. ' +
+      'Use in a relay session (phone attached) to get ground-truth values for upgrading a ' +
+      'viewport preset from extrapolated/placeholder to measured. ' +
+      'Requires the relay to be attached — call list_pages first.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -288,6 +300,179 @@ export interface ScreenshotResult {
 export async function takeScreenshot(connection: CdpConnection): Promise<ScreenshotResult> {
   const { data } = await connection.send('Page.captureScreenshot', { format: 'png' });
   return { data, dataUri: `data:image/png;base64,${data}`, mimeType: 'image/png' };
+}
+
+/* -------------------------------------------------------------------------- */
+/* measure_safe_area — Runtime.evaluate probe                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The JS probe injected via `Runtime.evaluate`. It reads:
+ *   1. `env(safe-area-inset-*)` via a temporary element with padding set to
+ *      those CSS env vars, then `getComputedStyle`.
+ *   2. `SafeAreaInsets.get()` if the native SDK object is available.
+ *   3. nav bar geometry (first `.ait-navbar` element height, if present).
+ *   4. `innerWidth`, `innerHeight`, `devicePixelRatio`, `navigator.userAgent`.
+ *
+ * Returns a plain JSON-serialisable object so `returnByValue: true` works.
+ *
+ * NOTE: This expression is evaluated in the page context on the real device.
+ * It does not mutate any page state — the temporary element is removed after
+ * reading. No secret or auth token is read or returned.
+ */
+export const SAFE_AREA_PROBE_EXPRESSION = `
+(function() {
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;' +
+    'padding-top:env(safe-area-inset-top,0px);' +
+    'padding-right:env(safe-area-inset-right,0px);' +
+    'padding-bottom:env(safe-area-inset-bottom,0px);' +
+    'padding-left:env(safe-area-inset-left,0px)';
+  document.documentElement.appendChild(el);
+  var cs = window.getComputedStyle(el);
+  var cssEnv = {
+    top: parseFloat(cs.paddingTop) || 0,
+    right: parseFloat(cs.paddingRight) || 0,
+    bottom: parseFloat(cs.paddingBottom) || 0,
+    left: parseFloat(cs.paddingLeft) || 0
+  };
+  document.documentElement.removeChild(el);
+  var sdkInsets = null;
+  try {
+    if (typeof SafeAreaInsets !== 'undefined' && SafeAreaInsets && typeof SafeAreaInsets.get === 'function') {
+      sdkInsets = SafeAreaInsets.get();
+    }
+  } catch(_) {}
+  var navBarHeight = null;
+  try {
+    var nb = document.querySelector('.ait-navbar');
+    if (nb) navBarHeight = nb.getBoundingClientRect().height;
+  } catch(_) {}
+  return JSON.stringify({
+    cssEnv: cssEnv,
+    sdkInsets: sdkInsets,
+    navBarHeight: navBarHeight,
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+    devicePixelRatio: window.devicePixelRatio,
+    userAgent: navigator.userAgent
+  });
+})()
+`.trim();
+
+/**
+ * Normalized result returned by `measure_safe_area`.
+ *
+ * All inset values are in CSS pixels as reported by the real device.
+ * `userAgent` is included for device identification; it never contains
+ * authentication secrets or session tokens.
+ */
+export interface SafeAreaMeasurement {
+  /**
+   * `env(safe-area-inset-*)` values read via `getComputedStyle` on the device.
+   * On iOS inside the Toss host WebView this is typically all-zero because the
+   * WebView viewport is placed below the physical notch by the host app.
+   */
+  cssEnv: { top: number; right: number; bottom: number; left: number };
+  /**
+   * `SafeAreaInsets.get()` result from the native SDK, if available.
+   * In the Toss host this carries the nav bar height as `top` and the
+   * home-indicator height as `bottom`. `null` when the SDK object is absent
+   * (e.g. outside a Toss WebView).
+   */
+  sdkInsets: { top: number; right: number; bottom: number; left: number } | null;
+  /**
+   * Height of the `.ait-navbar` element (px) if present, else `null`.
+   * Useful to cross-validate `sdkInsets.top` against the rendered nav bar.
+   */
+  navBarHeight: number | null;
+  /** CSS viewport width (`window.innerWidth`). */
+  innerWidth: number;
+  /** CSS viewport height (`window.innerHeight`). */
+  innerHeight: number;
+  /**
+   * Device pixel ratio (`window.devicePixelRatio`).
+   * Note: `window.devicePixelRatio` is read-only in the browser, so devtools
+   * cannot emulate DPR locally — this is the ground-truth value from the device.
+   */
+  devicePixelRatio: number;
+  /**
+   * `navigator.userAgent` string for device identification.
+   * Does not contain authentication secrets.
+   */
+  userAgent: string;
+}
+
+/**
+ * Parses a raw `Runtime.evaluate` result value into a `SafeAreaMeasurement`.
+ * The probe returns a JSON string (because `returnByValue:true` with a plain
+ * object works unreliably across Chii relay versions — stringifying is safer).
+ *
+ * Throws if the result is missing, contains an exception, or cannot be parsed.
+ */
+export function normalizeSafeAreaResult(rawValue: unknown): SafeAreaMeasurement {
+  if (typeof rawValue !== 'string') {
+    throw new Error(
+      `measure_safe_area: probe returned unexpected type "${typeof rawValue}" — expected JSON string`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    throw new Error(`measure_safe_area: probe returned non-JSON string: ${rawValue}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('measure_safe_area: parsed result is not an object');
+  }
+  const obj = parsed as Record<string, unknown>;
+
+  function requireInsets(
+    key: string,
+  ): { top: number; right: number; bottom: number; left: number } | null {
+    const v = obj[key];
+    if (v === null || v === undefined) return null;
+    if (typeof v !== 'object') return null;
+    const r = v as Record<string, unknown>;
+    return {
+      top: typeof r.top === 'number' ? r.top : 0,
+      right: typeof r.right === 'number' ? r.right : 0,
+      bottom: typeof r.bottom === 'number' ? r.bottom : 0,
+      left: typeof r.left === 'number' ? r.left : 0,
+    };
+  }
+
+  const cssEnv = requireInsets('cssEnv') ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  const sdkInsets = requireInsets('sdkInsets');
+  const navBarHeight = typeof obj.navBarHeight === 'number' ? obj.navBarHeight : null;
+  const innerWidth = typeof obj.innerWidth === 'number' ? obj.innerWidth : 0;
+  const innerHeight = typeof obj.innerHeight === 'number' ? obj.innerHeight : 0;
+  const devicePixelRatio = typeof obj.devicePixelRatio === 'number' ? obj.devicePixelRatio : 1;
+  const userAgent = typeof obj.userAgent === 'string' ? obj.userAgent : '';
+
+  return { cssEnv, sdkInsets, navBarHeight, innerWidth, innerHeight, devicePixelRatio, userAgent };
+}
+
+/**
+ * Runs the safe-area probe on the attached page and returns a normalized
+ * `SafeAreaMeasurement`. Read-only — does not mutate page state.
+ *
+ * Throws on CDP error, probe exception, or result parse failure.
+ */
+export async function measureSafeArea(connection: CdpConnection): Promise<SafeAreaMeasurement> {
+  const result = await connection.send('Runtime.evaluate', {
+    expression: SAFE_AREA_PROBE_EXPRESSION,
+    returnByValue: true,
+    awaitPromise: false,
+  });
+  if (result.exceptionDetails) {
+    const msg =
+      result.exceptionDetails.exception?.description ??
+      result.exceptionDetails.text ??
+      'Runtime.evaluate threw an exception';
+    throw new Error(`measure_safe_area: probe threw — ${msg}`);
+  }
+  return normalizeSafeAreaResult(result.result.value);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -136,6 +136,24 @@ export type NotchType = 'none' | 'notch' | 'dynamic-island' | 'punch-hole-center
  */
 export type AitNavBarType = 'partner' | 'game';
 
+/**
+ * Provenance of a preset's safe-area values — how trustworthy they are.
+ *
+ * - `measured`   — confirmed by an on-device relay session via `measure_safe_area`.
+ * - `extrapolated` — derived from related device specs / Apple/Samsung docs without
+ *   a relay session on that exact model.
+ * - `placeholder` — a best-guess stand-in. Do not use for QA ground truth until
+ *   upgraded to `measured` via a relay session.
+ */
+export interface SafeAreaProvenance {
+  /** Origin of the safe-area values for this preset. */
+  source: 'measured' | 'extrapolated' | 'placeholder';
+  /** Device label used during the relay session (meaningful for `measured`). */
+  device?: string;
+  /** ISO-8601 date of the relay measurement session (meaningful for `measured`). */
+  date?: string;
+}
+
 export interface ViewportPreset {
   id: ViewportPresetId;
   label: string;
@@ -167,6 +185,12 @@ export interface ViewportPreset {
   navBarHeight: number;
   /** OS-level home-indicator inset in portrait (px), device-specific. */
   safeAreaBottom: number;
+  /**
+   * How trustworthy the safe-area values are. See {@link SafeAreaProvenance}.
+   * Absent for `none`/`custom` (no safe-area model).
+   * Use `measure_safe_area` MCP tool in a relay session to upgrade to `measured`.
+   */
+  safeAreaProvenance?: SafeAreaProvenance;
 }
 
 export interface ViewportState {

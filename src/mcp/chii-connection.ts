@@ -184,7 +184,9 @@ export class ChiiCdpConnection implements CdpConnection {
     method: M,
     params?: CdpCommandMap[M]['params'],
   ): Promise<CdpCommandMap[M]['result']> {
-    return this.sendCommand(method, params ?? {}) as Promise<CdpCommandMap[M]['result']>;
+    return this.sendCommand(method, (params ?? {}) as Record<string, unknown>) as Promise<
+      CdpCommandMap[M]['result']
+    >;
   }
 
   /**
