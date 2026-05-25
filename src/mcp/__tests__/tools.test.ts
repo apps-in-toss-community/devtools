@@ -298,6 +298,7 @@ describe('AIT.* tools (Phase 3)', () => {
             timestamp: 5,
             status: 'rejected',
             error: 'permission denied',
+            fidelity: 'partial' as const,
           },
         ],
       },

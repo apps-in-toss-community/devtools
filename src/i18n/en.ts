@@ -161,6 +161,9 @@ export const en: Record<StringKey, string> = {
   // Analytics tab
   'analytics.section.log': 'Analytics Log ({count})',
   'analytics.btn.clear': 'Clear',
+  'analytics.calls.section': 'SDK Calls ({count})',
+  'analytics.calls.btn.clear': 'Clear',
+  'analytics.calls.empty': '(no SDK calls yet)',
 
   // Storage tab
   'storage.section.title': 'Storage ({count} items)',

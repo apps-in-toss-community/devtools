@@ -10,7 +10,7 @@
   - `🔴 inert` — mock이 호출은 받지만 **상태를 전혀 안 바꿔** 호출 전/후를 구분할 수 없다. real은 환경을 바꾸므로 toss-gated 코드가 브라우저에서 영영 안 돌거나, 부수효과를 대조할 수 없다. **gap이 가장 큼.**
   - `🟡 partial` — 동작은 하지만 real과 형태·타이밍·분기가 다르다. 보통 실용에 충분하나 edge case에서 갈린다.
   - `🟢 faithful` — mock이 real의 계약(반환 shape·상태 전이)을 충실히 재현. 남은 차이는 native 런타임 자체(실제 결제 UI, 실제 카메라)뿐.
-- **관측 가능?** — 호출 결과가 `AIT.getMockState`(패널·MCP로 read)에 반영되는가. `AIT.getMockState`는 `aitState.state`를 그대로 반환하므로, **state slice에 쓰는 API만** 에이전트가 호출 후 환경 변화를 관측할 수 있다.
+- **관측 가능?** — 호출 결과가 `AIT.getMockState`(패널·MCP로 read)에 반영되는가. `AIT.getMockState`는 `aitState.state`를 그대로 반환하므로, **state slice에 쓰는 API만** 에이전트가 호출 후 환경 변화를 관측할 수 있다. `✓ sdkCallLog`는 영역 4 ([#195](https://github.com/apps-in-toss-community/devtools/issues/195)) 구현으로 추가된 `AIT.getSdkCallHistory` 관측을 뜻한다 — state가 안 바뀌는 inert API도 **호출 자체**를 패널 Analytics → Calls 뷰에서 🔴 뱃지로 확인하고, MCP `AIT.getSdkCallHistory`로 에이전트가 읽을 수 있다.
 - 코드 위치는 `src/mock/` 기준 상대 경로.
 
 이 표의 출발점은 [devtools#171](https://github.com/apps-in-toss-community/devtools/issues/171) on-device relay 세션(2026-05-25)에서 실폰(`AppsInToss TossApp/5.261.0`)에 attach해 실측한 분기들이다.
@@ -64,9 +64,9 @@ iPhone 15 Pro 실 web-relevant 스펙(참고): CSS viewport **393×852**(portrai
 |---|---|---|---|---|---|
 | `setIosSwipeGestureEnabled` | `console.log`만 (`navigation/index.ts:31`) | iOS 엣지 스와이프 뒤로가기 제스처를 실제 토글 | 🔴 inert | ✗ | 호출 후 mock state 변화 없음 → toss-gated 가드가 "걸렸는지"를 관측 불가. **#190 1순위** (pattern: `setDeviceOrientation` mirror). |
 | `setDeviceOrientation` | `viewport.appOrientation` 토글 (`auto`일 때만) | 화면 방향 강제 | 🟢 faithful | ✓ | 상태 기록·패널 반영. real과 가장 가까운 no-op→state 패턴의 모범. |
-| `setScreenAwakeMode` | log + 입력값 echo | 화면 슬립 방지 토글 | 🔴 inert | ✗ | `{enabled}` 반환만, state 미반영. |
-| `setSecureScreen` | log + 입력값 echo | 캡처 방지(보안 화면) | 🔴 inert | ✗ | 위와 동일. |
-| `requestReview` | log (`isSupported:()=>true`) | 앱스토어 리뷰 프롬프트 | 🔴 inert | ✗ | native UI라 브라우저 재현 불가. 최소한 "요청됨" state는 가능. |
+| `setScreenAwakeMode` | log + 입력값 echo → **`sdkCallLog` 🔴 기록** (#195) | 화면 슬립 방지 토글 | 🔴 inert | ✓ sdkCallLog | `{enabled}` 반환만, state 미반영. Analytics 탭 Calls 뷰에서 🔴 뱃지로 관측 가능. |
+| `setSecureScreen` | log + 입력값 echo → **`sdkCallLog` 🔴 기록** (#195) | 캡처 방지(보안 화면) | 🔴 inert | ✓ sdkCallLog | 위와 동일. |
+| `requestReview` | log (`isSupported:()=>true`) → **`sdkCallLog` 🔴 기록** (#195) | 앱스토어 리뷰 프롬프트 | 🔴 inert | ✓ sdkCallLog | native UI라 브라우저 재현 불가. 호출 여부는 sdkCallLog로 관측 가능. |
 | `closeView` | `window.history.back()` | 미니앱 뷰 종료 | 🟡 partial | ✗ | 브라우저에선 히스토리 뒤로. 실제 종료(앱 컨테이너 dismiss)와 의미 다름. |
 | `openURL` | `window.open(_, '_blank')` | 외부 브라우저/딥링크 | 🟡 partial | ✗ | 새 탭. 토스 in-app 브라우저 동작과 다름. |
 | `share` | `navigator.share` 있으면 위임, 없으면 log | 네이티브 공유 시트 | 🟡 partial | ✗ | 브라우저 Web Share에 의존. |

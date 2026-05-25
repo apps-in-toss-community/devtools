@@ -79,8 +79,12 @@ export class HttpAitSource implements AitSource {
         return result as AitMethodMap[M];
       }
       case 'AIT.getSdkCallHistory': {
-        // Dev endpoint records no SDK call trace; return empty rather than fake.
-        const result: AitSdkCallHistory = { calls: [] };
+        // sdkCallLog slice is now part of the mock state pushed by the browser panel.
+        // Read it from the state snapshot rather than returning an empty stub.
+        const state = await this.fetchState();
+        const raw = state.sdkCallLog;
+        const calls = Array.isArray(raw) ? (raw as AitSdkCallHistory['calls']) : [];
+        const result: AitSdkCallHistory = { calls };
         return result as AitMethodMap[M];
       }
       default:

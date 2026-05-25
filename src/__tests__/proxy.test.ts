@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { createMockProxy } from '../mock/proxy.js';
+import { aitState } from '../mock/state.js';
 
 describe('createMockProxy', () => {
   it('구현된 프로퍼티는 정상적으로 접근 가능하다', () => {
@@ -33,5 +34,21 @@ describe('createMockProxy', () => {
     const ref = createMockProxy('TestModule', { existing: () => 1 });
     expect('existing' in ref).toBe(true);
     expect('missing' in ref).toBe(false);
+  });
+});
+
+describe('createMockProxy — KNOWN_UNIMPLEMENTED allowlist', () => {
+  beforeEach(() => {
+    aitState.reset();
+  });
+
+  it('KNOWN_UNIMPLEMENTED에 없는 미지의 이름은 여전히 throw한다', () => {
+    const ref = createMockProxy('SomeModule', {}) as Record<string, unknown>;
+    expect(() => ref.completelyUnknownApi).toThrow(/is not mocked/);
+  });
+
+  it('구현된 프로퍼티는 throw하지 않는다', () => {
+    const mock = createMockProxy('SomeModule', { implemented: () => 42 });
+    expect(mock.implemented()).toBe(42);
   });
 });
