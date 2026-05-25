@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.1.33
+
+### Patch Changes
+
+- 179b466: feat(mock): 광고 더미 fidelity — TossAds 콜백 발화 + destroy 누수 수정 + 인터랙티브 패널 컨트롤 (#196)
+
+  slot 레지스트리로 placeholder를 추적해 `destroy`/`destroyAll`/반환 `destroy`가 실제 엘리먼트를 제거한다(누수 수정). `attachBanner`의 `BannerSlotCallbacks`와 `initialize` 콜백을 결정론적으로 발화하고, AdMob reward의 하드코딩을 `state.ads.rewardUnitType`/`rewardAmount`로 파라미터화한다. 패널 Ads 탭에 콜백 결과(loaded/no-fill/reward/dismissed/clicked/failed)·배너 인터랙티브 컨트롤 추가. 시그니처는 SDK 계약 그대로 보존.
+
+- bc6ca6d: feat(mock): haptic 관측 강화 — navigator.vibrate 매핑 + 패널 가시화 (#197)
+
+  `generateHapticFeedback` 10종 타입을 `navigator.vibrate` 패턴으로 best-effort 매핑하고, `sdkCallLog`에 🟡(partial)로 기록한다. 패널 Device 탭에 마지막 haptic 행과 10종 트리거 버튼 추가.
+
+- 179b466: feat(relay): relay attach TOTP 인증 (relay-side 권위 관문 + in-app gate fail-fast) (#194)
+
+  `AIT_DEBUG_TOTP_SECRET`이 설정되면 relay-side(Node)가 모든 attach upgrade를 RFC 6238 TOTP로 검증한다 — chii.start() 전에 등록한 upgrade 리스너가 권위 있는 관문이고, in-app gate Layer C3은 2차 fail-fast다. 위협 모델은 tunnel URL 유출자 차단으로 한정. 시크릿·코드값은 로그/배너/gate-reason에 출력하지 않는다.
+
+- a752893: feat(mcp): measure_safe_area 툴 추가 + ViewportPreset provenance 필드
+
+  - CdpCommandMap에 Runtime.evaluate 타입 추가 (예고된 확장 지점 실현)
+  - measure_safe_area MCP 툴: relay 실기기에서 safe-area 프로브 실행 후 정규화 반환
+  - ViewportPreset에 safeAreaProvenance 필드 추가 (measured/extrapolated/placeholder)
+  - 패널 Viewport 탭에 추정치/미측정 뱃지 렌더링
+  - catalog stale 정정: default top 47→54, iPhone 15 Pro preset 상태 정정
+
+- 179b466: feat(mock): sdkCallLog 관측 layer + no-op API 일괄 가시화 (#195)
+
+  `aitState`에 구조화된 `sdkCallLog` slice(ring buffer, 상한 200)와 `logSdkCall`을 추가하고, 시그니처를 보존하는 `observe(apiName, fidelity, fn)` 래퍼를 도입한다. MCP `AIT.getSdkCallHistory`가 이 로그를 실제 데이터 소스로 읽는다. proxy는 기본 throw를 유지하되 `KNOWN_UNIMPLEMENTED` 이름만 🔴(inert) 기록 후 no-op 반환한다. 패널 Analytics 탭에 fidelity 뱃지(🟢/🟡/🔴) SDK Calls 뷰 추가.
+
 ## 0.1.32
 
 ### Patch Changes
