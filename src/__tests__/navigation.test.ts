@@ -229,14 +229,14 @@ describe('Navigation mock', () => {
   });
 
   it('getSafeAreaInsets (deprecated): top 값을 반환한다', () => {
-    // default는 iphone-15-pro와 정합 (Dynamic Island top 59).
-    expect(getSafeAreaInsets()).toBe(59);
+    // default는 iPhone 15 Pro partner WebView 실측과 정합 (nav bar top 54).
+    expect(getSafeAreaInsets()).toBe(54);
   });
 
   describe('SafeAreaInsets', () => {
     it('get: 현재 safe area insets를 반환한다', () => {
       const insets = SafeAreaInsets.get();
-      expect(insets).toEqual({ top: 59, bottom: 34, left: 0, right: 0 });
+      expect(insets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
     });
 
     it('subscribe: 상태 변경 시 콜백이 호출되고 unsubscribe 후 호출되지 않는다', () => {

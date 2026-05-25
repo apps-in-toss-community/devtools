@@ -135,7 +135,7 @@ export const en: Record<StringKey, string> = {
   'viewport.status.cssPhysical': 'CSS / physical',
   'viewport.status.safeArea': 'Safe area',
   'viewport.status.aitNavBar': 'AIT nav bar',
-  'viewport.status.aitNavBarValue': '{height}px (excl. SafeArea) · {type}',
+  'viewport.status.aitNavBarValue': '{height}px → SafeArea top · {type}',
   'viewport.orientation.autoSuffix': '{orient} (auto)',
 
   // IAP tab

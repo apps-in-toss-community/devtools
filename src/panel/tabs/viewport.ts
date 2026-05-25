@@ -8,7 +8,6 @@ import type {
 } from '../../mock/types.js';
 import { h, monitoringNotice } from '../helpers.js';
 import {
-  AIT_NAV_BAR_HEIGHT,
   clampCustomDimension,
   computeSafeAreaInsets,
   effectiveOrientation,
@@ -179,7 +178,13 @@ export function renderViewportTab(): HTMLElement {
     );
 
     if (preset) {
-      const insets = computeSafeAreaInsets(preset, landscape, vp.landscapeSide);
+      const insets = computeSafeAreaInsets(
+        preset,
+        landscape,
+        vp.landscapeSide,
+        vp.aitNavBar,
+        vp.aitNavBarType,
+      );
       rows.push(
         h(
           'div',
@@ -195,6 +200,8 @@ export function renderViewportTab(): HTMLElement {
     }
 
     if (vp.aitNavBar && !landscape) {
+      // partner는 콘텐츠를 navBarHeight만큼 밀어내고, game은 투명 오버레이라 0.
+      const navBarTop = vp.aitNavBarType === 'partner' ? (preset?.navBarHeight ?? 0) : 0;
       rows.push(
         h(
           'div',
@@ -204,7 +211,7 @@ export function renderViewportTab(): HTMLElement {
             'span',
             { className: 'ait-status-value' },
             t('viewport.status.aitNavBarValue', {
-              height: AIT_NAV_BAR_HEIGHT,
+              height: navBarTop,
               type: vp.aitNavBarType,
             }),
           ),

@@ -427,7 +427,9 @@ Each preset includes:
 - **CSS viewport** (portrait `width × height`)
 - **DPR** (devicePixelRatio: 2, 3, 3.5, etc.)
 - **Notch** type (`none` / `notch` / `dynamic-island` / `punch-hole-center`)
-- **OS-level safe area insets** (status bar / home indicator / left/right insets based on notch rotation)
+- **Notch inset** — the OS notch / Dynamic Island offset. Device-specific. In portrait this does *not* reach the miniapp's top inset (it's only used for the landscape side inset and to position the visual notch overlay).
+- **Nav bar height** — the Toss host's top nav bar. Device-independent (`54px` for a `partner` WebView). For a `partner` app this height *is* `SafeAreaInsets.get().top`.
+- **Home-indicator inset** — the bottom safe-area inset (home indicator), device-specific.
 
 ### Orientation
 
@@ -449,9 +451,9 @@ When **Show frame** is toggled on:
 - The back button triggers `__ait:backEvent` and the X button calls `closeView()` — you can verify actual SDK event plumbing directly from the panel
 
 When **Show Apps in Toss nav bar** is toggled on (default on):
-- A 48px nav bar overlay simulating the Toss host's top nav bar (back / app icon+name / ⋯ / ×)
-- Positioned just below the status bar, after the safe area top
-- **Important**: these 48px are **not included** in `env(safe-area-inset-top)` or `SafeAreaInsets.get().top` (this matches the SDK behavior). Toss-side examples compensate using the pattern `insets.top + 48`.
+- A 54px nav bar overlay simulating the Toss host's top nav bar (back / app icon+name / ⋯ / ×)
+- Positioned below the OS status bar (notch), offset by the preset's notch inset
+- For a `partner` WebView this nav bar height **is** `SafeAreaInsets.get().top`. Relay measurement of an iPhone 15 Pro (sandbox, portrait) showed `env(safe-area-inset-top)` = 0 (the OS notch stays outside the WebView viewport) and `SafeAreaInsets.get().top` = 54 px — i.e. the SDK top inset reports the host nav bar, not the notch. So a `partner` app lays out using `insets.top` alone. A `game` WebView is a transparent overlay that does not push content (top 0). Measured on iOS `partner`; Android values are provisional and `external` is not simulated.
 
 ### Console manipulation
 
@@ -482,8 +484,8 @@ __ait.patch('viewport', { preset: 'none' });
 
 The bottom of the Viewport tab shows the currently applied values in real time:
 - **CSS / physical**: `402×874@3x | 1206×2622 portrait (auto)`
-- **Safe area**: `T59 R0 B34 L0`
-- **AIT nav bar**: `48px (excl. SafeArea)`
+- **Safe area**: `T54 R0 B34 L0` (portrait `partner` — top is the nav bar height, not the notch)
+- **AIT nav bar**: `54px → SafeArea top · partner`
 
 ### Persistence + technical details
 

@@ -27,17 +27,22 @@ export const VIEWPORT_STORAGE_KEY = '__ait_viewport';
 export const VIEWPORT_CUSTOM_MAX = 4096;
 
 /**
- * Apps in Toss host nav bar 높이 (CSS px). 공식 문서에 픽셀 값이 명시돼 있지 않아,
- * 앱인토스 샘플 앱(`with-contacts-viral`, `random-balls`)이 safeArea.top에 `+ 48`을
- * 더하는 패턴에서 역산한 추정치다 (호스트 실측으로 확정 예정 — devtools#190).
- * nav bar 높이는 SafeAreaInsets에 포함되지 않으므로 별도 상수로 관리한다.
+ * Apps in Toss host nav bar 높이 (CSS px), `partner` type 기준.
  *
- * 주의: 이 보정은 `webViewProps.type === 'partner'`에 한정된다. `game` type은 nav bar가
- * 투명 오버레이라 콘텐츠를 밀어내지 않고(인게임 full-screen이 출시 요건), `external`은
- * 아직 시뮬레이션하지 않는다. 현재 renderNavBar는 두 type 모두 같은 오프셋으로 그리는데,
- * game이 정말 콘텐츠를 밀어내지 않는지는 실측 후 보정한다.
+ * iPhone 15 Pro on-device relay 실측값(devtools#190): `SafeAreaInsets.get().top`이
+ * **54 px**를 반환했고, 같은 시점 `env(safe-area-inset-top)`은 0이었다. 즉 SDK가 top으로
+ * 주는 값은 OS 노치 inset이 아니라 토스 네이티브 nav bar 높이 그 자체다 — nav bar는 호스트
+ * chrome이라 기기에 무관하므로 모든 preset이 이 단일 상수를 공유한다(이전 추정치 48은 폐기).
+ *
+ * type별 동작:
+ * - `partner` (기본): nav bar가 콘텐츠를 밀어내므로 SDK top = 이 값.
+ * - `game`: nav bar가 투명 오버레이라 콘텐츠를 밀어내지 않음(인게임 full-screen이 출시 요건)
+ *   → SDK top = 0. `external` type은 아직 시뮬레이션하지 않는다.
+ *
+ * landscape에서의 nav bar 거동은 아직 실측하지 못해 portrait 모델만 확정이다(landscape는
+ * 노치를 측면 inset으로 돌리고 top=0 유지 — 후속 실측 대상).
  */
-export const AIT_NAV_BAR_HEIGHT = 48;
+export const AIT_NAV_BAR_HEIGHT_PARTNER = 54;
 
 const NONE_PRESET: ViewportPreset = {
   id: 'none',
@@ -46,7 +51,8 @@ const NONE_PRESET: ViewportPreset = {
   height: 0,
   dpr: 1,
   notch: 'none',
-  safeAreaTop: 0,
+  notchInset: 0,
+  navBarHeight: 0,
   safeAreaBottom: 0,
 };
 
@@ -57,7 +63,8 @@ const CUSTOM_PRESET: ViewportPreset = {
   height: 0,
   dpr: 1,
   notch: 'none',
-  safeAreaTop: 0,
+  notchInset: 0,
+  navBarHeight: 0,
   safeAreaBottom: 0,
 };
 
@@ -65,7 +72,19 @@ const CUSTOM_PRESET: ViewportPreset = {
  * Device presets (2026). CSS viewport 크기는 실제 기기의 `window.innerWidth/innerHeight`.
  * iPhone 17 시리즈는 2025-09 출시. iPhone Air는 2026-04 출시.
  * Galaxy S26 시리즈는 2026-03-11 출시 — viewport 값은 phone-simulator.com에서 보고된
- * 측정치를 사용. safe area는 토스 호스트 환경 실측 필요 — S25 값으로 잠정.
+ * 측정치를 사용.
+ *
+ * safe-area 모델 (devtools#190 relay 실측 반영):
+ * - `notchInset` = OS 노치/status bar inset. 기기별 물리값(landscape 측면 inset + 시각
+ *   노치 오버레이용). iPhone 15 Pro 실측에서 `env(safe-area-inset-top)`은 0이었으므로 이
+ *   값은 portrait SDK top에는 들어가지 않는다.
+ * - `navBarHeight` = 토스 호스트 nav bar 높이. partner type portrait의 SDK `top`(실측 54).
+ *   호스트 chrome이라 기기 무관 — 전 preset이 `AIT_NAV_BAR_HEIGHT_PARTNER` 공유.
+ * - `safeAreaBottom` = home-indicator inset. 기기별(노치 iPhone 34, 홈버튼/Android 0).
+ *   iPhone 15 Pro 실측 bottom 34와 일치.
+ *
+ * 단, navBarHeight 54는 iOS partner에서만 실측됐다 — Android nav bar 높이와 game type
+ * 미세 차이는 후속 실측 대상(현재는 같은 값을 잠정 적용).
  *
  * iPhone 17과 17 Pro는 CSS viewport / DPR / safe area가 동일 — 이는 의도이며 카피-페이스트
  * 실수가 아니다. Apple의 17 lineup은 base와 Pro의 web-relevant 스펙이 같다.
@@ -80,7 +99,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 667,
     dpr: 2,
     notch: 'none',
-    safeAreaTop: 20,
+    notchInset: 20,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   {
@@ -90,7 +110,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 852,
     dpr: 3,
     notch: 'dynamic-island',
-    safeAreaTop: 59,
+    notchInset: 59,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
   },
   {
@@ -100,7 +121,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 844,
     dpr: 3,
     notch: 'notch',
-    safeAreaTop: 47,
+    notchInset: 47,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
   },
   {
@@ -110,7 +132,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 874,
     dpr: 3,
     notch: 'dynamic-island',
-    safeAreaTop: 59,
+    notchInset: 59,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
   },
   {
@@ -120,7 +143,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 912,
     dpr: 3,
     notch: 'dynamic-island',
-    safeAreaTop: 59,
+    notchInset: 59,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
   },
   {
@@ -130,7 +154,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 874,
     dpr: 3,
     notch: 'dynamic-island',
-    safeAreaTop: 59,
+    notchInset: 59,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
   },
   {
@@ -140,7 +165,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 956,
     dpr: 3,
     notch: 'dynamic-island',
-    safeAreaTop: 62,
+    notchInset: 62,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
   },
   // Samsung
@@ -156,7 +182,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 773,
     dpr: 3,
     notch: 'punch-hole-center',
-    safeAreaTop: 32,
+    notchInset: 32,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   {
@@ -166,7 +193,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 1040,
     dpr: 3,
     notch: 'punch-hole-center',
-    safeAreaTop: 32,
+    notchInset: 32,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   {
@@ -176,7 +204,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 1040,
     dpr: 3,
     notch: 'punch-hole-center',
-    safeAreaTop: 40,
+    notchInset: 40,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   {
@@ -186,7 +215,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 990,
     dpr: 3,
     notch: 'punch-hole-center',
-    safeAreaTop: 36,
+    notchInset: 36,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   {
@@ -196,7 +226,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 870,
     dpr: 3,
     notch: 'punch-hole-center',
-    safeAreaTop: 32,
+    notchInset: 32,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   {
@@ -206,7 +237,8 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     height: 884,
     dpr: 2.625,
     notch: 'punch-hole-center',
-    safeAreaTop: 32,
+    notchInset: 32,
+    navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 0,
   },
   CUSTOM_PRESET,
@@ -247,36 +279,46 @@ export function resolveViewportSize(state: ViewportState): { width: number; heig
 }
 
 /**
- * 프리셋 + landscape 여부 + landscape side로부터 OS-level safe-area insets를 계산한다.
+ * 프리셋 + orientation + nav bar 상태로부터 SDK `SafeAreaInsets.get()`이 반환할 insets를
+ * 계산한다. iPhone 15 Pro on-device relay 실측(devtools#190)에 맞춘 모델:
  *
- * - Portrait: preset의 `safeAreaTop`, `safeAreaBottom`을 그대로 사용.
- * - Landscape iPhone(notch/Dynamic Island): 노치가 한쪽으로 가므로 `landscapeSide`에
- *   따라 left 또는 right에만 인셋을 준다 (실 기기 동작과 일치). top은 0,
- *   home-indicator는 bottom에 유지.
- * - Android punch-hole(status bar): landscape 시에도 top에 status bar가 유지된다.
+ * - **Portrait top = 토스 nav bar 높이** (OS 노치가 아니다). 실측에서
+ *   `env(safe-area-inset-top)` = 0, `SafeAreaInsets.get().top` = 54 였고, 그 54는 호스트
+ *   nav bar다. 따라서 nav bar가 떠 있고 `partner` type일 때만 `navBarHeight`를 top에 준다.
+ *   `game`(투명 오버레이, 콘텐츠 안 밀어냄) 또는 nav bar 미표시면 top = 0.
+ * - **Bottom = `safeAreaBottom`** (home-indicator). 실측 34와 일치.
+ * - **Landscape iPhone(notch/Dynamic Island)**: 노치가 한쪽으로 가므로 `landscapeSide`에
+ *   따라 left/right 한쪽에만 `notchInset`을 준다. top은 0(landscape nav bar 거동은
+ *   미실측 — portrait 모델만 확정), home-indicator는 bottom에 유지.
+ * - **Android punch-hole(status bar)**: landscape에서도 top에 status bar(`notchInset`)가
+ *   유지된다.
  */
 export function computeSafeAreaInsets(
   preset: ViewportPreset,
   landscape: boolean,
   side: LandscapeSide,
+  navBarVisible: boolean,
+  navBarType: AitNavBarType,
 ): SafeAreaInsets {
   if (preset.id === 'none' || preset.id === 'custom') {
     return { top: 0, bottom: 0, left: 0, right: 0 };
   }
+  // partner nav bar가 떠 있을 때만 콘텐츠를 밀어낸다 (game은 투명 오버레이).
+  const navBarTop = navBarVisible && navBarType === 'partner' ? preset.navBarHeight : 0;
   if (!landscape) {
-    return { top: preset.safeAreaTop, bottom: preset.safeAreaBottom, left: 0, right: 0 };
+    return { top: navBarTop, bottom: preset.safeAreaBottom, left: 0, right: 0 };
   }
   if (preset.notch === 'notch' || preset.notch === 'dynamic-island') {
     return {
       top: 0,
       bottom: preset.safeAreaBottom,
-      left: side === 'left' ? preset.safeAreaTop : 0,
-      right: side === 'right' ? preset.safeAreaTop : 0,
+      left: side === 'left' ? preset.notchInset : 0,
+      right: side === 'right' ? preset.notchInset : 0,
     };
   }
   // Android status bar stays on the top edge even in landscape.
   return {
-    top: preset.safeAreaTop,
+    top: preset.notchInset,
     bottom: preset.safeAreaBottom,
     left: 0,
     right: 0,
@@ -291,6 +333,8 @@ function syncSafeAreaFromViewport(state: ViewportState): void {
     preset,
     effectiveOrientation(state) === 'landscape',
     state.landscapeSide,
+    state.aitNavBar,
+    state.aitNavBarType,
   );
   const current = aitState.state.safeAreaInsets;
   if (
@@ -340,15 +384,17 @@ function removeNavBarElement(): void {
 }
 
 /**
- * Apps in Toss host nav bar 렌더. OS status bar 아래에 48px 높이로 쌓인다.
+ * Apps in Toss host nav bar 렌더. OS status bar(notch) 아래에 쌓인다.
  *
  * 변형(SDK `webViewProps.type`과 의미 일치):
  * - `partner` (기본): 흰 배경, 좌측 뒤로가기(‹), 앱 아이콘 + 이름(`brand.displayName`),
  *   우측 `⋯` + 구분선 + `×`.
  * - `game`: 투명 배경, 게임 캔버스를 가리지 않도록 우측 `⋯` + 구분선 + `×`만.
  *
- * `env(safe-area-inset-top)`에는 이 높이가 포함되지 않으므로 (SDK 동작 확인),
- * 오버레이는 preset.safeAreaTop만큼 아래로 내려서 그린다.
+ * 시뮬레이터 프레임에서는 노치 오버레이가 body 상단에 장식으로 그려지므로, nav bar는 그
+ * 아래(`preset.notchInset`만큼 내려간 위치)에 둬서 시각적으로 노치 → nav bar 순서를 맞춘다.
+ * 이 시각 오프셋은 SDK가 반환하는 inset 값(`navBarHeight`)과 별개다 — 후자는
+ * `computeSafeAreaInsets`가 따로 계산한다.
  *
  * 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출한다.
  * 실제 SDK 이벤트 플러밍을 한 곳에서 검증할 수 있다.
@@ -360,7 +406,7 @@ function renderNavBar(preset: ViewportPreset, displayName: string, type: AitNavB
     className: `ait-navbar ait-navbar-${type}`,
     'aria-hidden': 'true',
   });
-  el.style.top = `${preset.safeAreaTop}px`;
+  el.style.top = `${preset.notchInset}px`;
 
   const moreBtn = h('button', {
     className: 'ait-navbar-btn',
@@ -481,7 +527,7 @@ export function disposeViewport(): void {
 /**
  * DOM에 뷰포트 제약을 적용한다.
  * - `html.ait-viewport-active` 클래스로 정적 CSS(styles.ts) 활성화
- * - body의 width/height는 preset 값으로, navbar top offset은 safeAreaTop으로 인라인 주입
+ * - body의 width/height는 preset 값으로, navbar top offset은 notchInset으로 인라인 주입
  */
 export function applyViewport(state: ViewportState): void {
   if (typeof document === 'undefined') return;

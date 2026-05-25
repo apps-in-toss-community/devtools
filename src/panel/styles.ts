@@ -482,7 +482,7 @@ export const PANEL_STYLES = /* css */ `
     position: absolute;
     left: 0;
     right: 0;
-    height: 48px; /* AIT_NAV_BAR_HEIGHT */
+    height: 54px; /* AIT_NAV_BAR_HEIGHT_PARTNER (relay 실측) */
     background: rgba(255, 255, 255, 0.92);
     backdrop-filter: blur(8px);
     display: flex;

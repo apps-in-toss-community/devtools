@@ -437,7 +437,9 @@ mount();          // 깨끗한 상태로 다시 마운트. 중복 <style>·liste
 - **CSS viewport** (portrait `width × height`)
 - **DPR** (devicePixelRatio: 2, 3, 3.5 등)
 - **Notch** 종류 (`none` / `notch` / `dynamic-island` / `punch-hole-center`)
-- **OS-level safe area insets** (status bar / 홈 인디케이터 / 노치 회전에 따른 좌우 인셋)
+- **notch inset** (OS 노치/status bar — landscape 좌우 인셋 + 시각 노치용, 기기별)
+- **nav bar height** (토스 호스트 nav bar — `partner` portrait의 `SafeAreaInsets.get().top`, 실측 54px)
+- **home-indicator inset** (`safeAreaBottom`, 기기별)
 
 ### Orientation
 
@@ -459,11 +461,11 @@ Landscape로 전환하면:
 - 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출 — 실제 SDK 이벤트 플러밍을 패널에서 직접 검증할 수 있습니다.
 
 **Show Apps in Toss nav bar** 토글(기본 on)을 켜면:
-- 토스 호스트의 상단 nav bar를 약 48px 높이로 오버레이. `Nav bar type`에 따라 모양이 다릅니다:
+- 토스 호스트의 상단 nav bar를 54px 높이로 오버레이. `Nav bar type`에 따라 모양이 다릅니다:
   - `partner` (비게임 기본): 흰 배경 + 뒤로가기 / 앱 아이콘·이름 / ⋯ / ×. 콘텐츠를 nav bar 높이만큼 아래로 밀어냅니다.
   - `game`: 투명 배경 + ⋯ / × 만. 게임 캔버스 위에 떠 있어 콘텐츠를 밀어내지 않습니다 — 인게임 화면은 full-screen이 [출시 요건](https://developers-apps-in-toss.toss.im/checklist/app-game.html).
-- status bar 바로 아래, safe area top 이후에 배치
-- nav bar 높이는 `env(safe-area-inset-top)` 및 `SafeAreaInsets.get().top`에 **포함되지 않습니다** (SDK 동작). 따라서 `partner` 앱은 콘텐츠 상단을 `insets.top + navBarHeight`로 보정해야 합니다. nav bar 높이 48px은 토스 예제(`with-contacts-viral`·`random-balls`)에서 역산한 추정치로, 공식 문서에 명시된 값이 아닙니다 — 호스트 실측으로 확정 예정 ([devtools#190](https://github.com/apps-in-toss-community/devtools/issues/190)). SDK의 `webViewProps.type`은 `partner` / `game` 외에 `external`도 있습니다 (현재 패널은 앞 둘만 시뮬레이션).
+- 시뮬레이터 프레임에서는 노치 오버레이 바로 아래에 배치
+- `partner` WebView에서는 **이 nav bar 높이가 곧 `SafeAreaInsets.get().top`** 입니다. iPhone 15 Pro on-device relay 실측([devtools#190](https://github.com/apps-in-toss-community/devtools/issues/190))에서 `env(safe-area-inset-top)`은 0(노치는 WebView 뷰포트 밖)이고 `SafeAreaInsets.get().top`은 54px이었으며, 그 54px가 호스트 nav bar 높이였습니다. 즉 `partner` 앱은 콘텐츠 상단을 `insets.top`만큼만 보정하면 됩니다(별도 `+ navBarHeight` 불필요). `game`은 콘텐츠를 밀어내지 않으므로 top inset이 0입니다. 이 54px는 iOS partner에서 실측됐고 Android nav bar 높이는 같은 값을 잠정 적용합니다. SDK의 `webViewProps.type`은 `partner` / `game` 외에 `external`도 있습니다 (현재 패널은 앞 둘만 시뮬레이션).
 
 ### 콘솔에서 직접 조작
 
@@ -494,8 +496,8 @@ __ait.patch('viewport', { preset: 'none' });
 
 Viewport 탭 하단에 현재 적용된 값을 실시간으로 보여줍니다:
 - **CSS / physical**: `402×874@3x | 1206×2622 portrait (auto)`
-- **Safe area**: `T59 R0 B34 L0`
-- **AIT nav bar**: `48px (excl. SafeArea)`
+- **Safe area**: `T54 R0 B34 L0` (partner nav bar 기준 — top이 곧 nav bar 높이)
+- **AIT nav bar**: `54px → SafeArea top · partner`
 
 ### 영속성 + 기술 세부
 

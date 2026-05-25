@@ -147,8 +147,25 @@ export interface ViewportPreset {
   dpr: number;
   /** Notch / camera cutout style (portrait) */
   notch: NotchType;
-  /** OS-level safe area insets in portrait (px). Excludes Apps in Toss nav bar. */
-  safeAreaTop: number;
+  /**
+   * OS-level notch / status-bar inset (px), device-specific. This is the
+   * physical notch the OS carves out — used for the landscape side-inset and
+   * the visual notch overlay. It is NOT what the Toss SDK reports as
+   * `SafeAreaInsets.get().top` in portrait: on-device relay measurement of an
+   * iPhone 15 Pro showed `env(safe-area-inset-top)` is 0 (the host WebView is
+   * positioned below the physical notch), so the OS notch never reaches the
+   * miniapp's top inset. See `navBarHeight`.
+   */
+  notchInset: number;
+  /**
+   * Apps in Toss host nav bar height (px). This — not `notchInset` — is what
+   * the SDK returns as `SafeAreaInsets.get().top` for a `partner` WebView in
+   * portrait: the relay measured 54 px, which is the native nav bar drawn at
+   * the top of the WebView's own coordinate space. It is device-independent
+   * (host chrome, not device hardware). 0 for `none`/`custom`.
+   */
+  navBarHeight: number;
+  /** OS-level home-indicator inset in portrait (px), device-specific. */
   safeAreaBottom: number;
 }
 
