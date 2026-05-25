@@ -182,7 +182,7 @@ iPhone 15 Pro 실 web-relevant 스펙(참고): CSS viewport **393×852**(portrai
 |---|---|---|---|---|---|
 | `getClipboardText` / `setClipboardText` | mode 분기: `mock`(state) / `web`(`navigator.clipboard`, default) | 네이티브 클립보드 | 🟢 faithful | ✓ (mock mode) | web mode는 브라우저 권한 프롬프트·HTTPS 필요. permission gate 부착. |
 | `fetchContacts` | `contacts` state slice 페이지네이션 + `contains` 필터 | 실 주소록 | 🟢 faithful | ✓ | 패널 contacts 편집. offset/size/query 충실. |
-| `generateHapticFeedback` | log + `analyticsLog`에 기록 | 실 햅틱 진동 | 🟡 partial | ✓ | 진동 자체는 불가(브라우저)이나 호출이 analyticsLog로 관측됨 — no-op 중 드물게 관측 가능. |
+| `generateHapticFeedback` | `analyticsLog` 기록 + 10종 타입→`navigator.vibrate` 패턴 매핑(best-effort) + `sdkCallLog` 🟡 기록(hapticType + vibrated) + 패널 Device 탭 마지막 haptic 행·트리거 버튼 | 실 햅틱 진동 | 🟡 partial | ✓ sdkCallLog | 진동 자체는 native API라 브라우저 표현이 다름. `navigator.vibrate` 지원 여부에 따라 실제 진동 여부(`vibrated: boolean`)가 sdkCallLog에 기록되어 관측 가능. ([#197](https://github.com/apps-in-toss-community/devtools/issues/197)) |
 | `saveBase64Data` | `<a download>` 트리거(브라우저 다운로드) | 네이티브 파일 저장 | 🟡 partial | ✗ | 브라우저 다운로드로 근사. 저장 위치 다름. |
 | `openPDFViewer` | `await Promise.resolve()` 후 `'CLOSE'` | 네이티브 PDF 뷰어 | 🔴 inert | ✗ | 즉시 CLOSE 반환, 실제 뷰어 없음. 권한·모드 분기 없음. |
 

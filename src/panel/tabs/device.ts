@@ -1,6 +1,11 @@
 import { type StringKey, t } from '../../i18n/index.js';
-import { getDefaultPlaceholderImages } from '../../mock/device/index.js';
+import {
+  generateHapticFeedback,
+  getDefaultPlaceholderImages,
+  HAPTIC_VIBRATE_PATTERN,
+} from '../../mock/device/index.js';
 import { aitState } from '../../mock/state.js';
+import type { HapticFeedbackType } from '../../mock/types.js';
 import { h, monitoringNotice, selectRow } from '../helpers.js';
 
 // --- Prompt mode state ---
@@ -261,5 +266,59 @@ export function renderDeviceTab(): HTMLElement {
     ),
   );
 
+  // Haptic section — sdkCallLog에서 마지막 haptic 호출을 읽어 표시한다
+  container.appendChild(renderHapticSection());
+
   return container;
+}
+
+function renderHapticSection(): HTMLElement {
+  // 마지막 generateHapticFeedback 호출을 sdkCallLog에서 찾는다.
+  const log = aitState.state.sdkCallLog;
+  const lastEntry = [...log].reverse().find((e) => e.method === 'generateHapticFeedback');
+  const lastResult = lastEntry?.result as { hapticType: string; vibrated: boolean } | undefined;
+
+  const lastCallValue = lastResult
+    ? `${lastResult.hapticType} (vibrated: ${String(lastResult.vibrated)})`
+    : t('device.haptic.noneYet');
+
+  const lastCallRow = h(
+    'div',
+    { className: 'ait-row' },
+    h('label', {}, t('device.haptic.lastCall')),
+    h('span', { className: 'ait-value' }, lastCallValue),
+  );
+
+  const hapticTypes = Object.keys(HAPTIC_VIBRATE_PATTERN) as HapticFeedbackType[];
+  const triggerSection = h(
+    'div',
+    { className: 'ait-section-subtitle' },
+    t('device.haptic.trigger'),
+  );
+  const btnRow = h(
+    'div',
+    { className: 'ait-btn-row' },
+    ...hapticTypes.map((type) => {
+      const btn = h(
+        'button',
+        { className: 'ait-btn-secondary', 'data-testid': `haptic-${type}-btn` },
+        type,
+      );
+      btn.addEventListener('click', () => {
+        void generateHapticFeedback({ type }).then(() => {
+          refreshPanel();
+        });
+      });
+      return btn;
+    }),
+  );
+
+  return h(
+    'div',
+    { className: 'ait-section', 'data-testid': 'section-haptic' },
+    h('div', { className: 'ait-section-title' }, t('device.section.haptic')),
+    lastCallRow,
+    triggerSection,
+    btnRow,
+  );
 }

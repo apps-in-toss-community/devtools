@@ -120,6 +120,12 @@ export const ko = {
   'device.prompt.send': 'Send',
   'device.prompt.cancel': 'Cancel',
 
+  // Device tab — Haptic section
+  'device.section.haptic': 'Haptic',
+  'device.haptic.lastCall': '마지막 haptic',
+  'device.haptic.noneYet': '(아직 없음)',
+  'device.haptic.trigger': 'Haptic 트리거',
+
   // Viewport tab
   'viewport.section.device': 'Device',
   'viewport.row.preset': 'Preset',
