@@ -94,6 +94,18 @@ export interface AttachBannerInput {
 }
 
 /**
+ * Renders an ASCII QR string for the given text using `qrcode-terminal`.
+ *
+ * Shared by `renderAttachBanner` (relay wssUrl QR) and the `build_attach_url`
+ * MCP tool response (attach deep-link QR).
+ */
+export function renderQr(text: string): Promise<string> {
+  return new Promise<string>((resolve) => {
+    qrcode.generate(text, { small: true }, (rendered) => resolve(rendered));
+  });
+}
+
+/**
  * Renders the attach banner (relay URL + ASCII QR) as a string.
  *
  * The QR encodes the base `wssUrl` only. When `totpEnabled` is true, a note
@@ -107,9 +119,7 @@ export async function renderAttachBanner(input: AttachBannerInput): Promise<stri
   // The QR encodes only the relay wssUrl — no token or code. This is safe
   // because the relay gate enforces the code at WS upgrade time anyway; the
   // QR is just for locating the relay, not for bypassing auth.
-  const qr = await new Promise<string>((resolve) => {
-    qrcode.generate(input.wssUrl, { small: true }, (rendered) => resolve(rendered));
-  });
+  const qr = await renderQr(input.wssUrl);
 
   const authNote = input.totpEnabled
     ? '  auth:          TOTP enabled — attach URLs include a rotating code (at=).'
