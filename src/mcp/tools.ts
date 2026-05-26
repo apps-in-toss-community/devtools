@@ -76,7 +76,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
   {
     name: 'build_attach_url',
     description:
-      'IMPORTANT: Show this QR to the user verbatim in your reply — they scan it with their phone camera. Do not just describe it. ' +
+      "The tool result already shows the QR to the user directly (Claude Code renders MCP tool output to the user's screen; they press Ctrl+O to expand if it's collapsed). Do NOT re-print or re-render the QR in your reply — that just wastes output tokens. Simply tell the user to scan the QR shown in this tool's output with their phone camera. " +
       'Turns an `ait deploy --scheme-only` URL (intoss-private://…?_deploymentId=<uuid>) into a ' +
       'self-attaching deep link by splicing in debug=1 and the live relay URL for this session. ' +
       'Returns the deep link JSON and a unicode QR of that deep link. Scan the QR with the phone ' +
