@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMode } from '../cli.js';
+import { parseMode, parseTarget } from '../cli.js';
 
 describe('parseMode', () => {
   it('defaults to debug mode with no flag', () => {
@@ -24,5 +24,35 @@ describe('parseMode', () => {
 
   it('throws on a dangling --mode with no value', () => {
     expect(() => parseMode(['--mode'])).toThrow(/--mode requires a value/);
+  });
+});
+
+describe('parseTarget', () => {
+  it('defaults to relay with no flag', () => {
+    expect(parseTarget([])).toBe('relay');
+  });
+
+  it('parses --target=local', () => {
+    expect(parseTarget(['--target=local'])).toBe('local');
+  });
+
+  it('parses --target local (space-separated)', () => {
+    expect(parseTarget(['--target', 'local'])).toBe('local');
+  });
+
+  it('parses --target=relay explicitly', () => {
+    expect(parseTarget(['--target=relay'])).toBe('relay');
+  });
+
+  it('throws on an unknown target', () => {
+    expect(() => parseTarget(['--target=bogus'])).toThrow(/Unknown --target/);
+  });
+
+  it('throws on a dangling --target with no value', () => {
+    expect(() => parseTarget(['--target'])).toThrow(/--target requires a value/);
+  });
+
+  it('ignores --mode when parsing target', () => {
+    expect(parseTarget(['--mode=debug', '--target=local'])).toBe('local');
   });
 });

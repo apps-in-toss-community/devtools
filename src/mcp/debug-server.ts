@@ -38,6 +38,8 @@ import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
+import { LocalCdpConnection } from './local-connection.js';
+import { launchChromium } from './local-launcher.js';
 import {
   buildAttachUrl,
   callSdk,
@@ -439,6 +441,100 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   process.on('unhandledRejection', (reason) => {
     process.stderr.write(`[ait-debug] unhandledRejection: ${String(reason)}\n`);
+    shutdown();
+    process.exit(1);
+  });
+
+  await server.connect(transport);
+}
+
+export interface RunLocalDebugServerOptions {
+  /**
+   * CDP remote debugging port for the local Chromium. Default 0 (OS-assigned).
+   * Uses an ephemeral free port when 0, avoiding EADDRINUSE on reconnect.
+   */
+  cdpPort?: number;
+  /**
+   * URL to open in the launched browser. Defaults to `AIT_DEVTOOLS_URL` env var
+   * or `http://localhost:5173`.
+   */
+  devUrl?: string;
+}
+
+/**
+ * Boots the local-browser debug stack and serves it over stdio:
+ *   1. launch a local Chromium with `--remote-debugging-port=<port>`,
+ *   2. attach a `LocalCdpConnection` to the first non-blank page target,
+ *   3. expose the debug tools backed by that connection + a `ChiiAitSource`.
+ *
+ * `build_attach_url` (relay-specific, generates a deep-link + QR for the phone)
+ * is not applicable in local mode because there is no relay or tunnel. The tool
+ * is still listed (it is part of `DEBUG_TOOL_DEFINITIONS`) but will return a
+ * clear "not applicable" message via the tunnel-down path (wssUrl is null).
+ *
+ * The AIT.* tools (`AIT.getSdkCallHistory`, `AIT.getMockState`,
+ * `AIT.getOperationalEnvironment`) ride the same CDP channel via
+ * `ChiiAitSource` → `LocalCdpConnection.sendCommand`. They will succeed once
+ * the sdk-example dev-bridge (`window.__sdkCall` install) lands in sdk-example;
+ * until then they return the sdk-example "bridge absent" message — which is
+ * expected and noted in the PR as an explicit out-of-scope follow-up.
+ */
+export async function runLocalDebugServer(options: RunLocalDebugServerOptions = {}): Promise<void> {
+  const cdpPort = options.cdpPort ?? 0;
+  const devUrl = options.devUrl ?? process.env.AIT_DEVTOOLS_URL ?? 'http://localhost:5173';
+
+  const chromium = await launchChromium({ port: cdpPort, devUrl });
+
+  // Give Chromium a moment to start the CDP endpoint before we connect.
+  // 800 ms is enough on most machines; the connection retries if it fails.
+  await new Promise<void>((r) => setTimeout(r, 800));
+
+  const connection = new LocalCdpConnection({ devtoolsHttpUrl: chromium.devtoolsUrl });
+  // AIT.* methods ride the same CDP channel via LocalCdpConnection.sendCommand.
+  const aitSource = new ChiiAitSource(connection);
+
+  // Local mode has no relay tunnel — tunnelStatus is always "down" which causes
+  // build_attach_url to return a clear "tunnel not up" error, communicating to
+  // the agent that this tool is relay-only.
+  const tunnelStatus: TunnelStatus = { up: false, wssUrl: null };
+
+  const server = createDebugServer({
+    connection,
+    aitSource,
+    getTunnelStatus: () => tunnelStatus,
+  });
+
+  const transport = new StdioServerTransport();
+
+  let closed = false;
+
+  const shutdown = () => {
+    if (closed) return;
+    closed = true;
+    connection.close();
+    chromium.stop();
+    void server.close();
+  };
+
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  process.once('SIGHUP', shutdown);
+
+  process.on('exit', () => {
+    if (!closed) {
+      closed = true;
+      chromium.stop();
+    }
+  });
+
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(`[ait-local-debug] uncaughtException: ${String(err)}\n`);
+    shutdown();
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(`[ait-local-debug] unhandledRejection: ${String(reason)}\n`);
     shutdown();
     process.exit(1);
   });
