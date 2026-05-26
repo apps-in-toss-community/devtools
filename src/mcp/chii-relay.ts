@@ -29,6 +29,7 @@
 
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { createRequire } from 'node:module';
+import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 const require = createRequire(import.meta.url);
@@ -60,13 +61,23 @@ function loadChiiServer(): ChiiServerModule {
 
 export interface ChiiRelay {
   port: number;
-  /** Base URL for the relay HTTP/WS server, e.g. `http://127.0.0.1:9100`. */
+  /** Base URL for the relay HTTP/WS server, e.g. `http://127.0.0.1:54321`. */
   baseUrl: string;
   close(): Promise<void>;
 }
 
 export interface StartChiiRelayOptions {
-  /** Local port for the relay. Default 9100. */
+  /**
+   * Local port for the relay. Default 0 (OS-assigned ephemeral port).
+   *
+   * Using 0 means the OS picks a free port — this is the safe default because
+   * a stale cloudflared child process (PPID 1, orphaned after SIGKILL) may still
+   * be holding a fixed port. A fixed port causes EADDRINUSE on the next startup,
+   * which makes the MCP handshake fail with -32000. With port 0 the new relay
+   * always gets a fresh port, making any orphaned process harmless.
+   *
+   * Pass an explicit number to restore fixed-port behaviour (backwards-compatible).
+   */
   port?: number;
   /** Bind host. Default 127.0.0.1 (tunnel reaches it locally). */
   host?: string;
@@ -87,9 +98,24 @@ export interface StartChiiRelayOptions {
   verifyAuth?: (req: IncomingMessage) => boolean;
 }
 
-/** Starts the Chii relay on the given port and resolves once listening. */
+/**
+ * Starts the Chii relay and resolves once listening.
+ *
+ * Default port is 0 (OS-assigned). With port 0 the OS picks a free ephemeral
+ * port on every start, so a stale cloudflared orphan holding any particular
+ * port cannot cause EADDRINUSE. The resolved `ChiiRelay.port` and `baseUrl`
+ * always reflect the actual bound port.
+ *
+ * chii.start() is called with `server` (our pre-created httpServer) BEFORE
+ * httpServer.listen(). This is intentional: chii attaches its Koa handler and
+ * WS upgrade listener to the server object, but the actual TCP bind is
+ * performed by our httpServer.listen() call below. The `port`/`domain` values
+ * passed to chii.start() are used for display/banner purposes inside chii and
+ * do not affect which port the server binds. The connection path (clients
+ * connecting to `relay.baseUrl`) always uses the post-listen confirmed port.
+ */
 export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promise<ChiiRelay> {
-  const port = options.port ?? 9100;
+  const requestedPort = options.port ?? 0;
   const host = options.host ?? '127.0.0.1';
   const { verifyAuth } = options;
 
@@ -120,19 +146,22 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
   const chii = loadChiiServer();
   // Passing an existing `server` makes chii attach its Koa handler + WS upgrade
   // to our HTTP server rather than creating its own listener.
-  await chii.start({ server: httpServer, domain: `${host}:${port}`, port });
+  // Note: port/domain here are display-only inside chii — the TCP bind is ours.
+  await chii.start({ server: httpServer, domain: `${host}:${requestedPort}`, port: requestedPort });
 
-  await new Promise<void>((resolve, reject) => {
+  const actualPort = await new Promise<number>((resolve, reject) => {
     httpServer.once('error', reject);
-    httpServer.listen(port, host, () => {
+    httpServer.listen(requestedPort, host, () => {
       httpServer.off('error', reject);
-      resolve();
+      // httpServer.address() is non-null immediately after the listen callback.
+      const addr = httpServer.address() as AddressInfo;
+      resolve(addr.port);
     });
   });
 
   return {
-    port,
-    baseUrl: `http://${host}:${port}`,
+    port: actualPort,
+    baseUrl: `http://${host}:${actualPort}`,
     close: () =>
       new Promise<void>((resolve) => {
         httpServer.close(() => resolve());
