@@ -27,6 +27,18 @@
  * wires the live pieces (relay + tunnel + production connection); the phone
  * roundtrip is fully wired and pending only on-device acceptance.
  *
+ * Dynamic tool registration (issue #208):
+ * The server advertises `listChanged: true` so MCP clients can subscribe to
+ * `notifications/tools/list_changed`. Before any page attaches, only bootstrap
+ * tools (`build_attach_url`, `list_pages`) are listed. Once a target appears,
+ * the full attach-dependent tool set is added and a `list_changed` notification
+ * is sent — without requiring a session restart. `runDebugServer` and
+ * `runLocalDebugServer` start a polling watcher that detects the 0→N target
+ * transition and calls `server.sendToolListChanged()`.
+ *
+ * Note: `src/mcp/server.ts` (dev mode, HTTP mock-state) is NOT subject to this
+ * model — it has no attach concept and always exposes the full tool surface.
+ *
  * Node-only.
  */
 
@@ -41,6 +53,7 @@ import { startChiiRelay } from './chii-relay.js';
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import {
+  BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
   callSdk,
   DEBUG_TOOL_DEFINITIONS,
@@ -87,18 +100,33 @@ export interface DebugServerDeps {
  * Builds the debug-mode MCP server around an injected CDP connection + AIT
  * source + tunnel status getter. Pure wiring — does not start a relay or
  * tunnel, which is what makes the tool surface unit-testable.
+ *
+ * `tools/list` is two-tiered (issue #208):
+ *   - bootstrap (always): `build_attach_url`, `list_pages`
+ *   - attach-dependent (after `connection.listTargets().length > 0`): all others
+ *
+ * `CallTool` is NOT tiered — hidden tools still execute (attach errors surface
+ * naturally via `enableDomains`). The tier only controls visibility.
  */
 export function createDebugServer(deps: DebugServerDeps): Server {
   const { connection, aitSource, getTunnelStatus, waitForAttachTimeoutMs = 90_000 } = deps;
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
-    { capabilities: { tools: {} } },
+    // listChanged: true — the server emits notifications/tools/list_changed when
+    // a page attaches (0→N target transition), promoted attach-dependent tools.
+    { capabilities: { tools: { listChanged: true } } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: DEBUG_TOOL_DEFINITIONS.map((tool) => ({ ...tool })),
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, () => {
+    const attached = connection.listTargets().length > 0;
+    const tools = attached
+      ? DEBUG_TOOL_DEFINITIONS.map((tool) => ({ ...tool }))
+      : DEBUG_TOOL_DEFINITIONS.filter((tool) => BOOTSTRAP_TOOL_NAMES.has(tool.name)).map(
+          (tool) => ({ ...tool }),
+        );
+    return { tools };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name;
@@ -294,6 +322,48 @@ function errorResult(err: unknown, name: string) {
   };
 }
 
+/**
+ * Starts a polling watcher that detects the first 0→N target transition on
+ * `connection.listTargets()` and sends a `notifications/tools/list_changed`
+ * notification on the given server.
+ *
+ * The watcher polls every `intervalMs` (default 1 000 ms). It fires
+ * `server.sendToolListChanged()` exactly once — on the first transition — then
+ * clears itself. Shutdown calls `stop()` to clear the interval.
+ *
+ * SECRET-HANDLING: target `id`/`title`/`url` are not written to any log here.
+ * Only an attach-detected stderr line is emitted (no target details).
+ *
+ * @returns `stop` — call this during shutdown to clear the interval.
+ */
+export function startAttachWatcher(
+  connection: CdpConnection,
+  server: Server,
+  intervalMs = 1_000,
+): { stop(): void } {
+  let wasAttached = connection.listTargets().length > 0;
+  // If already attached when the watcher starts, send once immediately.
+  if (wasAttached) {
+    void server.sendToolListChanged();
+  }
+
+  const handle = setInterval(() => {
+    const isAttached = connection.listTargets().length > 0;
+    if (!wasAttached && isAttached) {
+      wasAttached = true;
+      // Emit once on 0→N transition so the MCP client refreshes its tool list.
+      void server.sendToolListChanged();
+      clearInterval(handle);
+    }
+  }, intervalMs);
+
+  return {
+    stop() {
+      clearInterval(handle);
+    },
+  };
+}
+
 export interface RunDebugServerOptions {
   /**
    * Local Chii relay port. Default 0 (OS-assigned ephemeral port).
@@ -400,12 +470,14 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // ---------------------------------------------------------------------------
 
   let closed = false;
+  let attachWatcher: { stop(): void } | null = null;
 
   const shutdown = () => {
     // Idempotent: multiple simultaneous signals/exit/uncaught calls run only once.
     if (closed) return;
     closed = true;
 
+    attachWatcher?.stop();
     connection.close();
     // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
     tunnel?.stop();
@@ -426,6 +498,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   process.on('exit', () => {
     if (!closed) {
       closed = true;
+      attachWatcher?.stop();
       tunnel?.stop();
     }
   });
@@ -446,6 +519,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   });
 
   await server.connect(transport);
+
+  // Start the attach watcher after the transport is connected so
+  // sendToolListChanged has a live session to notify.
+  attachWatcher = startAttachWatcher(connection, server);
 }
 
 export interface RunLocalDebugServerOptions {
@@ -507,10 +584,12 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   const transport = new StdioServerTransport();
 
   let closed = false;
+  let attachWatcher: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
+    attachWatcher?.stop();
     connection.close();
     chromium.stop();
     void server.close();
@@ -523,6 +602,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   process.on('exit', () => {
     if (!closed) {
       closed = true;
+      attachWatcher?.stop();
       chromium.stop();
     }
   });
@@ -540,4 +620,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   });
 
   await server.connect(transport);
+
+  // Start the attach watcher after the transport is connected so
+  // sendToolListChanged has a live session to notify.
+  attachWatcher = startAttachWatcher(connection, server);
 }

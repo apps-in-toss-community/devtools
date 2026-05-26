@@ -1,6 +1,10 @@
 /**
- * Tests for createDebugServer — specifically the build_attach_url tool whose
- * response now includes a unicode half-block QR string.
+ * Tests for createDebugServer:
+ *   - build_attach_url tool (QR, wait_for_attach)
+ *   - Dynamic tool registration (issue #208):
+ *     - listChanged capability declaration
+ *     - Two-tier tools/list (bootstrap only vs. full)
+ *     - startAttachWatcher: 0→N transition emits sendToolListChanged exactly once
  *
  * Uses MCP SDK InMemoryTransport + Client so the full request/response path
  * (including the async QR generation) is exercised without a real phone or
@@ -18,8 +22,9 @@ import type {
   CdpEventName,
   CdpTarget,
 } from '../cdp-connection.js';
-import { createDebugServer } from '../debug-server.js';
+import { createDebugServer, startAttachWatcher } from '../debug-server.js';
 import type { TunnelStatus } from '../tools.js';
+import { BOOTSTRAP_TOOL_NAMES, DEBUG_TOOL_DEFINITIONS } from '../tools.js';
 
 // Stub `qrcode` so tests are deterministic and don't need a real QR matrix.
 // The stub produces a 1x1 module matrix so the half-block loop runs but is cheap.
@@ -295,5 +300,154 @@ describe('build_attach_url — wait_for_attach', () => {
     });
 
     expect(enableDomainsSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Dynamic tool registration (issue #208)
+// ---------------------------------------------------------------------------
+
+describe('createDebugServer — listChanged capability', () => {
+  it('server capabilities include tools.listChanged: true', async () => {
+    const client = await makeClient({
+      getTunnelStatus: () => ({ up: false, wssUrl: null }),
+    });
+
+    // The MCP Client.getServerCapabilities() returns the negotiated capabilities.
+    const caps = client.getServerCapabilities();
+    expect(caps?.tools).toBeDefined();
+    expect((caps?.tools as Record<string, unknown>).listChanged).toBe(true);
+  });
+});
+
+describe('createDebugServer — two-tier tools/list', () => {
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+
+  it('before attach: only bootstrap tools are listed', async () => {
+    // No targets pre-populated → bootstrap tier only.
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map((t) => t.name));
+
+    // Bootstrap tools must be present.
+    for (const n of BOOTSTRAP_TOOL_NAMES) {
+      expect(names.has(n), `bootstrap tool "${n}" should be listed`).toBe(true);
+    }
+
+    // Attach-dependent tools must NOT be present.
+    const attachDependentExpected = DEBUG_TOOL_DEFINITIONS.filter(
+      (t) => !BOOTSTRAP_TOOL_NAMES.has(t.name),
+    );
+    for (const t of attachDependentExpected) {
+      expect(
+        names.has(t.name),
+        `attach-dependent tool "${t.name}" should NOT be listed pre-attach`,
+      ).toBe(false);
+    }
+  });
+
+  it('after attach: full tool list is returned', async () => {
+    const target: CdpTarget = { id: 't1', title: 'Page', url: 'https://example.com' };
+    const connection = new FakeCdpConnection([target]);
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp, connection });
+
+    const { tools } = await client.listTools();
+    const names = new Set(tools.map((t) => t.name));
+
+    // All tools must be present.
+    for (const t of DEBUG_TOOL_DEFINITIONS) {
+      expect(names.has(t.name), `tool "${t.name}" should be listed post-attach`).toBe(true);
+    }
+  });
+
+  it('tools/list count pre-attach equals BOOTSTRAP_TOOL_NAMES size', async () => {
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const { tools } = await client.listTools();
+    expect(tools).toHaveLength(BOOTSTRAP_TOOL_NAMES.size);
+  });
+
+  it('tools/list count post-attach equals DEBUG_TOOL_DEFINITIONS length', async () => {
+    const target: CdpTarget = { id: 't2', title: 'Page', url: 'https://example.com' };
+    const connection = new FakeCdpConnection([target]);
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp, connection });
+    const { tools } = await client.listTools();
+    expect(tools).toHaveLength(DEBUG_TOOL_DEFINITIONS.length);
+  });
+});
+
+describe('startAttachWatcher', () => {
+  it('emits sendToolListChanged exactly once on 0→N transition', async () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new FakeCdpConnection([]); // starts with no targets
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      // Minimal server stub — only sendToolListChanged is needed.
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100);
+
+      // No transition yet — no emit expected.
+      await vi.advanceTimersByTimeAsync(150);
+      expect(sendToolListChanged).not.toHaveBeenCalled();
+
+      // Now add a target — next tick should detect 0→N and emit once.
+      const target: CdpTarget = { id: 'w1', title: 'Page', url: 'https://example.com' };
+      connection.setTargets([target]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1);
+
+      // Further ticks should NOT emit again (watcher cleared after first emit).
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits immediately (once) if already attached when watcher starts', () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'w2', title: 'Page', url: 'https://example.com' };
+      const connection = new FakeCdpConnection([target]); // already attached
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100);
+      // Immediate emit on construction.
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stop() prevents any further emissions after being called', async () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new FakeCdpConnection([]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100);
+      watcher.stop();
+
+      // Add target and advance — interval is cleared, so no emit.
+      const target: CdpTarget = { id: 'w3', title: 'Page', url: 'https://example.com' };
+      connection.setTargets([target]);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sendToolListChanged).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
