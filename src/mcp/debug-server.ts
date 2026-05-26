@@ -40,7 +40,9 @@ import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import {
   buildAttachUrl,
+  callSdk,
   DEBUG_TOOL_DEFINITIONS,
+  evaluate,
   getDomDocument,
   getMockState,
   getOperationalEnvironment,
@@ -50,6 +52,7 @@ import {
   listConsoleMessages,
   listNetworkRequests,
   listPages,
+  measureSafeArea,
   type TunnelStatus,
   takeScreenshot,
   takeSnapshot,
@@ -228,6 +231,34 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           return {
             content: [{ type: 'image' as const, data: shot.data, mimeType: shot.mimeType }],
           };
+        }
+        case 'measure_safe_area':
+          return jsonResult(await measureSafeArea(connection));
+        case 'evaluate': {
+          const expression = request.params.arguments?.expression;
+          if (typeof expression !== 'string' || expression === '') {
+            return {
+              content: [
+                { type: 'text' as const, text: 'evaluate requires a non-empty expression.' },
+              ],
+              isError: true,
+            };
+          }
+          // SECRET-HANDLING: do not log expression or result value.
+          return jsonResult(await evaluate(connection, expression));
+        }
+        case 'call_sdk': {
+          const sdkName = request.params.arguments?.name;
+          if (typeof sdkName !== 'string' || sdkName === '') {
+            return {
+              content: [{ type: 'text' as const, text: 'call_sdk requires a non-empty name.' }],
+              isError: true,
+            };
+          }
+          const rawArgs = request.params.arguments?.args;
+          const sdkArgs: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
+          // SECRET-HANDLING: do not log name, args, or result value.
+          return jsonResult(await callSdk(connection, sdkName, sdkArgs));
         }
         default:
           return unknownTool(name);
