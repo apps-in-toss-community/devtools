@@ -108,7 +108,7 @@ function getContent(result: Awaited<ReturnType<Client['callTool']>>) {
 describe('build_attach_url — response includes unicode QR', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
-  it('response text starts with the IMPORTANT show-QR instruction', async () => {
+  it('response text starts with the do-not-reprint instruction', async () => {
     const client = await makeClient({ getTunnelStatus: () => tunnelUp });
 
     const result = await client.callTool({
@@ -121,7 +121,7 @@ describe('build_attach_url — response includes unicode QR', () => {
     expect(result.isError).toBeFalsy();
     const content = getContent(result);
     const text = content[0]!.text!;
-    expect(text).toContain('IMPORTANT: Show this QR to the user verbatim');
+    expect(text).toContain('do NOT re-print the QR below in your reply');
   });
 
   it('response text contains the attachUrl JSON and a QR string without ANSI escapes', async () => {
@@ -254,7 +254,7 @@ describe('build_attach_url — wait_for_attach', () => {
     expect(text).toContain('list_pages');
   });
 
-  it('response includes QR and IMPORTANT instruction even when wait_for_attach is true and attach succeeds', async () => {
+  it('response includes QR and do-not-reprint instruction even when wait_for_attach is true and attach succeeds', async () => {
     const connection = new FakeCdpConnection([fakeTarget]);
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
@@ -271,7 +271,7 @@ describe('build_attach_url — wait_for_attach', () => {
 
     expect(result.isError).toBeFalsy();
     const text = getContent(result)[0]!.text!;
-    expect(text).toContain('IMPORTANT: Show this QR to the user verbatim');
+    expect(text).toContain('do NOT re-print the QR below in your reply');
     // No ANSI escape codes (0x1b)
     expect(text.split('').some((c) => c.charCodeAt(0) === 0x1b)).toBe(false);
   });

@@ -140,7 +140,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         const { attachUrl, relayUrl } = buildAttachUrl(schemeUrl, getTunnelStatus());
         const qr = await renderQr(attachUrl);
         const header =
-          'IMPORTANT: Show this QR to the user verbatim in your reply — they scan it with their phone camera. Do not just describe it.';
+          'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
         const baseText = `${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
 
         if (!waitForAttach) {
