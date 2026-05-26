@@ -3,11 +3,12 @@
  *
  * `ait deploy --scheme-only` prints an `intoss-private://…?_deploymentId=<uuid>`
  * URL that opens a dogfood bundle on a phone. The in-app debug gate
- * (`src/in-app/gate.ts`) already auto-attaches when the entry URL also carries
- * `debug=1` and `relay=<wss-url>` — no QR scan or paste needed. This helper
- * splices those params (plus `at=<code>` when TOTP is enabled) into the scheme
- * URL so opening the result (e.g. via `adb shell am start -d "<url>"`) attaches
- * the running mini-app to the live Chii relay with zero human input.
+ * (`src/in-app/gate.ts`) auto-attaches when the entry URL also carries
+ * `debug=1` and `relay=<wss-url>`. This helper splices those params (plus
+ * `at=<code>` when TOTP is enabled) into the scheme URL; rendering the result
+ * as a QR code and scanning it with the phone camera opens the mini-app and
+ * attaches it to the live Chii relay. QR is the single entry path — it needs
+ * no USB cable, platform CLI, or driver, and works the same on iOS/Android.
  *
  * The Toss app propagates extra query params from the entry deep link into the
  * mini-app WebView's `location.search` (confirmed behavior), so the gate reads

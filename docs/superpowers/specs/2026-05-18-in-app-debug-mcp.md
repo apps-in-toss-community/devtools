@@ -84,7 +84,7 @@ AI가 단독으로 회귀를 진단·고치고 검증하는 한 사이클:
 8. AI: 결과 확인 → 다음 가설 / 종료
 ```
 
-핵심은 **단계 6–8이 AI tool call만으로 도는 것**. 사람이 폰을 보고 보고할 필요 없음. 단계 4의 push 탭은 v1에선 사람, 추후 dev 폰 자동화(예: Android adb send tap, iOS 개발자 메뉴 자동화)로 분리 phase.
+핵심은 **단계 6–8이 AI tool call만으로 도는 것**. 사람이 폰을 보고 보고할 필요 없음. 단계 4의 진입(QR 스캔)은 폰 물리 조작이라 본질적으로 사람 개입이 남는다 — 이게 진입을 QR 단일 경로로 둔 이유다(device-control 자동화 경로는 폐기, §6 정책). 자동화 천장은 "사람이 스캔할 QR을 띄우고, 붙으면 자동으로 알아챈다"까지다.
 
 ### 부수 시나리오 — 사람이 폰에서 직접 보기 (eruda overlay)
 
@@ -278,14 +278,11 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 3. **폰 attach UI 배치** — `?debug=1`로 진입한 미니앱에서 attach UI를 어디 둘 것인가: (a) in-app 자체 floating 버튼 (어느 페이지든 보임), (b) sdk-example의 별도 EnvironmentPage 진입점, (c) overlay 라이브러리 부착 시 그 overlay의 sub-panel. Phase 1 MVP는 (a) — 회귀 진단이 페이지 진입과 무관하게 가능해야 함.
 4. **MCP host에서의 session 라우팅** — `~/.mcp.json` 한 줄 등록만으로 자동 활용되는가, 아니면 Claude Code에서 명시적 `attach <token>` step 필요한가. MVP는 env (`AITC_DEBUG_SESSION` token) + 첫 tool 호출 시 implicit attach. Phase 5에서 share-link UX.
 5. **Console hook 위치** — `console.log` 자체를 proxy로 감싸면 사용자 코드 stack trace에 frame 1개 추가됨. Chii가 기본 wrapping을 제공하므로 우리 쪽 추가 hook은 최소화. AIT 도메인의 SDK call trace만 별도 proxy + ring buffer.
-6. **사람-탭 단계의 자동화** — 사람 개입은 두 매듭이었다: (a) attach UI에서 QR 스캔/URL paste, (b) deploy 후 push 알림 탭/딥링크 발사. **(a)는 해소**: `build_attach_url` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1`+이 세션의 relay wss URL을 끼워 self-attach 딥링크를 만든다 — gate(`src/in-app/gate.ts`)가 이미 `relay` query를 읽어 QR 없이 attach하므로 그 딥링크를 폰에서 여는 순간 자동 연결된다. token은 gate 검증 대상이 아니라(pairing hint) 딥링크에 불필요. 전제 두 가지(딥링크 query 전파 O, WebView CSP가 외부 `target.js` 로드 차단 X)는 확인됨. **(b) 딥링크 발사는 device-control 레이어**(Android `adb shell am start -d "<url>"` / iOS 자동화)로 별도 phase — `build_attach_url` 출력을 그대로 `am start`에 넘기면 진입+attach가 한 번에 닫힌다. 네이티브 제스처 회귀 재현(swipe 등)도 같은 device-control 레이어.
+6. **사람-탭 단계의 자동화** — 사람 개입은 두 매듭이었다: (a) attach UI에서 QR 스캔/URL paste, (b) deploy 후 딥링크 진입. **(a)는 해소**: `build_attach_url` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1`+이 세션의 relay wss URL을 끼워 self-attach 딥링크를 만든다 — gate(`src/in-app/gate.ts`)가 이미 `relay` query를 읽어 그 딥링크를 폰에서 여는 순간 자동 연결된다. token은 gate 검증 대상이 아니라(pairing hint) 딥링크에 불필요. 전제 두 가지(딥링크 query 전파 O, WebView CSP가 외부 `target.js` 로드 차단 X)는 확인됨. **(b) 딥링크 진입은 QR 스캔 단일 경로**: `build_attach_url` 출력을 ASCII QR로 렌더 → 폰 카메라로 스캔하면 진입+attach가 한 번에 닫힌다. 이게 실유저 플로우와 동일하고, 의존성 0·크로스플랫폼(iOS/Android 동일)이다.
 
-   **(2026-05-22 iOS device-control spike — 미완)** macOS에서 USB로 연결한 iPhone에 딥링크를 발사하는 경로를 실측하려 했으나 **기기 페어링 단계에서 막혔다**. 후보 도구: `xcrun devicectl`(Xcode 15+ 기본, 추가 설치 0), `xcrun simctl openurl`(시뮬레이터 전용 — 실기기 불가), `idb`(`brew install idb-companion` + `pip install fb-idb`). 관측:
-   - `xcrun devicectl list devices`가 매번 timeout(exit 124)으로 멈춘다 — JSON output 파일도 안 쓴다. 기기 enumerate 단계 도달 전 차단.
-   - `xcrun xctrace list devices`는 즉시 응답하나 **Mac 자신만** 나열, iPhone 없음. `system_profiler SPUSBDataType`에도 iPhone 안 보임.
-   - `~/Library/MobileDevice/` 디렉토리 자체가 부재 → 이 Mac은 **여태 어떤 iOS 기기와도 페어링한 적이 없음**. `usbmuxd`는 떠 있음.
+   > **정책 (2026-05-26, 사용자 결정)**: 진입은 **QR 스캔 단일 경로**다. `adb shell am start` / `xcrun devicectl … --payload-url` 같은 **device-control 발사(unattended) 경로는 추구하지 않는다** — USB 연결·기기 페어링·App Store bundle id 하드코딩에 의존해 brittle하고 실유저 플로우가 아니다. 아래 2026-05-22 spike 기록은 historical record로만 남긴다(그 결론—device-control 자동화—은 폐기됨).
 
-   원인은 device-control 도구가 아니라 **신뢰/페어링 미완**: 폰의 "이 컴퓨터를 신뢰" 미수락 + 개발자 모드(iOS 16+) 미활성 + 데이터 케이블 여부 중 하나 이상. 페어링이 잡혀야(`xctrace list devices`에 iPhone 1줄 추가) `devicectl`이 응답하고, 그 다음 발사 명령(`devicectl device process launch` 또는 `idb open <url>`)이 OS-level "토스 앱으로 열기" 다이얼로그를 띄우는지/code로 억제 가능한지를 실측할 수 있다. Android(`adb`)는 이 페어링 마찰이 없어 unattended 발사가 바로 되므로, GATE-phone 1차 acceptance는 Android 기기로 닫고 iOS는 페어링 확보 후 별도 확인하는 편이 마찰이 적다.
+   **(2026-05-22 iOS device-control spike — historical, 경로 폐기)** macOS에서 USB로 연결한 iPhone에 딥링크를 발사하는 경로를 실측하려 했으나 기기 페어링 단계에서 막혔다(`xcrun devicectl`/`idb`/`simctl` 후보 모두 `~/Library/MobileDevice/` 부재 = 미페어링이 원인). 2026-05-25에 페어링 후 `devicectl … --payload-url`로 발사 자체는 성공했으나, **위 정책대로 이 경로는 폐기**하고 QR 스캔으로 통일했다. 이 단락은 "왜 device-control을 안 쓰는지"의 근거 기록으로만 보존한다.
 7. **`Runtime.evaluate` ACL UX** — Phase 6에서 write 권한 열 때 per-call 폰 prompt vs session-wide write token vs 둘 다. AI-loop 자율성 vs 사용자 통제 trade-off — 현재 안은 session-wide write token + 첫 발급 시 폰 1회 prompt. Phase 6 spec에서 확정.
 
 ## 검증 계획
