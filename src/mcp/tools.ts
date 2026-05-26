@@ -138,6 +138,51 @@ export const DEBUG_TOOL_DEFINITIONS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
+    name: 'evaluate',
+    description:
+      'Evaluates an arbitrary JavaScript expression on the attached mini-app page via ' +
+      'CDP Runtime.evaluate (returnByValue: true) and returns the result. ' +
+      'NOT read-only — the expression can have side effects (DOM mutations, SDK calls, ' +
+      'state changes). Requires the relay to be attached — call list_pages first. ' +
+      'Throws if the evaluation throws an exception on the page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        expression: {
+          type: 'string',
+          description: 'JavaScript expression to evaluate in the page context.',
+        },
+      },
+      required: ['expression'],
+    },
+  },
+  {
+    name: 'call_sdk',
+    description:
+      'Calls a dogfood SDK method via the window.__sdkCall bridge ' +
+      '(exported by @apps-in-toss/web-framework only in __DEBUG_BUILD__ bundles). ' +
+      'NOT read-only — SDK calls have side effects (navigation, payments, permissions, etc.). ' +
+      'On env 2/3 (real device relay) this hits the real SDK; on env 1 (local mock) it hits ' +
+      'the mock SDK. Requires the relay to be attached — call list_pages first. ' +
+      'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
+      'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'SDK method name to call (e.g. "getOperationalEnvironment").',
+        },
+        args: {
+          type: 'array',
+          description: 'Arguments to pass to the SDK method (optional, default []).',
+          items: {},
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'AIT.getSdkCallHistory',
     description:
       'Returns the recent Apps In Toss SDK call trace (method, args, result/error, timestamp) that ' +
@@ -484,6 +529,162 @@ export async function measureSafeArea(connection: CdpConnection): Promise<SafeAr
     throw new Error(`measure_safe_area: probe threw — ${msg}`);
   }
   return normalizeSafeAreaResult(result.result.value);
+}
+
+/* -------------------------------------------------------------------------- */
+/* evaluate — arbitrary JS via Runtime.evaluate                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Result returned by the `evaluate` tool.
+ *
+ * `value` holds the `returnByValue` result from CDP — it may be any
+ * JSON-serialisable type. Treat it as opaque for logging purposes (it could
+ * carry sensitive data from the page context).
+ *
+ * SECRET-HANDLING: do NOT write `value` to any log or stderr — return it to
+ * the agent via the tool result only.
+ */
+export interface EvaluateResult {
+  /** The evaluated result value (`returnByValue: true`). */
+  value: unknown;
+  /** CDP type string of the result (e.g. "string", "number", "object"). */
+  type: string;
+}
+
+/**
+ * Evaluates an arbitrary JS expression on the attached page via
+ * `Runtime.evaluate`. NOT read-only — the expression may have side effects.
+ *
+ * Throws if the evaluation produced a CDP exception.
+ *
+ * SECRET-HANDLING: expression and result value are NOT written to any log.
+ */
+export async function evaluate(
+  connection: CdpConnection,
+  expression: string,
+): Promise<EvaluateResult> {
+  const result = await connection.send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: false,
+  });
+  if (result.exceptionDetails) {
+    // Surface only the engine error string — never the expression or result value.
+    const msg =
+      result.exceptionDetails.exception?.description ??
+      result.exceptionDetails.text ??
+      'Runtime.evaluate threw an exception';
+    throw new Error(`evaluate failed: ${msg}`);
+  }
+  return { value: result.result.value, type: result.result.type };
+}
+
+/* -------------------------------------------------------------------------- */
+/* call_sdk — window.__sdkCall bridge via Runtime.evaluate                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Result returned by the `call_sdk` tool.
+ * The bridge call wraps success/failure in a JSON envelope so cross-Chii
+ * stringification is reliable (same approach as `measure_safe_area`).
+ */
+export type CallSdkResult = { ok: true; value: unknown } | { ok: false; error: string };
+
+/**
+ * Builds the Runtime.evaluate expression that calls `window.__sdkCall` with
+ * the given method name and args, awaits the promise, and returns a JSON
+ * envelope `{ok, value/error}` as a string.
+ *
+ * Name and args are embedded via `JSON.stringify` so they are safely escaped.
+ * The expression checks for `window.__sdkCall` and returns a clear error if
+ * it is absent (non-dogfood bundle).
+ *
+ * SECRET-HANDLING: the expression is built here and MUST NOT be written to
+ * any log or stderr by the caller.
+ */
+export function buildCallSdkExpression(name: string, args: unknown[]): string {
+  const safeName = JSON.stringify(name);
+  const safeArgs = JSON.stringify(args);
+  return (
+    `(async () => {` +
+    ` if (typeof window.__sdkCall !== 'function') {` +
+    `  return JSON.stringify({ok:false,error:'window.__sdkCall is not available — is this a dogfood (__DEBUG_BUILD__) bundle?'});` +
+    ` }` +
+    ` try {` +
+    `  const r = await window.__sdkCall(${safeName}, ...${safeArgs});` +
+    `  return JSON.stringify({ok:true,value:r});` +
+    ` } catch(e) {` +
+    `  return JSON.stringify({ok:false,error:String(e && e.message || e)});` +
+    ` }` +
+    `})()`
+  );
+}
+
+/**
+ * Parses the JSON envelope string returned by the `call_sdk` expression.
+ * Returns a typed `CallSdkResult`.
+ *
+ * Throws only on parse failure (not on ok:false — that is a normal result).
+ */
+export function normalizeCallSdkResult(rawValue: unknown): CallSdkResult {
+  if (typeof rawValue !== 'string') {
+    throw new Error(
+      `call_sdk: bridge returned unexpected type "${typeof rawValue}" — expected JSON string`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawValue);
+  } catch {
+    // Do NOT include rawValue in the error message — it could contain secrets.
+    throw new Error('call_sdk: bridge returned non-JSON string');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error('call_sdk: parsed result is not an object');
+  }
+  const obj = parsed as Record<string, unknown>;
+  if (obj.ok === true) {
+    return { ok: true, value: obj.value };
+  }
+  if (obj.ok === false) {
+    return { ok: false, error: typeof obj.error === 'string' ? obj.error : String(obj.error) };
+  }
+  throw new Error('call_sdk: bridge result missing "ok" field');
+}
+
+/**
+ * Calls a dogfood SDK method via `window.__sdkCall` on the attached page.
+ * NOT read-only — SDK calls may have side effects.
+ *
+ * On env 2/3 (real device relay) this hits the real SDK; on env 1 (local
+ * mock) it hits the mock SDK.
+ *
+ * Throws on CDP error or result parse failure. Returns `{ok:false, error}`
+ * for bridge-level errors (method not found, SDK threw, bridge absent).
+ *
+ * SECRET-HANDLING: name, args, and the result value are NOT written to any log.
+ */
+export async function callSdk(
+  connection: CdpConnection,
+  name: string,
+  args: unknown[],
+): Promise<CallSdkResult> {
+  const expression = buildCallSdkExpression(name, args);
+  const result = await connection.send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+  });
+  if (result.exceptionDetails) {
+    // Surface only the engine error string — never name, args, or result value.
+    const msg =
+      result.exceptionDetails.exception?.description ??
+      result.exceptionDetails.text ??
+      'Runtime.evaluate threw an exception';
+    throw new Error(`call_sdk threw: ${msg}`);
+  }
+  return normalizeCallSdkResult(result.result.value);
 }
 
 /* -------------------------------------------------------------------------- */
