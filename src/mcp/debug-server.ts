@@ -4,11 +4,23 @@
  * Lets an AI coding agent attach to a running mini-app (real Toss WebView, or a
  * browser in dev mode) and read its console/network/DOM/screenshot over CDP plus
  * the AIT.* domain, without a human watching a phone. Transport is CDP-via-Chii:
- * a local Chii relay :9100 exposed through a cloudflared quick tunnel; the phone
- * attaches over the public wss URL.
+ * a local Chii relay on an OS-assigned port (default 0) exposed through a
+ * cloudflared quick tunnel; the phone attaches over the public wss URL.
  *
- *   AI host  --stdio-->  this server  --CDP client WS-->  Chii relay :9100
+ *   AI host  --stdio-->  this server  --CDP client WS-->  Chii relay :<OS-port>
  *                                                          ^-- target WS -- phone
+ *
+ * Port 0 (default): the OS picks a free ephemeral port on every startup.
+ * This prevents EADDRINUSE when a stale cloudflared child (orphaned after
+ * SIGKILL, PPID 1) still holds a fixed port — which previously caused the MCP
+ * handshake to fail with -32000. With port 0 any orphaned cloudflared is
+ * harmless; the new relay always gets a fresh port.
+ *
+ * Best-effort child cleanup: SIGINT/SIGTERM/SIGHUP handlers call shutdown() to
+ * stop cloudflared and the relay. uncaughtException/unhandledRejection also
+ * call shutdown() before exit. SIGKILL cannot be intercepted by Node, so
+ * cloudflared orphans from SIGKILL remain (port 0 makes them harmless). Users
+ * can clean up manually: `pkill -f 'cloudflared.*trycloudflare'`.
  *
  * The tool layer reads from an injectable `CdpConnection` (CDP) and `AitSource`
  * (AIT.*), so every tool is unit-testable with a fake (no phone). This module
@@ -250,7 +262,14 @@ function errorResult(err: unknown, name: string) {
 }
 
 export interface RunDebugServerOptions {
-  /** Local Chii relay port. Default 9100. */
+  /**
+   * Local Chii relay port. Default 0 (OS-assigned ephemeral port).
+   *
+   * Passing 0 lets the OS choose a free port on each startup — this prevents
+   * EADDRINUSE when a stale cloudflared orphan still holds a fixed port (the
+   * root cause of -32000 MCP handshake failures). Pass an explicit port number
+   * only when a fixed port is specifically required (backwards-compatible).
+   */
   relayPort?: number;
 }
 
@@ -289,19 +308,24 @@ export function buildRelayVerifyAuth():
 
 /**
  * Boots the live debug stack and serves it over stdio:
- *   1. start the Chii relay (with TOTP auth if AIT_DEBUG_TOTP_SECRET is set),
- *   2. open a cloudflared quick tunnel to it,
+ *   1. start the Chii relay on an OS-assigned port (with TOTP auth if
+ *      AIT_DEBUG_TOTP_SECRET is set),
+ *   2. open a cloudflared quick tunnel to the relay's confirmed port,
  *   3. print relay URL + attach instructions,
  *   4. expose the debug tools backed by a `ChiiCdpConnection` + `ChiiAitSource`.
  */
 export async function runDebugServer(options: RunDebugServerOptions = {}): Promise<void> {
-  const relayPort = options.relayPort ?? 9100;
+  // Default 0: OS picks a free port. Prevents EADDRINUSE from stale cloudflared
+  // orphans (SIGKILL survivors) that would otherwise block a fixed port and
+  // cause -32000 MCP handshake failures on reconnect.
+  const relayPort = options.relayPort ?? 0;
 
   // Build the TOTP verifyAuth predicate from env at startup (runtime read).
   const verifyAuth = buildRelayVerifyAuth();
   const totpEnabled = verifyAuth !== undefined;
 
   const relay = await startChiiRelay({ port: relayPort, verifyAuth });
+  // relay.port is the actual OS-assigned port (may differ from relayPort when 0).
 
   let tunnel: QuickTunnel | null = null;
   let tunnelStatus: TunnelStatus = { up: false, wssUrl: null };
@@ -310,7 +334,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const _token = generateAttachToken();
 
   try {
-    tunnel = await startQuickTunnel(relayPort);
+    // Use relay.port (confirmed bound port) — not the requested port — so the
+    // tunnel always points at the port the relay is actually listening on.
+    tunnel = await startQuickTunnel(relay.port);
     tunnelStatus = { up: true, wssUrl: tunnel.wssUrl };
     await printAttachBanner({ wssUrl: tunnel.wssUrl, totpEnabled });
   } catch (err) {
@@ -332,14 +358,59 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   const transport = new StdioServerTransport();
 
+  // ---------------------------------------------------------------------------
+  // Shutdown: best-effort cleanup of relay + cloudflared child process.
+  //
+  // SIGKILL cannot be intercepted — cloudflared may remain orphaned (PPID 1).
+  // Port 0 makes such orphans harmless: the next startup gets a fresh port.
+  // Manual cleanup if needed: `pkill -f 'cloudflared.*trycloudflare'`
+  // ---------------------------------------------------------------------------
+
+  let closed = false;
+
   const shutdown = () => {
+    // Idempotent: multiple simultaneous signals/exit/uncaught calls run only once.
+    if (closed) return;
+    closed = true;
+
     connection.close();
+    // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
     tunnel?.stop();
+    // relay.close() and server.close() are async; fine for signal handlers but
+    // skipped from the synchronous 'exit' handler below.
     void relay.close();
     void server.close();
   };
+
+  // Graceful termination signals.
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
+  // SIGHUP: terminal hangup / parent process exit.
+  process.once('SIGHUP', shutdown);
+
+  // Synchronous-only cleanup on process.exit (async calls are silently ignored
+  // by Node at this stage — only tunnel.stop() which is a sync child kill).
+  process.on('exit', () => {
+    if (!closed) {
+      closed = true;
+      tunnel?.stop();
+    }
+  });
+
+  // Crash safety: shutdown before exiting so cloudflared is killed even on
+  // unhandled errors. Covers cases where no signal is delivered (e.g. thrown
+  // exception in async code that wasn't caught).
+  process.on('uncaughtException', (err) => {
+    process.stderr.write(`[ait-debug] uncaughtException: ${String(err)}\n`);
+    shutdown();
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(`[ait-debug] unhandledRejection: ${String(reason)}\n`);
+    shutdown();
+    process.exit(1);
+  });
 
   await server.connect(transport);
 }
