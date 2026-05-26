@@ -78,9 +78,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
     description:
       'Turns an `ait deploy --scheme-only` URL (intoss-private://…?_deploymentId=<uuid>) into a ' +
       'self-attaching deep link by splicing in debug=1 and the live relay URL for this session. ' +
-      'Render the result as a QR code and scan it with the phone camera to open the mini-app and ' +
-      'attach it to this debug session (QR is the single entry path — no USB cable or platform CLI ' +
-      'needed). Requires the tunnel to be up — call list_pages first.',
+      'Returns the deep link JSON and an ASCII QR of that deep link. Scan the QR with the phone ' +
+      'camera to open the mini-app and attach it to this debug session (QR is the single entry ' +
+      'path — no USB cable or platform CLI needed). Requires the tunnel to be up — call ' +
+      'list_pages first.',
     inputSchema: {
       type: 'object',
       properties: {

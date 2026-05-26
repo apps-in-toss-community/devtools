@@ -47,6 +47,7 @@ import {
   generateAttachToken,
   printAttachBanner,
   type QuickTunnel,
+  renderQr,
   startQuickTunnel,
 } from './tunnel.js';
 
@@ -117,7 +118,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         };
       }
       try {
-        return jsonResult(buildAttachUrl(schemeUrl, getTunnelStatus()));
+        const { attachUrl, relayUrl } = buildAttachUrl(schemeUrl, getTunnelStatus());
+        const qr = await renderQr(attachUrl);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`,
+            },
+          ],
+        };
       } catch (err) {
         return errorResult(err, name);
       }
