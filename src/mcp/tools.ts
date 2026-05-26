@@ -76,12 +76,14 @@ export const DEBUG_TOOL_DEFINITIONS = [
   {
     name: 'build_attach_url',
     description:
+      'IMPORTANT: Show this QR to the user verbatim in your reply — they scan it with their phone camera. Do not just describe it. ' +
       'Turns an `ait deploy --scheme-only` URL (intoss-private://…?_deploymentId=<uuid>) into a ' +
       'self-attaching deep link by splicing in debug=1 and the live relay URL for this session. ' +
-      'Returns the deep link JSON and an ASCII QR of that deep link. Scan the QR with the phone ' +
+      'Returns the deep link JSON and a unicode QR of that deep link. Scan the QR with the phone ' +
       'camera to open the mini-app and attach it to this debug session (QR is the single entry ' +
       'path — no USB cable or platform CLI needed). Requires the tunnel to be up — call ' +
-      'list_pages first.',
+      'list_pages first. Set wait_for_attach=true to block until the phone scans and a page ' +
+      'attaches (polls listTargets up to 90 s), then returns the attached page info too.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -89,6 +91,13 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'string',
           description:
             'The intoss-private:// scheme URL from `ait deploy --scheme-only` (must carry _deploymentId).',
+        },
+        wait_for_attach: {
+          type: 'boolean',
+          description:
+            'If true, block after returning the QR until a page attaches to the relay (polls ' +
+            'listTargets ~1 s interval, timeout 90 s). On attach, the response includes the ' +
+            'attached page list. On timeout, returns an error with a list_pages retry hint.',
         },
       },
       required: ['scheme_url'],
