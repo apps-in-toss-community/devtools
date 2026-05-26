@@ -3,10 +3,10 @@
  *
  * On spawn, the debug server opens an accountless `*.trycloudflare.com` quick
  * tunnel to the local Chii relay so the phone can attach over a public wss URL,
- * then prints an ASCII QR + attach instructions. When TOTP auth is enabled
- * (`AIT_DEBUG_TOTP_SECRET` is set), the QR encodes only the base relay URL —
- * the TOTP code (`at=`) is NOT included because it rotates every 30 s and
- * would be stale by the time a human scans. The in-app deep-link builder
+ * then prints a unicode half-block QR + attach instructions. When TOTP auth is
+ * enabled (`AIT_DEBUG_TOTP_SECRET` is set), the QR encodes only the base relay
+ * URL — the TOTP code (`at=`) is NOT included because it rotates every 30 s
+ * and would be stale by the time a human scans. The in-app deep-link builder
  * splices the live code at attach time.
  *
  * SECRET-HANDLING: The TOTP secret and computed code values MUST NOT appear
@@ -17,7 +17,6 @@
 
 import { randomBytes } from 'node:crypto';
 import { bin, install, Tunnel } from 'cloudflared';
-import qrcode from 'qrcode-terminal';
 
 /** Generates a 32-byte hex attach token shown as a pairing hint (relay-side validation is a later phase). */
 export function generateAttachToken(): string {
@@ -94,15 +93,47 @@ export interface AttachBannerInput {
 }
 
 /**
- * Renders an ASCII QR string for the given text using `qrcode-terminal`.
+ * Renders a pure unicode half-block QR string for the given text.
+ *
+ * Uses `qrcode` (Node full lib) to get the raw bit matrix, then encodes every
+ * two vertical modules into a single half-block character:
+ *   - both dark  → `█`
+ *   - top only   → `▀`
+ *   - bottom only → `▄`
+ *   - both light → ` ` (space)
+ *
+ * The output contains **zero ANSI escape codes**, so it renders correctly in
+ * every surface (terminal, VS Code, JetBrains, web) and can be scanned by a
+ * phone camera when shown verbatim in an agent response.
  *
  * Shared by `renderAttachBanner` (relay wssUrl QR) and the `build_attach_url`
  * MCP tool response (attach deep-link QR).
  */
-export function renderQr(text: string): Promise<string> {
-  return new Promise<string>((resolve) => {
-    qrcode.generate(text, { small: true }, (rendered) => resolve(rendered));
-  });
+export async function renderQr(text: string): Promise<string> {
+  // Dynamic import mirrors the cloudflared/qrcode-terminal precedent: keeps the
+  // dependency out of the module graph when the function is not called.
+  const { default: QRCode } = await import('qrcode');
+  const qr = QRCode.create(text, { errorCorrectionLevel: 'M' });
+  const size: number = qr.modules.size;
+  const data: Uint8Array = qr.modules.data as Uint8Array;
+
+  const isDark = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return false;
+    return data[y * size + x] === 1;
+  };
+
+  const QUIET = 1;
+  const lines: string[] = [];
+  for (let y = -QUIET; y < size + QUIET; y += 2) {
+    let line = '';
+    for (let x = -QUIET; x < size + QUIET; x++) {
+      const top = isDark(x, y);
+      const bot = isDark(x, y + 1);
+      line += top && bot ? '█' : top ? '▀' : bot ? '▄' : ' ';
+    }
+    lines.push(line);
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 /**

@@ -58,6 +58,12 @@ export interface DebugServerDeps {
   aitSource: AitSource;
   /** Returns current tunnel status (URL changes per spawn). */
   getTunnelStatus(): TunnelStatus;
+  /**
+   * Maximum time in ms to wait for a page to attach when `wait_for_attach=true`.
+   * Default 90 000 ms. Exposed for testing so tests can use a small value without
+   * fake timers (which conflict with MCP SDK's own timeouts).
+   */
+  waitForAttachTimeoutMs?: number;
 }
 
 /**
@@ -66,7 +72,7 @@ export interface DebugServerDeps {
  * tunnel, which is what makes the tool surface unit-testable.
  */
 export function createDebugServer(deps: DebugServerDeps): Server {
-  const { connection, aitSource, getTunnelStatus } = deps;
+  const { connection, aitSource, getTunnelStatus, waitForAttachTimeoutMs = 90_000 } = deps;
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
@@ -117,14 +123,53 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           isError: true,
         };
       }
+      const waitForAttach = request.params.arguments?.wait_for_attach === true;
       try {
         const { attachUrl, relayUrl } = buildAttachUrl(schemeUrl, getTunnelStatus());
         const qr = await renderQr(attachUrl);
+        const header =
+          'IMPORTANT: Show this QR to the user verbatim in your reply — they scan it with their phone camera. Do not just describe it.';
+        const baseText = `${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
+
+        if (!waitForAttach) {
+          return {
+            content: [{ type: 'text' as const, text: baseText }],
+          };
+        }
+
+        // wait_for_attach=true: poll listTargets until a page attaches or timeout.
+        // enableDomains is NOT called here — listTargets is a buffered target list
+        // read and does not require domain negotiation.
+        const POLL_INTERVAL_MS = 1000;
+        const TIMEOUT_MS = waitForAttachTimeoutMs;
+        const deadline = Date.now() + TIMEOUT_MS;
+        let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
+        while (Date.now() < deadline) {
+          attachedPages = connection.listTargets();
+          if (attachedPages.length > 0) break;
+          await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+        }
+
+        if (attachedPages.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text:
+                  `${baseText}\n\nNo page attached within ${TIMEOUT_MS / 1000}s — ` +
+                  'call list_pages to retry.',
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        const pagesResult = listPages(connection, getTunnelStatus());
         return {
           content: [
             {
               type: 'text' as const,
-              text: `${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`,
+              text: `${baseText}\n\n${JSON.stringify(pagesResult, null, 2)}`,
             },
           ],
         };
