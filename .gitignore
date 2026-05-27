@@ -15,3 +15,4 @@ playwright-report/
 .claude/worktrees/
 # Machine-local MCP config (points at a local devtools-mcp; never committed)
 .mcp.json
+.codegraph/
