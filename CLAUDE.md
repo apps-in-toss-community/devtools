@@ -130,7 +130,9 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
 | `@ait-co/devtools/in-app` | In-app debug attach — 런타임 gate(layer B·C) + Chii target.js 주입. 소비자가 `if (__DEBUG_BUILD__)`로 import를 감싸 release 빌드에서 DCE — dogfood 빌드 전용 |
 
-## 실기기 미리보기 (tunnel + launcher)
+## 실기기 미리보기 — 환경 2 (AITC Sandbox PWA, tunnel + launcher)
+
+이 섹션은 4겹 fidelity 사다리의 **환경 2 = AITC Sandbox App**을 다룬다. 환경 1(로컬 브라우저 + mock SDK)이 구조적으로 메울 수 없는 실기기 WebKit 엔진·실 터치/뷰포트를 토스 검수·WebView 없이 확인하는 겹이다 — `devtools.aitc.dev/launcher/`에 배포된 installable PWA(`e2e/fixture/launcher/`)가 그 진입점이고, agent-plugin의 `/ait setup-phone-preview`가 이 환경을 배선하는 station 보조 skill이다. 설계 정본은 umbrella `meta/four-environments-fidelity.md` §1.1·§1.2(환경 2 매트릭스).
 
 unplugin `tunnel` 옵션(Vite dev 전용, `src/unplugin/index.ts`의 `vite.configureServer` 분기 + `src/unplugin/tunnel.ts`)이 dev 서버가 listen하면 `cloudflared` quick tunnel(`*.trycloudflare.com`, 계정 불필요)을 띄우고 터미널에 URL + ASCII QR을 출력한다. production은 `forceEnable`이어도 터널을 안 띄운다 (의도치 않은 노출 방지). `cloudflared`/`qrcode-terminal`는 **동적 import**로만 로드 → 터널 미사용 시 그래프에 안 들어옴. 이 둘은 `dependencies`에 들어가는데, "외부 의존성 최소화" 원칙의 의도적 예외다 (런타임 코드 경로에서 필요, 동적 import로 비용 격리). `tunnel.ts`의 `parseTrycloudflareUrl`/`printTunnelBanner`는 순수 함수로 빼서 vitest로 검증하고, cloudflared spawn 자체는 jsdom 범위 밖이라 e2e/수동 검증 ("web 모드는 e2e"와 같은 정신).
 
