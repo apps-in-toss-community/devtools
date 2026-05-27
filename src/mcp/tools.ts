@@ -215,6 +215,20 @@ export function isDebugToolName(name: string): name is DebugToolName {
   return DEBUG_TOOL_NAMES.has(name);
 }
 
+/**
+ * Tool names that are available before any page attaches (bootstrap tier).
+ *
+ * `build_attach_url` — pure URL synthesis, no attach needed.
+ * `list_pages`       — reports tunnel status + empty pages even pre-attach.
+ *
+ * All other tools require an attached page (`enableDomains` must succeed) and
+ * are only advertised in `tools/list` once a target appears.
+ */
+export const BOOTSTRAP_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'build_attach_url',
+  'list_pages',
+]);
+
 /** Normalized console message returned by `list_console_messages`. */
 export interface ConsoleMessage {
   level: string;
