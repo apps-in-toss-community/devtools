@@ -56,6 +56,7 @@ import {
   BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
   callSdk,
+  canOpenBrowser,
   DEBUG_TOOL_DEFINITIONS,
   evaluate,
   getDomDocument,
@@ -68,6 +69,7 @@ import {
   listNetworkRequests,
   listPages,
   measureSafeArea,
+  openQrInBrowser,
   type TunnelStatus,
   takeScreenshot,
   takeSnapshot,
@@ -169,12 +171,137 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         };
       }
       const waitForAttach = request.params.arguments?.wait_for_attach === true;
+      // open_in_browser defaults to true when not explicitly set.
+      const openInBrowser = request.params.arguments?.open_in_browser !== false;
+
       try {
-        const { attachUrl, relayUrl } = buildAttachUrl(schemeUrl, getTunnelStatus());
-        const qr = await renderQr(attachUrl);
+        const { attachUrl, relayUrl, authorityWarning } = buildAttachUrl(
+          schemeUrl,
+          getTunnelStatus(),
+        );
+
+        // Prepend a non-fatal authority warning when the scheme URL host looks wrong.
+        const warningPrefix = authorityWarning ? `⚠️  scheme_url 경고: ${authorityWarning}\n\n` : '';
+
         const header =
           'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
-        const baseText = `${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
+
+        // Try to open QR in browser when requested and a GUI is likely available.
+        if (openInBrowser && canOpenBrowser()) {
+          // Extract deploymentId from the attachUrl for the HTML label.
+          // SECRET-HANDLING: we use only the deploymentId param (not the at= code).
+          let deploymentIdLabel: string | undefined;
+          try {
+            const dpMatch = attachUrl.match(/[?&]_deploymentId=([^&]+)/);
+            if (dpMatch?.[1]) {
+              deploymentIdLabel = decodeURIComponent(dpMatch[1]).slice(0, 36);
+            }
+          } catch {
+            // Best-effort; ignore parse errors.
+          }
+
+          const browserResult = await openQrInBrowser(attachUrl, deploymentIdLabel);
+
+          if (browserResult.opened) {
+            // Opened successfully: return a short result (token-saving).
+            // SECRET-HANDLING: do NOT include attachUrl in the result text.
+            const shortText =
+              `${warningPrefix}${header}\n` +
+              `${JSON.stringify({ relayUrl }, null, 2)}\n\n` +
+              `ブラウザにQRを表示しました。\n` +
+              `QR画像: ${browserResult.pngPath}\n` +
+              `HTMLページ: ${browserResult.htmlPath}\n\n` +
+              `브라우저에 QR을 띄웠습니다. 스마트폰 카메라로 스캔하세요.\n` +
+              `PNG: ${browserResult.pngPath}`;
+
+            if (!waitForAttach) {
+              return { content: [{ type: 'text' as const, text: shortText }] };
+            }
+
+            // wait_for_attach path (browser opened).
+            const POLL_INTERVAL_MS = 1000;
+            const TIMEOUT_MS = waitForAttachTimeoutMs;
+            const deadline = Date.now() + TIMEOUT_MS;
+            let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
+            while (Date.now() < deadline) {
+              attachedPages = connection.listTargets();
+              if (attachedPages.length > 0) break;
+              await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
+            }
+
+            if (attachedPages.length === 0) {
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text:
+                      `${shortText}\n\nNo page attached within ${TIMEOUT_MS / 1000}s — ` +
+                      'call list_pages to retry.',
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            const pagesResult = listPages(connection, getTunnelStatus());
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `${shortText}\n\n${JSON.stringify(pagesResult, null, 2)}`,
+                },
+              ],
+            };
+          }
+
+          // Browser open failed — fall through to text QR with error note.
+          const fallbackNote = `(브라우저 열기 실패: ${browserResult.error ?? 'unknown'} — 텍스트 QR로 대체)\n`;
+          const qr = await renderQr(attachUrl);
+          const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
+
+          if (!waitForAttach) {
+            return { content: [{ type: 'text' as const, text: baseText }] };
+          }
+
+          // wait_for_attach + fallback path.
+          const POLL_INTERVAL_MS_FB = 1000;
+          const TIMEOUT_MS_FB = waitForAttachTimeoutMs;
+          const deadline2 = Date.now() + TIMEOUT_MS_FB;
+          let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
+          while (Date.now() < deadline2) {
+            attachedPagesFb = connection.listTargets();
+            if (attachedPagesFb.length > 0) break;
+            await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS_FB));
+          }
+
+          if (attachedPagesFb.length === 0) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text:
+                    `${baseText}\n\nNo page attached within ${TIMEOUT_MS_FB / 1000}s — ` +
+                    'call list_pages to retry.',
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const pagesResultFb = listPages(connection, getTunnelStatus());
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `${baseText}\n\n${JSON.stringify(pagesResultFb, null, 2)}`,
+              },
+            ],
+          };
+        }
+
+        // open_in_browser=false or no GUI available: text QR path (original behaviour).
+        const qr = await renderQr(attachUrl);
+        const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
 
         if (!waitForAttach) {
           return {

@@ -37,7 +37,7 @@ import type {
   NetworkRequestWillBeSentEvent,
   NetworkResponseReceivedEvent,
 } from './cdp-connection.js';
-import { buildDeepLinkAttachUrl } from './deeplink.js';
+import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
 
 /** Tunnel state surfaced by `list_pages`. */
 export interface TunnelStatus {
@@ -83,14 +83,18 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'camera to open the mini-app and attach it to this debug session (QR is the single entry ' +
       'path — no USB cable or platform CLI needed). Requires the tunnel to be up — call ' +
       'list_pages first. Set wait_for_attach=true to block until the phone scans and a page ' +
-      'attaches (polls listTargets up to 90 s), then returns the attached page info too.',
+      'attaches (polls listTargets up to 90 s), then returns the attached page info too. ' +
+      'When open_in_browser=true (default), saves the QR as a PNG and opens it in the OS default ' +
+      'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers).',
     inputSchema: {
       type: 'object',
       properties: {
         scheme_url: {
           type: 'string',
           description:
-            'The intoss-private:// scheme URL from `ait deploy --scheme-only` (must carry _deploymentId).',
+            'The intoss-private:// scheme URL from `ait deploy --scheme-only` (must carry _deploymentId). ' +
+            'The authority (host) must be the app name (e.g. intoss-private://aitc-sdk-example?_deploymentId=…). ' +
+            'Generic values like "web" or an empty host indicate a malformed URL.',
         },
         wait_for_attach: {
           type: 'boolean',
@@ -98,6 +102,13 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'If true, block after returning the QR until a page attaches to the relay (polls ' +
             'listTargets ~1 s interval, timeout 90 s). On attach, the response includes the ' +
             'attached page list. On timeout, returns an error with a list_pages retry hint.',
+        },
+        open_in_browser: {
+          type: 'boolean',
+          description:
+            'If true (default), render the QR as a PNG and open it in the OS default browser. ' +
+            'Only works when the MCP server is running on a local GUI machine — headless or ' +
+            'remote container environments should set this to false to use the text QR fallback.',
         },
       },
       required: ['scheme_url'],
@@ -321,12 +332,25 @@ export interface BuildAttachUrlResult {
   attachUrl: string;
   /** The relay URL that was spliced in (this session's quick tunnel). */
   relayUrl: string;
+  /**
+   * Non-fatal warning about the scheme URL's authority being missing or
+   * suspicious (e.g. "web", "localhost"). Callers should surface this to
+   * help the user catch a malformed URL early.
+   */
+  authorityWarning?: string;
 }
 
 /**
  * Builds a self-attaching dogfood deep link from an `ait deploy --scheme-only`
  * URL plus this session's live relay. Throws if the tunnel is not up yet (no
  * relay URL to splice in) — the caller surfaces that as a tool error.
+ *
+ * Also validates the scheme URL's authority. A suspicious authority (empty,
+ * "web", "localhost", etc.) is surfaced as a non-fatal `authorityWarning` on
+ * the result so the caller can show a helpful hint without blocking the link
+ * generation (the warning is consistent with how other validation in
+ * `buildDeepLinkAttachUrl` works — hard errors for relay, soft warning for
+ * the scheme authority which is in the caller's input, not ours to own).
  */
 export function buildAttachUrl(schemeUrl: string, tunnel: TunnelStatus): BuildAttachUrlResult {
   if (!tunnel.up || tunnel.wssUrl === null) {
@@ -335,10 +359,163 @@ export function buildAttachUrl(schemeUrl: string, tunnel: TunnelStatus): BuildAt
         'Call list_pages to check tunnel status.',
     );
   }
+  const authorityWarning = validateSchemeAuthority(schemeUrl) ?? undefined;
   return {
     attachUrl: buildDeepLinkAttachUrl(schemeUrl, tunnel.wssUrl),
     relayUrl: tunnel.wssUrl,
+    ...(authorityWarning !== undefined ? { authorityWarning } : {}),
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* QR PNG rendering + browser open                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Heuristic: can this process open a GUI browser?
+ *
+ * Returns `true` when we think a GUI is available:
+ *   - On macOS (`darwin`) we assume yes (MCP normally runs on the user's Mac).
+ *   - On Linux we check for `DISPLAY` or `WAYLAND_DISPLAY`.
+ *   - On Windows we assume yes.
+ *   - In a CI environment (`CI=true`) we assume no.
+ */
+export function canOpenBrowser(): boolean {
+  if (process.env.CI === 'true' || process.env.CI === '1') return false;
+  const platform = process.platform;
+  if (platform === 'darwin' || platform === 'win32') return true;
+  if (platform === 'linux') {
+    return Boolean(process.env.DISPLAY ?? process.env.WAYLAND_DISPLAY);
+  }
+  return false;
+}
+
+/**
+ * Result of `openQrInBrowser`.
+ *
+ * SECRET-HANDLING: `htmlPath` and `pngPath` are local filesystem paths — they
+ * do NOT contain the `at=` TOTP code value. The attach URL (which may contain
+ * `at=`) is embedded inside the HTML file, but the path itself is safe.
+ */
+export interface OpenQrInBrowserResult {
+  /** `true` if the browser was successfully opened. */
+  opened: boolean;
+  /** Absolute path to the written HTML file. */
+  htmlPath: string;
+  /** Absolute path to the written PNG file. */
+  pngPath: string;
+  /** Error message if `opened` is false (browser spawn failed). */
+  error?: string;
+}
+
+/**
+ * Writes the attach URL as a QR PNG + a wrapper HTML page to the OS temp
+ * directory, then opens the HTML in the OS default browser.
+ *
+ * SECRET-HANDLING:
+ *   - File names are derived from a short timestamp, NOT from the attach URL or
+ *     any token/code value. The `at=` code is NOT in the file name.
+ *   - The attach URL (which may carry `at=`) is embedded inside the HTML page
+ *     body — that is the intended delivery channel for the QR.
+ *   - This function must NOT write the attach URL, deploymentId, or any
+ *     TOTP code to stdout, stderr, or any log.
+ *
+ * @param attachUrl - The deep link to encode as a QR. May contain `at=<code>`.
+ * @param deploymentId - Optional human-readable label for the HTML page (e.g. UUID substring).
+ *   Must NOT be derived from the `at=` code value.
+ * @returns `OpenQrInBrowserResult` — never throws (errors are returned in `.error`).
+ */
+export async function openQrInBrowser(
+  attachUrl: string,
+  deploymentId?: string,
+): Promise<OpenQrInBrowserResult> {
+  const { tmpdir } = await import('node:os');
+  const { writeFileSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const { default: QRCode } = await import('qrcode');
+
+  // Use a timestamp-based name, NOT anything derived from the attach URL.
+  const stamp = Date.now();
+  const pngPath = join(tmpdir(), `ait-qr-${stamp}.png`);
+  const htmlPath = join(tmpdir(), `ait-qr-${stamp}.html`);
+
+  // Write the QR PNG.
+  try {
+    await QRCode.toFile(pngPath, attachUrl, { type: 'png', errorCorrectionLevel: 'M' });
+  } catch (err) {
+    return {
+      opened: false,
+      htmlPath,
+      pngPath,
+      error: `QR PNG write failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // Write the HTML wrapper.
+  // SECRET: attachUrl is placed in the HTML as a text node and QR image src,
+  // which is the intended delivery channel. It must NOT be in the file name.
+  const safeLabel = deploymentId
+    ? deploymentId.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`)
+    : 'attach';
+  const htmlContent = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AIT Debug — QR</title>
+  <style>
+    body { font-family: monospace; background: #111; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; gap: 1.5rem; padding: 2rem; box-sizing: border-box; }
+    img { width: min(90vw, 400px); height: auto; image-rendering: pixelated; background: #fff; padding: 1rem; border-radius: 8px; }
+    .label { font-size: 0.85rem; opacity: 0.6; }
+    .url { font-size: 0.75rem; word-break: break-all; max-width: 60ch; opacity: 0.5; }
+  </style>
+</head>
+<body>
+  <img src="${pngPath}" alt="QR code" />
+  <p class="label">deployment: ${safeLabel}</p>
+</body>
+</html>`;
+
+  try {
+    writeFileSync(htmlPath, htmlContent, 'utf8');
+  } catch (err) {
+    return {
+      opened: false,
+      htmlPath,
+      pngPath,
+      error: `HTML write failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  // Open in OS default browser.
+  const platform = process.platform;
+  let openCmd: string;
+  let openArgs: string[];
+  if (platform === 'darwin') {
+    openCmd = 'open';
+    openArgs = [htmlPath];
+  } else if (platform === 'win32') {
+    openCmd = 'cmd';
+    openArgs = ['/c', 'start', '', htmlPath];
+  } else {
+    openCmd = 'xdg-open';
+    openArgs = [htmlPath];
+  }
+
+  // Use spawnSync with a short timeout — we don't need to wait for the browser
+  // to finish loading, just for the launcher to start.
+  const spawnResult = spawnSync(openCmd, openArgs, { timeout: 5000 });
+  if (spawnResult.error) {
+    return {
+      opened: false,
+      htmlPath,
+      pngPath,
+      error: `Browser open failed (${openCmd}): ${spawnResult.error.message}`,
+    };
+  }
+
+  return { opened: true, htmlPath, pngPath };
 }
 
 /* -------------------------------------------------------------------------- */
