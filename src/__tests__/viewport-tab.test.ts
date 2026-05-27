@@ -150,3 +150,53 @@ describe('renderViewportTab', () => {
     expect(aitState.state.viewport.customWidth).toBe(400);
   });
 });
+
+describe('provenance badge', () => {
+  beforeEach(() => {
+    aitState.reset();
+    _resetViewportInit();
+  });
+
+  afterEach(() => {
+    _resetViewportInit();
+    disposeViewport();
+  });
+
+  it('measured 프리셋(iphone-15-pro)에는 provenance 뱃지가 없다', () => {
+    aitState.patch('viewport', { preset: 'iphone-15-pro' });
+    const root = renderViewportTab();
+    const badge = root.querySelector('.ait-provenance-badge');
+    expect(badge).toBeNull();
+  });
+
+  it('extrapolated 프리셋(iphone-17)에는 "(추정치)" 뱃지가 표시된다', () => {
+    aitState.patch('viewport', { preset: 'iphone-17' });
+    const root = renderViewportTab();
+    const badge = root.querySelector('.ait-provenance-badge');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('(추정치)');
+  });
+
+  it('placeholder 프리셋(galaxy-s26)에는 "(미측정)" 뱃지가 표시된다', () => {
+    aitState.patch('viewport', { preset: 'galaxy-s26' });
+    const root = renderViewportTab();
+    const badge = root.querySelector('.ait-provenance-badge');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('(미측정)');
+  });
+
+  it('panelEditable=false여도 provenance 뱃지가 표시된다', () => {
+    aitState.patch('viewport', { preset: 'galaxy-s26' });
+    aitState.update({ panelEditable: false });
+    const root = renderViewportTab();
+    const badge = root.querySelector('.ait-provenance-badge');
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe('(미측정)');
+  });
+
+  it('SafeAreaProvenance 필드가 없는 preset(none/custom)에는 뱃지가 없다', () => {
+    aitState.patch('viewport', { preset: 'none' });
+    const root = renderViewportTab();
+    expect(root.querySelector('.ait-provenance-badge')).toBeNull();
+  });
+});

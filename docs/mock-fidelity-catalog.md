@@ -58,6 +58,64 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 
 ---
 
+## 0.6. Safe-area 실측 절차 (`measure_safe_area` MCP 툴)
+
+`measure_safe_area` MCP 툴을 relay 세션(환경 2·3)에서 호출하면 실기기의 `SafeAreaInsets` + `devicePixelRatio`를 읽어 반환한다. 이 절차로 preset의 `safeAreaProvenance`를 `measured`로 승급한다.
+
+### 측정 대상 조합
+
+기기당 아래 4개 조합(orientation × navBarType)을 측정한다. 각 조합에서 `measure_safe_area` 툴을 호출하고 반환값을 표에 기록한다.
+
+| orientation | navBarType | measure 필요 항목 |
+|---|---|---|
+| portrait | partner | top(nav bar), bottom(home indicator), left, right |
+| portrait | game | top(투명 오버레이라 0 예상), bottom, left, right |
+| landscape (notch 왼쪽) | partner | left(notchInset), top(0 예상), right, bottom |
+| landscape (notch 오른쪽) | partner | right(notchInset), top(0 예상), left, bottom |
+
+### 측정 흐름
+
+1. relay 세션 진입: `build_attach_url` 툴로 QR/deep-link를 생성하고 실기기 토스 앱에서 스캔.
+2. relay attach 확인: `list_pages` 툴로 연결된 페이지 확인.
+3. 각 조합마다 `measure_safe_area` 툴 호출. 반환 예시:
+   ```json
+   { "top": 54, "right": 0, "bottom": 34, "left": 0, "devicePixelRatio": 3 }
+   ```
+4. 반환값을 아래 표에 채운다. `safeAreaBottom`은 portrait bottom 값, `notchInset`은 landscape left/right 값으로 검증.
+
+### 기록 표 (실측 후 채울 것)
+
+| preset id | 측정일 | orientation | navBarType | top | right | bottom | left | DPR | 비고 |
+|---|---|---|---|---|---|---|---|---|---|
+| `iphone-15-pro` | 2026-05-25 | portrait | partner | 54 | 0 | 34 | 0 | 3 | devtools#190 실측 — `measured` 승급 완료 |
+| `iphone-16e` | — | portrait | partner | — | — | — | — | — | 미실측 (`extrapolated`) |
+| `iphone-17` | — | portrait | partner | — | — | — | — | — | 미실측 (`extrapolated`) |
+| `iphone-air` | — | portrait | partner | — | — | — | — | — | 미실측 (`extrapolated`) |
+| `iphone-17-pro` | — | portrait | partner | — | — | — | — | — | 미실측 (`extrapolated`) |
+| `iphone-17-pro-max` | — | portrait | partner | — | — | — | — | — | 미실측 (`extrapolated`) |
+| `galaxy-s26` | — | portrait | partner | — | — | — | — | — | 미실측 (`placeholder`) |
+| `galaxy-s26-plus` | — | portrait | partner | — | — | — | — | — | 미실측 (`placeholder`) |
+| `galaxy-s26-ultra` | — | portrait | partner | — | — | — | — | — | 미실측 (`placeholder`) |
+| `galaxy-z-flip7` | — | portrait | partner | — | — | — | — | — | 미실측 (`placeholder`) |
+| `galaxy-z-fold7-folded` | — | portrait | partner | — | — | — | — | — | 미실측 (`placeholder`) |
+| `galaxy-z-fold7-unfolded` | — | portrait | partner | — | — | — | — | — | 미실측 (`placeholder`) |
+
+### 측정 후 코드 승급 절차
+
+1. `src/panel/viewport.ts`의 해당 preset에서 `safeAreaProvenance`를 수정:
+   ```ts
+   safeAreaProvenance: { source: 'measured', device: 'iPhone XX', date: 'yyyy-mm-dd' }
+   ```
+2. `navBarHeight`, `safeAreaBottom`, `notchInset` 값이 측정값과 다르면 같이 수정.
+3. 이 표의 해당 행을 채운다.
+4. `pnpm typecheck && pnpm test`로 회귀 없음 확인 후 PR.
+
+### DPR 천장
+
+`window.devicePixelRatio`는 브라우저 read-only라 환경 1(로컬 브라우저)에서는 에뮬레이션이 구조적으로 불가하다. `measure_safe_area`가 relay 세션에서 실기기 DPR을 반환하므로, DPR 확인은 환경 2·3에서만 가능하다. 이 천장은 환경 1의 설계 제약으로 향후 해결 대상이 아니다.
+
+---
+
 ## 1. Navigation / 환경 / 이벤트 (`navigation/index.ts`)
 
 | API | mock 동작 | real 동작 | 분류 | 관측? | gap |
@@ -216,7 +274,7 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 1. **`environment` 기본값 + toss 진입 story** (§0) — gate 전체의 뿌리. #190 acceptance 2번.
 2. **`setIosSwipeGestureEnabled` → state 토글** (§1) — `setDeviceOrientation` 패턴 mirror. #190 acceptance 3번, 명시적 1순위.
 3. **나머지 navigation no-op** (`setScreenAwakeMode`, `setSecureScreen`, `requestReview`) → "요청됨" state 기록.
-4. **safe area · 기기 특성 정합** (§0.5) — iPhone 15 Pro preset 추가(393×852/dpr3/dynamic-island/top59/bottom34) + default `safeAreaInsets`를 default 기기와 정합 + 호스트 실측. 연결 기기에 맞는 preset이 없는 게 당장의 gap.
+4. **safe area · 기기 특성 정합** (§0.5) — iPhone 15 Pro preset 존재(393×852/dpr3/dynamic-island, `safeAreaProvenance: measured`). 남은 gap: Android/Galaxy 계열 및 landscape mode safe-area relay 실측(`placeholder`/`extrapolated` → `measured` 승급). 절차는 §0.6 참조.
 5. **`appsInTossEvent` / `partner.*accessoryButton`** — 이벤트 발화 경로 연결(현재 완전 끊김).
 6. **UA/host 단서 흉내** (§0) — host-gated 코드 경로를 브라우저에서 시험 (#190 범위 4, 검토 단계).
 
