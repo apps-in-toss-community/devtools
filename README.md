@@ -861,11 +861,11 @@ tool을 봅니다.
 read-only tool만 노출합니다. 폰 attach 라운드트립은 fully wired 상태이며 남은 것은 실기기 acceptance
 한 번뿐입니다. tool 계층은 주입 가능한 CDP 연결 / AIT 소스를 mock해 CI에서 검증됩니다.
 
-`devtools-mcp`를 stdio로 실행하면 로컬 Chii 릴레이(:9100)를 띄우고 cloudflared quick tunnel로
-공개 `wss://*.trycloudflare.com` URL을 발급한 뒤 QR + secret token을 터미널에 출력합니다.
-폰이 dogfood 진입 시 in-app attach UI가 그 URL + token으로 릴레이에 붙으면, 에이전트가
-`chrome-devtools-mcp` 호환 tool로 console/network/page 상태를 read합니다. 사람이 폰을 지켜볼
-필요 없이 회귀를 단독 진단하는 것이 목표입니다.
+`devtools-mcp`를 stdio로 실행하면 로컬 Chii 릴레이를 OS가 할당한 포트에 띄우고 cloudflared quick
+tunnel로 공개 `wss://*.trycloudflare.com` URL을 발급한 뒤 QR을 터미널에 출력합니다(시크릿/인증
+코드는 출력하지 않습니다). 폰이 dogfood 진입 시 in-app attach UI가 그 URL로 릴레이에 붙으면,
+에이전트가 `chrome-devtools-mcp` 호환 tool로 console/network/page 상태를 read합니다. 사람이 폰을
+지켜볼 필요 없이 회귀를 단독 진단하는 것이 목표입니다.
 
 ```json
 {

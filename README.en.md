@@ -846,7 +846,7 @@ Both modes expose the same `AIT.*` tool surface — debug mode backed by the Chi
 
 Read-only tools only. The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
 
-Running `devtools-mcp` as a stdio server starts a local Chii relay on `:9100` and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL, a QR code, and a secret token in the terminal. When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL and token, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
+Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
 ```json
 {
