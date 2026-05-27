@@ -858,8 +858,11 @@ tool을 봅니다.
 
 ### Debug 모드 (CDP via Chii)
 
-read-only tool만 노출합니다. 폰 attach 라운드트립은 fully wired 상태이며 남은 것은 실기기 acceptance
-한 번뿐입니다. tool 계층은 주입 가능한 CDP 연결 / AIT 소스를 mock해 CI에서 검증됩니다.
+read-only tool만 노출합니다. 도구는 attach 상태에 따라 2단계로 등록됩니다 — attach 전에는 bootstrap
+도구(`build_attach_url`·`list_pages`)만 보이고, 릴레이/로컬 페이지가 attach되면 `notifications/tools/list_changed`로
+attach 의존 도구가 같은 세션에서 동적 등록됩니다(세션 재시작 불필요). 폰 attach 라운드트립은 fully wired
+상태이며 남은 것은 실기기 acceptance 한 번뿐입니다. tool 계층은 주입 가능한 CDP 연결 / AIT 소스를 mock해
+CI에서 검증됩니다.
 
 `devtools-mcp`를 stdio로 실행하면 로컬 Chii 릴레이(:9100)를 띄우고 cloudflared quick tunnel로
 공개 `wss://*.trycloudflare.com` URL을 발급한 뒤 QR + secret token을 터미널에 출력합니다.
