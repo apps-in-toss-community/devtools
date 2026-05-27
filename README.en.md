@@ -835,12 +835,15 @@ import '@ait-co/devtools/panel';
 
 AI coding agents (Claude Code, Cursor, etc.) can observe a running mini-app directly via [MCP (Model Context Protocol)](https://modelcontextprotocol.io/). A single `devtools-mcp` binary provides two modes.
 
-| Mode | Invocation | Target | Tools |
-|---|---|---|---|
-| **debug** (default) | `devtools-mcp` | Production bundle on a phone or dev browser (CDP/Chii) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
-| **dev** | `devtools-mcp --mode=dev` | Mock state from a running Vite dev server | `AIT.*` (+ `devtools_get_mock_state` alias) |
+A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so every tool works identically in both environments — the only difference is the attach strategy (`--target=relay` vs `--target=local`).
 
-Both modes expose the same `AIT.*` tool surface — debug mode backed by the Chii channel, dev mode by the dev server's mock-state HTTP endpoint — so an agent sees the same tools whether attached to a phone (debug) or a dev browser (dev).
+| Mode + target | Invocation | Target | Tools |
+|---|---|---|---|
+| `--mode=debug --target=relay` (default) | `devtools-mcp` | Production bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 2/3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
+| `--mode=debug --target=local` | `devtools-mcp --target=local` | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
+| `--mode=dev` | `devtools-mcp --mode=dev` | Mock state from a running Vite dev server | `AIT.*` (+ `devtools_get_mock_state` alias) |
+
+`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server. All three combinations expose the same `AIT.*` tool surface to the agent.
 
 ### Debug mode (CDP via Chii)
 
@@ -864,10 +867,13 @@ Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assi
 | `list_console_messages` | `Runtime.consoleAPICalled` | Recent console.log/warn/error messages (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | Recent XHR/fetch requests (url, method, status, timing) |
 | `list_pages` | Chii relay target list | Attached pages + tunnel status + wss URL |
-| `build_attach_url` | (pure synthesis) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL to make a self-attaching deep link (no QR scan) |
+| `build_attach_url` | (pure synthesis) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL, prints a QR. Scanning the QR with the phone camera is the single entry path for env 2/3 (requires `list_pages` first) |
 | `get_dom_document` | `DOM.getDocument` | DOM tree read (structural/layout regression diagnosis) |
 | `take_snapshot` | `DOMSnapshot.captureSnapshot` | Page snapshot (documents + interned strings, visual regression) |
 | `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |
+| `measure_safe_area` | `Runtime.evaluate` | Runs a safe-area probe on the attached page → returns normalized safe-area insets, viewport geometry, DPR, and User-Agent. Read-only. Use in a relay session to get ground-truth values for upgrading a viewport preset from extrapolated/placeholder to measured. Requires attach (`list_pages` first) |
+| `evaluate` | `Runtime.evaluate` | Evaluates an arbitrary JS expression on the attached page (returnByValue) and returns the result. **Not read-only** — the expression can have side effects (DOM mutations, SDK calls, state changes). Requires attach |
+| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dogfood SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 2/3, mock SDK on env 1. Requires attach. Returns `{ok,value}` / `{ok,error}` |
 | `AIT.getSdkCallHistory` | AIT domain | SDK call trace (method, args, result/error, timestamp) |
 | `AIT.getMockState` | AIT domain | Mock state snapshot (`window.__ait`) |
 | `AIT.getOperationalEnvironment` | AIT domain | `getOperationalEnvironment()` + SDK version |
