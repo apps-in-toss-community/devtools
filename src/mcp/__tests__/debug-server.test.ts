@@ -28,6 +28,7 @@ import { BOOTSTRAP_TOOL_NAMES, DEBUG_TOOL_DEFINITIONS } from '../tools.js';
 
 // Stub `qrcode` so tests are deterministic and don't need a real QR matrix.
 // The stub produces a 1x1 module matrix so the half-block loop runs but is cheap.
+// Also stubs `toFile` for the PNG-write path.
 vi.mock('qrcode', () => ({
   default: {
     create: (_input: string) => ({
@@ -36,8 +37,28 @@ vi.mock('qrcode', () => ({
         data: new Uint8Array([1]),
       },
     }),
+    toFile: vi.fn().mockResolvedValue(undefined),
   },
 }));
+
+// Stub node:fs for the HTML writeFileSync path.
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  return { ...original, writeFileSync: vi.fn() };
+});
+
+// Stub node:child_process so tests never open a real browser.
+vi.mock('node:child_process', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:child_process')>();
+  return { ...original, spawnSync: vi.fn().mockReturnValue({ error: null }) };
+});
+
+// Mock canOpenBrowser → false so existing tests exercise the text-QR path.
+// Tests that explicitly test the browser-open path override this per-test.
+vi.mock('../tools.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../tools.js')>();
+  return { ...original, canOpenBrowser: vi.fn().mockReturnValue(false) };
+});
 
 // ---- Minimal fakes --------------------------------------------------------
 
@@ -449,5 +470,144 @@ describe('startAttachWatcher', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// build_attach_url — scheme authority warning (#221)
+// ---------------------------------------------------------------------------
+
+describe('build_attach_url — scheme authority warning', () => {
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+
+  it('result text does not contain a warning for a well-formed scheme URL', async () => {
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=valid-uuid',
+        open_in_browser: false,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    expect(text).not.toContain('경고');
+    expect(text).not.toContain('placeholder');
+  });
+
+  it('result text includes a warning when authority is "web" (generic placeholder)', async () => {
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://web?_deploymentId=uuid',
+        open_in_browser: false,
+      },
+    });
+
+    // Should succeed but include a warning in the text.
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('경고');
+    // Still produces a valid attach URL (non-fatal).
+    expect(text).toContain('attachUrl');
+  });
+
+  it('result text includes a warning when authority is empty', async () => {
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://?_deploymentId=uuid',
+        open_in_browser: false,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('경고');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// build_attach_url — open_in_browser (#221)
+// ---------------------------------------------------------------------------
+
+describe('build_attach_url — open_in_browser', () => {
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+
+  it('open_in_browser=false falls back to text QR (original behaviour)', async () => {
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
+        open_in_browser: false,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // Text QR path: result should contain attachUrl JSON.
+    expect(text).toContain('attachUrl');
+    expect(text).toContain('relayUrl');
+  });
+
+  it('when canOpenBrowser() returns true, result is short (PNG path only, no attachUrl in text)', async () => {
+    const { canOpenBrowser } = await import('../tools.js');
+    (canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
+        open_in_browser: true,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // Browser path: result mentions PNG/browser but NOT the raw attachUrl.
+    expect(text).toContain('PNG');
+    // relayUrl (not attachUrl) should be in the JSON part.
+    expect(text).toContain('relayUrl');
+    // SECRET: attachUrl (with possible at= code) must NOT be in the plain text result.
+    // The text should NOT include the raw deep-link with debug=1 etc. in the visible text.
+    // (It's written to the HTML file, not the tool result text.)
+    expect(text).not.toContain('debug=1');
+  });
+
+  it('when browser open fails, falls back to text QR with error note', async () => {
+    const { canOpenBrowser } = await import('../tools.js');
+    (canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+
+    // Make spawnSync return an error for this test.
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      error: new Error('spawn ENOENT'),
+    });
+
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
+        open_in_browser: true,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // Fallback: includes the error note and the text QR path (attachUrl + QR chars).
+    expect(text).toContain('브라우저 열기 실패');
+    expect(text).toContain('attachUrl');
   });
 });

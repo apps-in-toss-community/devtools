@@ -29,6 +29,55 @@
  * pre-existing params (notably `_deploymentId`) byte-for-byte intact.
  */
 
+/**
+ * Suspicious/generic authority values that indicate a malformed or placeholder
+ * scheme URL. These are host strings that will almost certainly cause the Toss
+ * app to fail with "bundle not found" silently.
+ *
+ * The expected form from `ait deploy --scheme-only` is:
+ *   intoss-private://<appName>?_deploymentId=<uuid>
+ * where `<appName>` is a non-generic string like `aitc-sdk-example`.
+ */
+const SUSPICIOUS_AUTHORITIES = new Set<string>(['', 'web', 'localhost', '127.0.0.1', 'app']);
+
+/**
+ * Validates the authority (host) portion of a scheme URL.
+ *
+ * Returns a warning message if the authority is missing or looks like a
+ * placeholder, or `null` if the authority looks valid.
+ *
+ * Expected form: `intoss-private://<appName>?_deploymentId=<uuid>`
+ * The authority must be a non-empty, non-generic app name (e.g. `aitc-sdk-example`).
+ */
+export function validateSchemeAuthority(schemeUrl: string): string | null {
+  // Extract authority from `scheme://authority[/path][?query][#hash]`.
+  // We cannot use the WHATWG URL parser for non-special schemes reliably
+  // (see the deeplink.ts module comment), so we parse the raw string.
+  const afterScheme = schemeUrl.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//, '');
+  if (afterScheme === schemeUrl) {
+    // No `://` found — not a scheme URL at all.
+    return (
+      'scheme_url does not look like a scheme URL (expected `intoss-private://<appName>?_deploymentId=<uuid>`). ' +
+      'Use the URL printed by `ait deploy --scheme-only`.'
+    );
+  }
+
+  // authority ends at the first `/`, `?`, `#`, or end of string.
+  const authorityEnd = afterScheme.search(/[/?#]/);
+  const authority = authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
+
+  if (SUSPICIOUS_AUTHORITIES.has(authority.toLowerCase())) {
+    const displayAuthority = authority === '' ? '(empty)' : `"${authority}"`;
+    return (
+      `scheme_url authority ${displayAuthority} looks like a placeholder. ` +
+      'Expected an app name like `intoss-private://aitc-sdk-example?_deploymentId=<uuid>`. ' +
+      'Use the URL printed by `ait deploy --scheme-only` — it includes the correct app name as the host.'
+    );
+  }
+
+  return null;
+}
+
 /** A param the helper appends. Existing occurrences are replaced, not duplicated. */
 type AppendParam = readonly [key: string, value: string];
 

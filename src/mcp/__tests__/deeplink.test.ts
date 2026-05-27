@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildDeepLinkAttachUrl } from '../deeplink.js';
+import { buildDeepLinkAttachUrl, validateSchemeAuthority } from '../deeplink.js';
 
 const RELAY = 'wss://abc-def.trycloudflare.com';
 const RELAY_WITH_PATH = 'wss://abc-def.trycloudflare.com/relay';
@@ -115,5 +115,62 @@ describe('buildDeepLinkAttachUrl', () => {
     // Calling without a code removes the old `at=`.
     const out = buildDeepLinkAttachUrl(scheme, RELAY);
     expect(out).not.toContain('at=');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateSchemeAuthority — scheme host (authority) validation
+// ---------------------------------------------------------------------------
+
+describe('validateSchemeAuthority', () => {
+  it('returns null for a well-formed URL with a meaningful app-name authority', () => {
+    expect(
+      validateSchemeAuthority('intoss-private://aitc-sdk-example?_deploymentId=uuid'),
+    ).toBeNull();
+    expect(validateSchemeAuthority('intoss-private://my-miniapp?_deploymentId=x')).toBeNull();
+    expect(validateSchemeAuthority('intoss-private://com.example.app?_deploymentId=x')).toBeNull();
+  });
+
+  it('returns a warning when authority is empty', () => {
+    const msg = validateSchemeAuthority('intoss-private://?_deploymentId=x');
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/authority/i);
+    expect(msg).toMatch(/app name/i);
+  });
+
+  it('returns a warning when authority is "web" (generic placeholder)', () => {
+    const msg = validateSchemeAuthority('intoss-private://web?_deploymentId=x');
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/placeholder/i);
+    expect(msg).toMatch(/aitc-sdk-example/);
+  });
+
+  it('returns a warning when authority is "localhost"', () => {
+    const msg = validateSchemeAuthority('intoss-private://localhost?_deploymentId=x');
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/placeholder/i);
+  });
+
+  it('returns a warning when authority is "app" (generic)', () => {
+    const msg = validateSchemeAuthority('intoss-private://app?_deploymentId=x');
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/placeholder/i);
+  });
+
+  it('returns an error when the string is not a scheme URL at all', () => {
+    const msg = validateSchemeAuthority('not-a-url');
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/scheme URL/i);
+  });
+
+  it('treats authority check case-insensitively (WEB → warning)', () => {
+    const msg = validateSchemeAuthority('intoss-private://WEB?_deploymentId=x');
+    expect(msg).not.toBeNull();
+    expect(msg).toMatch(/placeholder/i);
+  });
+
+  it('returns null for authority "127.0.0.2" (not in the suspicious list)', () => {
+    // Only 127.0.0.1 is in the list, not arbitrary IPs.
+    expect(validateSchemeAuthority('intoss-private://127.0.0.2?_deploymentId=x')).toBeNull();
   });
 });
