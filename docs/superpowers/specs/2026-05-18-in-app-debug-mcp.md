@@ -1,6 +1,6 @@
 # Production debug surface — AI-loop via CDP (Chii) + 3-layer gate
 
-**작성일**: 2026-05-18 (초안), 2026-05-19 (개정: AI-loop 우선 재정렬 + Chii/CDP 채택 + 3-layer gate)
+**작성일**: 2026-05-18 (초안), 2026-05-19 (개정: AI-loop 우선 재정렬 + Chii/CDP 채택 + 3-layer gate), 2026-05-27 (개정: OQ6 RESOLVED — test-push Layer C 미전파, QR/deep-link 단일 경로 명문화)
 **상태**: 설계 (구현 전)
 **관련**: umbrella TODO "Debugging MCP Server" backlog, devtools#130 (dev-mode MCP spike), sdk-example v0.1.1 dog-food 회귀
 
@@ -76,8 +76,9 @@ AI가 단독으로 회귀를 진단·고치고 검증하는 한 사이클:
 1. AI: 가설 수립 ("BrowserRouter history.length === 1이라 native swipe가 미니앱 종료로 빠짐")
 2. AI: 코드 패치 (setIosSwipeGestureEnabled(false) 등)
 3. AI: `git push origin main && gh release create v0.1.x` → tag-gated workflow가 deploy
-4. AI: `aitcc app bundles test-push --deployment-id ... --params 'debug=1&relay=<url>&session=<uuid>'`
-       → 폰의 토스 앱이 push 알림 → 사람이 탭 (이 한 번만 사람 개입, 또는 dev 폰 자동 탭 자동화)
+4. AI: `build_attach_url` MCP tool 호출 → `ait deploy --scheme-only` URL에 `debug=1&relay=<wss>` splice → ASCII QR 렌더
+       → 사람이 폰 카메라로 QR 스캔(이 한 번만 사람 개입) → deep-link 진입 + Layer C 쿼리 전파 + relay attach 자동 완결
+       (test-push는 Layer C 쿼리를 WebView로 전파하지 못해 폐기 — open question 6 참고)
 5. 번들 mount 시 query에서 debug+relay+session 감지, WebSocket relay 연결
 6. AI MCP 호출: `devtools_get_history` → `{ length: 1, location: { pathname: '/storage' } }`
 7. AI: 가설 확인 ("history.length이 메뉴 진입 후 1 — gesture 막혔는지 검증") → swipe 시뮬 후 다시 read
@@ -278,7 +279,13 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 3. **폰 attach UI 배치** — `?debug=1`로 진입한 미니앱에서 attach UI를 어디 둘 것인가: (a) in-app 자체 floating 버튼 (어느 페이지든 보임), (b) sdk-example의 별도 EnvironmentPage 진입점, (c) overlay 라이브러리 부착 시 그 overlay의 sub-panel. Phase 1 MVP는 (a) — 회귀 진단이 페이지 진입과 무관하게 가능해야 함.
 4. **MCP host에서의 session 라우팅** — `~/.mcp.json` 한 줄 등록만으로 자동 활용되는가, 아니면 Claude Code에서 명시적 `attach <token>` step 필요한가. MVP는 env (`AITC_DEBUG_SESSION` token) + 첫 tool 호출 시 implicit attach. Phase 5에서 share-link UX.
 5. **Console hook 위치** — `console.log` 자체를 proxy로 감싸면 사용자 코드 stack trace에 frame 1개 추가됨. Chii가 기본 wrapping을 제공하므로 우리 쪽 추가 hook은 최소화. AIT 도메인의 SDK call trace만 별도 proxy + ring buffer.
-6. **사람-탭 단계의 자동화** — 사람 개입은 두 매듭이었다: (a) attach UI에서 QR 스캔/URL paste, (b) deploy 후 딥링크 진입. **(a)는 해소**: `build_attach_url` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1`+이 세션의 relay wss URL을 끼워 self-attach 딥링크를 만든다 — gate(`src/in-app/gate.ts`)가 이미 `relay` query를 읽어 그 딥링크를 폰에서 여는 순간 자동 연결된다. token은 gate 검증 대상이 아니라(pairing hint) 딥링크에 불필요. 전제 두 가지(딥링크 query 전파 O, WebView CSP가 외부 `target.js` 로드 차단 X)는 확인됨. **(b) 딥링크 진입은 QR 스캔 단일 경로**: `build_attach_url` 출력을 ASCII QR로 렌더 → 폰 카메라로 스캔하면 진입+attach가 한 번에 닫힌다. 이게 실유저 플로우와 동일하고, 의존성 0·크로스플랫폼(iOS/Android 동일)이다.
+6. **사람-탭 단계의 자동화 + Layer C 전달 채널** — **(2026-05-21 / 2026-05-25 RESOLVED)**
+
+   **test-push는 Layer C 채널이 될 수 없다 (2026-05-21 실폰 확정).** sdk-example 31146 dogfood 번들로 실기기 dog-food 시 확인한 사실: 토스 앱의 test-push는 POST `{deploymentId}` payload만 보내는 알림 채널이다 — 진입 URL에 `_deploymentId`(Layer B)와 토스 자체 파라미터(`toss_referrer`/`contentId`)만 붙고, `debug=1`/`relay` 같은 Layer C query param이 WebView로 전파되지 않는다. 결과적으로 in-app gate는 영구히 `reason: 'opt-in'`으로 막혀 attach가 불가능하다. test-push를 Layer C 전달 경로로 쓰는 설계는 폐기한다.
+
+   **Layer C 정식 전달 경로는 QR/deep-link query-param 단일 경로 (2026-05-25 실증).** `build_attach_url` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1&relay=<wss>`를 splice한 `intoss-private://…?_deploymentId=…&debug=1&relay=<wss>` deep link를 만들고 ASCII QR로 렌더한다. 폰 카메라로 QR을 스캔하면 딥링크가 WebView URL로 진입하면서 Layer C 쿼리가 그대로 전파되어 gate 통과 + relay attach가 자동으로 닫힌다. 이 경로는 실유저 플로우와 동일하고 의존성 0, iOS/Android 모두 동일하게 동작한다.
+
+   따라서 사람 개입은 "QR 스캔" 1회로 고정된다 — 사람이 스캔할 QR을 에이전트가 만들고, 붙으면 자동으로 알아챈다는 자동화 천장이 이게 전부다.
 
    > **정책 (2026-05-26, 사용자 결정)**: 진입은 **QR 스캔 단일 경로**다. `adb shell am start` / `xcrun devicectl … --payload-url` 같은 **device-control 발사(unattended) 경로는 추구하지 않는다** — USB 연결·기기 페어링·App Store bundle id 하드코딩에 의존해 brittle하고 실유저 플로우가 아니다. 아래 2026-05-22 spike 기록은 historical record로만 남긴다(그 결론—device-control 자동화—은 폐기됨).
 
