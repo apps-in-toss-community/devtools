@@ -1,0 +1,90 @@
+[
+  {
+    "id": "safe-area.SafeAreaInsetsGet",
+    "reason": "Mock default returns {top:54,bottom:34,left:0,right:0} (iPhone 15 Pro relay-measured values per devtools#198). Real device relay returns device-specific values — on iPhone 15 Pro this should MATCH; on other devices (e.g. SE, Fold) it will differ."
+  },
+  {
+    "id": "safe-area.getSafeAreaInsets",
+    "reason": "Deprecated helper returns safeAreaInsets.top (mock default=54). Real device relay returns actual navBarHeight — matches iPhone 15 Pro, differs on others."
+  },
+  {
+    "id": "safe-area.SafeAreaInsetsSubscribeFirstEmit",
+    "reason": "First emit mirrors SafeAreaInsets.get() — same device-specific variance as safe-area.SafeAreaInsetsGet."
+  },
+  {
+    "id": "browser.navigatorUserAgent",
+    "reason": "jsdom UA ('Mozilla/5.0 (darwin) AppleWebKit/537.36 (KHTML, like Gecko) jsdom/29.1.1') differs from real device WebView UA. Expected environment difference."
+  },
+  {
+    "id": "browser.screenWidth",
+    "reason": "jsdom screen.width=0, real device returns physical screen width in CSS px."
+  },
+  {
+    "id": "browser.screenHeight",
+    "reason": "jsdom screen.height=0, real device returns physical screen height in CSS px."
+  },
+  {
+    "id": "browser.devicePixelRatio",
+    "reason": "jsdom devicePixelRatio=1 (set by mock runner), real device returns hardware DPR (e.g. 3 for iPhone 15 Pro)."
+  },
+  {
+    "id": "browser.windowInnerWidth",
+    "reason": "jsdom innerWidth=1024 (default), real device returns actual viewport width."
+  },
+  {
+    "id": "browser.windowInnerHeight",
+    "reason": "jsdom innerHeight=768 (default), real device returns actual viewport height."
+  },
+  {
+    "id": "browser.navigatorLanguage",
+    "reason": "jsdom navigator.language='en-US' by default, real device returns device locale (e.g. 'ko-KR')."
+  },
+  {
+    "id": "env.getDeviceId",
+    "reason": "Mock returns a randomly-generated mock device ID ('mock-device-<random>'). Real device relay returns a real stable device identifier."
+  },
+  {
+    "id": "env.getSchemeUri",
+    "reason": "Mock returns '/' (jsdom location.pathname). Real device relay returns the actual mini-app scheme URI."
+  },
+  {
+    "id": "env.getServerTime",
+    "reason": "Both return '<timestamp>' sentinel (normalized in probe). Exact numeric values differ by definition."
+  },
+  {
+    "id": "env.getAppsInTossGlobals",
+    "reason": "Mock returns mock brand defaults (displayName='Mock App'). Real device returns actual app brand values."
+  },
+  {
+    "id": "env.envGetDeploymentId",
+    "reason": "Mock returns 'mock-deployment-id'. Real device returns the actual deploymentId."
+  },
+  {
+    "id": "env.getGroupId",
+    "reason": "Mock returns 'mock-group-id'. Real device returns the actual group ID."
+  },
+  {
+    "id": "device.getClipboardText",
+    "reason": "Mock returns empty string (default mock clipboard). Real device relay returns actual clipboard content (typically empty or last copied text)."
+  },
+  {
+    "id": "iap.getPendingOrdersEmpty",
+    "reason": "Mock state includes pending orders by default for testing (returns Array with items). Real device relay will typically return empty array (no pending orders)."
+  },
+  {
+    "id": "iap.getCompletedOrRefundedOrdersEmpty",
+    "reason": "Mock state includes completed orders by default for testing (returns Array with items). Real device relay will typically return empty array."
+  },
+  {
+    "id": "game.getGameCenterGameProfileNull",
+    "reason": "Mock state includes a default game profile ({statusCode:'SUCCESS', nickname:'MockPlayer'}). Real device relay returns actual game center profile or null."
+  },
+  {
+    "id": "auth.getUserKeyForGame",
+    "reason": "Mock returns {type:'HASH', hasHash:true} (mock state has userKeyHash). Real device may return undefined (not logged in) or a real hash."
+  },
+  {
+    "id": "auth.getAnonymousKey",
+    "reason": "Mock returns {type:'HASH', hasHash:true} (mock state has anonymousKeyHash). Real device returns actual anonymous key or undefined."
+  }
+]

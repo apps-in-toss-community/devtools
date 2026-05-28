@@ -36,6 +36,8 @@ jobs:
 
       - run: pnpm test
 
+      - run: pnpm qa:fidelity --runner=mock
+
   e2e:
     runs-on: ubuntu-latest
     steps:

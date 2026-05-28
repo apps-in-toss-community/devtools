@@ -58,6 +58,7 @@
     "check-sdk-update": "tsx scripts/check-sdk-update.ts",
     "diff-sdk-exports": "tsx scripts/diff-sdk-exports.ts",
     "build:og": "tsx --tsconfig scripts/tsconfig.json scripts/build-og-image.tsx",
+    "qa:fidelity": "tsx --tsconfig scripts/tsconfig.json scripts/fidelity-qa/index.ts",
     "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test && pnpm build:og"
   },
   "peerDependencies": {

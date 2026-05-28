@@ -777,6 +777,30 @@ Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 2. Updates to the latest version and runs the type check
 3. On detecting a new version, automatically opens a GitHub Issue (including whether there are type errors)
 
+## Fidelity QA
+
+`scripts/fidelity-qa/` automatically measures SDK API fidelity between the mock and a real-device relay session.
+
+```bash
+pnpm qa:fidelity --runner=mock           # mock-only (CI default, regression detection)
+pnpm qa:fidelity --runner=relay          # requires attached device (devtools MCP)
+pnpm qa:fidelity --runner=both --diff    # run both + print diff
+pnpm qa:fidelity --include-writes        # include Storage write cycle (off by default)
+pnpm qa:fidelity --output=results.json  # write JSON results to file
+```
+
+CI runs `pnpm qa:fidelity --runner=mock` automatically (exits 0 on a clean state).
+
+**Diff labels**:
+
+- `MATCH` — mock and relay values are equal
+- `EXPECTED_MISMATCH` — known difference registered in `scripts/fidelity-qa/whitelist.json` (e.g. jsdom UA vs real WebView UA)
+- `UNEXPECTED` — mismatch not in whitelist → exits 1 (potential regression)
+
+**Updating the whitelist**: when an intentional difference is found during a relay session, add `{ "id": "<probe-id>", "reason": "<explanation>" }` to `scripts/fidelity-qa/whitelist.json`.
+
+The relay runner is currently a stub (CDP Runtime.evaluate implementation is a follow-up in devtools#261).
+
 ## Contributing
 
 ### Adding a new API mock
