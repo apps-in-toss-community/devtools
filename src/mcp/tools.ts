@@ -551,8 +551,14 @@ export async function takeScreenshot(connection: CdpConnection): Promise<Screens
  * The JS probe injected via `Runtime.evaluate`. It reads:
  *   1. `env(safe-area-inset-*)` via a temporary element with padding set to
  *      those CSS env vars, then `getComputedStyle`.
- *   2. `SafeAreaInsets.get()` if the native SDK object is available.
- *   3. nav bar geometry (first `.ait-navbar` element height, if present).
+ *   2. `window.__sdk.SafeAreaInsets.get()` (1st priority) or
+ *      `window.__sdk.getSafeAreaInsets()` (2nd priority) — both surfaces
+ *      confirmed live on iPhone 15 Pro relay. `window.__sdk` is only present
+ *      in dogfood (__DEBUG_BUILD__) bundles; outside those it is undefined.
+ *      If both paths fail the result carries `sdkInsetsError` explaining why.
+ *   3. nav bar geometry: the SDK does not expose navBar height as a standalone
+ *      API — `.ait-navbar` DOM height is read as a cross-check, and
+ *      `navBarHeightSource` records where it came from.
  *   4. `innerWidth`, `innerHeight`, `devicePixelRatio`, `navigator.userAgent`.
  *
  * Returns a plain JSON-serialisable object so `returnByValue: true` works.
@@ -579,25 +585,42 @@ export const SAFE_AREA_PROBE_EXPRESSION = `
   };
   document.documentElement.removeChild(el);
   var sdkInsets = null;
+  var sdkInsetsError = undefined;
   try {
-    if (typeof SafeAreaInsets !== 'undefined' && SafeAreaInsets && typeof SafeAreaInsets.get === 'function') {
-      sdkInsets = SafeAreaInsets.get();
+    var sdk = window.__sdk;
+    if (sdk && sdk.SafeAreaInsets && typeof sdk.SafeAreaInsets.get === 'function') {
+      sdkInsets = sdk.SafeAreaInsets.get();
+    } else if (sdk && typeof sdk.getSafeAreaInsets === 'function') {
+      sdkInsets = sdk.getSafeAreaInsets();
+    } else if (!sdk) {
+      sdkInsetsError = 'window.__sdk not available (non-dogfood bundle)';
+    } else {
+      sdkInsetsError = 'neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk';
     }
-  } catch(_) {}
+  } catch(e) {
+    sdkInsetsError = String(e && e.message || e);
+  }
   var navBarHeight = null;
+  var navBarHeightSource = 'not-exposed-by-sdk';
   try {
     var nb = document.querySelector('.ait-navbar');
-    if (nb) navBarHeight = nb.getBoundingClientRect().height;
+    if (nb) {
+      navBarHeight = nb.getBoundingClientRect().height;
+      navBarHeightSource = 'dom-.ait-navbar';
+    }
   } catch(_) {}
-  return JSON.stringify({
+  var result = {
     cssEnv: cssEnv,
     sdkInsets: sdkInsets,
     navBarHeight: navBarHeight,
+    navBarHeightSource: navBarHeightSource,
     innerWidth: window.innerWidth,
     innerHeight: window.innerHeight,
     devicePixelRatio: window.devicePixelRatio,
     userAgent: navigator.userAgent
-  });
+  };
+  if (sdkInsetsError !== undefined) result.sdkInsetsError = sdkInsetsError;
+  return JSON.stringify(result);
 })()
 `.trim();
 
@@ -616,17 +639,36 @@ export interface SafeAreaMeasurement {
    */
   cssEnv: { top: number; right: number; bottom: number; left: number };
   /**
-   * `SafeAreaInsets.get()` result from the native SDK, if available.
-   * In the Toss host this carries the nav bar height as `top` and the
-   * home-indicator height as `bottom`. `null` when the SDK object is absent
-   * (e.g. outside a Toss WebView).
+   * `window.__sdk.SafeAreaInsets.get()` (1st priority) or
+   * `window.__sdk.getSafeAreaInsets()` (2nd priority) result from the native
+   * SDK. `null` when both paths fail — see `sdkInsetsError` for the reason.
+   * In the Toss host WebView `top` is the nav bar height and `bottom` is the
+   * home-indicator height.
    */
   sdkInsets: { top: number; right: number; bottom: number; left: number } | null;
   /**
+   * Populated when the SDK inset lookup failed (both paths absent or threw).
+   * `undefined` when `sdkInsets` is non-null (i.e. the lookup succeeded).
+   *
+   * Example values:
+   *   - `"window.__sdk not available (non-dogfood bundle)"`
+   *   - `"neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk"`
+   *   - `"TypeError: ..."`
+   */
+  sdkInsetsError?: string;
+  /**
    * Height of the `.ait-navbar` element (px) if present, else `null`.
-   * Useful to cross-validate `sdkInsets.top` against the rendered nav bar.
+   * The SDK does not expose navBar height as a standalone API; this DOM
+   * measurement is used to cross-validate `sdkInsets.top`.
    */
   navBarHeight: number | null;
+  /**
+   * Describes where `navBarHeight` came from:
+   *   - `"dom-.ait-navbar"` — read from the `.ait-navbar` element's bounding rect.
+   *   - `"not-exposed-by-sdk"` — the SDK has no standalone navBar height API and
+   *     no `.ait-navbar` element was found in the DOM.
+   */
+  navBarHeightSource: string;
   /** CSS viewport width (`window.innerWidth`). */
   innerWidth: number;
   /** CSS viewport height (`window.innerHeight`). */
@@ -685,13 +727,26 @@ export function normalizeSafeAreaResult(rawValue: unknown): SafeAreaMeasurement 
 
   const cssEnv = requireInsets('cssEnv') ?? { top: 0, right: 0, bottom: 0, left: 0 };
   const sdkInsets = requireInsets('sdkInsets');
+  const sdkInsetsError = typeof obj.sdkInsetsError === 'string' ? obj.sdkInsetsError : undefined;
   const navBarHeight = typeof obj.navBarHeight === 'number' ? obj.navBarHeight : null;
+  const navBarHeightSource =
+    typeof obj.navBarHeightSource === 'string' ? obj.navBarHeightSource : 'not-exposed-by-sdk';
   const innerWidth = typeof obj.innerWidth === 'number' ? obj.innerWidth : 0;
   const innerHeight = typeof obj.innerHeight === 'number' ? obj.innerHeight : 0;
   const devicePixelRatio = typeof obj.devicePixelRatio === 'number' ? obj.devicePixelRatio : 1;
   const userAgent = typeof obj.userAgent === 'string' ? obj.userAgent : '';
 
-  return { cssEnv, sdkInsets, navBarHeight, innerWidth, innerHeight, devicePixelRatio, userAgent };
+  return {
+    cssEnv,
+    sdkInsets,
+    ...(sdkInsetsError !== undefined ? { sdkInsetsError } : {}),
+    navBarHeight,
+    navBarHeightSource,
+    innerWidth,
+    innerHeight,
+    devicePixelRatio,
+    userAgent,
+  };
 }
 
 /**
