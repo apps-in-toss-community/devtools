@@ -70,6 +70,12 @@ export const DEBUG_TOOL_DEFINITIONS = [
     description:
       'Lists the mini-app page(s) the Chii relay currently sees attached, plus whether the ' +
       'cloudflared tunnel is up and the public wss relay URL the phone uses to attach. ' +
+      'Each page entry includes a `lastSeenAt` ISO timestamp (last inbound CDP message from ' +
+      'that target — useful to detect stale entries when the phone app backgrounded). ' +
+      'The result also includes `crashDetectedAt` (ISO timestamp or null): when non-null, ' +
+      'a page crash was detected via Inspector.targetCrashed / Target.targetDestroyed since ' +
+      'the last attach, the pages list will be empty, and `crashWarning` shows a Korean hint ' +
+      'to re-attach. ' +
       'Call this first to confirm a page is attached before reading console/network.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
@@ -316,14 +322,66 @@ export function listNetworkRequests(connection: CdpConnection): NetworkRequest[]
   });
 }
 
-/** Result of `list_pages`: attach status + tunnel state. */
+/** A page entry in the `list_pages` result, extended with freshness info. */
+export interface ListPagesEntry {
+  id: string;
+  title: string;
+  url: string;
+  /** ISO timestamp of the last inbound CDP message from this target, or null. */
+  lastSeenAt: string | null;
+}
+
+/** Result of `list_pages`: attach status + tunnel state + crash info. */
 export interface ListPagesResult {
-  pages: ReturnType<CdpConnection['listTargets']>;
+  pages: ListPagesEntry[];
   tunnel: TunnelStatus;
+  /**
+   * ISO timestamp of the most recent crash / targetDestroyed / detachedFromTarget
+   * event detected since the last `enableDomains()`, or `null` if none.
+   * When non-null, all attached pages have been removed from the relay map and
+   * a new `enableDomains()` call is required to resume debugging.
+   */
+  crashDetectedAt: string | null;
+  /** Korean warning line shown in tool output when a crash was detected. */
+  crashWarning: string | null;
+}
+
+/**
+ * Duck-type interface for the crash-detection extras exposed by `ChiiCdpConnection`.
+ * The base `CdpConnection` interface is kept minimal (fake-friendly); the extras
+ * are opt-in so tests without them continue to compile.
+ */
+interface CrashAwareCdpConnection extends CdpConnection {
+  getLastCrashDetectedAt(): number | null;
+  getTargetLastSeenAt(targetId: string): number | null;
+}
+
+function isCrashAware(conn: CdpConnection): conn is CrashAwareCdpConnection {
+  return (
+    typeof (conn as CrashAwareCdpConnection).getLastCrashDetectedAt === 'function' &&
+    typeof (conn as CrashAwareCdpConnection).getTargetLastSeenAt === 'function'
+  );
 }
 
 export function listPages(connection: CdpConnection, tunnel: TunnelStatus): ListPagesResult {
-  return { pages: connection.listTargets(), tunnel };
+  const rawTargets = connection.listTargets();
+  const pages: ListPagesEntry[] = rawTargets.map((t) => {
+    const lastSeenMs = isCrashAware(connection) ? connection.getTargetLastSeenAt(t.id) : null;
+    return {
+      id: t.id,
+      title: t.title,
+      url: t.url,
+      lastSeenAt: lastSeenMs !== null ? new Date(lastSeenMs).toISOString() : null,
+    };
+  });
+
+  const crashMs = isCrashAware(connection) ? connection.getLastCrashDetectedAt() : null;
+  const crashDetectedAt = crashMs !== null ? new Date(crashMs).toISOString() : null;
+  const crashWarning = crashDetectedAt
+    ? `[ait-debug] page crash 감지됨 — 새 attach 필요 (관측 시각: ${crashDetectedAt})`
+    : null;
+
+  return { pages, tunnel, crashDetectedAt, crashWarning };
 }
 
 /** A `build_attach_url` result: the spliced deep link the phone should open. */
