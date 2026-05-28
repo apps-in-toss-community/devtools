@@ -163,6 +163,10 @@ list_console_messages
 
 **복구**: 폰에서 토스 앱을 다시 포그라운드로 가져온다. 필요 시 새 QR 재스캔.
 
+### 미니앱 재로드 시 page가 두 개 뜨는 것처럼 보임
+
+`list_pages`는 항상 **최대 1개** page를 반환한다(single-attach model — `singleAttachModel: true` 필드로 확인 가능). 같은 미니앱을 재로드하거나 QR을 다시 스캔하면 새 attach가 도착하는 순간 이전 page 세션은 자동으로 교체된다(last-attach wins). 이전 세션에 대기 중이던 CDP 명령은 즉시 `replaced-by-new-attach` 오류로 reject된다. 새 page가 `list_pages`에 나타나면 `enableDomains()`를 다시 호출해 CDP 연결을 재활성화한다.
+
 ### PREPARE 상태에서 cold-load 안 됨
 
 **증상**: QR을 스캔해도 미니앱이 열리지 않거나 다른 화면으로 이동.
