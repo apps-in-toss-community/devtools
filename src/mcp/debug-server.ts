@@ -67,6 +67,7 @@ import {
   isAitToolName,
   isDebugToolName,
   listConsoleMessages,
+  listExceptions,
   listNetworkRequests,
   listPages,
   measureSafeArea,
@@ -383,6 +384,11 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       switch (name) {
         case 'list_console_messages':
           return jsonResult(listConsoleMessages(connection));
+        case 'list_exceptions': {
+          const rawLimit = request.params.arguments?.limit;
+          const limit = typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 50;
+          return jsonResult({ exceptions: listExceptions(connection, limit) });
+        }
         case 'list_network_requests':
           return jsonResult(listNetworkRequests(connection));
         case 'list_pages':

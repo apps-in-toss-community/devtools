@@ -10,6 +10,7 @@ import type {
   ConsoleApiCalledEvent,
   NetworkRequestWillBeSentEvent,
   NetworkResponseReceivedEvent,
+  RuntimeExceptionThrownEvent,
 } from '../cdp-connection.js';
 import {
   getDomDocument,
@@ -19,10 +20,12 @@ import {
   isAitToolName,
   isDebugToolName,
   listConsoleMessages,
+  listExceptions,
   listNetworkRequests,
   listPages,
   measureSafeArea,
   normalizeConsoleMessage,
+  normalizeException,
   normalizeSafeAreaResult,
   type TunnelStatus,
   takeScreenshot,
@@ -52,6 +55,7 @@ class FakeCdpConnection implements CdpConnection {
     console?: ConsoleApiCalledEvent[];
     requests?: NetworkRequestWillBeSentEvent[];
     responses?: NetworkResponseReceivedEvent[];
+    exceptions?: RuntimeExceptionThrownEvent[];
     commandResults?: CommandResults;
   }) {
     this.targets = init.targets ?? [];
@@ -59,6 +63,7 @@ class FakeCdpConnection implements CdpConnection {
       'Runtime.consoleAPICalled': init.console ?? [],
       'Network.requestWillBeSent': init.requests ?? [],
       'Network.responseReceived': init.responses ?? [],
+      'Runtime.exceptionThrown': init.exceptions ?? [],
     };
     this.commandResults = init.commandResults ?? {};
   }
@@ -461,5 +466,113 @@ describe('measureSafeArea (Phase 2)', () => {
       },
     });
     await expect(measureSafeArea(connection)).rejects.toThrow(/probe threw/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* list_exceptions + normalizeException (#267)                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Builds a minimal `Runtime.exceptionThrown` event for tests. */
+function makeExceptionEvent(
+  overrides: Partial<RuntimeExceptionThrownEvent> = {},
+): RuntimeExceptionThrownEvent {
+  return {
+    timestamp: 1_700_000_000_000,
+    exceptionDetails: {
+      exceptionId: 1,
+      text: 'Uncaught TypeError',
+      lineNumber: 10,
+      columnNumber: 5,
+      url: 'https://example/app.js',
+      exception: {
+        type: 'object',
+        subtype: 'error',
+        description: 'TypeError: Cannot read properties of undefined',
+      },
+      stackTrace: {
+        callFrames: [
+          {
+            functionName: 'callSdkMethod',
+            url: 'https://example/app.js',
+            lineNumber: 10,
+            columnNumber: 5,
+          },
+          {
+            functionName: '',
+            url: 'https://example/app.js',
+            lineNumber: 42,
+            columnNumber: 1,
+          },
+        ],
+      },
+    },
+    ...overrides,
+  };
+}
+
+describe('normalizeException', () => {
+  it('flattens exceptionDetails into a BufferedException', () => {
+    const event = makeExceptionEvent();
+    const result = normalizeException(event);
+    expect(result.timestamp).toBe(1_700_000_000_000);
+    expect(result.text).toBe('Uncaught TypeError');
+    expect(result.url).toBe('https://example/app.js');
+    expect(result.lineNumber).toBe(10);
+    expect(result.columnNumber).toBe(5);
+    expect(result.exceptionText).toBe('TypeError: Cannot read properties of undefined');
+    expect(result.stack).toBe(
+      'at callSdkMethod (https://example/app.js:10:5)\nat (anonymous) (https://example/app.js:42:1)',
+    );
+    expect(result.raw).toBe(event);
+  });
+
+  it('omits url/lineNumber/stack when not present in exceptionDetails', () => {
+    const event: RuntimeExceptionThrownEvent = {
+      timestamp: 1,
+      exceptionDetails: { exceptionId: 2, text: 'SyntaxError', lineNumber: 0, columnNumber: 0 },
+    };
+    const result = normalizeException(event);
+    expect(result.url).toBeUndefined();
+    expect(result.stack).toBeUndefined();
+    expect(result.exceptionText).toBeUndefined();
+  });
+});
+
+describe('listExceptions', () => {
+  it('returns an empty list when no exceptions are buffered', () => {
+    const connection = new FakeCdpConnection({});
+    expect(listExceptions(connection)).toEqual([]);
+  });
+
+  it('returns normalized exceptions oldest-first', () => {
+    const e1 = makeExceptionEvent({ timestamp: 100 });
+    const e2 = makeExceptionEvent({ timestamp: 200 });
+    const connection = new FakeCdpConnection({ exceptions: [e1, e2] });
+    const result = listExceptions(connection);
+    expect(result).toHaveLength(2);
+    expect(result[0]?.timestamp).toBe(100);
+    expect(result[1]?.timestamp).toBe(200);
+  });
+
+  it('honors the limit arg — returns only the N most recent', () => {
+    const events = Array.from({ length: 10 }, (_, i) =>
+      makeExceptionEvent({ timestamp: (i + 1) * 100 }),
+    );
+    const connection = new FakeCdpConnection({ exceptions: events });
+    const result = listExceptions(connection, 3);
+    expect(result).toHaveLength(3);
+    // Oldest-first from the tail: timestamps 800, 900, 1000
+    expect(result[0]?.timestamp).toBe(800);
+    expect(result[2]?.timestamp).toBe(1000);
+  });
+
+  it('caps at 50 regardless of the limit arg', () => {
+    const events = Array.from({ length: 60 }, (_, i) =>
+      makeExceptionEvent({ timestamp: (i + 1) * 10 }),
+    );
+    const connection = new FakeCdpConnection({ exceptions: events });
+    const result = listExceptions(connection, 999);
+    expect(result).toHaveLength(50);
   });
 });

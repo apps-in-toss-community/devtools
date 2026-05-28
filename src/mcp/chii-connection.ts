@@ -81,6 +81,22 @@ const PHASE_1_EVENTS: readonly CdpEventName[] = [
   'Network.responseReceived',
 ];
 
+/**
+ * Ring buffer size for `Runtime.exceptionThrown`.
+ *
+ * Exceptions are rarer than console messages but each is heavier (stack
+ * trace). 50 is generous enough to cover a crash scenario while keeping
+ * memory bounded.
+ *
+ * **Lifecycle note**: the exception buffer intentionally survives `replaced` /
+ * `crashed` / `destroyed` lifecycle events — it is NOT cleared on target
+ * transitions. Rationale: an exception fired just before a crash is exactly
+ * the signal we want to preserve for root-cause analysis. The buffer
+ * represents "exceptions seen in this MCP session", not "exceptions in the
+ * current page".
+ */
+const EXCEPTION_BUFFER_SIZE = 50;
+
 export interface ChiiCdpConnectionOptions {
   /** Base URL of the local Chii relay HTTP/WS server, e.g. `http://127.0.0.1:9100`. */
   relayBaseUrl: string;
@@ -155,6 +171,9 @@ export class ChiiCdpConnection implements CdpConnection {
       options.commandTimeoutMs ??
       DEFAULT_COMMAND_TIMEOUT_MS;
     for (const event of PHASE_1_EVENTS) this.buffers.set(event, []);
+    // Exception buffer initialized separately — its per-event size cap
+    // (EXCEPTION_BUFFER_SIZE=50) is enforced in handleMessage below.
+    this.buffers.set('Runtime.exceptionThrown', []);
     // EventEmitter caps listeners at 10 by default; the tool layer may add
     // several short-lived subscriptions, so lift the cap.
     this.emitter.setMaxListeners(0);
@@ -598,7 +617,10 @@ export class ChiiCdpConnection implements CdpConnection {
     const buffer = this.buffers.get(event);
     if (!buffer) return;
     buffer.push(message.params);
-    if (buffer.length > this.bufferSize) buffer.shift();
+    // Runtime.exceptionThrown uses a dedicated smaller cap (50); all other
+    // Phase 1 events use the default bufferSize (500).
+    const cap = event === 'Runtime.exceptionThrown' ? EXCEPTION_BUFFER_SIZE : this.bufferSize;
+    if (buffer.length > cap) buffer.shift();
     this.emitter.emit(event, message.params);
   }
 
