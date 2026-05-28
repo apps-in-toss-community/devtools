@@ -137,6 +137,8 @@ list_console_messages
 
 ## 자주 깨지는 경우와 복구
 
+attach 중에 미니앱이 **crash**한 경우(tunnel 끊김·TOTP 만료와는 구분됨)는 별도 문서를 참고한다: [`docs/crash-triage.md`](./crash-triage.md) — `list_pages.crashDetectedAt`, `list_exceptions`, `list_console_messages` 3개 MCP 소스와 iOS Console.app `.ips` 분석 절차를 포함한다.
+
 ### tunnel URL 교체 (MCP 재시작)
 
 **증상**: `list_pages` → `up: false` 또는 폰 attach 후 페이지가 안 뜸.
