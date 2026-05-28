@@ -859,6 +859,8 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)]
 
 ### Debug 모드 (CDP via Chii)
 
+실기기 relay 디버깅 루프(dogfood 빌드 → QR 스캔 → relay attach)의 단계별 절차와 복구 방법은 **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** 를 참고하세요.
+
 read-only tool만 노출합니다. 도구는 attach 상태에 따라 2단계로 등록됩니다 — attach 전에는 bootstrap
 도구(`build_attach_url`·`list_pages`)만 보이고, 릴레이/로컬 페이지가 attach되면 `notifications/tools/list_changed`로
 attach 의존 도구가 같은 세션에서 동적 등록됩니다(세션 재시작 불필요). 폰 attach 라운드트립은 fully wired
