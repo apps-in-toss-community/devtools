@@ -883,7 +883,7 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)]
 
 ### Debug 모드 (CDP via Chii)
 
-실기기 relay 디버깅 루프(dogfood 빌드 → QR 스캔 → relay attach)의 단계별 절차와 복구 방법은 **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** 를 참고하세요.
+실기기 relay 디버깅 루프(dogfood 빌드 → QR 스캔 → relay attach)의 단계별 절차와 복구 방법은 **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** 를 참고하세요. crash가 발생한 경우 — `list_pages.crashDetectedAt`, iOS Console.app `.ips` 분석, redact 절차를 포함한 원인 추적 절차는 **[`docs/crash-triage.md`](./docs/crash-triage.md)** 를 참고하세요.
 
 read-only tool만 노출합니다. 도구는 attach 상태에 따라 2단계로 등록됩니다 — attach 전에는 bootstrap
 도구(`build_attach_url`·`list_pages`)만 보이고, 릴레이/로컬 페이지가 attach되면 `notifications/tools/list_changed`로

@@ -871,7 +871,7 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 
 ### Debug mode (CDP via Chii)
 
-For a step-by-step walkthrough of the on-device relay debug loop (dogfood build → QR scan → relay attach) including common failure recovery, see **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** (Korean).
+For a step-by-step walkthrough of the on-device relay debug loop (dogfood build → QR scan → relay attach) including common failure recovery, see **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** (Korean). For crash triage — `list_pages.crashDetectedAt`, iOS Console.app `.ips` analysis, and the redact procedure — see **[`docs/crash-triage.md`](./docs/crash-triage.md)** (Korean).
 
 Read-only tools only. Tools are registered in two tiers based on attach state — before attach, only the bootstrap tools (`build_attach_url`, `list_pages`) are visible; once a relay/local page attaches, the attach-dependent tools are registered dynamically in the same session via `notifications/tools/list_changed` (no session restart needed). The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
 
