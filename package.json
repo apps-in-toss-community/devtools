@@ -70,6 +70,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "ajv": "^8.18.0",
     "chii": "^1.15.5",
     "cloudflared": "^0.7.1",
     "qrcode": "^1.5.4",

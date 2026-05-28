@@ -11,6 +11,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)
+      ajv:
+        specifier: ^8.18.0
+        version: 8.18.0
       chii:
         specifier: ^1.15.5
         version: 1.15.5
@@ -2692,6 +2695,7 @@ packages:
 
   '@react-navigation/native@6.0.13':
     resolution: {integrity: sha512-CwaJcAGbhv3p3ECablxBkw8QBCGDWXqVRwQ4QbelajNW623m3sNTC9dOF6kjp8au6Rg9B5e0KmeuY0xWbPk79A==}
+    deprecated: This version is no longer supported
     peerDependencies:
       react: '*'
       react-native: '*'
