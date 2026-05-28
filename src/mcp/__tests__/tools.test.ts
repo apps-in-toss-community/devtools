@@ -229,6 +229,7 @@ describe('listPages', () => {
       tunnel: { up: true, wssUrl: 'wss://abc123.trycloudflare.com' },
       crashDetectedAt: null,
       crashWarning: null,
+      singleAttachModel: true,
     });
   });
 
@@ -239,6 +240,7 @@ describe('listPages', () => {
       tunnel: { up: true, wssUrl: 'wss://x.trycloudflare.com' },
       crashDetectedAt: null,
       crashWarning: null,
+      singleAttachModel: true,
     });
   });
 });

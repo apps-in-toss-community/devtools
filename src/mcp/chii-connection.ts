@@ -40,8 +40,13 @@ interface CdpInboundMessage {
  * Consumers (e.g. the tool layer) can subscribe with `.onLifecycle(cb)`.
  */
 export interface TargetLifecycleEvent {
-  /** 'crashed' → Inspector.targetCrashed | 'destroyed' → Target.targetDestroyed | 'detached' → Target.detachedFromTarget */
-  kind: 'crashed' | 'destroyed' | 'detached';
+  /**
+   * 'crashed'          → Inspector.targetCrashed
+   * 'destroyed'        → Target.targetDestroyed
+   * 'detached'         → Target.detachedFromTarget
+   * 'replaced'         → evicted by single-attach model (last-attach wins)
+   */
+  kind: 'crashed' | 'destroyed' | 'detached' | 'replaced';
   targetId: string | null;
   /** ISO timestamp of detection. */
   detectedAt: string;
@@ -107,6 +112,12 @@ export class ChiiCdpConnection implements CdpConnection {
   private ws: WebSocket | null = null;
   private connectionState: 'idle' | 'connected' | 'disconnected' = 'idle';
   private nextCommandId = 1;
+  /**
+   * The single active target id under the single-attach model.
+   * Updated by `refreshTargets()` whenever a non-null target is present.
+   * Used to detect a new (different) target attach and evict the previous one.
+   */
+  private activeTargetId: string | null = null;
   /** In-flight enableDomains() promise — concurrent callers share it. */
   private enablingPromise: Promise<void> | null = null;
   /** Pending request→response commands keyed by CDP message id. */
@@ -157,15 +168,47 @@ export class ChiiCdpConnection implements CdpConnection {
     }
     const body: unknown = await res.json();
     const list = isObject(body) && Array.isArray(body.targets) ? body.targets : [];
+
+    // Single-attach model: find the "newest" target id from the relay response.
+    // The relay may return multiple targets if the previous session did not cleanly
+    // detach. We keep only the last entry (last-attach wins) and evict the previous
+    // active target if it differs.
+    let newestTargetId: string | null = null;
+    for (const item of list) {
+      if (!isObject(item) || typeof item.id !== 'string') continue;
+      newestTargetId = item.id; // last wins
+    }
+
+    // Evict previous active target when a genuinely new targetId arrives.
+    if (
+      newestTargetId !== null &&
+      this.activeTargetId !== null &&
+      newestTargetId !== this.activeTargetId
+    ) {
+      const prevId = this.activeTargetId;
+      process.stderr.write(`[ait-debug] 이전 page 세션 종료 — 새 attach로 교체 (prev=${prevId})\n`);
+      this.evictTarget(prevId);
+    }
+
+    // Rebuild the targets map with at most the single newest target.
     this.targets.clear();
     for (const item of list) {
       if (!isObject(item) || typeof item.id !== 'string') continue;
+      // Single-attach model: only register the newest target.
+      if (item.id !== newestTargetId) continue;
       this.targets.set(item.id, {
         id: item.id,
         title: typeof item.title === 'string' ? item.title : '',
         url: typeof item.url === 'string' ? item.url : '',
       });
     }
+
+    if (newestTargetId !== null) {
+      this.activeTargetId = newestTargetId;
+    } else {
+      this.activeTargetId = null;
+    }
+
     return [...this.targets.values()];
   }
 
@@ -235,6 +278,7 @@ export class ChiiCdpConnection implements CdpConnection {
     // Reset crash state when a new connection is established.
     this.lastCrashDetectedAt = null;
     this.targetLastSeenAt.clear();
+    // activeTargetId is already set by refreshTargets() above; don't reset here.
 
     this.connectionState = 'connected';
     ws.on('message', (data: WebSocket.RawData) => this.handleMessage(data.toString()));
@@ -352,6 +396,38 @@ export class ChiiCdpConnection implements CdpConnection {
   }
 
   /**
+   * Evict a previously active target under the single-attach model.
+   * Rejects pending commands with a 'replaced-by-new-attach' reason and emits
+   * a 'replaced' lifecycle event. Does NOT clear all targets — only the specific
+   * targetId. The caller is responsible for rebuilding the targets map afterwards.
+   *
+   * The error message uses 'replaced-by-new-attach' so test assertions can match it.
+   */
+  private evictTarget(targetId: string): void {
+    const detectedAt = new Date().toISOString();
+    this.targets.delete(targetId);
+    this.targetLastSeenAt.delete(targetId);
+
+    const err = new Error(
+      `[ait-debug] replaced-by-new-attach — 이전 page 세션이 새 attach로 교체됐습니다 (targetId=${targetId}). ` +
+        'list_pages로 현재 attach 상태를 확인하세요.',
+    );
+    for (const waiter of this.pending.values()) {
+      waiter.reject(err);
+    }
+    this.pending.clear();
+
+    const event: TargetLifecycleEvent = { kind: 'replaced', targetId, detectedAt };
+    for (const listener of this.lifecycleListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Listeners must not crash the connection.
+      }
+    }
+  }
+
+  /**
    * Handle a page-level crash or target destruction event.
    * Removes the target from the in-memory map, rejects all pending commands,
    * and emits a lifecycle event.
@@ -368,10 +444,15 @@ export class ChiiCdpConnection implements CdpConnection {
     if (targetId !== null) {
       this.targets.delete(targetId);
       this.targetLastSeenAt.delete(targetId);
+      // Also clear activeTargetId when the active target is gone.
+      if (this.activeTargetId === targetId) {
+        this.activeTargetId = null;
+      }
     } else {
       // Inspector.targetCrashed carries no targetId — clear all targets.
       this.targets.clear();
       this.targetLastSeenAt.clear();
+      this.activeTargetId = null;
     }
 
     // Reject pending commands with a descriptive Korean error.

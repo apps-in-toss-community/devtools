@@ -68,8 +68,11 @@ export const DEBUG_TOOL_DEFINITIONS = [
   {
     name: 'list_pages',
     description:
-      'Lists the mini-app page(s) the Chii relay currently sees attached, plus whether the ' +
-      'cloudflared tunnel is up and the public wss relay URL the phone uses to attach. ' +
+      'Returns the single active page (at most one) the relay sees attached. ' +
+      'When a second page attaches, the previous one is evicted (last-attach wins — ' +
+      'single-attach model). The result includes `singleAttachModel: true` so the agent ' +
+      'knows the array is always 0 or 1 entries. ' +
+      'Also returns whether the cloudflared tunnel is up and the public wss relay URL. ' +
       'Each page entry includes a `lastSeenAt` ISO timestamp (last inbound CDP message from ' +
       'that target — useful to detect stale entries when the phone app backgrounded). ' +
       'The result also includes `crashDetectedAt` (ISO timestamp or null): when non-null, ' +
@@ -333,6 +336,10 @@ export interface ListPagesEntry {
 
 /** Result of `list_pages`: attach status + tunnel state + crash info. */
 export interface ListPagesResult {
+  /**
+   * The single active page, or an empty array when nothing is attached.
+   * Under the single-attach model this is always 0 or 1 entries.
+   */
   pages: ListPagesEntry[];
   tunnel: TunnelStatus;
   /**
@@ -344,6 +351,11 @@ export interface ListPagesResult {
   crashDetectedAt: string | null;
   /** Korean warning line shown in tool output when a crash was detected. */
   crashWarning: string | null;
+  /**
+   * Always `true` — signals to the agent that at most one page is ever present.
+   * When a second page attaches, the previous one is evicted (last-attach wins).
+   */
+  singleAttachModel: true;
 }
 
 /**
@@ -381,7 +393,7 @@ export function listPages(connection: CdpConnection, tunnel: TunnelStatus): List
     ? `[ait-debug] page crash 감지됨 — 새 attach 필요 (관측 시각: ${crashDetectedAt})`
     : null;
 
-  return { pages, tunnel, crashDetectedAt, crashWarning };
+  return { pages, tunnel, crashDetectedAt, crashWarning, singleAttachModel: true };
 }
 
 /** A `build_attach_url` result: the spliced deep link the phone should open. */
