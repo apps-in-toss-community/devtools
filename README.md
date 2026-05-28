@@ -788,6 +788,30 @@ Please file an issue: https://github.com/apps-in-toss-community/devtools/issues
 2. 최신 버전으로 업데이트 후 타입 체크 실행
 3. 새 버전 감지 시 자동으로 GitHub Issue 생성 (타입 에러 여부 포함)
 
+## Fidelity QA
+
+`scripts/fidelity-qa/`는 mock SDK와 실기기 relay 사이의 **SDK API 정합성을 자동으로 측정**하는 도구다.
+
+```bash
+pnpm qa:fidelity --runner=mock           # mock-only (CI 기본값, 회귀 감지)
+pnpm qa:fidelity --runner=relay          # 실기기 relay 필요 (devtools MCP 연결)
+pnpm qa:fidelity --runner=both --diff    # mock+relay 동시 실행 + diff 출력
+pnpm qa:fidelity --include-writes        # Storage write 사이클 포함 (기본 OFF)
+pnpm qa:fidelity --output=results.json  # JSON 결과 파일 저장
+```
+
+CI는 `pnpm qa:fidelity --runner=mock`을 자동 실행한다 (mock-only, exit 0이면 통과).
+
+**Diff 레이블**:
+
+- `MATCH` — mock과 relay 값이 동일
+- `EXPECTED_MISMATCH` — `scripts/fidelity-qa/whitelist.json`에 등록된 알려진 차이 (예: jsdom UA vs 실 WebView UA)
+- `UNEXPECTED` — whitelist에 없는 불일치 → exit 1 (회귀 의심)
+
+**whitelist 갱신 절차**: relay 세션에서 의도적 차이가 발견되면 `scripts/fidelity-qa/whitelist.json`에 `{ "id": "<probe-id>", "reason": "<설명>" }`을 추가한다.
+
+relay runner는 현재 stub (devtools#261 follow-up에서 CDP Runtime.evaluate 구현 예정).
+
 ## Contributing
 
 ### 새 API mock 추가 절차
