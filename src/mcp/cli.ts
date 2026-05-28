@@ -18,6 +18,7 @@
  * Node-only stdio process.
  */
 
+import { realpathSync } from 'node:fs';
 import { argv } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { runDebugServer, runLocalDebugServer } from './debug-server.js';
@@ -97,12 +98,21 @@ async function main(): Promise<void> {
   }
 }
 
-/** True when this file is the process entry (the bin), not an import. */
+/**
+ * True when this file is the process entry (the bin), not an import.
+ *
+ * `argv[1]` is whatever path the OS used to launch node — under `npx`/npm's
+ * bin shim that's the symlink in `node_modules/.bin/` (or a wrapper), whereas
+ * `import.meta.url` resolves to the realpath inside the package. Comparing
+ * the two raw paths gives a false negative on every install that goes through
+ * a bin shim — exactly the dominant path for `npx -y @ait-co/devtools
+ * devtools-mcp`. Resolve `argv[1]` to its realpath before comparing.
+ */
 function isEntrypoint(): boolean {
   const entry = argv[1];
   if (entry === undefined) return false;
   try {
-    return fileURLToPath(import.meta.url) === entry;
+    return fileURLToPath(import.meta.url) === realpathSync(entry);
   } catch {
     return false;
   }
