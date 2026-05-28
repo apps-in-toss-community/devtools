@@ -563,19 +563,30 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // longer print it in the banner to avoid accidental secret exposure.
   const _token = generateAttachToken();
 
-  try {
-    // Use relay.port (confirmed bound port) — not the requested port — so the
-    // tunnel always points at the port the relay is actually listening on.
-    tunnel = await startQuickTunnel(relay.port);
-    tunnelStatus = { up: true, wssUrl: tunnel.wssUrl };
-    await printAttachBanner({ wssUrl: tunnel.wssUrl, totpEnabled });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `[ait-debug] Failed to open cloudflared quick tunnel: ${message}\n` +
-        '[ait-debug] The relay is up locally; attach over the public URL is unavailable until the tunnel starts.\n',
-    );
-  }
+  // Bring the cloudflared tunnel up in the background so the MCP stdio
+  // transport can answer `initialize` immediately. cloudflared has to lazy-
+  // download a ~38 MB binary on first run; awaiting it here pushes the
+  // initialize response past Claude Code's MCP connection timeout. Tools that
+  // need the tunnel (`build_attach_url`) already gate on `getTunnelStatus()`
+  // and return a clear "tunnel not up" message when it isn't ready yet, so
+  // dropping the await is safe — the agent retries once the banner prints.
+  const tunnelReady = startQuickTunnel(relay.port).then(
+    (t) => {
+      tunnel = t;
+      tunnelStatus = { up: true, wssUrl: t.wssUrl };
+      return printAttachBanner({ wssUrl: t.wssUrl, totpEnabled });
+    },
+    (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[ait-debug] Failed to open cloudflared quick tunnel: ${message}\n` +
+          '[ait-debug] The relay is up locally; attach over the public URL is unavailable until the tunnel starts.\n',
+      );
+    },
+  );
+  // Reference the promise to placate the linter — actual completion is observed
+  // via the side-effects on `tunnelStatus` from inside `.then`.
+  void tunnelReady;
 
   const connection = new ChiiCdpConnection({ relayBaseUrl: relay.baseUrl });
   // AIT.* methods ride the same Chii channel as CDP commands.
