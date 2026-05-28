@@ -40,6 +40,7 @@ import type {
   RuntimeExceptionThrownEvent,
 } from './cdp-connection.js';
 import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
+import type { McpEnvironment } from './environment.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
 
 /** Tunnel state surfaced by `list_pages`. */
@@ -50,6 +51,21 @@ export interface TunnelStatus {
   wssUrl: string | null;
 }
 
+/**
+ * Tier classification per RFC #277 ("MCP tool surface fidelity"):
+ *
+ * - **Tier A** (`mock` only) — mock-internal state dials with no real-device
+ *   equivalent. Hidden when env is `relay`.
+ * - **Tier B** (`relay` only) — relay infrastructure tools that have no mock
+ *   equivalent (e.g. `build_attach_url` needs a cloudflared tunnel URL). Hidden
+ *   when env is `mock`.
+ * - **Tier C** (`both`) — fidelity-parallel tools that produce semantically
+ *   equivalent results across mock and relay. The agent sees the same tool with
+ *   the same shape; only the `source` provenance field (where applicable)
+ *   differs.
+ */
+export type ToolAvailability = 'mock' | 'relay' | 'both';
+
 /** Static MCP tool descriptors (name + JSONSchema) for the full debug tool surface. */
 export const DEBUG_TOOL_DEFINITIONS = [
   {
@@ -59,6 +75,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'mini-app page over CDP (Runtime.consoleAPICalled). Read-only. Returns level, text, ' +
       'timestamp, and stringified args, oldest-first.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'list_network_requests',
@@ -67,6 +84,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'CDP (Network.requestWillBeSent + Network.responseReceived). Read-only. Returns url, ' +
       'method, status, and timing, oldest-first.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'list_pages',
@@ -84,6 +102,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'to re-attach. ' +
       'Call this first to confirm a page is attached before reading console/network.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'build_attach_url',
@@ -125,6 +144,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       },
       required: ['scheme_url'],
     },
+    // Tier B per RFC #277 — the URL synthesis requires a live cloudflared
+    // tunnel + relay, which only exists in the `relay` environment.
+    availableIn: 'relay' as ToolAvailability,
   },
   {
     name: 'get_dom_document',
@@ -133,6 +155,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Use for structural/layout regression diagnosis (e.g. confirming an element exists, ' +
       'inspecting attributes). Returns the document root node with children.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'take_snapshot',
@@ -141,6 +164,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Read-only. Returns the documents + interned strings table for visual-regression diagnosis ' +
       '(e.g. checking computed CSS custom properties like --sat against the live layout).',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'take_screenshot',
@@ -148,6 +172,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Captures a PNG screenshot of the attached mini-app page over CDP (Page.captureScreenshot) ' +
       'so the agent can see the phone screen directly. Read-only. Returns an image content block.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'measure_safe_area',
@@ -155,10 +180,15 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Runs a safe-area probe on the attached mini-app page via Runtime.evaluate and returns ' +
       'normalized safe-area insets, viewport geometry, device pixel ratio, and User-Agent. ' +
       'Read-only — does not modify page state. ' +
+      'Tier C per RFC #277: the same Runtime.evaluate probe runs in both `mock` (devtools panel ' +
+      'page with window.__ait state) and `relay` (real-device WebView with window.__sdk). ' +
+      'The result includes a `source: "mock" | "relay"` field so consumers can identify ' +
+      'provenance without inspecting payload values. ' +
       'Use in a relay session (phone attached) to get ground-truth values for upgrading a ' +
       'viewport preset from extrapolated/placeholder to measured. ' +
-      'Requires the relay to be attached — call list_pages first.',
+      'Requires a page to be attached — call list_pages first.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'evaluate',
@@ -178,6 +208,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       },
       required: ['expression'],
     },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'list_exceptions',
@@ -198,6 +229,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       },
       required: [],
     },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'call_sdk',
@@ -239,6 +271,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       },
       required: ['name'],
     },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'AIT.getSdkCallHistory',
@@ -247,6 +280,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'raw CDP cannot observe. Read-only. Use to confirm an SDK call fired and how it resolved ' +
       '(e.g. a saveBase64Data permission regression).',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'AIT.getMockState',
@@ -255,6 +289,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'auth, network, IAP, and more. Read-only. In dev mode this is the live browser mock state; in ' +
       'debug mode the in-app side reports it over the AIT domain.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'AIT.getOperationalEnvironment',
@@ -262,6 +297,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Returns getOperationalEnvironment() plus the resolved SDK version — metadata raw CDP cannot ' +
       'observe. Read-only.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
 ] as const;
 
@@ -271,6 +307,43 @@ const DEBUG_TOOL_NAMES = new Set<string>(DEBUG_TOOL_DEFINITIONS.map((t) => t.nam
 
 export function isDebugToolName(name: string): name is DebugToolName {
   return DEBUG_TOOL_NAMES.has(name);
+}
+
+/**
+ * Returns the `ToolAvailability` declared on a registered debug tool, or
+ * `undefined` when the name is not a known debug tool. Used by the tool
+ * registry to filter `tools/list` by current env and by the call handler to
+ * reject env-mismatch invocations.
+ */
+export function getToolAvailability(name: string): ToolAvailability | undefined {
+  for (const t of DEBUG_TOOL_DEFINITIONS) {
+    if (t.name === name) return t.availableIn;
+  }
+  return undefined;
+}
+
+/**
+ * Returns true when the named tool is available in the given environment.
+ * Unknown tools return `false` — callers should reject them as unknown rather
+ * than as env-mismatched.
+ */
+export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
+  const availability = getToolAvailability(name);
+  if (availability === undefined) return false;
+  if (availability === 'both') return true;
+  return availability === env;
+}
+
+/**
+ * Filters a `DEBUG_TOOL_DEFINITIONS`-shaped list to those whose `availableIn`
+ * matches the given env. Pure — preserves order; both Tier C ("both") and the
+ * matching single-env tier pass through.
+ */
+export function filterToolsByEnvironment<T extends { name: string; availableIn: ToolAvailability }>(
+  tools: ReadonlyArray<T>,
+  env: McpEnvironment,
+): T[] {
+  return tools.filter((t) => t.availableIn === 'both' || t.availableIn === env);
 }
 
 /**
@@ -731,11 +804,13 @@ export async function takeScreenshot(connection: CdpConnection): Promise<Screens
  * The JS probe injected via `Runtime.evaluate`. It reads:
  *   1. `env(safe-area-inset-*)` via a temporary element with padding set to
  *      those CSS env vars, then `getComputedStyle`.
- *   2. `window.__sdk.SafeAreaInsets.get()` (1st priority) or
- *      `window.__sdk.getSafeAreaInsets()` (2nd priority) — both surfaces
- *      confirmed live on iPhone 15 Pro relay. `window.__sdk` is only present
- *      in dogfood (__DEBUG_BUILD__) bundles; outside those it is undefined.
- *      If both paths fail the result carries `sdkInsetsError` explaining why.
+ *   2. SDK insets via a priority chain so the SAME probe works on both relay
+ *      (real device) and mock (devtools panel page):
+ *        a. `window.__sdk.SafeAreaInsets.get()`  — dogfood bundle on real device.
+ *        b. `window.__sdk.getSafeAreaInsets()`   — dogfood bundle (deprecated).
+ *        c. `window.__ait.state.safeAreaInsets`  — devtools mock state (mock env).
+ *      The probe records `sdkInsetsSource` = `'window.__sdk'` | `'window.__ait'`
+ *      | `null`. If all paths fail the result carries `sdkInsetsError`.
  *   3. nav bar geometry: the SDK does not expose navBar height as a standalone
  *      API — `.ait-navbar` DOM height is read as a cross-check, and
  *      `navBarHeightSource` records where it came from.
@@ -743,9 +818,15 @@ export async function takeScreenshot(connection: CdpConnection): Promise<Screens
  *
  * Returns a plain JSON-serialisable object so `returnByValue: true` works.
  *
- * NOTE: This expression is evaluated in the page context on the real device.
- * It does not mutate any page state — the temporary element is removed after
- * reading. No secret or auth token is read or returned.
+ * NOTE: This expression is evaluated in the page context — on the real device
+ * (relay) or on the mock panel page. It does not mutate any page state — the
+ * temporary element is removed after reading. No secret or auth token is read
+ * or returned.
+ *
+ * RFC #277 Tier C parity: the SAME probe string runs in both envs. Mock fidelity
+ * comes from the panel's `applyViewport` / `computeSafeAreaInsets` correctly
+ * setting `window.__ait.state.safeAreaInsets` (#275). When that is correct,
+ * the cssEnv + sdkInsets pair returned here matches the relay's shape.
  */
 export const SAFE_AREA_PROBE_EXPRESSION = `
 (function() {
@@ -765,17 +846,28 @@ export const SAFE_AREA_PROBE_EXPRESSION = `
   };
   document.documentElement.removeChild(el);
   var sdkInsets = null;
+  var sdkInsetsSource = null;
   var sdkInsetsError = undefined;
   try {
     var sdk = window.__sdk;
+    var ait = window.__ait;
     if (sdk && sdk.SafeAreaInsets && typeof sdk.SafeAreaInsets.get === 'function') {
       sdkInsets = sdk.SafeAreaInsets.get();
+      sdkInsetsSource = 'window.__sdk';
     } else if (sdk && typeof sdk.getSafeAreaInsets === 'function') {
       sdkInsets = sdk.getSafeAreaInsets();
-    } else if (!sdk) {
-      sdkInsetsError = 'window.__sdk not available (non-dogfood bundle)';
-    } else {
+      sdkInsetsSource = 'window.__sdk';
+    } else if (ait && ait.state && ait.state.safeAreaInsets &&
+               typeof ait.state.safeAreaInsets.top === 'number') {
+      var s = ait.state.safeAreaInsets;
+      sdkInsets = { top: s.top, bottom: s.bottom, left: s.left, right: s.right };
+      sdkInsetsSource = 'window.__ait';
+    } else if (!sdk && !ait) {
+      sdkInsetsError = 'neither window.__sdk (relay) nor window.__ait (mock) available';
+    } else if (sdk) {
       sdkInsetsError = 'neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk';
+    } else {
+      sdkInsetsError = 'window.__ait.state.safeAreaInsets is missing or malformed';
     }
   } catch(e) {
     sdkInsetsError = String(e && e.message || e);
@@ -792,6 +884,7 @@ export const SAFE_AREA_PROBE_EXPRESSION = `
   var result = {
     cssEnv: cssEnv,
     sdkInsets: sdkInsets,
+    sdkInsetsSource: sdkInsetsSource,
     navBarHeight: navBarHeight,
     navBarHeightSource: navBarHeightSource,
     innerWidth: window.innerWidth,
@@ -805,34 +898,59 @@ export const SAFE_AREA_PROBE_EXPRESSION = `
 `.trim();
 
 /**
+ * Where the SDK insets came from. `null` when the lookup failed (in which case
+ * `sdkInsetsError` is populated).
+ *
+ *   - `'window.__sdk'`  — real-device dogfood bundle (relay env).
+ *   - `'window.__ait'`  — devtools mock state (mock env).
+ *   - `null`            — both paths absent or threw.
+ */
+export type SdkInsetsSource = 'window.__sdk' | 'window.__ait' | null;
+
+/**
  * Normalized result returned by `measure_safe_area`.
  *
- * All inset values are in CSS pixels as reported by the real device.
+ * All inset values are in CSS pixels as reported by the page context.
  * `userAgent` is included for device identification; it never contains
  * authentication secrets or session tokens.
  */
 export interface SafeAreaMeasurement {
   /**
-   * `env(safe-area-inset-*)` values read via `getComputedStyle` on the device.
+   * MCP environment this measurement was taken in — `'mock'` for the dev
+   * browser panel, `'relay'` for the real-device WebView. Set by the caller
+   * (`measureSafeArea`) from the env detection SSoT (`getEnvironment`).
+   */
+  source: McpEnvironment;
+  /**
+   * `env(safe-area-inset-*)` values read via `getComputedStyle` on the page.
    * On iOS inside the Toss host WebView this is typically all-zero because the
    * WebView viewport is placed below the physical notch by the host app.
    */
   cssEnv: { top: number; right: number; bottom: number; left: number };
   /**
-   * `window.__sdk.SafeAreaInsets.get()` (1st priority) or
-   * `window.__sdk.getSafeAreaInsets()` (2nd priority) result from the native
-   * SDK. `null` when both paths fail — see `sdkInsetsError` for the reason.
+   * SDK insets from one of three paths (in priority order):
+   *   - `window.__sdk.SafeAreaInsets.get()`  (relay, dogfood bundle)
+   *   - `window.__sdk.getSafeAreaInsets()`   (relay, deprecated)
+   *   - `window.__ait.state.safeAreaInsets`  (mock, devtools panel state)
+   *
+   * `null` when all paths fail — see `sdkInsetsError` for the reason.
    * In the Toss host WebView `top` is the nav bar height and `bottom` is the
    * home-indicator height.
    */
   sdkInsets: { top: number; right: number; bottom: number; left: number } | null;
   /**
-   * Populated when the SDK inset lookup failed (both paths absent or threw).
+   * Which path resolved `sdkInsets` — useful for diagnosis of fidelity gaps
+   * between mock and relay. `null` when `sdkInsets` is `null`.
+   */
+  sdkInsetsSource: SdkInsetsSource;
+  /**
+   * Populated when the SDK inset lookup failed (all paths absent or threw).
    * `undefined` when `sdkInsets` is non-null (i.e. the lookup succeeded).
    *
    * Example values:
-   *   - `"window.__sdk not available (non-dogfood bundle)"`
+   *   - `"neither window.__sdk (relay) nor window.__ait (mock) available"`
    *   - `"neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk"`
+   *   - `"window.__ait.state.safeAreaInsets is missing or malformed"`
    *   - `"TypeError: ..."`
    */
   sdkInsetsError?: string;
@@ -871,9 +989,14 @@ export interface SafeAreaMeasurement {
  * The probe returns a JSON string (because `returnByValue:true` with a plain
  * object works unreliably across Chii relay versions — stringifying is safer).
  *
+ * `source` is supplied by the caller (`measureSafeArea`) from the env SSoT.
+ *
  * Throws if the result is missing, contains an exception, or cannot be parsed.
  */
-export function normalizeSafeAreaResult(rawValue: unknown): SafeAreaMeasurement {
+export function normalizeSafeAreaResult(
+  rawValue: unknown,
+  source: McpEnvironment,
+): SafeAreaMeasurement {
   if (typeof rawValue !== 'string') {
     throw new Error(
       `measure_safe_area: probe returned unexpected type "${typeof rawValue}" — expected JSON string`,
@@ -907,6 +1030,10 @@ export function normalizeSafeAreaResult(rawValue: unknown): SafeAreaMeasurement 
 
   const cssEnv = requireInsets('cssEnv') ?? { top: 0, right: 0, bottom: 0, left: 0 };
   const sdkInsets = requireInsets('sdkInsets');
+  const sdkInsetsSource: SdkInsetsSource =
+    obj.sdkInsetsSource === 'window.__sdk' || obj.sdkInsetsSource === 'window.__ait'
+      ? obj.sdkInsetsSource
+      : null;
   const sdkInsetsError = typeof obj.sdkInsetsError === 'string' ? obj.sdkInsetsError : undefined;
   const navBarHeight = typeof obj.navBarHeight === 'number' ? obj.navBarHeight : null;
   const navBarHeightSource =
@@ -917,8 +1044,10 @@ export function normalizeSafeAreaResult(rawValue: unknown): SafeAreaMeasurement 
   const userAgent = typeof obj.userAgent === 'string' ? obj.userAgent : '';
 
   return {
+    source,
     cssEnv,
     sdkInsets,
+    sdkInsetsSource,
     ...(sdkInsetsError !== undefined ? { sdkInsetsError } : {}),
     navBarHeight,
     navBarHeightSource,
@@ -933,9 +1062,19 @@ export function normalizeSafeAreaResult(rawValue: unknown): SafeAreaMeasurement 
  * Runs the safe-area probe on the attached page and returns a normalized
  * `SafeAreaMeasurement`. Read-only — does not mutate page state.
  *
+ * `source` is supplied by the caller from the env detection SSoT (see
+ * `src/mcp/environment.ts`). The same `Runtime.evaluate` call runs in both
+ * envs — the probe expression tries `window.__sdk` first (relay) then
+ * `window.__ait` (mock), so mock fidelity is enforced by the panel's
+ * `applyViewport`/`computeSafeAreaInsets` keeping `__ait.state.safeAreaInsets`
+ * correct (RFC #277 Tier C parity, #275 model).
+ *
  * Throws on CDP error, probe exception, or result parse failure.
  */
-export async function measureSafeArea(connection: CdpConnection): Promise<SafeAreaMeasurement> {
+export async function measureSafeArea(
+  connection: CdpConnection,
+  source: McpEnvironment,
+): Promise<SafeAreaMeasurement> {
   const result = await connection.send('Runtime.evaluate', {
     expression: SAFE_AREA_PROBE_EXPRESSION,
     returnByValue: true,
@@ -948,7 +1087,7 @@ export async function measureSafeArea(connection: CdpConnection): Promise<SafeAr
       'Runtime.evaluate threw an exception';
     throw new Error(`measure_safe_area: probe threw — ${msg}`);
   }
-  return normalizeSafeAreaResult(result.result.value);
+  return normalizeSafeAreaResult(result.result.value, source);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -364,7 +364,7 @@ function makeProbeJson(overrides: Record<string, unknown> = {}): string {
 
 describe('normalizeSafeAreaResult', () => {
   it('parses a successful SafeAreaInsets.get() result (no sdkInsetsError)', () => {
-    const result = normalizeSafeAreaResult(makeProbeJson());
+    const result = normalizeSafeAreaResult(makeProbeJson(), 'relay');
     expect(result.sdkInsets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
     expect(result.sdkInsetsError).toBeUndefined();
     expect(result.navBarHeight).toBeNull();
@@ -376,14 +376,16 @@ describe('normalizeSafeAreaResult', () => {
     expect(result.userAgent).toBe('AppsInToss TossApp/5.261.0 iPhone');
   });
 
-  it('carries sdkInsetsError when window.__sdk is absent', () => {
+  it('carries sdkInsetsError when neither window.__sdk nor window.__ait is available', () => {
     const json = makeProbeJson({
       sdkInsets: null,
-      sdkInsetsError: 'window.__sdk not available (non-dogfood bundle)',
+      sdkInsetsError: 'neither window.__sdk (relay) nor window.__ait (mock) available',
     });
-    const result = normalizeSafeAreaResult(json);
+    const result = normalizeSafeAreaResult(json, 'mock');
     expect(result.sdkInsets).toBeNull();
-    expect(result.sdkInsetsError).toBe('window.__sdk not available (non-dogfood bundle)');
+    expect(result.sdkInsetsError).toBe(
+      'neither window.__sdk (relay) nor window.__ait (mock) available',
+    );
   });
 
   it('carries sdkInsetsError when neither path found on window.__sdk', () => {
@@ -391,7 +393,7 @@ describe('normalizeSafeAreaResult', () => {
       sdkInsets: null,
       sdkInsetsError: 'neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk',
     });
-    const result = normalizeSafeAreaResult(json);
+    const result = normalizeSafeAreaResult(json, 'relay');
     expect(result.sdkInsets).toBeNull();
     expect(result.sdkInsetsError).toBe(
       'neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk',
@@ -403,30 +405,30 @@ describe('normalizeSafeAreaResult', () => {
       sdkInsets: null,
       sdkInsetsError: 'TypeError: sdk.SafeAreaInsets.get is not a function',
     });
-    const result = normalizeSafeAreaResult(json);
+    const result = normalizeSafeAreaResult(json, 'relay');
     expect(result.sdkInsets).toBeNull();
     expect(result.sdkInsetsError).toBe('TypeError: sdk.SafeAreaInsets.get is not a function');
   });
 
   it('reads navBarHeight from dom-.ait-navbar source when present', () => {
     const json = makeProbeJson({ navBarHeight: 48, navBarHeightSource: 'dom-.ait-navbar' });
-    const result = normalizeSafeAreaResult(json);
+    const result = normalizeSafeAreaResult(json, 'relay');
     expect(result.navBarHeight).toBe(48);
     expect(result.navBarHeightSource).toBe('dom-.ait-navbar');
   });
 
   it('throws on non-string input', () => {
-    expect(() => normalizeSafeAreaResult(42)).toThrow(/unexpected type/);
+    expect(() => normalizeSafeAreaResult(42, 'mock')).toThrow(/unexpected type/);
   });
 
   it('throws on non-JSON string', () => {
-    expect(() => normalizeSafeAreaResult('not json')).toThrow(/non-JSON/);
+    expect(() => normalizeSafeAreaResult('not json', 'mock')).toThrow(/non-JSON/);
   });
 });
 
 describe('measureSafeArea (Phase 2)', () => {
   it('resolves with sdkInsets populated via SafeAreaInsets.get() path', async () => {
-    const json = makeProbeJson();
+    const json = makeProbeJson({ sdkInsetsSource: 'window.__sdk' });
     const connection = new FakeCdpConnection({
       commandResults: {
         'Runtime.evaluate': {
@@ -434,15 +436,17 @@ describe('measureSafeArea (Phase 2)', () => {
         },
       },
     });
-    const measurement = await measureSafeArea(connection);
+    const measurement = await measureSafeArea(connection, 'relay');
+    expect(measurement.source).toBe('relay');
     expect(measurement.sdkInsets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
+    expect(measurement.sdkInsetsSource).toBe('window.__sdk');
     expect(measurement.sdkInsetsError).toBeUndefined();
   });
 
-  it('resolves with sdkInsetsError when __sdk absent (non-dogfood bundle)', async () => {
+  it('resolves with sdkInsetsError when neither window.__sdk nor window.__ait is available', async () => {
     const json = makeProbeJson({
       sdkInsets: null,
-      sdkInsetsError: 'window.__sdk not available (non-dogfood bundle)',
+      sdkInsetsError: 'neither window.__sdk (relay) nor window.__ait (mock) available',
     });
     const connection = new FakeCdpConnection({
       commandResults: {
@@ -451,9 +455,12 @@ describe('measureSafeArea (Phase 2)', () => {
         },
       },
     });
-    const measurement = await measureSafeArea(connection);
+    const measurement = await measureSafeArea(connection, 'mock');
+    expect(measurement.source).toBe('mock');
     expect(measurement.sdkInsets).toBeNull();
-    expect(measurement.sdkInsetsError).toBe('window.__sdk not available (non-dogfood bundle)');
+    expect(measurement.sdkInsetsError).toBe(
+      'neither window.__sdk (relay) nor window.__ait (mock) available',
+    );
   });
 
   it('rejects when the probe throws a CDP exception', async () => {
@@ -465,7 +472,7 @@ describe('measureSafeArea (Phase 2)', () => {
         },
       },
     });
-    await expect(measureSafeArea(connection)).rejects.toThrow(/probe threw/);
+    await expect(measureSafeArea(connection, 'mock')).rejects.toThrow(/probe threw/);
   });
 });
 

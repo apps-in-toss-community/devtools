@@ -120,6 +120,12 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 
 같은 devtools 안에서 SDK 라인별 런타임 분기는 하지 않는다 (mock 본체가 두 벌이 되어 비용이 큼). 동시 지원 윈도우가 정말 필요해지면 그때 별도 결정.
 
+## MCP tool surface — 환경 감지 + Tier 매트릭스 (RFC #277)
+
+debug-mode MCP 서버(`devtools-mcp`)는 **단일 함수 `getEnvironment()`**(`src/mcp/environment.ts`)로 세션 시작 시 한 번 env를 결정한다. 우선순위: (1) `MCP_ENV=mock|relay` 환경변수 → (2) CDP target URL 패턴(`intoss-private://` 또는 `*.trycloudflare.com` 매칭 시 relay) → (3) default `mock`. 결과는 sticky — 세션 안에서 env 전환 없음.
+
+도구는 RFC #277 Tier 분류를 따른다 — Tier A(`mock` only, mock state dial), Tier B(`relay` only, 예: `build_attach_url`), Tier C(`both`, 평행 동작). `tools/list`가 env에 맞춰 자동 필터하고, 환경 불일치 호출은 `data.reason`을 담은 tool-result error로 거부된다. `measure_safe_area`는 양쪽에서 같은 `Runtime.evaluate` probe(`SAFE_AREA_PROBE_EXPRESSION`)를 돌리고 결과에 `source: 'mock' | 'relay'`를 attach해 provenance를 노출한다.
+
 ## 패키지 export 구조
 
 | Import path | 용도 |

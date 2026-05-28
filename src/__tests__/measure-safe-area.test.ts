@@ -89,7 +89,7 @@ describe('normalizeSafeAreaResult', () => {
       devicePixelRatio: 3,
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
     };
-    const result = normalizeSafeAreaResult(JSON.stringify(payload));
+    const result = normalizeSafeAreaResult(JSON.stringify(payload), 'mock');
     expect(result.cssEnv).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
     expect(result.sdkInsets).toEqual({ top: 54, right: 0, bottom: 34, left: 0 });
     expect(result.navBarHeight).toBe(54);
@@ -109,14 +109,14 @@ describe('normalizeSafeAreaResult', () => {
       devicePixelRatio: 3,
       userAgent: 'Chrome/120',
     };
-    const result = normalizeSafeAreaResult(JSON.stringify(payload));
+    const result = normalizeSafeAreaResult(JSON.stringify(payload), 'mock');
     expect(result.sdkInsets).toBeNull();
     expect(result.navBarHeight).toBeNull();
   });
 
   it('falls back to 0 for missing numeric fields', () => {
     // Minimal payload — missing most fields
-    const result = normalizeSafeAreaResult(JSON.stringify({}));
+    const result = normalizeSafeAreaResult(JSON.stringify({}), 'mock');
     expect(result.cssEnv).toEqual({ top: 0, right: 0, bottom: 0, left: 0 });
     expect(result.sdkInsets).toBeNull();
     expect(result.innerWidth).toBe(0);
@@ -126,17 +126,19 @@ describe('normalizeSafeAreaResult', () => {
   });
 
   it('throws on non-string input', () => {
-    expect(() => normalizeSafeAreaResult(42)).toThrow('unexpected type');
-    expect(() => normalizeSafeAreaResult(null)).toThrow('unexpected type');
-    expect(() => normalizeSafeAreaResult(undefined)).toThrow('unexpected type');
+    expect(() => normalizeSafeAreaResult(42, 'mock')).toThrow('unexpected type');
+    expect(() => normalizeSafeAreaResult(null, 'mock')).toThrow('unexpected type');
+    expect(() => normalizeSafeAreaResult(undefined, 'mock')).toThrow('unexpected type');
   });
 
   it('throws on non-JSON string', () => {
-    expect(() => normalizeSafeAreaResult('not json')).toThrow('non-JSON string');
+    expect(() => normalizeSafeAreaResult('not json', 'mock')).toThrow('non-JSON string');
   });
 
   it('throws on JSON that is not an object', () => {
-    expect(() => normalizeSafeAreaResult(JSON.stringify([1, 2, 3]))).toThrow('not an object');
+    expect(() => normalizeSafeAreaResult(JSON.stringify([1, 2, 3]), 'mock')).toThrow(
+      'not an object',
+    );
   });
 
   it('handles cssEnv with partial fields gracefully', () => {
@@ -146,7 +148,7 @@ describe('normalizeSafeAreaResult', () => {
       innerHeight: 667,
       devicePixelRatio: 2,
     };
-    const result = normalizeSafeAreaResult(JSON.stringify(payload));
+    const result = normalizeSafeAreaResult(JSON.stringify(payload), 'mock');
     expect(result.cssEnv.top).toBe(10);
     expect(result.cssEnv.right).toBe(0);
     expect(result.cssEnv.bottom).toBe(0);
@@ -172,7 +174,8 @@ describe('measureSafeArea', () => {
     const conn = makeFakeConnection({
       'Runtime.evaluate': cannedEvalResult(payload),
     });
-    const result = await measureSafeArea(conn);
+    const result = await measureSafeArea(conn, 'relay');
+    expect(result.source).toBe('relay');
     expect(result.sdkInsets?.top).toBe(54);
     expect(result.sdkInsets?.bottom).toBe(34);
     expect(result.innerWidth).toBe(393);
@@ -194,7 +197,7 @@ describe('measureSafeArea', () => {
         },
       },
     });
-    await expect(measureSafeArea(conn)).rejects.toThrow('probe threw');
+    await expect(measureSafeArea(conn, 'mock')).rejects.toThrow('probe threw');
   });
 
   it('throws when the probe returns a non-string value', async () => {
@@ -203,12 +206,14 @@ describe('measureSafeArea', () => {
         result: { type: 'number', value: 42 },
       },
     });
-    await expect(measureSafeArea(conn)).rejects.toThrow('unexpected type');
+    await expect(measureSafeArea(conn, 'mock')).rejects.toThrow('unexpected type');
   });
 
   it('rejects when Runtime.evaluate is not in canned results', async () => {
     const conn = makeFakeConnection({});
-    await expect(measureSafeArea(conn)).rejects.toThrow('no canned result for Runtime.evaluate');
+    await expect(measureSafeArea(conn, 'mock')).rejects.toThrow(
+      'no canned result for Runtime.evaluate',
+    );
   });
 });
 
