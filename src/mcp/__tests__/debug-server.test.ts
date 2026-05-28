@@ -234,7 +234,12 @@ describe('build_attach_url — response includes unicode QR', () => {
 
 describe('build_attach_url — wait_for_attach', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
-  const fakeTarget: CdpTarget = { id: 'target-1', title: 'Test', url: 'https://example.com' };
+  // URL includes the deploymentId so the isMatchingPage filter passes.
+  const fakeTarget: CdpTarget = {
+    id: 'target-1',
+    title: 'Test',
+    url: 'intoss-private://miniapp?_deploymentId=wait-test',
+  };
 
   it('returns attach page info when a target is already present', async () => {
     // Pre-populate connection with a target so polling resolves on the first poll.
@@ -288,7 +293,13 @@ describe('build_attach_url — wait_for_attach', () => {
   });
 
   it('response includes QR and do-not-reprint instruction even when wait_for_attach is true and attach succeeds', async () => {
-    const connection = new FakeCdpConnection([fakeTarget]);
+    // Use a target whose URL matches the deploymentId in scheme_url.
+    const qrTarget: CdpTarget = {
+      id: 'target-qr',
+      title: 'Test',
+      url: 'intoss-private://miniapp?_deploymentId=wait-qr-test',
+    };
+    const connection = new FakeCdpConnection([qrTarget]);
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       connection,
@@ -312,7 +323,13 @@ describe('build_attach_url — wait_for_attach', () => {
   it('does not call enableDomains during wait_for_attach polling', async () => {
     // enableDomains being called would imply an attach check via CDP domain
     // negotiation, which is wrong — listTargets is a buffered read.
-    const connection = new FakeCdpConnection([fakeTarget]);
+    // Target URL must match the deploymentId so polling resolves immediately.
+    const spyTarget: CdpTarget = {
+      id: 'target-spy',
+      title: 'Test',
+      url: 'intoss-private://miniapp?_deploymentId=spy-test',
+    };
+    const connection = new FakeCdpConnection([spyTarget]);
     const enableDomainsSpy = vi.spyOn(connection, 'enableDomains');
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
@@ -328,6 +345,126 @@ describe('build_attach_url — wait_for_attach', () => {
     });
 
     expect(enableDomainsSpy).not.toHaveBeenCalled();
+  });
+
+  // ---- deploymentId matching (#276) ----------------------------------------
+
+  it('waits past a stale page and resolves only when a matching deploymentId page attaches', async () => {
+    // Simulates the regression: a page from a previous session is already
+    // attached (URL contains "old-deployment-id"), and a new QR carries
+    // "new-deployment-fake-id". The polling loop must NOT break on the stale
+    // page and must wait until the new page appears.
+    const staleTarget: CdpTarget = {
+      id: 'stale-target',
+      title: 'Stale',
+      url: 'intoss-private://miniapp?_deploymentId=old-deployment-id',
+    };
+    const freshTarget: CdpTarget = {
+      id: 'fresh-target',
+      title: 'Fresh',
+      url: 'intoss-private://miniapp?_deploymentId=new-deployment-fake-id',
+    };
+
+    const connection = new FakeCdpConnection([staleTarget]); // stale page pre-attached
+
+    // After 60ms the "phone" attaches a new page with the correct deploymentId.
+    const attachTimer = setTimeout(() => {
+      connection.setTargets([staleTarget, freshTarget]);
+    }, 60);
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 2000,
+    });
+
+    try {
+      const result = await client.callTool(
+        {
+          name: 'build_attach_url',
+          arguments: {
+            scheme_url: 'intoss-private://miniapp?_deploymentId=new-deployment-fake-id',
+            wait_for_attach: true,
+          },
+        },
+        undefined,
+        { timeout: 5000 },
+      );
+
+      expect(result.isError).toBeFalsy();
+      const text = getContent(result)[0]!.text!;
+      // The result must reference the fresh target, not stale.
+      expect(text).toContain('fresh-target');
+    } finally {
+      clearTimeout(attachTimer);
+    }
+  });
+
+  it('timeout error includes expected deploymentId and observed page URLs when only stale pages are present', async () => {
+    // The connection has a page from a previous session; the expected deploymentId
+    // never appears within the timeout window → error message must be diagnostic.
+    const staleTarget: CdpTarget = {
+      id: 'stale-2',
+      title: 'Stale 2',
+      url: 'intoss-private://miniapp?_deploymentId=old-session-fake-id',
+    };
+    const connection = new FakeCdpConnection([staleTarget]);
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 50,
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=expected-fake-id',
+          wait_for_attach: true,
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    expect(result.isError).toBe(true);
+    const text = getContent(result)[0]!.text!;
+    // Must mention the expected deploymentId so the agent knows what to look for.
+    expect(text).toContain('expected-fake-id');
+    // Must list the observed stale URL so the agent can diagnose the mismatch.
+    expect(text).toContain('old-session-fake-id');
+    // Standard retry hint must still be present.
+    expect(text).toContain('list_pages');
+  });
+
+  it('falls back to presence-only matching when scheme_url has no _deploymentId', async () => {
+    // When deploymentId cannot be parsed (null fallback), any attached page satisfies.
+    const anyTarget: CdpTarget = {
+      id: 'any-target',
+      title: 'Any',
+      url: 'https://example.com/some-page',
+    };
+    const connection = new FakeCdpConnection([anyTarget]);
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+    });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        // No _deploymentId query param — tests the null-fallback path.
+        scheme_url: 'intoss-private://miniapp',
+        wait_for_attach: true,
+      },
+    });
+
+    // With null deploymentId, presence-only: any page satisfies → must succeed.
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('any-target');
   });
 });
 
