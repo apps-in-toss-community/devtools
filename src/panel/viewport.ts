@@ -3,8 +3,10 @@
  *
  * Panel에서 선택한 디바이스 프리셋을 `document.body`에 적용한다. 정적 CSS는
  * `panel/styles.ts`에 정의되어 있고 (Panel mount 시 head에 주입), 여기서는 프리셋별
- * 동적 값(width/height, 콘텐츠 push용 body padding-top)만 별도 `<style>` 엘리먼트로
- * 관리한다.
+ * 동적 값(width/height)만 별도 `<style>` 엘리먼트로 관리한다.
+ *
+ * body `padding-top`은 주입하지 않는다: 실기기에서 토스 native nav bar는 WebView viewport
+ * 밖이라 콘텐츠는 top=0부터 시작한다(devtools#275).
  */
 
 import { closeView } from '../mock/navigation/index.js';
@@ -30,18 +32,21 @@ export const VIEWPORT_CUSTOM_MAX = 4096;
 /**
  * Apps in Toss host nav bar 높이 (CSS px), `partner` type 기준.
  *
- * iPhone 15 Pro on-device relay 실측값(devtools#190): `SafeAreaInsets.get().top`이
- * **54 px**를 반환했고, 같은 시점 `env(safe-area-inset-top)`은 0이었다. 즉 SDK가 top으로
- * 주는 값은 OS 노치 inset이 아니라 토스 네이티브 nav bar 높이 그 자체다 — nav bar는 호스트
- * chrome이라 기기에 무관하므로 모든 preset이 이 단일 상수를 공유한다(이전 추정치 48은 폐기).
+ * iPhone 15 Pro on-device relay 실측값(devtools#275): 토스 native nav bar는 partner
+ * WebView **viewport 밖**에 그려진다. `SafeAreaInsets.get().top`이 반환하는 54 px는 호스트
+ * nav bar 높이에 대한 **정보용 값**이며, partner 앱이 이 값을 `padding-top`으로 적용하면
+ * WebView가 이미 nav bar 아래에서 시작하므로 잉여 공간이 생긴다(double-count).
  *
- * type별 동작:
- * - `partner` (기본): nav bar가 콘텐츠를 밀어내므로 SDK top = 이 값.
- * - `game`: nav bar가 투명 오버레이라 콘텐츠를 밀어내지 않음(인게임 full-screen이 출시 요건)
- *   → SDK top = 0. `external` type은 아직 시뮬레이션하지 않는다.
+ * 따라서 mock의 `computeSafeAreaInsets`는 partner portrait에서 top=0을 반환한다 —
+ * WebView 좌표계에서 콘텐츠는 top=0부터 시작하고, 소비자가 SDK top을 padding으로 적용해도
+ * 실기기와 같은 결과를 보도록 한다. `game` type은 nav bar가 WebView 안쪽 투명 오버레이라
+ * 별도 실측 대상.
  *
  * landscape에서는 토스 앱이 partner nav bar를 숨기므로 SDK top=0 (2026-05-28 iPhone 15
  * Pro relay 실측 #232 확인).
+ *
+ * 이 상수는 프리셋의 `navBarHeight` 필드(host chrome 높이 메타데이터 — 프레임 렌더 등에
+ * 사용)와 패널 UI 표시 목적으로만 유지된다.
  */
 export const AIT_NAV_BAR_HEIGHT_PARTNER = 54;
 
@@ -122,14 +127,18 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     id: 'iphone-15-pro',
     label: 'iPhone 15 Pro',
     width: 393,
-    height: 852,
+    // devtools#275 실측: partner type innerHeight=754. native chrome(iOS status bar + 토스
+    // nav bar = 98 pt)이 WebView 밖에 reserve됨 — WebView는 754 pt. screenHeight=852는
+    // window.screen.height(전체 물리 화면 CSS px)를 기기 emulation에 사용.
+    height: 754,
+    screenHeight: 852,
     dpr: 3,
     notch: 'dynamic-island',
     notchInset: 59,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
     safeAreaBottomLandscape: 20,
-    // devtools#190 portrait 실측: navBarHeight=54, bottom=34.
+    // devtools#190/#275 portrait 실측: innerH=754(partner), bottom=34.
     // devtools#198/#232 landscape 실측(2026-05-28): bottom=20, left=right=59(양쪽 대칭).
     safeAreaProvenance: {
       source: 'measured',
@@ -321,12 +330,14 @@ export function resolveViewportSize(state: ViewportState): { width: number; heig
 
 /**
  * 프리셋 + orientation + nav bar 상태로부터 SDK `SafeAreaInsets.get()`이 반환할 insets를
- * 계산한다. iPhone 15 Pro on-device relay 실측(devtools#190, #198, #232)에 맞춘 모델:
+ * 계산한다. iPhone 15 Pro on-device relay 실측(devtools#190, #198, #232, #275)에 맞춘 모델:
  *
- * - **Portrait top = 토스 nav bar 높이** (OS 노치가 아니다). 실측에서
- *   `env(safe-area-inset-top)` = 0, `SafeAreaInsets.get().top` = 54 였고, 그 54는 호스트
- *   nav bar다. 따라서 nav bar가 떠 있고 `partner` type일 때만 `navBarHeight`를 top에 준다.
- *   `game`(투명 오버레이, 콘텐츠 안 밀어냄) 또는 nav bar 미표시면 top = 0.
+ * - **Portrait top = 0** (partner/game 모두). 실측(devtools#275)에서 토스 native nav bar는
+ *   partner WebView **viewport 밖**에 그려진다. SDK가 반환하는 `top=54`는 호스트 nav bar
+ *   높이에 대한 정보용 값이고, WebView 좌표계에서 콘텐츠는 top=0부터 시작한다. 소비자가
+ *   이 값을 `padding-top`으로 적용하면 실기기에서 잉여 공간이 생긴다(double-count).
+ *   mock은 top=0을 반환해 소비자 코드가 실기기와 같은 결과를 내도록 한다.
+ *   `game` type 측정은 아직 미진행이지만 동일하게 top=0을 반환한다(추후 실측으로 갱신).
  * - **Bottom = `safeAreaBottom`** (portrait home-indicator, 실측 34).
  *   landscape는 `safeAreaBottomLandscape`가 정의돼 있으면 그 값을 사용한다
  *   (iPhone 15 Pro landscape 실측 20 — portrait 34와 다름).
@@ -338,19 +349,15 @@ export function resolveViewportSize(state: ViewportState): { width: number; heig
  * - **Android punch-hole(status bar)**: landscape에서도 top에 status bar(`notchInset`)가
  *   유지된다.
  */
-export function computeSafeAreaInsets(
-  preset: ViewportPreset,
-  landscape: boolean,
-  navBarVisible: boolean,
-  navBarType: AitNavBarType,
-): SafeAreaInsets {
+export function computeSafeAreaInsets(preset: ViewportPreset, landscape: boolean): SafeAreaInsets {
   if (preset.id === 'none' || preset.id === 'custom') {
     return { top: 0, bottom: 0, left: 0, right: 0 };
   }
-  // partner nav bar가 떠 있을 때만 콘텐츠를 밀어낸다 (game은 투명 오버레이).
-  const navBarTop = navBarVisible && navBarType === 'partner' ? preset.navBarHeight : 0;
+  // Portrait top=0: 토스 native nav bar는 partner WebView viewport 밖 — SDK top은 정보용이라
+  // padding 대상이 아님(devtools#275). 소비자가 SDK top을 padding으로 적용해도 실기기와
+  // 같은 결과를 보도록 top=0을 반환한다. game type 실측 후 분기 필요 시 여기에 추가.
   if (!landscape) {
-    return { top: navBarTop, bottom: preset.safeAreaBottom, left: 0, right: 0 };
+    return { top: 0, bottom: preset.safeAreaBottom, left: 0, right: 0 };
   }
   // landscape bottom: 별도 실측값이 있으면 우선 사용 (iPhone 15 Pro portrait 34 vs landscape 20).
   const landscapeBottom =
@@ -380,12 +387,7 @@ export function computeSafeAreaInsets(
 function syncSafeAreaFromViewport(state: ViewportState): void {
   if (state.preset === 'none' || state.preset === 'custom') return;
   const preset = getPreset(state.preset);
-  const next = computeSafeAreaInsets(
-    preset,
-    effectiveOrientation(state) === 'landscape',
-    state.aitNavBar,
-    state.aitNavBarType,
-  );
+  const next = computeSafeAreaInsets(preset, effectiveOrientation(state) === 'landscape');
   const current = aitState.state.safeAreaInsets;
   if (
     current.top === next.top &&
@@ -441,12 +443,10 @@ function removeNavBarElement(): void {
  *   우측 `⋯` + 구분선 + `×`.
  * - `game`: 투명 배경, 게임 캔버스를 가리지 않도록 우측 `⋯` + 구분선 + `×`만.
  *
- * nav bar는 WebView(body) 좌표계의 최상단(top 0)에 앉는다 — 실기기에서 OS notch는
- * WebView 밖(status bar)이라 `env(safe-area-inset-top)`이 0이고, WebView 콘텐츠 영역은
- * nav bar 바로 아래(= SDK `SafeAreaInsets.get().top` = `navBarHeight`)에서 시작한다.
- * 콘텐츠를 그만큼 밀어내는 건 `applyViewport`의 body `padding-top`이 담당하므로, nav bar
- * 바닥과 콘텐츠 시작이 정확히 맞물린다. 시각 notch 오버레이는 body 밖 위쪽(status bar
- * 영역)에 따로 그린다(`renderNotchOverlay`) — body 안이 아니다.
+ * 이 오버레이는 **시각 참고용 frame 장식**이다. 실기기에서 토스 native nav bar는 WebView
+ * viewport 밖에 그려지므로(devtools#275), mock의 nav bar 오버레이가 콘텐츠 위에 overlap
+ * 되는 것이 실제 동작과 일치한다 — body에 `padding-top`을 주입하지 않는다.
+ * 시각 notch 오버레이는 body 밖 위쪽에 따로 그린다(`renderNotchOverlay`) — body 안이 아니다.
  *
  * 뒤로가기 버튼은 `__ait:backEvent`를 트리거하고, X 버튼은 `closeView()`를 호출한다.
  * 실제 SDK 이벤트 플러밍을 한 곳에서 검증할 수 있다.
@@ -616,22 +616,16 @@ export function applyViewport(state: ViewportState): void {
   // 기기 preset이면 UA/DPR/screen/platform을 그 기기와 정합 (custom은 치수만 강제).
   syncDeviceEmulation(preset, landscape);
 
-  // partner nav bar는 실기기 토스 호스트처럼 콘텐츠를 밀어낸다 — body padding-top으로
-  // 재현한다. game은 투명 오버레이라 안 밀고(0), nav bar 미표시·landscape도 0. 미는 양은
-  // SDK `SafeAreaInsets.get().top`과 같은 값이라 computeSafeAreaInsets의 top을 단일 진실로
-  // 쓴다 (오버레이로만 얹으면 nav bar가 콘텐츠 첫 픽셀을 덮어 실기기와 어긋난다).
-  const contentTop = preset
-    ? computeSafeAreaInsets(preset, landscape, state.aitNavBar, state.aitNavBarType).top
-    : 0;
-
   // Dynamic per-preset values only — static rules live in styles.ts.
+  // body padding-top을 주입하지 않는다: 실기기에서 토스 native nav bar는 WebView viewport
+  // 밖에 그려지므로 콘텐츠는 top=0부터 시작한다(devtools#275). mock의 nav bar 오버레이는
+  // 시각 참고용 — body는 padding 없이 top=0에서 콘텐츠를 렌더한다.
   style.textContent = /* css */ `
     html.ait-viewport-active body {
       width: ${size.width}px;
       max-width: ${size.width}px;
       min-height: ${size.height}px;
       max-height: ${size.height}px;
-      padding-top: ${contentTop}px;
     }
   `;
 

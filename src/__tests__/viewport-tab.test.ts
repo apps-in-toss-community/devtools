@@ -28,8 +28,8 @@ describe('renderViewportTab', () => {
     expect(text).toContain('402×874@3x');
     expect(text).toContain('1206×2622');
     expect(text).toContain('Safe area');
-    // partner WebView portrait: top = nav bar 54 (실측 모델), 노치 59 아님.
-    expect(text).toContain('T54');
+    // portrait top=0: 토스 native nav bar는 WebView 바깥(devtools#275). 노치 59 아님.
+    expect(text).toContain('T0');
     expect(text).toContain('AIT nav bar');
   });
 

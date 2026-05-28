@@ -188,7 +188,7 @@ export function renderViewportTab(): HTMLElement {
     );
 
     if (preset) {
-      const insets = computeSafeAreaInsets(preset, landscape, vp.aitNavBar, vp.aitNavBarType);
+      const insets = computeSafeAreaInsets(preset, landscape);
       const safeAreaValueEl = h(
         'span',
         { className: 'ait-status-value' },
@@ -207,7 +207,8 @@ export function renderViewportTab(): HTMLElement {
     }
 
     if (vp.aitNavBar && !landscape) {
-      // partner는 콘텐츠를 navBarHeight만큼 밀어내고, game은 투명 오버레이라 0.
+      // nav bar 높이를 status 패널에 정보용으로 표시한다. 이 값은 실기기에서 WebView 바깥의
+      // host nav bar 높이(devtools#275)이며 body padding에는 사용하지 않는다.
       const navBarTop = vp.aitNavBarType === 'partner' ? (preset?.navBarHeight ?? 0) : 0;
       rows.push(
         h(
