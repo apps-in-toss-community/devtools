@@ -600,20 +600,18 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // AIT.* methods ride the same Chii channel as CDP commands.
   const aitSource = new ChiiAitSource(connection);
 
-  // 로컬 QR HTTP 서버를 cloudflared와 동일하게 background 시작.
+  // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
+  // 도달하는 race를 없애기 위해 cloudflared(fire-and-forget)와 달리 동기 await 사용.
   // GUI 없는 환경에서는 startQrHttpServer가 실패해도 text QR fallback으로 동작한다.
   let qrServer: QrHttpServer | undefined;
-  void startQrHttpServer().then(
-    (s) => {
-      qrServer = s;
-    },
-    (err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `[ait-debug] QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}\n`,
-      );
-    },
-  );
+  try {
+    qrServer = await startQrHttpServer();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `[ait-debug] QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}\n`,
+    );
+  }
 
   const server = createDebugServer({
     connection,
