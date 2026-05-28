@@ -847,6 +847,8 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 
 ### Debug mode (CDP via Chii)
 
+For a step-by-step walkthrough of the on-device relay debug loop (dogfood build → QR scan → relay attach) including common failure recovery, see **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** (Korean).
+
 Read-only tools only. Tools are registered in two tiers based on attach state — before attach, only the bootstrap tools (`build_attach_url`, `list_pages`) are visible; once a relay/local page attaches, the attach-dependent tools are registered dynamically in the same session via `notifications/tools/list_changed` (no session restart needed). The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
