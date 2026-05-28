@@ -65,7 +65,7 @@
   },
   "peerDependenciesMeta": {
     "@apps-in-toss/web-framework": {
-      "optional": false
+      "optional": true
     }
   },
   "dependencies": {
