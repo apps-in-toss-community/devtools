@@ -35,6 +35,18 @@ interface CdpInboundMessage {
   error?: { message: string };
 }
 
+/**
+ * Events emitted by `ChiiCdpConnection` for crash / lifecycle notifications.
+ * Consumers (e.g. the tool layer) can subscribe with `.onLifecycle(cb)`.
+ */
+export interface TargetLifecycleEvent {
+  /** 'crashed' → Inspector.targetCrashed | 'destroyed' → Target.targetDestroyed | 'detached' → Target.detachedFromTarget */
+  kind: 'crashed' | 'destroyed' | 'detached';
+  targetId: string | null;
+  /** ISO timestamp of detection. */
+  detectedAt: string;
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -103,6 +115,24 @@ export class ChiiCdpConnection implements CdpConnection {
     { resolve: (result: unknown) => void; reject: (err: Error) => void }
   >();
 
+  /**
+   * Timestamp (ms since epoch) of the most recent crash/destroy/detach event,
+   * or `null` if no crash has been detected since the last `enableDomains()`.
+   */
+  private lastCrashDetectedAt: number | null = null;
+
+  /**
+   * Per-target last-seen timestamp (ms since epoch). Updated on any inbound
+   * CDP message carrying data from a target. Keyed by target id.
+   */
+  private readonly targetLastSeenAt = new Map<string, number>();
+
+  /** Active heartbeat interval handle (only when `AIT_CDP_HEARTBEAT_MS` is set). */
+  private heartbeatHandle: ReturnType<typeof setInterval> | null = null;
+
+  /** Lifecycle event listeners (crash / destroyed / detached). */
+  private readonly lifecycleListeners: Array<(event: TargetLifecycleEvent) => void> = [];
+
   constructor(options: ChiiCdpConnectionOptions) {
     this.relayBaseUrl = options.relayBaseUrl.replace(/\/$/, '');
     this.bufferSize = options.bufferSize ?? DEFAULT_BUFFER_SIZE;
@@ -144,6 +174,31 @@ export class ChiiCdpConnection implements CdpConnection {
   }
 
   /**
+   * Timestamp (ms since epoch) of the most recent crash/destroy/detach event
+   * detected since the last `enableDomains()` call, or `null` if none.
+   */
+  getLastCrashDetectedAt(): number | null {
+    return this.lastCrashDetectedAt;
+  }
+
+  /**
+   * Last-seen timestamp (ms since epoch) for a given target id, or `null` if
+   * the target is unknown / no message has been received from it yet.
+   */
+  getTargetLastSeenAt(targetId: string): number | null {
+    return this.targetLastSeenAt.get(targetId) ?? null;
+  }
+
+  /** Subscribe to target lifecycle events (crash / destroyed / detached). */
+  onLifecycle(listener: (event: TargetLifecycleEvent) => void): () => void {
+    this.lifecycleListeners.push(listener);
+    return () => {
+      const idx = this.lifecycleListeners.indexOf(listener);
+      if (idx !== -1) this.lifecycleListeners.splice(idx, 1);
+    };
+  }
+
+  /**
    * Connect a client websocket to the first attached target and enable Phase 1
    * domains. Resolves once the socket is open and enable commands are sent.
    */
@@ -177,6 +232,10 @@ export class ChiiCdpConnection implements CdpConnection {
       ws.once('error', (err: Error) => reject(err));
     });
 
+    // Reset crash state when a new connection is established.
+    this.lastCrashDetectedAt = null;
+    this.targetLastSeenAt.clear();
+
     this.connectionState = 'connected';
     ws.on('message', (data: WebSocket.RawData) => this.handleMessage(data.toString()));
     ws.on('close', () => this.handleDisconnect('relay WebSocket 연결이 끊겼습니다'));
@@ -188,6 +247,14 @@ export class ChiiCdpConnection implements CdpConnection {
     // request→response commands once enabled.
     this.sendFireAndForget('DOM.enable');
     this.sendFireAndForget('Page.enable');
+    // Subscribe to page-level crash and target lifecycle events.
+    // Inspector.targetCrashed fires when a page OOM/JS-crash/native-bridge crash.
+    // Target.setDiscoverTargets enables Target.targetDestroyed + Target.detachedFromTarget.
+    this.sendFireAndForget('Inspector.enable');
+    this.sendFireAndForget('Target.setDiscoverTargets', { discover: true });
+
+    // Optional heartbeat: env AIT_CDP_HEARTBEAT_MS=N enables a ping loop.
+    this.startHeartbeat(target.id);
   }
 
   /** Fire-and-forget CDP message (used for `*.enable`, no result awaited). */
@@ -274,6 +341,7 @@ export class ChiiCdpConnection implements CdpConnection {
     if (this.connectionState === 'disconnected') return; // already handled
     this.connectionState = 'disconnected';
     this.ws = null;
+    this.stopHeartbeat();
     const err = new Error(
       `${reason}. list_pages로 attach 상태를 확인하고 enableDomains()로 재연결하세요.`,
     );
@@ -281,6 +349,113 @@ export class ChiiCdpConnection implements CdpConnection {
       waiter.reject(err);
     }
     this.pending.clear();
+  }
+
+  /**
+   * Handle a page-level crash or target destruction event.
+   * Removes the target from the in-memory map, rejects all pending commands,
+   * and emits a lifecycle event.
+   *
+   * @param kind - Event kind: 'crashed' | 'destroyed' | 'detached'
+   * @param targetId - The target ID from the event params (may be null for
+   *   Inspector.targetCrashed which has no targetId in the params).
+   */
+  private handleTargetGone(kind: TargetLifecycleEvent['kind'], targetId: string | null): void {
+    const detectedAt = new Date().toISOString();
+    this.lastCrashDetectedAt = Date.now();
+
+    // Remove matching target(s) from the in-memory map.
+    if (targetId !== null) {
+      this.targets.delete(targetId);
+      this.targetLastSeenAt.delete(targetId);
+    } else {
+      // Inspector.targetCrashed carries no targetId — clear all targets.
+      this.targets.clear();
+      this.targetLastSeenAt.clear();
+    }
+
+    // Reject pending commands with a descriptive Korean error.
+    const label =
+      kind === 'crashed'
+        ? 'page crash (Inspector.targetCrashed)'
+        : kind === 'destroyed'
+          ? 'target 종료 (Target.targetDestroyed)'
+          : 'target detach (Target.detachedFromTarget)';
+    const err = new Error(
+      `[ait-debug] ${label} 감지됨 — relay에서 제거됐습니다. ` +
+        '새 attach가 필요합니다 (list_pages로 확인 → enableDomains()로 재연결).',
+    );
+    for (const waiter of this.pending.values()) {
+      waiter.reject(err);
+    }
+    this.pending.clear();
+
+    // Notify lifecycle listeners.
+    const event: TargetLifecycleEvent = { kind, targetId, detectedAt };
+    for (const listener of this.lifecycleListeners) {
+      try {
+        listener(event);
+      } catch {
+        // Listeners must not crash the connection.
+      }
+    }
+  }
+
+  /**
+   * Start the optional CDP heartbeat loop.
+   *
+   * When `AIT_CDP_HEARTBEAT_MS` is set to a positive integer, every interval
+   * we send `Runtime.evaluate({expression: '1'})` to each active target. If
+   * the command times out (2 s hard deadline) or errors, we treat the target
+   * as dead and call `handleTargetGone`.
+   *
+   * This is a zombie-detector fallback: cloudflared keeps-alive the tunnel ws
+   * even when the phone app has crashed, so the ws-level disconnect (#252) won't
+   * fire. The heartbeat catches this gap.
+   *
+   * Default: OFF. Only activates when `AIT_CDP_HEARTBEAT_MS` is set.
+   */
+  private startHeartbeat(initialTargetId: string): void {
+    this.stopHeartbeat(); // clear any previous interval
+
+    const envMs = process.env.AIT_CDP_HEARTBEAT_MS
+      ? Number(process.env.AIT_CDP_HEARTBEAT_MS)
+      : undefined;
+    if (envMs === undefined || !Number.isFinite(envMs) || envMs <= 0) return;
+
+    const PING_TIMEOUT_MS = 2_000;
+
+    this.heartbeatHandle = setInterval(() => {
+      // Take a snapshot of current targets to avoid mutation during iteration.
+      const targetIds = this.targets.size > 0 ? [...this.targets.keys()] : [initialTargetId];
+      for (const targetId of targetIds) {
+        // Issue a lightweight eval with a 2 s deadline.
+        const pingPromise = this.sendCommand('Runtime.evaluate', {
+          expression: '1',
+          returnByValue: true,
+          timeout: PING_TIMEOUT_MS,
+        });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('heartbeat timeout')),
+            PING_TIMEOUT_MS + 500, // slightly longer than the CDP timeout
+          ),
+        );
+        Promise.race([pingPromise, timeoutPromise]).catch(() => {
+          // Ping failed: mark target as dead if it still exists in the map.
+          if (this.targets.has(targetId)) {
+            this.handleTargetGone('destroyed', targetId);
+          }
+        });
+      }
+    }, envMs) as unknown as ReturnType<typeof setInterval>;
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatHandle !== null) {
+      clearInterval(this.heartbeatHandle);
+      this.heartbeatHandle = null;
+    }
   }
 
   private handleMessage(raw: string): void {
@@ -298,8 +473,45 @@ export class ChiiCdpConnection implements CdpConnection {
       return;
     }
 
-    // Event (buffered for the Phase 1 stream tools).
+    // Any inbound message implies the connection is active — update lastSeenAt
+    // for whichever target we currently know about (single-target model).
+    const now = Date.now();
+    for (const targetId of this.targets.keys()) {
+      this.targetLastSeenAt.set(targetId, now);
+    }
+
     if (typeof message.method !== 'string') return;
+
+    // --- Target lifecycle events ---
+
+    // Inspector.targetCrashed: page OOM / JS exception / native bridge crash.
+    // Params are usually empty; no targetId field in the event.
+    if (message.method === 'Inspector.targetCrashed') {
+      this.handleTargetGone('crashed', null);
+      return;
+    }
+
+    // Target.targetDestroyed: params = { targetId: string }
+    if (message.method === 'Target.targetDestroyed') {
+      const targetId =
+        isObject(message.params) && typeof message.params.targetId === 'string'
+          ? message.params.targetId
+          : null;
+      this.handleTargetGone('destroyed', targetId);
+      return;
+    }
+
+    // Target.detachedFromTarget: params = { sessionId, targetId? }
+    if (message.method === 'Target.detachedFromTarget') {
+      const targetId =
+        isObject(message.params) && typeof message.params.targetId === 'string'
+          ? message.params.targetId
+          : null;
+      this.handleTargetGone('detached', targetId);
+      return;
+    }
+
+    // --- Phase 1 event stream (buffered ring-buffer) ---
     if (!this.buffers.has(message.method as CdpEventName)) return;
     const event = message.method as CdpEventName;
     const buffer = this.buffers.get(event);
@@ -322,6 +534,7 @@ export class ChiiCdpConnection implements CdpConnection {
   /** Close the relay client websocket and reject any in-flight commands. */
   close(): void {
     const ws = this.ws;
+    this.stopHeartbeat();
     // handleDisconnect clears this.ws and pending; call it first so the 'close'
     // event from ws.close() below is a no-op (already disconnected).
     this.handleDisconnect('Chii relay connection closed');

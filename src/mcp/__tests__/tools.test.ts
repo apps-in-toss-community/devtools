@@ -225,8 +225,10 @@ describe('listPages', () => {
       targets: [{ id: 't1', title: 'sdk-example', url: 'https://example/storage' }],
     });
     expect(listPages(connection, tunnel)).toEqual({
-      pages: [{ id: 't1', title: 'sdk-example', url: 'https://example/storage' }],
+      pages: [{ id: 't1', title: 'sdk-example', url: 'https://example/storage', lastSeenAt: null }],
       tunnel: { up: true, wssUrl: 'wss://abc123.trycloudflare.com' },
+      crashDetectedAt: null,
+      crashWarning: null,
     });
   });
 
@@ -235,6 +237,8 @@ describe('listPages', () => {
     expect(listPages(connection, { up: true, wssUrl: 'wss://x.trycloudflare.com' })).toEqual({
       pages: [],
       tunnel: { up: true, wssUrl: 'wss://x.trycloudflare.com' },
+      crashDetectedAt: null,
+      crashWarning: null,
     });
   });
 });
