@@ -38,6 +38,7 @@ import type {
   NetworkResponseReceivedEvent,
 } from './cdp-connection.js';
 import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
+import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
 
 /** Tunnel state surfaced by `list_pages`. */
 export interface TunnelStatus {
@@ -182,7 +183,20 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'On env 2/3 (real device relay) this hits the real SDK; on env 1 (local mock) it hits ' +
       'the mock SDK. Requires the relay to be attached — call list_pages first. ' +
       'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
-      'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle).',
+      'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle).\n\n' +
+      'IMPORTANT — 인자 시그니처 (잘못된 인자로 호출하면 토스 앱 crash 위험):\n' +
+      '  setDeviceOrientation:        call_sdk("setDeviceOrientation", [{ type: "landscape" }])  // NOT "landscape"\n' +
+      '  setIosSwipeGestureEnabled:   call_sdk("setIosSwipeGestureEnabled", [{ isEnabled: false }])\n' +
+      '  setSecureScreen:             call_sdk("setSecureScreen", [{ enabled: true }])\n' +
+      '  setScreenAwakeMode:          call_sdk("setScreenAwakeMode", [{ enabled: true }])\n' +
+      '  getOperationalEnvironment:   call_sdk("getOperationalEnvironment", [])\n' +
+      '  getPlatformOS:               call_sdk("getPlatformOS", [])\n' +
+      '  getDeviceId:                 call_sdk("getDeviceId", [])\n' +
+      '  getLocale:                   call_sdk("getLocale", [])\n' +
+      '  getNetworkStatus:            call_sdk("getNetworkStatus", [])\n' +
+      '  getSchemeUri:                call_sdk("getSchemeUri", [])\n' +
+      '  requestReview:               call_sdk("requestReview", [])\n' +
+      '  closeView:                   call_sdk("closeView", [])',
     inputSchema: {
       type: 'object',
       properties: {
@@ -958,8 +972,13 @@ export function normalizeCallSdkResult(rawValue: unknown): CallSdkResult {
  * On env 2/3 (real device relay) this hits the real SDK; on env 1 (local
  * mock) it hits the mock SDK.
  *
+ * 인자 시그니처 검증: 등록된 메서드는 bridge 호출 전에 인자를 검증하고, mismatch면
+ * `{ok:false, error}` MCP 오류 결과를 반환한다(bridge에 도달하지 않음).
+ * 미등록 메서드는 passthrough + stderr 경고 1회.
+ *
  * Throws on CDP error or result parse failure. Returns `{ok:false, error}`
- * for bridge-level errors (method not found, SDK threw, bridge absent).
+ * for bridge-level errors (method not found, SDK threw, bridge absent) or
+ * argument schema violations.
  *
  * SECRET-HANDLING: name, args, and the result value are NOT written to any log.
  */
@@ -968,6 +987,24 @@ export async function callSdk(
   name: string,
   args: unknown[],
 ): Promise<CallSdkResult> {
+  // 인자 시그니처 검증 — bridge 호출 전에 reject하여 native crash를 예방한다.
+  const signature = lookupSignature(name);
+  if (signature !== undefined) {
+    const validation = signature.validateArgs(args);
+    if (!validation.ok) {
+      // isError: true 형태로 반환 — bridge에 도달하지 않음.
+      const errorText =
+        `call_sdk("${name}") 인자 시그니처 오류.\n` +
+        `받음: ${validation.received}\n` +
+        `기대: ${validation.expected}\n` +
+        `올바른 예시: ${signature.example}`;
+      return { ok: false, error: errorText };
+    }
+  } else {
+    // 미등록 메서드 — passthrough하지만 stderr에 경고 1회.
+    warnPassthrough(name);
+  }
+
   const expression = buildCallSdkExpression(name, args);
   const result = await connection.send('Runtime.evaluate', {
     expression,

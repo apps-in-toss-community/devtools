@@ -121,10 +121,8 @@ attach 성공 시 `pages` 배열에 페이지가 나타난다:
 attach 이후 에이전트가 직접 관측한다. 예시:
 
 ```
-# 기기 방향 확인 (Apps-in-Toss는 SDK-controlled, 자동 회전 없음)
-call_sdk
-  method: "setDeviceOrientation"
-  args: { orientation: "portrait" }
+# 기기 방향 전환 (Apps-in-Toss는 SDK-controlled, 자동 회전 없음)
+call_sdk("setDeviceOrientation", [{ type: "portrait" }])
 
 # safe-area 실측 (viewport preset 승급용)
 measure_safe_area
@@ -178,6 +176,30 @@ list_console_messages
 **원인**: 앱인토스 콘솔 REVIEW lock 상태 — 운영팀 처리 대기 중.
 
 **대응**: 운영팀 처리를 기다린다. **새 앱을 만들어 우회하지 않는다** — sdk-example dogfood는 miniAppId `31146` 단일 update 모드로만 운영한다. 배경: [`console-cli/docs/api/mini-apps.md`](https://github.com/apps-in-toss-community/console-cli/blob/main/docs/api/mini-apps.md).
+
+### 잘못된 SDK 시그니처로 토스 앱 crash
+
+**증상**: `call_sdk` 호출 직후 폰에서 토스 앱이 종료되거나, `list_pages` → `pages: []` (attach 소실).
+
+**원인**: SDK 메서드가 객체 인자를 기대하는데 원시 값(문자열/숫자)을 전달하면 native bridge(Swift/Kotlin)에서 `.type` 등의 프로퍼티를 `undefined`로 읽어 crash한다.
+
+흔한 실수 예:
+
+```
+# 잘못된 호출 — crash 위험
+call_sdk("setDeviceOrientation", ["landscape"])   // ❌ 문자열 전달
+call_sdk("setIosSwipeGestureEnabled", [true])     // ❌ boolean 전달
+call_sdk("setSecureScreen", [{ isSecure: true }]) // ❌ 잘못된 키
+
+# 올바른 호출
+call_sdk("setDeviceOrientation", [{ type: "landscape" }])      // ✓
+call_sdk("setIosSwipeGestureEnabled", [{ isEnabled: false }])  // ✓
+call_sdk("setSecureScreen", [{ enabled: true }])               // ✓
+```
+
+`call_sdk` 도구는 등록된 메서드(12개)에 대해 bridge 호출 전에 인자를 검증하고, 시그니처 불일치 시 즉시 `{ok:false, error}` 형태로 거부한다 ([#264](https://github.com/apps-in-toss-community/devtools/issues/264)). 미등록 메서드는 passthrough되므로, crash 후 `AIT.getSdkCallHistory`로 호출 이력을 확인해 인자 형태를 검토한다.
+
+**복구**: `build_attach_url`로 새 QR을 생성해 폰을 다시 attach한다.
 
 ### TOTP 코드 만료 (Layer C 실패)
 
