@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.41
+
+### Patch Changes
+
+- cb9e470: fix(mcp): call_sdk 인자 시그니처 검증 — 잘못된 인자로 인한 토스 앱 crash 예방 (#264)
+- 35537dd: fix(mcp): CDP sendCommand에 per-command timeout(기본 30s) + WebSocket 끊김 시 pending reject 추가 (#252)
+- 57dd111: feat(mcp): Runtime.exceptionThrown ring buffer + list_exceptions tool (#267)
+- e999b0c: fix: build_attach_url이 qrHttpServer 시작을 await하지 않아 첫 호출 race로 unicode QR fallback이 트리거되던 버그 수정.
+- 230d7f9: fix(mcp): page crash 감지 — Inspector.targetCrashed / Target.targetDestroyed / Target.detachedFromTarget CDP 이벤트 구독 + per-target lastSeenAt 추적 + opt-in heartbeat (AIT_CDP_HEARTBEAT_MS). list_pages 응답에 crashDetectedAt / crashWarning / lastSeenAt 필드 추가.
+- 53340f4: 단일 미니앱 attach 모델 도입 — last-attach wins. 새 page가 relay에 attach되면 이전 page 세션을 자동 교체(pending 명령 reject + `replaced` lifecycle 이벤트). `list_pages`는 배열을 유지하되 항상 0-1 항목이며 `singleAttachModel: true` 필드로 명시.
+
 ## 0.1.40
 
 ### Patch Changes
