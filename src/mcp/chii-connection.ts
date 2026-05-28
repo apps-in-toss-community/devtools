@@ -69,7 +69,16 @@ export interface ChiiCdpConnectionOptions {
   relayBaseUrl: string;
   /** Per-domain ring buffer size. */
   bufferSize?: number;
+  /**
+   * Default per-command timeout in milliseconds.
+   * Override via env `AIT_CDP_COMMAND_TIMEOUT_MS`.
+   * Defaults to 30 000 ms (30s).
+   */
+  commandTimeoutMs?: number;
 }
+
+/** Default per-command timeout if neither option nor env var is set. */
+const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
 
 /**
  * Production CDP connection. Polls the relay for the first attached target,
@@ -78,11 +87,13 @@ export interface ChiiCdpConnectionOptions {
 export class ChiiCdpConnection implements CdpConnection {
   private readonly relayBaseUrl: string;
   private readonly bufferSize: number;
+  private readonly commandTimeoutMs: number;
   private readonly emitter = new EventEmitter();
   private readonly buffers = new Map<CdpEventName, unknown[]>();
   private readonly targets = new Map<string, CdpTarget>();
 
   private ws: WebSocket | null = null;
+  private connectionState: 'idle' | 'connected' | 'disconnected' = 'idle';
   private nextCommandId = 1;
   /** In-flight enableDomains() promise — concurrent callers share it. */
   private enablingPromise: Promise<void> | null = null;
@@ -95,6 +106,13 @@ export class ChiiCdpConnection implements CdpConnection {
   constructor(options: ChiiCdpConnectionOptions) {
     this.relayBaseUrl = options.relayBaseUrl.replace(/\/$/, '');
     this.bufferSize = options.bufferSize ?? DEFAULT_BUFFER_SIZE;
+    const envMs = process.env.AIT_CDP_COMMAND_TIMEOUT_MS
+      ? Number(process.env.AIT_CDP_COMMAND_TIMEOUT_MS)
+      : undefined;
+    this.commandTimeoutMs =
+      (envMs !== undefined && Number.isFinite(envMs) && envMs > 0 ? envMs : undefined) ??
+      options.commandTimeoutMs ??
+      DEFAULT_COMMAND_TIMEOUT_MS;
     for (const event of PHASE_1_EVENTS) this.buffers.set(event, []);
     // EventEmitter caps listeners at 10 by default; the tool layer may add
     // several short-lived subscriptions, so lift the cap.
@@ -159,7 +177,10 @@ export class ChiiCdpConnection implements CdpConnection {
       ws.once('error', (err: Error) => reject(err));
     });
 
+    this.connectionState = 'connected';
     ws.on('message', (data: WebSocket.RawData) => this.handleMessage(data.toString()));
+    ws.on('close', () => this.handleDisconnect('relay WebSocket 연결이 끊겼습니다'));
+    ws.on('error', (err: Error) => this.handleDisconnect(`relay WebSocket 오류: ${err.message}`));
 
     this.sendFireAndForget('Runtime.enable');
     this.sendFireAndForget('Network.enable');
@@ -193,8 +214,24 @@ export class ChiiCdpConnection implements CdpConnection {
    * Issue an arbitrary request→response command over the relay and resolve with
    * its raw result. Both the typed CDP {@link send} and the AIT domain (Phase 3
    * `AIT.*` methods, forwarded over the same Chii channel) build on this.
+   *
+   * Rejects immediately if the connection is disconnected (fail-fast — no
+   * auto-reconnect). Caller should re-run `list_pages` or `enableDomains` to
+   * reattach.
+   *
+   * Times out after `commandTimeoutMs` (default 30s, env
+   * `AIT_CDP_COMMAND_TIMEOUT_MS`). On timeout the pending entry is cleaned up
+   * and the promise rejects with a descriptive Korean error.
    */
   sendCommand(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    // Fail-fast: connection already known to be dead — don't write into a dead socket.
+    if (this.connectionState === 'disconnected') {
+      return Promise.reject(
+        new Error(
+          `relay에 연결되어 있지 않습니다 (${method}). list_pages로 attach 상태를 확인하고 enableDomains()로 재연결하세요.`,
+        ),
+      );
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return Promise.reject(
         new Error('No mini-app page attached to the Chii relay yet. Call enableDomains() first.'),
@@ -202,10 +239,48 @@ export class ChiiCdpConnection implements CdpConnection {
     }
     const id = this.nextCommandId++;
     const ws = this.ws;
+    const timeoutMs = this.commandTimeoutMs;
     return new Promise<unknown>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const handle = setTimeout(() => {
+        this.pending.delete(id);
+        reject(
+          new Error(
+            `CDP 명령이 타임아웃됐습니다 (${method}, ${timeoutMs}ms). ` +
+              '폰 측 토스 앱이 백그라운드로 내려갔거나 미니앱이 unload됐을 수 있습니다. ' +
+              'list_pages로 attach 상태를 확인하세요.',
+          ),
+        );
+      }, timeoutMs);
+      this.pending.set(id, {
+        resolve: (v) => {
+          clearTimeout(handle);
+          resolve(v);
+        },
+        reject: (e) => {
+          clearTimeout(handle);
+          reject(e);
+        },
+      });
       ws.send(JSON.stringify({ id, method, params }));
     });
+  }
+
+  /**
+   * Called on WebSocket `close` or `error` after a successful connection.
+   * Rejects all pending commands and marks the connection as disconnected so
+   * subsequent `sendCommand` calls fail fast (no auto-reconnect).
+   */
+  private handleDisconnect(reason: string): void {
+    if (this.connectionState === 'disconnected') return; // already handled
+    this.connectionState = 'disconnected';
+    this.ws = null;
+    const err = new Error(
+      `${reason}. list_pages로 attach 상태를 확인하고 enableDomains()로 재연결하세요.`,
+    );
+    for (const waiter of this.pending.values()) {
+      waiter.reject(err);
+    }
+    this.pending.clear();
   }
 
   private handleMessage(raw: string): void {
@@ -246,11 +321,10 @@ export class ChiiCdpConnection implements CdpConnection {
 
   /** Close the relay client websocket and reject any in-flight commands. */
   close(): void {
-    this.ws?.close();
-    this.ws = null;
-    for (const waiter of this.pending.values()) {
-      waiter.reject(new Error('Chii relay connection closed.'));
-    }
-    this.pending.clear();
+    const ws = this.ws;
+    // handleDisconnect clears this.ws and pending; call it first so the 'close'
+    // event from ws.close() below is a no-op (already disconnected).
+    this.handleDisconnect('Chii relay connection closed');
+    ws?.close();
   }
 }
