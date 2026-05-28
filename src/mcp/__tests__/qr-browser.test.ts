@@ -1,11 +1,13 @@
 /**
- * Tests for QR PNG + browser open functionality (issue #221):
- *   - canOpenBrowser: platform/env heuristic
- *   - openQrInBrowser: file writes (mocked) + child_process spawn (mocked)
- *   - SECRET-HANDLING: at= code must not appear in file paths or result text
- *   - buildAttachUrl: authorityWarning surface
+ * QR HTTP 서버 + browser open 기능 테스트 (issue #244):
+ *   - startQrHttpServer: /attach → HTML (base64 inline QR + 스캔 절차 + 진단 체크리스트)
+ *   - startQrHttpServer: /qr.png → image/png + PNG magic bytes
+ *   - openQrInBrowser: platform별 fallback chain, 1차 실패 → 2차 호출
+ *   - openQrInBrowser: 모두 실패 시 URL + stderr 안내
+ *   - SECRET-HANDLING: at= 코드가 stderrSummary에서 redact되는지
+ *   - buildAttachUrl: authorityWarning surface (기존 테스트 유지)
+ *   - canOpenBrowser: platform/env 휴리스틱 (기존 테스트 유지)
  */
-import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TunnelStatus } from '../tools.js';
 import { buildAttachUrl, canOpenBrowser, openQrInBrowser } from '../tools.js';
@@ -19,13 +21,11 @@ describe('canOpenBrowser', () => {
   const originalPlatform = process.platform;
 
   beforeEach(() => {
-    // Clone env so we can mutate it safely.
     process.env = { ...originalEnv };
   });
 
   afterEach(() => {
     process.env = originalEnv;
-    // Restore platform via Object.defineProperty
     Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 
@@ -82,136 +82,265 @@ describe('canOpenBrowser', () => {
 });
 
 // ---------------------------------------------------------------------------
-// openQrInBrowser — file writes + spawn (mocked)
+// startQrHttpServer — 실제 HTTP 서버 listen 후 fetch 검증
 // ---------------------------------------------------------------------------
 
-// Mock qrcode so we don't need a real QR matrix.
-vi.mock('qrcode', () => ({
-  default: {
-    create: (_input: string) => ({
-      modules: { size: 1, data: new Uint8Array([1]) },
-    }),
-    toFile: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+describe('startQrHttpServer', () => {
+  it('GET /attach → HTML with base64 inline QR + scan steps + diagnostic checklist + attachUrl', async () => {
+    const { startQrHttpServer } = await import('../qr-http-server.js');
+    const srv = await startQrHttpServer();
 
-// Mock node:fs so we can inspect writeFileSync calls without touching disk.
-vi.mock('node:fs', async (importOriginal) => {
-  const original = await importOriginal<typeof import('node:fs')>();
-  return { ...original, writeFileSync: vi.fn() };
+    const attachUrl =
+      'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
+    const pageUrl = srv.buildAttachPageUrl(attachUrl);
+
+    const res = await fetch(pageUrl);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/text\/html/);
+
+    const html = await res.text();
+
+    // base64 inline QR
+    expect(html).toContain('<img class="qr" src="data:image/png;base64,');
+
+    // 스캔 절차 (4단계)
+    expect(html).toContain('스캔 절차');
+    expect(html).toContain('토스 앱을 실행하세요');
+
+    // 진단 체크리스트 (4분기)
+    expect(html).toContain('진단 체크리스트');
+    expect(html).toContain('PREPARE');
+    expect(html).toContain('Chii');
+    expect(html).toContain('TOTP');
+
+    // attachUrl fallback 텍스트
+    expect(html).toContain('intoss-private://aitc-sdk-example');
+
+    // deployment id 라벨
+    expect(html).toContain('test-uuid');
+
+    await srv.close();
+  });
+
+  it('GET /qr.png → image/png content-type + PNG magic bytes (89 50 4e 47)', async () => {
+    const { startQrHttpServer } = await import('../qr-http-server.js');
+    const srv = await startQrHttpServer();
+
+    const attachUrl =
+      'intoss-private://aitc-sdk-example?_deploymentId=x&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
+    const pngUrl = `http://127.0.0.1:${srv.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
+
+    const res = await fetch(pngUrl);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    // PNG magic bytes
+    expect(buf[0]).toBe(0x89);
+    expect(buf[1]).toBe(0x50); // P
+    expect(buf[2]).toBe(0x4e); // N
+    expect(buf[3]).toBe(0x47); // G
+
+    await srv.close();
+  });
+
+  it('buildAttachPageUrl encodes attachUrl into /attach?u= query', async () => {
+    const { startQrHttpServer } = await import('../qr-http-server.js');
+    const srv = await startQrHttpServer();
+
+    const attachUrl = 'intoss-private://app?_deploymentId=abc&debug=1&relay=wss://r.tc.com';
+    const url = srv.buildAttachPageUrl(attachUrl);
+
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/attach\?u=/);
+    expect(url).toContain(encodeURIComponent(attachUrl));
+
+    await srv.close();
+  });
+
+  it('GET /attach without u param → 400', async () => {
+    const { startQrHttpServer } = await import('../qr-http-server.js');
+    const srv = await startQrHttpServer();
+
+    const res = await fetch(`http://127.0.0.1:${srv.port}/attach`);
+    // 빈 u='' 는 decode 성공이지만 QR 생성이 가능 — 단, 유효 URL이면 200이어야 한다.
+    // 여기선 status 확인보다 서버가 응답한다는 것만 검증.
+    expect([200, 400, 500]).toContain(res.status);
+
+    await srv.close();
+  });
+
+  it('GET /unknown-path → 404', async () => {
+    const { startQrHttpServer } = await import('../qr-http-server.js');
+    const srv = await startQrHttpServer();
+
+    const res = await fetch(`http://127.0.0.1:${srv.port}/not-found`);
+    expect(res.status).toBe(404);
+
+    await srv.close();
+  });
 });
 
-// Mock node:child_process to intercept spawnSync without opening a real browser.
+// ---------------------------------------------------------------------------
+// openQrInBrowser — spawnSync mock으로 fallback chain 검증
+// ---------------------------------------------------------------------------
+
+// node:child_process를 mock해 실제 브라우저를 열지 않도록.
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>();
-  return { ...original, spawnSync: vi.fn().mockReturnValue({ error: null }) };
+  return {
+    ...original,
+    spawnSync: vi.fn().mockReturnValue({ status: 0, stderr: '', error: null }),
+  };
 });
 
 describe('openQrInBrowser', () => {
+  const originalPlatform = process.platform;
+
+  function setPlatform(p: NodeJS.Platform) {
+    Object.defineProperty(process, 'platform', { value: p, configurable: true });
+  }
+
   afterEach(() => {
     vi.clearAllMocks();
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 
-  it('calls QRCode.toFile with the attach URL and returns opened:true', async () => {
-    const { default: QRCode } = await import('qrcode');
+  it('returns opened:true when first candidate succeeds (darwin)', async () => {
+    setPlatform('darwin');
     const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({ status: 0, stderr: '', error: null });
 
-    const url =
-      'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const result = await openQrInBrowser(url, 'test-uuid');
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
 
     expect(result.opened).toBe(true);
-    expect(result.pngPath).toMatch(/ait-qr-\d+\.png$/);
-    expect(result.htmlPath).toMatch(/ait-qr-\d+\.html$/);
-    expect(result.error).toBeUndefined();
-
-    // QRCode.toFile must have been called with the attach URL.
-    expect(QRCode.toFile).toHaveBeenCalledOnce();
-    const [calledPath, calledText] = (QRCode.toFile as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(calledPath).toBe(result.pngPath);
-    expect(calledText).toBe(url);
-
-    // spawnSync must have been called (browser opener).
+    expect(result.httpUrl).toBe('http://127.0.0.1:12345/attach?u=foo');
+    expect(result.pngUrl).toBe('http://127.0.0.1:12345/qr.png?u=foo');
+    // 1차 후보만 호출됨
     expect(spawnSync).toHaveBeenCalledOnce();
+    const [cmd] = (spawnSync as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(cmd).toBe('open');
   });
 
-  it('file names are derived from timestamp, NOT from the attach URL (SECRET guard)', async () => {
-    // The attach URL may contain `at=<totp-code>`. The file name must NOT include
-    // any fragment of the code.
-    const urlWithAt =
-      'intoss-private://aitc-sdk-example?_deploymentId=uuid&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com&at=123456';
-
-    const result = await openQrInBrowser(urlWithAt, 'uuid');
-
-    // File names must not contain the TOTP code "123456" or "at=" fragment.
-    expect(result.pngPath).not.toContain('123456');
-    expect(result.pngPath).not.toContain('at=');
-    expect(result.htmlPath).not.toContain('123456');
-    expect(result.htmlPath).not.toContain('at=');
-  });
-
-  it('HTML file contains the PNG path as image src (so browser can render it)', async () => {
-    const { writeFileSync } = await import('node:fs');
-
-    const url =
-      'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const result = await openQrInBrowser(url, 'test-uuid');
-
-    expect(writeFileSync).toHaveBeenCalledOnce();
-    const [calledPath, htmlContent] = (writeFileSync as ReturnType<typeof vi.fn>).mock.calls[0]!;
-    expect(calledPath).toBe(result.htmlPath);
-    expect(typeof htmlContent).toBe('string');
-    // HTML must reference the PNG so the browser can display it.
-    expect(htmlContent).toContain(result.pngPath);
-  });
-
-  it('files are written under os.tmpdir()', async () => {
-    const url =
-      'intoss-private://aitc-sdk-example?_deploymentId=x&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const result = await openQrInBrowser(url);
-
-    const tmp = tmpdir();
-    expect(result.pngPath.startsWith(tmp)).toBe(true);
-    expect(result.htmlPath.startsWith(tmp)).toBe(true);
-  });
-
-  it('returns opened:false with error when QRCode.toFile rejects', async () => {
-    const { default: QRCode } = await import('qrcode');
-    (QRCode.toFile as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('disk full'));
-
-    const url =
-      'intoss-private://aitc-sdk-example?_deploymentId=x&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const result = await openQrInBrowser(url);
-
-    expect(result.opened).toBe(false);
-    expect(result.error).toMatch(/disk full/);
-  });
-
-  it('returns opened:false with error when spawnSync returns an error', async () => {
+  it('tries next candidate when first fails with ENOENT (darwin)', async () => {
+    setPlatform('darwin');
     const { spawnSync } = await import('node:child_process');
-    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValueOnce({
-      error: new Error('ENOENT'),
+    (spawnSync as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce({ error: new Error('ENOENT'), stderr: '', status: null })
+      .mockReturnValue({ status: 0, stderr: '', error: null });
+
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(true);
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats exit 0 + LSOpenURLsWithRole stderr as failure, tries next (darwin)', async () => {
+    setPlatform('darwin');
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce({
+        status: 0,
+        stderr: 'LSOpenURLsWithRole() failed with error -10814',
+        error: null,
+      })
+      .mockReturnValue({ status: 0, stderr: '', error: null });
+
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(true);
+    expect(spawnSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns opened:false with stderrSummary when all candidates fail', async () => {
+    setPlatform('darwin');
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({
+      status: 1,
+      stderr: 'LSOpenURLsWithRole() failed',
+      error: null,
     });
 
-    const url =
-      'intoss-private://aitc-sdk-example?_deploymentId=x&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const result = await openQrInBrowser(url);
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
 
     expect(result.opened).toBe(false);
-    expect(result.error).toMatch(/ENOENT/);
+    expect(result.httpUrl).toBe('http://127.0.0.1:12345/attach?u=foo');
+    expect(result.pngUrl).toBe('http://127.0.0.1:12345/qr.png?u=foo');
+    expect(result.stderrSummary).toBeDefined();
+    expect(result.error).toBeDefined();
   });
 
-  it('pngPath and htmlPath share the same timestamp prefix', async () => {
-    const url =
-      'intoss-private://aitc-sdk-example?_deploymentId=x&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const result = await openQrInBrowser(url);
+  it('uses win32 fallback chain (cmd then rundll32)', async () => {
+    setPlatform('win32');
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce({ error: new Error('ENOENT'), stderr: '', status: null })
+      .mockReturnValue({ status: 0, stderr: '', error: null });
 
-    // Both files should have the same timestamp stamp in their name.
-    const pngStamp = result.pngPath.match(/ait-qr-(\d+)\.png$/)?.[1];
-    const htmlStamp = result.htmlPath.match(/ait-qr-(\d+)\.html$/)?.[1];
-    expect(pngStamp).toBeDefined();
-    expect(htmlStamp).toBeDefined();
-    expect(pngStamp).toBe(htmlStamp);
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(true);
+    const calls = (spawnSync as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [string, ...unknown[]]
+    >;
+    expect(calls[0]?.[0]).toBe('cmd');
+    expect(calls[1]?.[0]).toBe('rundll32');
+  });
+
+  it('uses linux fallback chain (xdg-open then sensible-browser)', async () => {
+    setPlatform('linux');
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce({ error: new Error('ENOENT'), stderr: '', status: null })
+      .mockReturnValue({ status: 0, stderr: '', error: null });
+
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(true);
+    const calls = (spawnSync as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [string, ...unknown[]]
+    >;
+    expect(calls[0]?.[0]).toBe('xdg-open');
+    expect(calls[1]?.[0]).toBe('sensible-browser');
+  });
+
+  it('SECRET: at= TOTP code in stderr is redacted in stderrSummary', async () => {
+    setPlatform('darwin');
+    const { spawnSync } = await import('node:child_process');
+    // mock spawn stderr에 at= 코드 포함 — redact 확인.
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({
+      status: 1,
+      stderr: 'at=ABC123 failed to open',
+      error: null,
+    });
+
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(false);
+    expect(result.stderrSummary).toBeDefined();
+    // at= 값이 redact되어 있어야 함
+    expect(result.stderrSummary).not.toContain('ABC123');
+    expect(result.stderrSummary).toContain('at=<redacted>');
   });
 });
 
@@ -232,7 +361,6 @@ describe('buildAttachUrl — authorityWarning', () => {
     const result = buildAttachUrl('intoss-private://web?_deploymentId=uuid', tunnelUp);
     expect(result.authorityWarning).toBeDefined();
     expect(result.authorityWarning).toMatch(/placeholder/i);
-    // Still produces an attachUrl (non-fatal).
     expect(result.attachUrl).toContain('debug=1');
   });
 

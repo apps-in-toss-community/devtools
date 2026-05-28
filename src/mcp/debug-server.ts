@@ -52,6 +52,7 @@ import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
+import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
@@ -96,6 +97,11 @@ export interface DebugServerDeps {
    * fake timers (which conflict with MCP SDK's own timeouts).
    */
   waitForAttachTimeoutMs?: number;
+  /**
+   * 로컬 QR HTTP 서버 — `build_attach_url` tool이 브라우저로 열 HTTP URL을 제공.
+   * 없으면 text QR fallback으로만 동작 (GUI 없는 환경 호환).
+   */
+  qrHttpServer?: QrHttpServer;
 }
 
 /**
@@ -111,7 +117,13 @@ export interface DebugServerDeps {
  * naturally via `enableDomains`). The tier only controls visibility.
  */
 export function createDebugServer(deps: DebugServerDeps): Server {
-  const { connection, aitSource, getTunnelStatus, waitForAttachTimeoutMs = 90_000 } = deps;
+  const {
+    connection,
+    aitSource,
+    getTunnelStatus,
+    waitForAttachTimeoutMs = 90_000,
+    qrHttpServer,
+  } = deps;
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
@@ -186,33 +198,21 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         const header =
           'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
 
-        // Try to open QR in browser when requested and a GUI is likely available.
-        if (openInBrowser && canOpenBrowser()) {
-          // Extract deploymentId from the attachUrl for the HTML label.
-          // SECRET-HANDLING: we use only the deploymentId param (not the at= code).
-          let deploymentIdLabel: string | undefined;
-          try {
-            const dpMatch = attachUrl.match(/[?&]_deploymentId=([^&]+)/);
-            if (dpMatch?.[1]) {
-              deploymentIdLabel = decodeURIComponent(dpMatch[1]).slice(0, 36);
-            }
-          } catch {
-            // Best-effort; ignore parse errors.
-          }
+        // Try to open QR in browser when requested, a GUI is available, and the HTTP server is up.
+        if (openInBrowser && canOpenBrowser() && qrHttpServer) {
+          const httpUrl = qrHttpServer.buildAttachPageUrl(attachUrl);
+          const pngUrl = `http://127.0.0.1:${qrHttpServer.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
 
-          const browserResult = await openQrInBrowser(attachUrl, deploymentIdLabel);
+          const browserResult = await openQrInBrowser(httpUrl, pngUrl);
 
           if (browserResult.opened) {
-            // Opened successfully: return a short result (token-saving).
-            // SECRET-HANDLING: do NOT include attachUrl in the result text.
+            // Opened successfully — HTTP URL을 사용자에게 명시.
+            // SECRET-HANDLING: attachUrl은 httpUrl query string 안에 있고, tool result에는 httpUrl만 노출.
             const shortText =
               `${warningPrefix}${header}\n` +
               `${JSON.stringify({ relayUrl }, null, 2)}\n\n` +
-              `ブラウザにQRを表示しました。\n` +
-              `QR画像: ${browserResult.pngPath}\n` +
-              `HTMLページ: ${browserResult.htmlPath}\n\n` +
-              `브라우저에 QR을 띄웠습니다. 스마트폰 카메라로 스캔하세요.\n` +
-              `PNG: ${browserResult.pngPath}`;
+              `브라우저에서 QR을 열었습니다. 폰 카메라로 스캔하세요.\n` +
+              `URL: ${browserResult.httpUrl}`;
 
             if (!waitForAttach) {
               return { content: [{ type: 'text' as const, text: shortText }] };
@@ -254,8 +254,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             };
           }
 
-          // Browser open failed — fall through to text QR with error note.
-          const fallbackNote = `(브라우저 열기 실패: ${browserResult.error ?? 'unknown'} — 텍스트 QR로 대체)\n`;
+          // Browser open failed — URL + stderr 안내 후 text QR fallback.
+          const stderrNote = browserResult.stderrSummary
+            ? `\nstderr: ${browserResult.stderrSummary}`
+            : '';
+          const fallbackNote =
+            `브라우저 자동 열기에 실패했습니다. 다음 URL을 직접 브라우저에서 여세요:\n` +
+            `${browserResult.httpUrl}\n` +
+            `또는 PNG로 받기: ${browserResult.pngUrl}` +
+            stderrNote +
+            '\n\n';
           const qr = await renderQr(attachUrl);
           const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
 
@@ -299,7 +307,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
-        // open_in_browser=false or no GUI available: text QR path (original behaviour).
+        // open_in_browser=false or no GUI available or no HTTP server: text QR fallback.
         const qr = await renderQr(attachUrl);
         const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
 
@@ -591,10 +599,29 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const connection = new ChiiCdpConnection({ relayBaseUrl: relay.baseUrl });
   // AIT.* methods ride the same Chii channel as CDP commands.
   const aitSource = new ChiiAitSource(connection);
+
+  // 로컬 QR HTTP 서버를 cloudflared와 동일하게 background 시작.
+  // GUI 없는 환경에서는 startQrHttpServer가 실패해도 text QR fallback으로 동작한다.
+  let qrServer: QrHttpServer | undefined;
+  void startQrHttpServer().then(
+    (s) => {
+      qrServer = s;
+    },
+    (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      process.stderr.write(
+        `[ait-debug] QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}\n`,
+      );
+    },
+  );
+
   const server = createDebugServer({
     connection,
     aitSource,
     getTunnelStatus: () => tunnelStatus,
+    get qrHttpServer() {
+      return qrServer;
+    },
   });
 
   const transport = new StdioServerTransport();
@@ -619,10 +646,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     connection.close();
     // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
     tunnel?.stop();
-    // relay.close() and server.close() are async; fine for signal handlers but
-    // skipped from the synchronous 'exit' handler below.
+    // relay.close(), server.close(), qrServer.close() are async — fine for signal handlers.
     void relay.close();
     void server.close();
+    void qrServer?.close();
   };
 
   // Graceful termination signals.

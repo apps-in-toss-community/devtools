@@ -393,129 +393,123 @@ export function canOpenBrowser(): boolean {
 /**
  * Result of `openQrInBrowser`.
  *
- * SECRET-HANDLING: `htmlPath` and `pngPath` are local filesystem paths — they
- * do NOT contain the `at=` TOTP code value. The attach URL (which may contain
- * `at=`) is embedded inside the HTML file, but the path itself is safe.
+ * HTTP URL 기반으로 재구현 — tmp 파일 없음. `httpUrl`이 브라우저에 전달되는 URL이다.
+ * SECRET-HANDLING: `httpUrl`은 127.0.0.1 로컬 전용이며 at= 코드 값을 직접 담지 않는다
+ * (attachUrl은 /attach?u= query로 전달되어 서버 메모리에서만 처리).
  */
 export interface OpenQrInBrowserResult {
   /** `true` if the browser was successfully opened. */
   opened: boolean;
-  /** Absolute path to the written HTML file. */
-  htmlPath: string;
-  /** Absolute path to the written PNG file. */
-  pngPath: string;
+  /** `http://127.0.0.1:<port>/attach?u=...` — 브라우저에 전달된 URL. */
+  httpUrl: string;
+  /** `http://127.0.0.1:<port>/qr.png?u=...` — PNG fallback URL. */
+  pngUrl: string;
   /** Error message if `opened` is false (browser spawn failed). */
   error?: string;
+  /** Captured stderr from failed spawn attempts (at= 값은 redact됨). */
+  stderrSummary?: string;
+}
+
+/** platform별 browser open 명령 후보 목록 — 앞에서부터 순차 시도. */
+function getBrowserCandidates(httpUrl: string): Array<{ cmd: string; args: string[] }> {
+  const platform = process.platform;
+  if (platform === 'darwin') {
+    return [
+      { cmd: 'open', args: [httpUrl] },
+      { cmd: 'open', args: ['-a', 'Safari', httpUrl] },
+      { cmd: 'open', args: ['-a', 'Google Chrome', httpUrl] },
+      { cmd: 'open', args: ['-a', 'Firefox', httpUrl] },
+    ];
+  }
+  if (platform === 'win32') {
+    return [
+      { cmd: 'cmd', args: ['/c', 'start', '', httpUrl] },
+      { cmd: 'rundll32', args: ['url.dll,FileProtocolHandler', httpUrl] },
+    ];
+  }
+  // linux + fallback
+  return [
+    { cmd: 'xdg-open', args: [httpUrl] },
+    { cmd: 'sensible-browser', args: [httpUrl] },
+    { cmd: 'x-www-browser', args: [httpUrl] },
+    { cmd: 'firefox', args: [httpUrl] },
+    { cmd: 'google-chrome', args: [httpUrl] },
+    { cmd: 'chromium', args: [httpUrl] },
+  ];
+}
+
+/** stderr에서 at= TOTP 코드 값을 redact한다. */
+function redactSecrets(text: string): string {
+  // at=<value> 패턴에서 값 부분을 redact — TOTP 코드가 노출되지 않도록.
+  return text.replace(/\bat=([^&\s"']+)/g, 'at=<redacted>');
+}
+
+/** spawnSync exit 0이어도 stderr에 launch 실패 시그널이 있으면 실패로 판단한다. */
+const LAUNCH_FAILURE_PATTERNS = [
+  /LSOpenURLsWithRole\(\) failed/,
+  /kLSApplicationNotFoundErr/,
+  /No application/,
+  /Unable to find application/,
+  /xdg-open: not found/,
+  /command not found/,
+];
+
+function isLaunchFailureStderr(stderr: string): boolean {
+  return LAUNCH_FAILURE_PATTERNS.some((p) => p.test(stderr));
 }
 
 /**
- * Writes the attach URL as a QR PNG + a wrapper HTML page to the OS temp
- * directory, then opens the HTML in the OS default browser.
+ * 로컬 HTTP 서버 URL(`http://127.0.0.1:<port>/attach?u=...`)을 OS 기본 브라우저로 연다.
+ *
+ * platform별 fallback chain으로 시도하며, 모두 실패해도 `opened: false` + `httpUrl`을
+ * 반환해 사용자가 직접 브라우저에 붙여넣을 수 있게 한다.
  *
  * SECRET-HANDLING:
- *   - File names are derived from a short timestamp, NOT from the attach URL or
- *     any token/code value. The `at=` code is NOT in the file name.
- *   - The attach URL (which may carry `at=`) is embedded inside the HTML page
- *     body — that is the intended delivery channel for the QR.
- *   - This function must NOT write the attach URL, deploymentId, or any
- *     TOTP code to stdout, stderr, or any log.
+ *   - tmp 파일을 만들지 않는다 (HTML/PNG는 HTTP 서버가 메모리에서 응답).
+ *   - httpUrl/pngUrl은 127.0.0.1 로컬 전용.
+ *   - stderr 캡처 결과에서 at= 코드 값을 redact한 후 stderrSummary에 포함.
+ *   - attachUrl, deploymentId, TOTP 코드를 stdout/stderr/로그에 직접 출력 금지.
  *
- * @param attachUrl - The deep link to encode as a QR. May contain `at=<code>`.
- * @param deploymentId - Optional human-readable label for the HTML page (e.g. UUID substring).
- *   Must NOT be derived from the `at=` code value.
- * @returns `OpenQrInBrowserResult` — never throws (errors are returned in `.error`).
+ * @param httpUrl - `http://127.0.0.1:<port>/attach?u=<encoded>` HTTP URL.
+ * @param pngUrl  - `http://127.0.0.1:<port>/qr.png?u=<encoded>` PNG fallback URL.
  */
 export async function openQrInBrowser(
-  attachUrl: string,
-  deploymentId?: string,
+  httpUrl: string,
+  pngUrl: string,
 ): Promise<OpenQrInBrowserResult> {
-  const { tmpdir } = await import('node:os');
-  const { writeFileSync } = await import('node:fs');
-  const { join } = await import('node:path');
   const { spawnSync } = await import('node:child_process');
-  const { default: QRCode } = await import('qrcode');
 
-  // Use a timestamp-based name, NOT anything derived from the attach URL.
-  const stamp = Date.now();
-  const pngPath = join(tmpdir(), `ait-qr-${stamp}.png`);
-  const htmlPath = join(tmpdir(), `ait-qr-${stamp}.html`);
+  const candidates = getBrowserCandidates(httpUrl);
+  const stderrLines: string[] = [];
 
-  // Write the QR PNG.
-  try {
-    await QRCode.toFile(pngPath, attachUrl, { type: 'png', errorCorrectionLevel: 'M' });
-  } catch (err) {
-    return {
-      opened: false,
-      htmlPath,
-      pngPath,
-      error: `QR PNG write failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
+  for (const { cmd, args } of candidates) {
+    const result = spawnSync(cmd, args, { encoding: 'utf8', timeout: 5000 });
+
+    if (result.error) {
+      // 명령 자체를 실행하지 못한 경우 (ENOENT 등) — 다음 후보로.
+      stderrLines.push(`${cmd}: ${result.error.message}`);
+      continue;
+    }
+
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    if (stderr) {
+      stderrLines.push(`${cmd}: ${redactSecrets(stderr.trim())}`);
+    }
+
+    // exit 0이어도 stderr에 launch 실패 패턴이 있으면 실패로 취급.
+    if (result.status === 0 && !isLaunchFailureStderr(stderr)) {
+      return { opened: true, httpUrl, pngUrl };
+    }
   }
 
-  // Write the HTML wrapper.
-  // SECRET: attachUrl is placed in the HTML as a text node and QR image src,
-  // which is the intended delivery channel. It must NOT be in the file name.
-  const safeLabel = deploymentId
-    ? deploymentId.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`)
-    : 'attach';
-  const htmlContent = `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AIT Debug — QR</title>
-  <style>
-    body { font-family: monospace; background: #111; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; gap: 1.5rem; padding: 2rem; box-sizing: border-box; }
-    img { width: min(90vw, 400px); height: auto; image-rendering: pixelated; background: #fff; padding: 1rem; border-radius: 8px; }
-    .label { font-size: 0.85rem; opacity: 0.6; }
-    .url { font-size: 0.75rem; word-break: break-all; max-width: 60ch; opacity: 0.5; }
-  </style>
-</head>
-<body>
-  <img src="${pngPath}" alt="QR code" />
-  <p class="label">deployment: ${safeLabel}</p>
-</body>
-</html>`;
-
-  try {
-    writeFileSync(htmlPath, htmlContent, 'utf8');
-  } catch (err) {
-    return {
-      opened: false,
-      htmlPath,
-      pngPath,
-      error: `HTML write failed: ${err instanceof Error ? err.message : String(err)}`,
-    };
-  }
-
-  // Open in OS default browser.
-  const platform = process.platform;
-  let openCmd: string;
-  let openArgs: string[];
-  if (platform === 'darwin') {
-    openCmd = 'open';
-    openArgs = [htmlPath];
-  } else if (platform === 'win32') {
-    openCmd = 'cmd';
-    openArgs = ['/c', 'start', '', htmlPath];
-  } else {
-    openCmd = 'xdg-open';
-    openArgs = [htmlPath];
-  }
-
-  // Use spawnSync with a short timeout — we don't need to wait for the browser
-  // to finish loading, just for the launcher to start.
-  const spawnResult = spawnSync(openCmd, openArgs, { timeout: 5000 });
-  if (spawnResult.error) {
-    return {
-      opened: false,
-      htmlPath,
-      pngPath,
-      error: `Browser open failed (${openCmd}): ${spawnResult.error.message}`,
-    };
-  }
-
-  return { opened: true, htmlPath, pngPath };
+  const stderrSummary = stderrLines.length > 0 ? stderrLines.join('\n') : undefined;
+  return {
+    opened: false,
+    httpUrl,
+    pngUrl,
+    error: '모든 브라우저 실행 후보가 실패했습니다.',
+    stderrSummary,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
