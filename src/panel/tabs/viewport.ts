@@ -2,7 +2,6 @@ import { t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import type {
   AitNavBarType,
-  LandscapeSide,
   SafeAreaProvenance,
   ViewportOrientation,
   ViewportPresetId,
@@ -83,18 +82,6 @@ export function renderViewportTab(): HTMLElement {
     aitState.patch('viewport', {
       orientation: orientationSelect.value as ViewportOrientation,
     });
-  });
-
-  // --- Landscape side (only meaningful when landscape) ---
-  const landscapeSideSelect = h('select', { className: 'ait-select' });
-  if (disabled) landscapeSideSelect.disabled = true;
-  for (const opt of ['left', 'right'] as LandscapeSide[]) {
-    const option = h('option', { value: opt }, opt);
-    if (opt === vp.landscapeSide) option.selected = true;
-    landscapeSideSelect.appendChild(option);
-  }
-  landscapeSideSelect.addEventListener('change', () => {
-    aitState.patch('viewport', { landscapeSide: landscapeSideSelect.value as LandscapeSide });
   });
 
   // --- Custom width/height inputs (custom 모드에서만 활성화) ---
@@ -201,13 +188,7 @@ export function renderViewportTab(): HTMLElement {
     );
 
     if (preset) {
-      const insets = computeSafeAreaInsets(
-        preset,
-        landscape,
-        vp.landscapeSide,
-        vp.aitNavBar,
-        vp.aitNavBarType,
-      );
+      const insets = computeSafeAreaInsets(preset, landscape, vp.aitNavBar, vp.aitNavBarType);
       const safeAreaValueEl = h(
         'span',
         { className: 'ait-status-value' },
@@ -262,21 +243,9 @@ export function renderViewportTab(): HTMLElement {
     ),
   );
 
-  // Landscape side row only shown when effective orientation is landscape and
-  // the device has a notch (otherwise the value has no visible effect).
-  if (effectiveOrientation(vp) === 'landscape' && vp.preset !== 'none' && vp.preset !== 'custom') {
-    const notch = getPreset(vp.preset).notch;
-    if (notch === 'notch' || notch === 'dynamic-island') {
-      deviceSection.appendChild(
-        h(
-          'div',
-          { className: 'ait-row' },
-          h('label', {}, t('viewport.row.notchSide')),
-          landscapeSideSelect,
-        ),
-      );
-    }
-  }
+  // Landscape + notch 기기: iOS landscape에서 CSS env()와 SDK SafeAreaInsets 모두
+  // left=right=notchInset(양쪽 대칭)을 반환하므로 side select가 더 이상 필요 없다.
+  // (2026-05-28 iPhone 15 Pro relay 실측 #198/#232)
 
   container.append(
     deviceSection,

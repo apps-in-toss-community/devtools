@@ -304,7 +304,6 @@ const DEFAULT_STATE: AitDevtoolsState = {
     preset: 'none',
     orientation: 'auto',
     appOrientation: null,
-    landscapeSide: 'left',
     customWidth: 402,
     customHeight: 874,
     frame: false,
