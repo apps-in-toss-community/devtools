@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.35
+
+### Patch Changes
+
+- 998e395: build_attach_url: tool result가 이미 사용자에게 보이므로 QR 재출력 지시 제거(토큰 절감)
+- bb8962d: npx 콜드 install 시 ajv 트리 누락으로 인한 MCP server 시작 실패 fix — `ajv@^8.17.1`을 본인 dependency로 명시
+- bee1c8e: build_attach_url: QR PNG + 브라우저 열기(open_in_browser), scheme host authority 검증 추가
+- 2794f74: safe-area provenance 패널 뱃지 + catalog 정정 + 측정 절차 문서화 (#198)
+
 ## 0.1.34
 
 ### Patch Changes
