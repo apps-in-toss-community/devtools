@@ -85,6 +85,31 @@ import {
   startQuickTunnel,
 } from './tunnel.js';
 
+/**
+ * Parses `_deploymentId` from the query string of a scheme URL.
+ *
+ * Returns `null` when the param is absent or empty — callers treat that as
+ * "no deploymentId filter; match on presence only" and fall back to the
+ * original `attachedPages.length > 0` condition.
+ *
+ * SECRET-HANDLING: deploymentId is a public identifier and may appear in
+ * debug output. Never confuse it with TOTP secrets or relay tunnel URLs.
+ */
+export function extractDeploymentId(schemeUrl: string): string | null {
+  try {
+    // scheme URLs like `intoss-private://host?_deploymentId=xxx` are not
+    // parseable by `new URL()` in all environments, so we extract the query
+    // string manually.
+    const qIndex = schemeUrl.indexOf('?');
+    if (qIndex === -1) return null;
+    const params = new URLSearchParams(schemeUrl.slice(qIndex + 1));
+    const id = params.get('_deploymentId');
+    return id && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Live infra the connection reads tunnel status from. */
 export interface DebugServerDeps {
   connection: CdpConnection;
@@ -187,6 +212,41 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       // open_in_browser defaults to true when not explicitly set.
       const openInBrowser = request.params.arguments?.open_in_browser !== false;
 
+      // Parse _deploymentId from scheme_url to filter stale attached pages.
+      // null → "no filter; match on presence only" (original behaviour preserved).
+      const deploymentId = extractDeploymentId(schemeUrl);
+      if (!deploymentId) {
+        process.stderr.write(
+          '[ait-debug] build_attach_url: no _deploymentId in scheme_url; matching on presence only\n',
+        );
+      }
+
+      /** Returns true when the page list satisfies the attach condition. */
+      const isMatchingPage = (pages: ReturnType<CdpConnection['listTargets']>): boolean => {
+        if (pages.length === 0) return false;
+        if (deploymentId === null) return true;
+        return pages.some((p) => p.url.includes(deploymentId));
+      };
+
+      /** Builds a timeout error message with diagnostic context. */
+      const buildTimeoutError = (
+        baseText: string,
+        timeoutSec: number,
+        observed: ReturnType<CdpConnection['listTargets']>,
+      ): string => {
+        const observedUrls = observed
+          .slice(0, 3)
+          .map((p) => p.url.slice(0, 80))
+          .join(', ');
+        const observedNote =
+          observed.length > 0 ? ` — previously attached pages: [${observedUrls}]` : '';
+        const deploymentNote = deploymentId ? ` matching deploymentId=${deploymentId}` : '';
+        return (
+          `${baseText}\n\nNo page${deploymentNote} attached within ${timeoutSec}s${observedNote} — ` +
+          'call list_pages to retry.'
+        );
+      };
+
       try {
         const { attachUrl, relayUrl, authorityWarning } = buildAttachUrl(
           schemeUrl,
@@ -226,18 +286,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
             while (Date.now() < deadline) {
               attachedPages = connection.listTargets();
-              if (attachedPages.length > 0) break;
+              if (isMatchingPage(attachedPages)) break;
               await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
             }
 
-            if (attachedPages.length === 0) {
+            if (!isMatchingPage(attachedPages)) {
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text:
-                      `${shortText}\n\nNo page attached within ${TIMEOUT_MS / 1000}s — ` +
-                      'call list_pages to retry.',
+                    text: buildTimeoutError(shortText, TIMEOUT_MS / 1000, attachedPages),
                   },
                 ],
                 isError: true,
@@ -279,18 +337,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
           while (Date.now() < deadline2) {
             attachedPagesFb = connection.listTargets();
-            if (attachedPagesFb.length > 0) break;
+            if (isMatchingPage(attachedPagesFb)) break;
             await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS_FB));
           }
 
-          if (attachedPagesFb.length === 0) {
+          if (!isMatchingPage(attachedPagesFb)) {
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text:
-                    `${baseText}\n\nNo page attached within ${TIMEOUT_MS_FB / 1000}s — ` +
-                    'call list_pages to retry.',
+                  text: buildTimeoutError(baseText, TIMEOUT_MS_FB / 1000, attachedPagesFb),
                 },
               ],
               isError: true,
@@ -318,27 +374,28 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
-        // wait_for_attach=true: poll listTargets until a page attaches or timeout.
+        // wait_for_attach=true: poll listTargets until a matching page attaches or timeout.
         // enableDomains is NOT called here — listTargets is a buffered target list
         // read and does not require domain negotiation.
+        // The deploymentId filter (parsed above) ensures we don't return a stale
+        // page from a previous session — the break fires only when an attached page's
+        // URL contains the expected deploymentId.
         const POLL_INTERVAL_MS = 1000;
         const TIMEOUT_MS = waitForAttachTimeoutMs;
         const deadline = Date.now() + TIMEOUT_MS;
         let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
         while (Date.now() < deadline) {
           attachedPages = connection.listTargets();
-          if (attachedPages.length > 0) break;
+          if (isMatchingPage(attachedPages)) break;
           await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
         }
 
-        if (attachedPages.length === 0) {
+        if (!isMatchingPage(attachedPages)) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text:
-                  `${baseText}\n\nNo page attached within ${TIMEOUT_MS / 1000}s — ` +
-                  'call list_pages to retry.',
+                text: buildTimeoutError(baseText, TIMEOUT_MS / 1000, attachedPages),
               },
             ],
             isError: true,
