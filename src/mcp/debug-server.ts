@@ -50,6 +50,7 @@ import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
+import { getEnvironment, getEnvironmentReason, type McpEnvironment } from './environment.js';
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
@@ -60,12 +61,15 @@ import {
   canOpenBrowser,
   DEBUG_TOOL_DEFINITIONS,
   evaluate,
+  filterToolsByEnvironment,
   getDomDocument,
   getMockState,
   getOperationalEnvironment,
   getSdkCallHistory,
+  getToolAvailability,
   isAitToolName,
   isDebugToolName,
+  isToolAvailableIn,
   listConsoleMessages,
   listExceptions,
   listNetworkRequests,
@@ -128,6 +132,18 @@ export interface DebugServerDeps {
    * 없으면 text QR fallback으로만 동작 (GUI 없는 환경 호환).
    */
   qrHttpServer?: QrHttpServer;
+  /**
+   * Resolves the current MCP environment (`mock` | `relay`) per RFC #277.
+   * Used by `tools/list` to filter Tier A/B tools and by Tier C tools (e.g.
+   * `measure_safe_area`) to label the `source` provenance field.
+   *
+   * Optional — defaults to a function that asks `getEnvironment(input)` with
+   * the live connection. Tests inject a fake to pin the env without touching
+   * `setEnvironmentOverride` (which is process-global).
+   */
+  getEnvironment?: () => McpEnvironment;
+  /** Resolves the reason for the current env decision (for logs). */
+  getEnvironmentReason?: () => string;
 }
 
 /**
@@ -149,7 +165,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     getTunnelStatus,
     waitForAttachTimeoutMs = 90_000,
     qrHttpServer,
+    getEnvironment: getEnvDep,
+    getEnvironmentReason: getEnvReasonDep,
   } = deps;
+
+  // Env SSoT — production wires the real `getEnvironment` with the connection;
+  // tests inject fakes. Lazy so each request reflects the live connection.
+  const resolveEnvironment: () => McpEnvironment =
+    getEnvDep ?? (() => getEnvironment({ connection }));
+  const resolveEnvironmentReason: () => string =
+    getEnvReasonDep ?? (() => getEnvironmentReason({ connection }));
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
@@ -159,12 +184,15 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, () => {
+    const env = resolveEnvironment();
     const attached = connection.listTargets().length > 0;
+    // Tier A/B filter first (env), then bootstrap tier (attach state).
+    const envFiltered = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, env);
     const tools = attached
-      ? DEBUG_TOOL_DEFINITIONS.map((tool) => ({ ...tool }))
-      : DEBUG_TOOL_DEFINITIONS.filter((tool) => BOOTSTRAP_TOOL_NAMES.has(tool.name)).map(
-          (tool) => ({ ...tool }),
-        );
+      ? envFiltered.map((tool) => ({ ...tool }))
+      : envFiltered
+          .filter((tool) => BOOTSTRAP_TOOL_NAMES.has(tool.name))
+          .map((tool) => ({ ...tool }));
     return { tools };
   });
 
@@ -173,6 +201,25 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     if (!isDebugToolName(name)) {
       return {
         content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+        isError: true,
+      };
+    }
+
+    // Tier A/B env-mismatch guard (RFC #277). Tier C tools pass through.
+    // We return a tool-result error (not an MCP protocol error) so the client
+    // sees a structured isError + reason text rather than a thrown exception —
+    // the MCP SDK still surfaces this as an error to the agent, but with the
+    // explanatory `data.reason` payload preserved as text.
+    const env = resolveEnvironment();
+    if (!isToolAvailableIn(name, env)) {
+      const requiredEnv = getToolAvailability(name);
+      const reason =
+        `tool ${name} is available only in ${requiredEnv}. ` +
+        `Current environment is ${env} (${resolveEnvironmentReason()}).`;
+      // Log to stderr (no secrets — only stable env strings + tool name).
+      process.stderr.write(`[ait-debug] tier-filter rejected ${name}: ${reason}\n`);
+      return {
+        content: [{ type: 'text' as const, text: reason }],
         isError: true,
       };
     }
@@ -461,7 +508,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
         case 'measure_safe_area':
-          return jsonResult(await measureSafeArea(connection));
+          // Pass env to attach `source: 'mock' | 'relay'` to the result (Tier C
+          // parity per RFC #277 — the same Runtime.evaluate probe runs in both
+          // envs; only the provenance label differs).
+          return jsonResult(await measureSafeArea(connection, resolveEnvironment()));
         case 'evaluate': {
           const expression = request.params.arguments?.expression;
           if (typeof expression !== 'string' || expression === '') {

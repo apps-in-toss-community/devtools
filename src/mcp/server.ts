@@ -44,9 +44,16 @@ import {
   getOperationalEnvironment,
   getSdkCallHistory,
   isAitToolName,
+  type ToolAvailability,
 } from './tools.js';
 
-/** Tool descriptors served by the dev-mode server. */
+/**
+ * Tool descriptors served by the dev-mode server.
+ *
+ * All dev-mode tools are Tier C (both envs) per RFC #277 — the dev-mode server
+ * itself is the mock-side embodiment of those Tier C tools. `availableIn` is
+ * declared so the surface stays consistent with the debug-mode registry.
+ */
 const DEV_TOOL_DEFINITIONS = [
   {
     name: 'AIT.getMockState',
@@ -56,6 +63,7 @@ const DEV_TOOL_DEFINITIONS = [
       'Requires the Vite dev server running with the @ait-co/devtools unplugin option `mcp: true`. ' +
       'Same tool as in debug mode, where the in-app side reports it over the AIT domain.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'AIT.getOperationalEnvironment',
@@ -63,6 +71,7 @@ const DEV_TOOL_DEFINITIONS = [
       'Returns the operational environment + SDK/app version derived from the dev mock state. ' +
       'Read-only.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'AIT.getSdkCallHistory',
@@ -70,6 +79,7 @@ const DEV_TOOL_DEFINITIONS = [
       'Returns the SDK call trace. In dev mode the HTTP mock-state endpoint records no trace, so ' +
       'this returns an empty list; in debug mode it is populated over the AIT domain. Read-only.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
   {
     name: 'devtools_get_mock_state',
@@ -77,6 +87,7 @@ const DEV_TOOL_DEFINITIONS = [
       'Backward-compatible alias of AIT.getMockState (the original devtools#130 name). Returns the ' +
       'current AIT DevTools mock state snapshot. Read-only. Prefer AIT.getMockState in new configs.',
     inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
   },
 ] as const;
 

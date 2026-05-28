@@ -1,0 +1,130 @@
+/**
+ * Unit tests for the environment detection SSoT (RFC #277).
+ *
+ * Covers the precedence chain:
+ *   1. test override (setEnvironmentOverride)
+ *   2. MCP_ENV env var
+ *   3. CDP target URL pattern match
+ *   4. default mock
+ *
+ * Plus the URL pattern matcher (`isRelayUrl`) directly.
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { CdpTarget } from '../cdp-connection.js';
+import {
+  getEnvironment,
+  getEnvironmentReason,
+  isRelayUrl,
+  setEnvironmentOverride,
+} from '../environment.js';
+
+function fakeConnection(targets: CdpTarget[]) {
+  return { listTargets: () => targets };
+}
+
+describe('isRelayUrl — real-device WebView URL detection', () => {
+  it('matches intoss-private:// scheme', () => {
+    expect(isRelayUrl('intoss-private://miniapp?_deploymentId=xyz')).toBe(true);
+    expect(isRelayUrl('INTOSS-PRIVATE://miniapp')).toBe(true);
+  });
+
+  it('matches *.trycloudflare.com host suffix', () => {
+    expect(isRelayUrl('wss://abc123.trycloudflare.com/client/1')).toBe(true);
+    expect(isRelayUrl('https://foo-bar.trycloudflare.com/')).toBe(true);
+    expect(isRelayUrl('wss://x.trycloudflare.com')).toBe(true);
+  });
+
+  it('does not match arbitrary URLs', () => {
+    expect(isRelayUrl('http://localhost:5173/')).toBe(false);
+    expect(isRelayUrl('https://example.com/')).toBe(false);
+    expect(isRelayUrl('')).toBe(false);
+    // Substring-only match (no host structure) should not pass.
+    expect(isRelayUrl('not-a-relay-url')).toBe(false);
+  });
+
+  it('rejects URLs that contain the suffix as a non-host fragment', () => {
+    // Important: the suffix must be the host, not embedded in the path/query.
+    expect(isRelayUrl('https://example.com/?back=trycloudflare.com')).toBe(false);
+  });
+});
+
+describe('getEnvironment — precedence chain', () => {
+  // Clean shared state between cases.
+  const originalEnv = process.env.MCP_ENV;
+  beforeEach(() => {
+    setEnvironmentOverride(null);
+    delete process.env.MCP_ENV;
+  });
+  afterEach(() => {
+    setEnvironmentOverride(null);
+    if (originalEnv === undefined) delete process.env.MCP_ENV;
+    else process.env.MCP_ENV = originalEnv;
+  });
+
+  it('1. test override wins over everything', () => {
+    process.env.MCP_ENV = 'relay';
+    setEnvironmentOverride('mock');
+    expect(
+      getEnvironment({
+        connection: fakeConnection([{ id: 't', title: '', url: 'intoss-private://x' }]),
+      }),
+    ).toBe('mock');
+    expect(getEnvironmentReason()).toBe('env-var-mock');
+  });
+
+  it('2. MCP_ENV=relay wins over URL pattern + default', () => {
+    process.env.MCP_ENV = 'relay';
+    expect(getEnvironment()).toBe('relay');
+    expect(getEnvironmentReason()).toBe('env-var-relay');
+  });
+
+  it('2. MCP_ENV=mock wins over URL pattern', () => {
+    process.env.MCP_ENV = 'mock';
+    const conn = fakeConnection([{ id: 't', title: '', url: 'intoss-private://miniapp' }]);
+    expect(getEnvironment({ connection: conn })).toBe('mock');
+    expect(getEnvironmentReason({ connection: conn })).toBe('env-var-mock');
+  });
+
+  it('MCP_ENV with garbage value is ignored — falls through to next step', () => {
+    process.env.MCP_ENV = 'banana';
+    expect(getEnvironment()).toBe('mock');
+    expect(getEnvironmentReason()).toBe('default-mock');
+  });
+
+  it('3. CDP target URL pattern → relay', () => {
+    const conn = fakeConnection([
+      { id: 't1', title: '', url: 'http://localhost:5173/' },
+      { id: 't2', title: '', url: 'intoss-private://miniapp?_deploymentId=z' },
+    ]);
+    expect(getEnvironment({ connection: conn })).toBe('relay');
+    expect(getEnvironmentReason({ connection: conn })).toBe('cdp-target-url-relay-pattern');
+  });
+
+  it('3. CDP targets with only mundane URLs do NOT trigger relay', () => {
+    const conn = fakeConnection([{ id: 't', title: '', url: 'http://localhost:5173/' }]);
+    expect(getEnvironment({ connection: conn })).toBe('mock');
+    expect(getEnvironmentReason({ connection: conn })).toBe('default-mock');
+  });
+
+  it('4. no signal → default mock', () => {
+    expect(getEnvironment()).toBe('mock');
+    expect(getEnvironmentReason()).toBe('default-mock');
+  });
+
+  it('no connection passed → only env var + default consulted', () => {
+    expect(getEnvironment()).toBe('mock');
+    process.env.MCP_ENV = 'relay';
+    expect(getEnvironment()).toBe('relay');
+  });
+});
+
+describe('setEnvironmentOverride — test hook', () => {
+  afterEach(() => setEnvironmentOverride(null));
+
+  it('clears with null', () => {
+    setEnvironmentOverride('relay');
+    expect(getEnvironment()).toBe('relay');
+    setEnvironmentOverride(null);
+    expect(getEnvironment()).toBe('mock');
+  });
+});

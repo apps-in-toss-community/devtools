@@ -23,6 +23,7 @@ import type {
   CdpTarget,
 } from '../cdp-connection.js';
 import { createDebugServer, startAttachWatcher } from '../debug-server.js';
+import type { McpEnvironment } from '../environment.js';
 import type { TunnelStatus } from '../tools.js';
 import { BOOTSTRAP_TOOL_NAMES, DEBUG_TOOL_DEFINITIONS } from '../tools.js';
 
@@ -106,6 +107,12 @@ interface MakeClientOptions {
   waitForAttachTimeoutMs?: number;
   /** Inject a fake QrHttpServer for open_in_browser path tests. */
   qrHttpServer?: import('../qr-http-server.js').QrHttpServer;
+  /**
+   * Pin the env reported by `getEnvironment()` for this server. Defaults to
+   * `'relay'` because this test file exercises relay-only tools (build_attach_url).
+   * Set to `'mock'` for env-mismatch tests.
+   */
+  env?: McpEnvironment;
 }
 
 /** Connects a createDebugServer instance via InMemoryTransport and returns a ready Client. */
@@ -114,6 +121,7 @@ async function makeClient({
   connection,
   waitForAttachTimeoutMs,
   qrHttpServer,
+  env = 'relay',
 }: MakeClientOptions): Promise<Client> {
   const server = createDebugServer({
     connection: connection ?? new FakeCdpConnection(),
@@ -121,6 +129,8 @@ async function makeClient({
     getTunnelStatus,
     waitForAttachTimeoutMs,
     qrHttpServer,
+    getEnvironment: () => env,
+    getEnvironmentReason: () => `test-pinned-${env}`,
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
