@@ -50,7 +50,10 @@ vi.mock('node:fs', async (importOriginal) => {
 // Stub node:child_process so tests never open a real browser.
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>();
-  return { ...original, spawnSync: vi.fn().mockReturnValue({ error: null }) };
+  return {
+    ...original,
+    spawnSync: vi.fn().mockReturnValue({ status: 0, stderr: '', error: null }),
+  };
 });
 
 // Mock canOpenBrowser → false so existing tests exercise the text-QR path.
@@ -101,6 +104,8 @@ interface MakeClientOptions {
   connection?: FakeCdpConnection;
   /** Override default 90s wait timeout — useful for timeout-path tests. */
   waitForAttachTimeoutMs?: number;
+  /** Inject a fake QrHttpServer for open_in_browser path tests. */
+  qrHttpServer?: import('../qr-http-server.js').QrHttpServer;
 }
 
 /** Connects a createDebugServer instance via InMemoryTransport and returns a ready Client. */
@@ -108,12 +113,14 @@ async function makeClient({
   getTunnelStatus,
   connection,
   waitForAttachTimeoutMs,
+  qrHttpServer,
 }: MakeClientOptions): Promise<Client> {
   const server = createDebugServer({
     connection: connection ?? new FakeCdpConnection(),
     aitSource: new FakeAitSource(),
     getTunnelStatus,
     waitForAttachTimeoutMs,
+    qrHttpServer,
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -558,11 +565,21 @@ describe('build_attach_url — open_in_browser', () => {
     expect(text).toContain('relayUrl');
   });
 
-  it('when canOpenBrowser() returns true, result is short (PNG path only, no attachUrl in text)', async () => {
+  it('when canOpenBrowser() returns true and qrHttpServer is set, result shows HTTP URL (not raw attachUrl)', async () => {
     const { canOpenBrowser } = await import('../tools.js');
     (canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
 
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    // spawnSync mock은 성공(status:0)으로 세팅돼 있음.
+    const fakeQrServer: import('../qr-http-server.js').QrHttpServer = {
+      port: 19999,
+      buildAttachPageUrl: (url) => `http://127.0.0.1:19999/attach?u=${encodeURIComponent(url)}`,
+      close: async () => {},
+    };
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      qrHttpServer: fakeQrServer,
+    });
 
     const result = await client.callTool({
       name: 'build_attach_url',
@@ -574,27 +591,33 @@ describe('build_attach_url — open_in_browser', () => {
 
     expect(result.isError).toBeFalsy();
     const text = getContent(result)[0]!.text!;
-    // Browser path: result mentions PNG/browser but NOT the raw attachUrl.
-    expect(text).toContain('PNG');
-    // relayUrl (not attachUrl) should be in the JSON part.
+    // Browser HTTP path: result mentions the HTTP URL, not the raw attachUrl.
+    expect(text).toContain('http://127.0.0.1:19999/attach');
     expect(text).toContain('relayUrl');
-    // SECRET: attachUrl (with possible at= code) must NOT be in the plain text result.
-    // The text should NOT include the raw deep-link with debug=1 etc. in the visible text.
-    // (It's written to the HTML file, not the tool result text.)
+    // SECRET: raw deep-link (debug=1) must NOT be in the plain text result.
     expect(text).not.toContain('debug=1');
   });
 
-  it('when browser open fails, falls back to text QR with error note', async () => {
+  it('when browser open fails, falls back to text QR with HTTP URL fallback message', async () => {
     const { canOpenBrowser } = await import('../tools.js');
     (canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
 
-    // Make spawnSync return an error for this test.
+    // Make spawnSync return an error for all candidates.
     const { spawnSync } = await import('node:child_process');
-    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({
       error: new Error('spawn ENOENT'),
     });
 
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const fakeQrServer: import('../qr-http-server.js').QrHttpServer = {
+      port: 19999,
+      buildAttachPageUrl: (url) => `http://127.0.0.1:19999/attach?u=${encodeURIComponent(url)}`,
+      close: async () => {},
+    };
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      qrHttpServer: fakeQrServer,
+    });
 
     const result = await client.callTool({
       name: 'build_attach_url',
@@ -606,8 +629,10 @@ describe('build_attach_url — open_in_browser', () => {
 
     expect(result.isError).toBeFalsy();
     const text = getContent(result)[0]!.text!;
-    // Fallback: includes the error note and the text QR path (attachUrl + QR chars).
-    expect(text).toContain('브라우저 열기 실패');
+    // Fallback: includes the "브라우저 자동 열기에 실패" note and HTTP URL.
+    expect(text).toContain('브라우저 자동 열기에 실패했습니다');
+    expect(text).toContain('http://127.0.0.1:19999/attach');
+    // text QR fallback: attachUrl JSON should be in the QR path too.
     expect(text).toContain('attachUrl');
   });
 });
