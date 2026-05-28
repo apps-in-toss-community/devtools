@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.38
+
+### Patch Changes
+
+- 6984706: `devtools-mcp` bin이 npx/npm bin shim symlink로 실행되면 entrypoint 감지 실패해 MCP server가 기동조차 안 하던 회귀 fix — `argv[1]`을 `realpathSync`로 정규화 후 `import.meta.url`과 비교
+- 6984706: MCP `initialize` 응답을 cloudflared 부팅과 분리 — tunnel을 background로 띄워, 첫 spawn에 cloudflared 바이너리(~38 MB) lazy download가 걸려도 Claude Code MCP connection timeout을 치지 않는다
+
 ## 0.1.37
 
 ### Patch Changes
