@@ -86,11 +86,43 @@ export interface NetworkResponseReceivedEvent {
   type?: string;
 }
 
+/**
+ * A single call frame in a `Runtime.exceptionThrown` stack trace.
+ * Subset of the CDP `Runtime.CallFrame` shape.
+ */
+export interface CdpCallFrame {
+  functionName: string;
+  scriptId?: string;
+  url: string;
+  lineNumber: number;
+  columnNumber: number;
+}
+
+/** Payload of a `Runtime.exceptionThrown` event. */
+export interface RuntimeExceptionThrownEvent {
+  /** Milliseconds since epoch (CDP `Runtime.Timestamp`). */
+  timestamp: number;
+  exceptionDetails: {
+    exceptionId: number;
+    text: string;
+    lineNumber: number;
+    columnNumber: number;
+    scriptId?: string;
+    url?: string;
+    stackTrace?: {
+      callFrames: CdpCallFrame[];
+    };
+    /** The thrown value as a CDP `RemoteObject`. */
+    exception?: CdpRemoteObject;
+  };
+}
+
 /** Map of the CDP event names Phase 1 consumes to their payload shapes. */
 export interface CdpEventMap {
   'Runtime.consoleAPICalled': ConsoleApiCalledEvent;
   'Network.requestWillBeSent': NetworkRequestWillBeSentEvent;
   'Network.responseReceived': NetworkResponseReceivedEvent;
+  'Runtime.exceptionThrown': RuntimeExceptionThrownEvent;
 }
 
 export type CdpEventName = keyof CdpEventMap;

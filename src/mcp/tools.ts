@@ -29,6 +29,7 @@ import type {
   AitSource,
 } from './ait-source.js';
 import type {
+  CdpCallFrame,
   CdpConnection,
   CdpRemoteObject,
   ConsoleApiCalledEvent,
@@ -36,6 +37,7 @@ import type {
   DomSnapshotResult,
   NetworkRequestWillBeSentEvent,
   NetworkResponseReceivedEvent,
+  RuntimeExceptionThrownEvent,
 } from './cdp-connection.js';
 import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
@@ -178,6 +180,26 @@ export const DEBUG_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'list_exceptions',
+    description:
+      'Lists JS-level exceptions captured via `Runtime.exceptionThrown` from the relay attached ' +
+      'page. Includes timestamp, exception text, source URL/line, and stack trace. ' +
+      'Use to root-cause SDK throws that may precede a Toss app crash (#265 / #267). ' +
+      'The buffer holds up to 50 most recent exceptions and survives target ' +
+      'replaced/crashed/destroyed events so an exception just before a crash is preserved. ' +
+      'Returns up to 50 most recent by default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: {
+          type: 'number',
+          description: 'Maximum number of exceptions to return (default 50, max 50).',
+        },
+      },
+      required: [],
+    },
+  },
+  {
     name: 'call_sdk',
     description:
       'Calls a dogfood SDK method via the window.__sdkCall bridge ' +
@@ -186,6 +208,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'On env 2/3 (real device relay) this hits the real SDK; on env 1 (local mock) it hits ' +
       'the mock SDK. Requires the relay to be attached — call list_pages first. ' +
       'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
+      'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
+      'the result also includes `recentException` for crash triage. ' +
       'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle).\n\n' +
       'IMPORTANT — 인자 시그니처 (잘못된 인자로 호출하면 토스 앱 crash 위험):\n' +
       '  setDeviceOrientation:        call_sdk("setDeviceOrientation", [{ type: "landscape" }])  // NOT "landscape"\n' +
@@ -337,6 +361,78 @@ export function listNetworkRequests(connection: CdpConnection): NetworkRequest[]
       endTime: response ? response.timestamp : null,
     };
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* list_exceptions — Runtime.exceptionThrown ring buffer                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Normalized exception returned by `list_exceptions`.
+ *
+ * Flattens the CDP `Runtime.ExceptionDetails` shape into the most useful
+ * fields. The `raw` field carries the original event for callers that need
+ * the full payload.
+ */
+export interface BufferedException {
+  /** Wall-clock ms since epoch (CDP `Runtime.Timestamp`). */
+  timestamp: number;
+  /** Short summary text from `exceptionDetails.text`. */
+  text: string;
+  /** Source URL where the exception was thrown, if known. */
+  url?: string;
+  /** 0-based line number in the source file, if known. */
+  lineNumber?: number;
+  /** 0-based column number in the source file, if known. */
+  columnNumber?: number;
+  /** `description` of the thrown `RemoteObject` (e.g. "TypeError: …"). */
+  exceptionText?: string;
+  /**
+   * Formatted stack trace: `at fn (url:line:col)` lines joined by `\n`.
+   * Omitted when no `stackTrace.callFrames` are available.
+   */
+  stack?: string;
+  /** Full original `Runtime.exceptionThrown` event payload. */
+  raw: RuntimeExceptionThrownEvent;
+}
+
+/** Formats a single CDP call frame into `at fn (url:line:col)`. */
+function formatCallFrame(frame: CdpCallFrame): string {
+  const fn = frame.functionName || '(anonymous)';
+  return `at ${fn} (${frame.url}:${frame.lineNumber}:${frame.columnNumber})`;
+}
+
+/** Normalizes a raw `Runtime.exceptionThrown` event into a `BufferedException`. */
+export function normalizeException(event: RuntimeExceptionThrownEvent): BufferedException {
+  const { timestamp, exceptionDetails } = event;
+  const frames = exceptionDetails.stackTrace?.callFrames;
+  const stack = frames && frames.length > 0 ? frames.map(formatCallFrame).join('\n') : undefined;
+  const exceptionText = exceptionDetails.exception?.description ?? undefined;
+
+  const result: BufferedException = {
+    timestamp,
+    text: exceptionDetails.text,
+    raw: event,
+  };
+  if (exceptionDetails.url !== undefined) result.url = exceptionDetails.url;
+  if (exceptionDetails.lineNumber !== undefined) result.lineNumber = exceptionDetails.lineNumber;
+  if (exceptionDetails.columnNumber !== undefined)
+    result.columnNumber = exceptionDetails.columnNumber;
+  if (exceptionText !== undefined) result.exceptionText = exceptionText;
+  if (stack !== undefined) result.stack = stack;
+  return result;
+}
+
+/**
+ * Returns the most recent buffered `Runtime.exceptionThrown` events, normalized.
+ * Oldest-first; limited to `limit` entries (default 50, max 50).
+ */
+export function listExceptions(connection: CdpConnection, limit = 50): BufferedException[] {
+  const cap = Math.min(Math.max(1, limit), 50);
+  const events = connection.getBufferedEvents('Runtime.exceptionThrown');
+  // Slice from the tail to respect the cap while preserving oldest-first order.
+  const sliced = events.length > cap ? events.slice(events.length - cap) : events;
+  return sliced.map((e) => normalizeException(e));
 }
 
 /** A page entry in the `list_pages` result, extended with freshness info. */
@@ -912,8 +1008,15 @@ export async function evaluate(
  * Result returned by the `call_sdk` tool.
  * The bridge call wraps success/failure in a JSON envelope so cross-Chii
  * stringification is reliable (same approach as `measure_safe_area`).
+ *
+ * `recentException` is populated when a `Runtime.exceptionThrown` event was
+ * observed within the heuristic triage window [callStart-50ms, callEnd+200ms].
+ * This helps correlate an SDK throw with the bridge result, especially when
+ * the SDK throws synchronously before the promise resolves.
  */
-export type CallSdkResult = { ok: true; value: unknown } | { ok: false; error: string };
+export type CallSdkResult =
+  | { ok: true; value: unknown; recentException?: BufferedException }
+  | { ok: false; error: string; recentException?: BufferedException };
 
 /**
  * Builds the Runtime.evaluate expression that calls `window.__sdkCall` with
@@ -978,6 +1081,33 @@ export function normalizeCallSdkResult(rawValue: unknown): CallSdkResult {
 }
 
 /**
+ * Looks up the most recent exception from the buffer that falls within the
+ * triage window [windowStart, windowEnd]. Returns `undefined` if none found.
+ *
+ * The heuristic window is:
+ *   - windowStart = callStart - 50ms  (catch sync throws before bridge fires)
+ *   - windowEnd   = callEnd + 200ms   (catch async throws resolved soon after)
+ *
+ * Only the most recent exception within the window is returned (the one most
+ * likely to be causally related to the SDK call).
+ */
+function findRecentException(
+  connection: CdpConnection,
+  windowStart: number,
+  windowEnd: number,
+): BufferedException | undefined {
+  const events = connection.getBufferedEvents('Runtime.exceptionThrown');
+  // Scan from the tail (most recent) to find the closest-in-time exception.
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.timestamp >= windowStart && e.timestamp <= windowEnd) {
+      return normalizeException(e);
+    }
+  }
+  return undefined;
+}
+
+/**
  * Calls a dogfood SDK method via `window.__sdkCall` on the attached page.
  * NOT read-only — SDK calls may have side effects.
  *
@@ -991,6 +1121,11 @@ export function normalizeCallSdkResult(rawValue: unknown): CallSdkResult {
  * Throws on CDP error or result parse failure. Returns `{ok:false, error}`
  * for bridge-level errors (method not found, SDK threw, bridge absent) or
  * argument schema violations.
+ *
+ * If a `Runtime.exceptionThrown` event was observed within the triage window
+ * [callStart-50ms, callEnd+200ms], the result includes `recentException` for
+ * crash triage. This window is a heuristic — it catches the common case of an
+ * SDK throw immediately before/after the bridge resolves.
  *
  * SECRET-HANDLING: name, args, and the result value are NOT written to any log.
  */
@@ -1017,12 +1152,15 @@ export async function callSdk(
     warnPassthrough(name);
   }
 
+  const callStart = Date.now();
   const expression = buildCallSdkExpression(name, args);
   const result = await connection.send('Runtime.evaluate', {
     expression,
     returnByValue: true,
     awaitPromise: true,
   });
+  const callEnd = Date.now();
+
   if (result.exceptionDetails) {
     // Surface only the engine error string — never name, args, or result value.
     const msg =
@@ -1031,7 +1169,18 @@ export async function callSdk(
       'Runtime.evaluate threw an exception';
     throw new Error(`call_sdk threw: ${msg}`);
   }
-  return normalizeCallSdkResult(result.result.value);
+
+  const sdkResult = normalizeCallSdkResult(result.result.value);
+
+  // Triage window: [callStart - 50ms, callEnd + 200ms].
+  // -50ms: catches sync throws that fire just before the bridge call is sent.
+  // +200ms: catches async throws resolved shortly after the bridge returns.
+  const recentException = findRecentException(connection, callStart - 50, callEnd + 200);
+
+  if (recentException !== undefined) {
+    return { ...sdkResult, recentException };
+  }
+  return sdkResult;
 }
 
 /* -------------------------------------------------------------------------- */
