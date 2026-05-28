@@ -24,7 +24,6 @@ function makeState(overrides: Partial<ViewportState> = {}): ViewportState {
     preset: 'none',
     orientation: 'auto',
     appOrientation: null,
-    landscapeSide: 'left',
     customWidth: 402,
     customHeight: 874,
     frame: false,
@@ -383,7 +382,7 @@ describe('computeSafeAreaInsets', () => {
   it('preset=none이면 모두 0을 반환한다', () => {
     const none = VIEWPORT_PRESETS.find((p) => p.id === 'none');
     if (!none) throw new Error('none preset missing');
-    expect(computeSafeAreaInsets(none, false, 'left', true, 'partner')).toEqual({
+    expect(computeSafeAreaInsets(none, false, true, 'partner')).toEqual({
       top: 0,
       bottom: 0,
       left: 0,
@@ -393,9 +392,7 @@ describe('computeSafeAreaInsets', () => {
 
   it('portrait partner: top = nav bar 높이(54), bottom = home indicator (실측 모델)', () => {
     // relay 실측: env top=0, SDK top=54(nav bar). OS 노치(notchInset 59)는 top에 안 들어감.
-    expect(
-      computeSafeAreaInsets(getPreset('iphone-17-pro'), false, 'left', true, 'partner'),
-    ).toEqual({
+    expect(computeSafeAreaInsets(getPreset('iphone-17-pro'), false, true, 'partner')).toEqual({
       top: 54,
       bottom: 34,
       left: 0,
@@ -404,7 +401,7 @@ describe('computeSafeAreaInsets', () => {
   });
 
   it('portrait game: nav bar가 투명 오버레이라 top=0 (콘텐츠 안 밀어냄)', () => {
-    expect(computeSafeAreaInsets(getPreset('iphone-17-pro'), false, 'left', true, 'game')).toEqual({
+    expect(computeSafeAreaInsets(getPreset('iphone-17-pro'), false, true, 'game')).toEqual({
       top: 0,
       bottom: 34,
       left: 0,
@@ -413,9 +410,7 @@ describe('computeSafeAreaInsets', () => {
   });
 
   it('portrait nav bar 미표시: top=0', () => {
-    expect(
-      computeSafeAreaInsets(getPreset('iphone-17-pro'), false, 'left', false, 'partner'),
-    ).toEqual({
+    expect(computeSafeAreaInsets(getPreset('iphone-17-pro'), false, false, 'partner')).toEqual({
       top: 0,
       bottom: 34,
       left: 0,
@@ -423,30 +418,31 @@ describe('computeSafeAreaInsets', () => {
     });
   });
 
-  it('landscape-left iPhone: left에만 notchInset, right는 0, top=0', () => {
-    expect(
-      computeSafeAreaInsets(getPreset('iphone-17-pro'), true, 'left', true, 'partner'),
-    ).toEqual({
+  it('landscape iPhone(notch/Dynamic Island): left=right=notchInset(양쪽 대칭), top=0, bottom=safeAreaBottom (실측 모델)', () => {
+    // 2026-05-28 iPhone 15 Pro relay 실측 #198/#232:
+    // CSS env()와 SDK SafeAreaInsets 모두 left=right=59(대칭).
+    // top=0: landscape에서 토스 앱이 partner nav bar를 숨김.
+    // bottom: iphone-17-pro는 safeAreaBottomLandscape 미설정 → safeAreaBottom(34) fallback.
+    expect(computeSafeAreaInsets(getPreset('iphone-17-pro'), true, true, 'partner')).toEqual({
       top: 0,
       bottom: 34,
       left: 59,
-      right: 0,
+      right: 59,
     });
   });
 
-  it('landscape-right iPhone: right에만 notchInset, left는 0', () => {
-    expect(
-      computeSafeAreaInsets(getPreset('iphone-17-pro'), true, 'right', true, 'partner'),
-    ).toEqual({
+  it('iPhone 15 Pro landscape: bottom=20(실측값), left=right=59', () => {
+    // safeAreaBottomLandscape=20 (portrait 34와 다름 — relay 실측 #198/#232).
+    expect(computeSafeAreaInsets(getPreset('iphone-15-pro'), true, true, 'partner')).toEqual({
       top: 0,
-      bottom: 34,
-      left: 0,
+      bottom: 20,
+      left: 59,
       right: 59,
     });
   });
 
   it('iPhone SE(홈버튼)는 notch가 없으므로 landscape에서도 top에 status bar(notchInset)만 남는다', () => {
-    expect(computeSafeAreaInsets(getPreset('iphone-se-3'), true, 'left', true, 'partner')).toEqual({
+    expect(computeSafeAreaInsets(getPreset('iphone-se-3'), true, true, 'partner')).toEqual({
       top: 20,
       bottom: 0,
       left: 0,
@@ -455,7 +451,7 @@ describe('computeSafeAreaInsets', () => {
   });
 
   it('Android punch-hole은 landscape에서도 status bar(notchInset)가 top에 남는다', () => {
-    expect(computeSafeAreaInsets(getPreset('galaxy-s26'), true, 'left', true, 'partner')).toEqual({
+    expect(computeSafeAreaInsets(getPreset('galaxy-s26'), true, true, 'partner')).toEqual({
       top: 32,
       bottom: 0,
       left: 0,
@@ -483,10 +479,11 @@ describe('viewport → safeAreaInsets auto-sync', () => {
     expect(aitState.state.safeAreaInsets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
   });
 
-  it('landscape로 전환하면 iPhone 인셋이 한쪽으로 이동한다 (landscape-left default)', () => {
+  it('landscape로 전환하면 iPhone 인셋이 양쪽 대칭으로 적용된다 (relay 실측 모델)', () => {
+    // 2026-05-28 relay 실측 #198/#232: left=right=notchInset(59), top=0.
     initViewport();
     aitState.patch('viewport', { preset: 'iphone-17-pro', orientation: 'landscape' });
-    expect(aitState.state.safeAreaInsets).toEqual({ top: 0, bottom: 34, left: 59, right: 0 });
+    expect(aitState.state.safeAreaInsets).toEqual({ top: 0, bottom: 34, left: 59, right: 59 });
   });
 
   it('preset=custom이면 safeAreaInsets를 덮어쓰지 않는다', () => {
@@ -505,7 +502,7 @@ describe('viewport → safeAreaInsets auto-sync', () => {
     await setDeviceOrientation({ type: 'landscape' });
     // appOrientation이 landscape가 되어 effective orientation이 landscape
     expect(aitState.state.viewport.appOrientation).toBe('landscape');
-    expect(aitState.state.safeAreaInsets).toEqual({ top: 0, bottom: 34, left: 59, right: 0 });
+    expect(aitState.state.safeAreaInsets).toEqual({ top: 0, bottom: 34, left: 59, right: 59 });
   });
 });
 
@@ -626,7 +623,7 @@ describe('sessionStorage persistence', () => {
         preset: 'galaxy-s26',
         orientation: 'landscape',
         appOrientation: 'landscape',
-        landscapeSide: 'right',
+        landscapeSide: 'right', // deprecated — 무시됨
         customWidth: 500,
         customHeight: 900,
         frame: false,
@@ -635,11 +632,11 @@ describe('sessionStorage persistence', () => {
       }),
     );
     const restored = loadViewportFromStorage();
+    // landscapeSide는 더 이상 ViewportState에 없으므로 복원값에 포함되지 않는다.
     expect(restored).toEqual({
       preset: 'galaxy-s26',
       orientation: 'landscape',
       appOrientation: 'landscape',
-      landscapeSide: 'right',
       customWidth: 500,
       customHeight: 900,
       frame: false,
@@ -764,7 +761,6 @@ describe('body-scroll hint (console.info)', () => {
       preset: 'iphone-17',
       orientation: 'auto',
       appOrientation: null,
-      landscapeSide: 'left',
       customWidth: 0,
       customHeight: 0,
       frame: false,
@@ -778,7 +774,6 @@ describe('body-scroll hint (console.info)', () => {
       preset: 'iphone-17-pro',
       orientation: 'auto',
       appOrientation: null,
-      landscapeSide: 'left',
       customWidth: 0,
       customHeight: 0,
       frame: false,
@@ -802,11 +797,10 @@ describe('aitState.viewport integration', () => {
     disposeViewport();
   });
 
-  it('기본값은 preset=none, orientation=auto, appOrientation=null, landscapeSide=left, aitNavBar=true, aitNavBarType=partner', () => {
+  it('기본값은 preset=none, orientation=auto, appOrientation=null, aitNavBar=true, aitNavBarType=partner', () => {
     expect(aitState.state.viewport.preset).toBe('none');
     expect(aitState.state.viewport.orientation).toBe('auto');
     expect(aitState.state.viewport.appOrientation).toBeNull();
-    expect(aitState.state.viewport.landscapeSide).toBe('left');
     expect(aitState.state.viewport.frame).toBe(false);
     expect(aitState.state.viewport.aitNavBar).toBe(true);
     expect(aitState.state.viewport.aitNavBarType).toBe('partner');

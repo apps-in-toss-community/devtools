@@ -80,10 +80,15 @@ describe('renderViewportTab', () => {
     expect(inputs.length).toBe(2);
   });
 
-  it('orientation이 landscape이고 notch가 있는 프리셋이면 "Notch side" 행이 보인다', () => {
+  it('landscape iPhone safe area가 양쪽 대칭(left=right=notchInset)으로 표시된다', () => {
+    // landscapeSide UI가 제거되었고, iOS landscape는 양쪽 대칭 실측 모델로 전환됨.
+    // iphone-17-pro: notchInset=59 → landscape T0 R59 B34 L59
     aitState.patch('viewport', { preset: 'iphone-17-pro', orientation: 'landscape' });
     const root = renderViewportTab();
-    expect(root.textContent).toContain('Notch side');
+    const text = root.textContent ?? '';
+    expect(text).toContain('T0');
+    expect(text).toContain('R59');
+    expect(text).toContain('L59');
   });
 
   it('portrait 모드에선 "Notch side" 행이 보이지 않는다', () => {
@@ -92,8 +97,9 @@ describe('renderViewportTab', () => {
     expect(root.textContent).not.toContain('Notch side');
   });
 
-  it('punch-hole 디바이스(notch가 없는 형식)는 landscape에서도 "Notch side" 행이 보이지 않는다', () => {
-    aitState.patch('viewport', { preset: 'galaxy-s26', orientation: 'landscape' });
+  it('landscape 모드에서도 "Notch side" 행이 더 이상 보이지 않는다 (양쪽 대칭으로 전환)', () => {
+    // landscapeSide select가 제거됨 — CSS env()와 SDK 모두 좌우 대칭 반환(relay 실측 #198/#232).
+    aitState.patch('viewport', { preset: 'iphone-17-pro', orientation: 'landscape' });
     const root = renderViewportTab();
     expect(root.textContent).not.toContain('Notch side');
   });

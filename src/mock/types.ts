@@ -124,7 +124,12 @@ export type ViewportOrientation = 'auto' | 'portrait' | 'landscape';
  */
 export type AppOrientation = 'portrait' | 'landscape' | null;
 
-/** Landscape 시 노치/Dynamic Island가 어느 쪽으로 가는지. iOS 기본은 landscape-left. */
+/**
+ * @deprecated landscapeSide는 잘못된 mental model이었다 — iOS landscape에서 CSS env()와
+ * SDK SafeAreaInsets 모두 left=right=notchInset(양쪽 대칭)을 반환한다(2026-05-28 iPhone 15
+ * Pro relay 실측 #198/#232). 이 타입은 하위 호환 유지만을 위해 export되며 내부 로직에서
+ * 더 이상 사용되지 않는다.
+ */
 export type LandscapeSide = 'left' | 'right';
 
 export type NotchType = 'none' | 'notch' | 'dynamic-island' | 'punch-hole-center';
@@ -152,6 +157,11 @@ export interface SafeAreaProvenance {
   device?: string;
   /** ISO-8601 date of the relay measurement session (meaningful for `measured`). */
   date?: string;
+  /**
+   * Orientations confirmed by relay measurement. Absent means only portrait was
+   * measured (or measurement orientation is unknown for non-`measured` sources).
+   */
+  orientations?: Array<'portrait' | 'landscape'>;
 }
 
 export interface ViewportPreset {
@@ -186,6 +196,13 @@ export interface ViewportPreset {
   /** OS-level home-indicator inset in portrait (px), device-specific. */
   safeAreaBottom: number;
   /**
+   * OS-level home-indicator inset in landscape (px). When defined, takes precedence
+   * over `safeAreaBottom` in landscape. iPhone 15 Pro relay measured 20 px
+   * (vs portrait 34) — the home indicator shrinks in landscape (#198/#232).
+   * Absent for presets where landscape has not been measured.
+   */
+  safeAreaBottomLandscape?: number;
+  /**
    * How trustworthy the safe-area values are. See {@link SafeAreaProvenance}.
    * Absent for `none`/`custom` (no safe-area model).
    * Use `measure_safe_area` MCP tool in a relay session to upgrade to `measured`.
@@ -202,8 +219,6 @@ export interface ViewportState {
    * `orientation === 'auto'`일 때 실제 화면 방향 결정에 쓰인다. 초기값 `null`.
    */
   appOrientation: AppOrientation;
-  /** Landscape 시 노치/Dynamic Island가 어느 쪽으로 갈지. */
-  landscapeSide: LandscapeSide;
   customWidth: number;
   customHeight: number;
   frame: boolean;

@@ -12,7 +12,6 @@ import { aitState } from '../mock/state.js';
 import type {
   AitNavBarType,
   AppOrientation,
-  LandscapeSide,
   SafeAreaInsets,
   SafeAreaProvenance,
   ViewportOrientation,
@@ -41,8 +40,8 @@ export const VIEWPORT_CUSTOM_MAX = 4096;
  * - `game`: nav bar가 투명 오버레이라 콘텐츠를 밀어내지 않음(인게임 full-screen이 출시 요건)
  *   → SDK top = 0. `external` type은 아직 시뮬레이션하지 않는다.
  *
- * landscape에서의 nav bar 거동은 아직 실측하지 못해 portrait 모델만 확정이다(landscape는
- * 노치를 측면 inset으로 돌리고 top=0 유지 — 후속 실측 대상).
+ * landscape에서는 토스 앱이 partner nav bar를 숨기므로 SDK top=0 (2026-05-28 iPhone 15
+ * Pro relay 실측 #232 확인).
  */
 export const AIT_NAV_BAR_HEIGHT_PARTNER = 54;
 
@@ -129,8 +128,15 @@ export const VIEWPORT_PRESETS: ViewportPreset[] = [
     notchInset: 59,
     navBarHeight: AIT_NAV_BAR_HEIGHT_PARTNER,
     safeAreaBottom: 34,
-    // devtools#190 relay 실측: iOS partner portrait에서 navBarHeight=54, bottom=34 확인.
-    safeAreaProvenance: { source: 'measured', device: 'iPhone 15 Pro', date: '2026-05-25' },
+    safeAreaBottomLandscape: 20,
+    // devtools#190 portrait 실측: navBarHeight=54, bottom=34.
+    // devtools#198/#232 landscape 실측(2026-05-28): bottom=20, left=right=59(양쪽 대칭).
+    safeAreaProvenance: {
+      source: 'measured',
+      device: 'iPhone 15 Pro',
+      date: '2026-05-28',
+      orientations: ['portrait', 'landscape'],
+    },
   },
   {
     id: 'iphone-16e',
@@ -315,23 +321,26 @@ export function resolveViewportSize(state: ViewportState): { width: number; heig
 
 /**
  * 프리셋 + orientation + nav bar 상태로부터 SDK `SafeAreaInsets.get()`이 반환할 insets를
- * 계산한다. iPhone 15 Pro on-device relay 실측(devtools#190)에 맞춘 모델:
+ * 계산한다. iPhone 15 Pro on-device relay 실측(devtools#190, #198, #232)에 맞춘 모델:
  *
  * - **Portrait top = 토스 nav bar 높이** (OS 노치가 아니다). 실측에서
  *   `env(safe-area-inset-top)` = 0, `SafeAreaInsets.get().top` = 54 였고, 그 54는 호스트
  *   nav bar다. 따라서 nav bar가 떠 있고 `partner` type일 때만 `navBarHeight`를 top에 준다.
  *   `game`(투명 오버레이, 콘텐츠 안 밀어냄) 또는 nav bar 미표시면 top = 0.
- * - **Bottom = `safeAreaBottom`** (home-indicator). 실측 34와 일치.
- * - **Landscape iPhone(notch/Dynamic Island)**: 노치가 한쪽으로 가므로 `landscapeSide`에
- *   따라 left/right 한쪽에만 `notchInset`을 준다. top은 0(landscape nav bar 거동은
- *   미실측 — portrait 모델만 확정), home-indicator는 bottom에 유지.
+ * - **Bottom = `safeAreaBottom`** (portrait home-indicator, 실측 34).
+ *   landscape는 `safeAreaBottomLandscape`가 정의돼 있으면 그 값을 사용한다
+ *   (iPhone 15 Pro landscape 실측 20 — portrait 34와 다름).
+ * - **Landscape iPhone(notch/Dynamic Island)**: CSS env()와 SDK SafeAreaInsets 모두
+ *   `left = right = notchInset`(양쪽 대칭)을 반환한다. 물리적 노치는 한쪽으로 가지만
+ *   OS가 양쪽 모두에 같은 inset을 부여하므로 landscapeSide mental model은 틀렸다
+ *   (2026-05-28 iPhone 15 Pro relay 실측 #198/#232: left=right=59). top=0(landscape에서
+ *   토스 앱이 partner nav bar를 숨김, #232 실측 확인).
  * - **Android punch-hole(status bar)**: landscape에서도 top에 status bar(`notchInset`)가
  *   유지된다.
  */
 export function computeSafeAreaInsets(
   preset: ViewportPreset,
   landscape: boolean,
-  side: LandscapeSide,
   navBarVisible: boolean,
   navBarType: AitNavBarType,
 ): SafeAreaInsets {
@@ -343,18 +352,25 @@ export function computeSafeAreaInsets(
   if (!landscape) {
     return { top: navBarTop, bottom: preset.safeAreaBottom, left: 0, right: 0 };
   }
+  // landscape bottom: 별도 실측값이 있으면 우선 사용 (iPhone 15 Pro portrait 34 vs landscape 20).
+  const landscapeBottom =
+    preset.safeAreaBottomLandscape !== undefined
+      ? preset.safeAreaBottomLandscape
+      : preset.safeAreaBottom;
   if (preset.notch === 'notch' || preset.notch === 'dynamic-island') {
+    // CSS env()와 SDK SafeAreaInsets 모두 양쪽 대칭으로 반환한다 (relay 실측 #198/#232).
+    // top=0: landscape에서 토스 앱이 partner nav bar를 숨김 (#232 실측).
     return {
       top: 0,
-      bottom: preset.safeAreaBottom,
-      left: side === 'left' ? preset.notchInset : 0,
-      right: side === 'right' ? preset.notchInset : 0,
+      bottom: landscapeBottom,
+      left: preset.notchInset,
+      right: preset.notchInset,
     };
   }
   // Android status bar stays on the top edge even in landscape.
   return {
     top: preset.notchInset,
-    bottom: preset.safeAreaBottom,
+    bottom: landscapeBottom,
     left: 0,
     right: 0,
   };
@@ -367,7 +383,6 @@ function syncSafeAreaFromViewport(state: ViewportState): void {
   const next = computeSafeAreaInsets(
     preset,
     effectiveOrientation(state) === 'landscape',
-    state.landscapeSide,
     state.aitNavBar,
     state.aitNavBarType,
   );
@@ -606,13 +621,7 @@ export function applyViewport(state: ViewportState): void {
   // SDK `SafeAreaInsets.get().top`과 같은 값이라 computeSafeAreaInsets의 top을 단일 진실로
   // 쓴다 (오버레이로만 얹으면 nav bar가 콘텐츠 첫 픽셀을 덮어 실기기와 어긋난다).
   const contentTop = preset
-    ? computeSafeAreaInsets(
-        preset,
-        landscape,
-        state.landscapeSide,
-        state.aitNavBar,
-        state.aitNavBarType,
-      ).top
+    ? computeSafeAreaInsets(preset, landscape, state.aitNavBar, state.aitNavBarType).top
     : 0;
 
   // Dynamic per-preset values only — static rules live in styles.ts.
@@ -653,10 +662,6 @@ function isAppOrientation(v: unknown): v is AppOrientation {
   return v === null || v === 'portrait' || v === 'landscape';
 }
 
-function isLandscapeSide(v: unknown): v is LandscapeSide {
-  return v === 'left' || v === 'right';
-}
-
 /** 1 이상의 정수 + VIEWPORT_CUSTOM_MAX 이하인지 검사. sessionStorage 보호용. */
 function isValidCustomDimension(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= VIEWPORT_CUSTOM_MAX;
@@ -686,7 +691,7 @@ export function loadViewportFromStorage(): Partial<ViewportState> | null {
     if (isViewportPresetId(obj.preset)) next.preset = obj.preset;
     if (isViewportOrientation(obj.orientation)) next.orientation = obj.orientation;
     if (isAppOrientation(obj.appOrientation)) next.appOrientation = obj.appOrientation;
-    if (isLandscapeSide(obj.landscapeSide)) next.landscapeSide = obj.landscapeSide;
+    // landscapeSide는 deprecated — sessionStorage에 저장된 기존 값은 무시한다.
     if (isValidCustomDimension(obj.customWidth)) next.customWidth = obj.customWidth;
     if (isValidCustomDimension(obj.customHeight)) next.customHeight = obj.customHeight;
     if (typeof obj.frame === 'boolean') next.frame = obj.frame;
