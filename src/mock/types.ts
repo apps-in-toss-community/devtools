@@ -167,10 +167,21 @@ export interface SafeAreaProvenance {
 export interface ViewportPreset {
   id: ViewportPresetId;
   label: string;
-  /** CSS viewport width in portrait (px) */
+  /** CSS viewport width in portrait (px). Equal to window.innerWidth on real device. */
   width: number;
-  /** CSS viewport height in portrait (px) */
+  /**
+   * CSS viewport height in portrait (px). Equal to window.innerHeight on real device —
+   * for partner type this is the WebView height BELOW the native chrome (smaller than
+   * the full screen height). See `screenHeight` for the full device screen height used
+   * in device emulation.
+   */
   height: number;
+  /**
+   * Full device screen height in portrait CSS px (= `window.screen.height` on real device).
+   * Differs from `height` when native chrome (status bar + nav bar) is outside the WebView.
+   * If absent, `height` is used as fallback (keeps backward-compat for non-partner presets).
+   */
+  screenHeight?: number;
   /** devicePixelRatio */
   dpr: number;
   /** Notch / camera cutout style (portrait) */

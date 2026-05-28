@@ -1,11 +1,11 @@
 [
   {
     "id": "safe-area.SafeAreaInsetsGet",
-    "reason": "Mock default returns {top:54,bottom:34,left:0,right:0} (iPhone 15 Pro relay-measured values per devtools#198). Real device relay returns device-specific values — on iPhone 15 Pro this should MATCH; on other devices (e.g. SE, Fold) it will differ."
+    "reason": "Mock default (no preset selected) returns {top:0,bottom:0,left:0,right:0}. Real device relay returns device-specific values — e.g. iPhone 15 Pro portrait: {top:54,bottom:34,left:0,right:0}. The mock top=0 intentionally differs from real-device top=54: per devtools#275, the SDK top value is informational (host nav bar is outside WebView viewport) and must not be applied as padding. This is the expected corrected model, not an unintentional mismatch."
   },
   {
     "id": "safe-area.getSafeAreaInsets",
-    "reason": "Deprecated helper returns safeAreaInsets.top (mock default=54). Real device relay returns actual navBarHeight — matches iPhone 15 Pro, differs on others."
+    "reason": "Deprecated helper returns safeAreaInsets.top (mock default=0 after devtools#275 fix). Real device relay returns actual navBarHeight (e.g. 54 on iPhone 15 Pro). Same intentional mismatch as safe-area.SafeAreaInsetsGet — mock top=0 is the correct fidelity model."
   },
   {
     "id": "safe-area.SafeAreaInsetsSubscribeFirstEmit",

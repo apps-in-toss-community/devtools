@@ -51,8 +51,9 @@ describe('buildDeviceProfile', () => {
     expect(buildDeviceProfile(getPreset('iphone-15-pro'), '5.0.0', false).devicePixelRatio).toBe(3);
   });
 
-  it('portrait: screen은 CSS px × dpr (물리 해상도)', () => {
-    // iPhone 15 Pro: 393×852 CSS, dpr 3 → 1179×2556 물리.
+  it('portrait: screen은 screenHeight(전체 화면 CSS px) × dpr (물리 해상도)', () => {
+    // iPhone 15 Pro: screen.height=852(전체), dpr 3 → 1179×2556 물리.
+    // preset.height=754(WebView innerHeight)와 다름 — screen.* 는 전체 화면 기준.
     const profile = buildDeviceProfile(getPreset('iphone-15-pro'), '5.0.0', false);
     expect(profile.screenWidth).toBe(1179);
     expect(profile.screenHeight).toBe(2556);

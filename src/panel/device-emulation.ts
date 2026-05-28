@@ -61,7 +61,10 @@ export function buildDeviceProfile(
         'Chrome/120.0.0.0 Mobile Safari/537.36';
 
   const physWidth = Math.round(preset.width * preset.dpr);
-  const physHeight = Math.round(preset.height * preset.dpr);
+  // screenHeight is the full device screen height in CSS px (= window.screen.height on real device).
+  // For partner presets, preset.height = WebView innerHeight (smaller than full screen);
+  // preset.screenHeight carries the actual screen.height. Falls back to preset.height when absent.
+  const physHeight = Math.round((preset.screenHeight ?? preset.height) * preset.dpr);
 
   return {
     platform,
