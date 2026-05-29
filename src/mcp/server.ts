@@ -19,6 +19,27 @@
  * (dev). `devtools_get_mock_state` (the original devtools#130 name) is kept as a
  * backward-compatible alias of `AIT.getMockState`.
  *
+ * Issue #305 (M2-1) — dev/debug tool-surface unification:
+ * dev-mode now also exposes `list_pages`, `get_diagnostics`, `measure_safe_area`,
+ * and `call_sdk` so the docs/qa/scenarios.md acceptance sequence
+ * `list_pages → measure_safe_area → call_sdk` works in dev mode without
+ * "Unknown tool" failures.
+ *
+ * - `list_pages`       — shim: returns the Vite dev URL as a single-entry array.
+ * - `get_diagnostics`  — dumps dev-mode server state (endpoint URL, last fetch
+ *                        error, reachability, mode/environment metadata).
+ * - `measure_safe_area`— reads safeAreaInsets from the mock state snapshot
+ *                        (source: 'mock-vite').
+ * - `call_sdk`         — reads mock state and builds a mock-equivalent result
+ *                        using window.__ait.state for supported methods; returns
+ *                        an explicit tier-filter error for methods that require
+ *                        a live CDP bridge.
+ * - CDP-only tools (`evaluate`, `take_screenshot`, `get_dom_document`,
+ *                   `take_snapshot`, `list_console_messages`,
+ *                   `list_network_requests`, `list_exceptions`) — return an
+ *                   explicit tier-filter error explaining that CDP is unavailable
+ *                   in dev-mode and pointing to `--mode=local` or `--mode=debug`.
+ *
  * This module is reached via the `devtools-mcp --mode=dev` CLI entry (see
  * `cli.ts`); the default (no flag) bin mode is the debug-mode CDP/Chii server.
  *
@@ -48,14 +69,27 @@ import {
   type ToolAvailability,
 } from './tools.js';
 
+/** Error message prefix for CDP-dependent tools called in dev-mode. */
+const CDP_UNAVAILABLE_IN_DEV_MODE =
+  'dev-mode에서는 CDP 연결이 없어 이 도구를 사용할 수 없습니다. ' +
+  '실기기 또는 로컬 Chromium에 붙이려면 `devtools-mcp --mode=local` 또는 ' +
+  '`devtools-mcp` (debug 모드 기본)로 전환하세요.';
+
 /**
  * Tool descriptors served by the dev-mode server.
  *
  * All dev-mode tools are Tier C (both envs) per RFC #277 — the dev-mode server
  * itself is the mock-side embodiment of those Tier C tools. `availableIn` is
  * declared so the surface stays consistent with the debug-mode registry.
+ *
+ * Issue #305: CDP-only tools are also listed with explicit descriptions so
+ * agents do not get "Unknown tool" failures — they get a clear tier-filter
+ * error message instead.
  */
 const DEV_TOOL_DEFINITIONS = [
+  /* ------------------------------------------------------------------ */
+  /* AIT.* tools — HTTP mock-state backed                                */
+  /* ------------------------------------------------------------------ */
   {
     name: 'AIT.getMockState',
     description:
@@ -90,13 +124,308 @@ const DEV_TOOL_DEFINITIONS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
     availableIn: 'both' as ToolAvailability,
   },
+  /* ------------------------------------------------------------------ */
+  /* Unified surface — dev-mode shims (issue #305)                       */
+  /* ------------------------------------------------------------------ */
+  {
+    name: 'list_pages',
+    description:
+      'dev-mode: returns the Vite dev server URL as a single-entry page list. ' +
+      'No CDP relay is involved — `tunnel.up` is always false and `devMode: true` marks ' +
+      'this as a shim result. Call this first to confirm the dev server is reachable. ' +
+      'In debug mode (`devtools-mcp` / `--mode=local`) this returns real attached pages.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'get_diagnostics',
+    description:
+      'dev-mode: returns server diagnostics — Vite endpoint URL, last fetch timestamp/error, ' +
+      'mock state endpoint reachability, mode ("dev"), and environment metadata. ' +
+      'Call this when the dev server connection is suspect. ' +
+      'In debug mode this returns tunnel/relay/attach status instead.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recent_errors_limit: {
+          type: 'number',
+          description: 'Ignored in dev-mode (no error ring buffer). Present for schema parity.',
+        },
+      },
+      required: [],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'measure_safe_area',
+    description:
+      'dev-mode: reads safe-area insets from the mock state snapshot via the Vite endpoint. ' +
+      'Returns `{ source: "mock-vite", sdkInsets, sdkInsetsSource: "window.__ait", ... }`. ' +
+      'Values reflect what the DevTools panel reports at the time of the last state push. ' +
+      'In debug mode this runs a Runtime.evaluate CDP probe on the attached page.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'call_sdk',
+    description:
+      'dev-mode: calls a mock SDK method via the Vite mock state endpoint. ' +
+      'Supported methods read from window.__ait mock state (e.g. getOperationalEnvironment). ' +
+      'Returns the same `{ok, value}` / `{ok, error}` envelope as debug mode. ' +
+      'In debug mode this calls the real SDK via window.__sdkCall over CDP.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Mock SDK method name to call (e.g. "getOperationalEnvironment").',
+        },
+        args: {
+          type: 'array',
+          description: 'Arguments (ignored in dev-mode mock path; present for schema parity).',
+          items: {},
+        },
+      },
+      required: ['name'],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
+  /* ------------------------------------------------------------------ */
+  /* CDP-only tools — tier-filter stubs so agents see a clear error      */
+  /* instead of "Unknown tool" (issue #305)                              */
+  /* ------------------------------------------------------------------ */
+  {
+    name: 'evaluate',
+    description:
+      'Evaluates an arbitrary JavaScript expression via CDP Runtime.evaluate. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug` for CDP access.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        expression: { type: 'string', description: 'JavaScript expression to evaluate.' },
+      },
+      required: ['expression'],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'take_screenshot',
+    description:
+      'Captures a PNG screenshot via CDP Page.captureScreenshot. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'get_dom_document',
+    description:
+      'Returns the DOM tree via CDP DOM.getDocument. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'take_snapshot',
+    description:
+      'Captures a serialized page snapshot via CDP DOMSnapshot.captureSnapshot. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'list_console_messages',
+    description:
+      'Lists console messages captured via CDP Runtime.consoleAPICalled. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'list_network_requests',
+    description:
+      'Lists network requests captured via CDP Network events. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
+    name: 'list_exceptions',
+    description:
+      'Lists JS exceptions captured via CDP Runtime.exceptionThrown. ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Maximum exceptions to return.' },
+      },
+      required: [],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
 ] as const;
 
+/** All tool names served in dev-mode (including tier-filter stubs). */
 const DEV_TOOL_NAMES = new Set<string>(DEV_TOOL_DEFINITIONS.map((t) => t.name));
+
+/** CDP-only tools — return a tier-filter error in dev-mode. */
+const CDP_ONLY_TOOL_NAMES = new Set<string>([
+  'evaluate',
+  'take_screenshot',
+  'get_dom_document',
+  'take_snapshot',
+  'list_console_messages',
+  'list_network_requests',
+  'list_exceptions',
+]);
 
 export interface CreateDevServerDeps {
   /** AIT source for the dev tools. Defaults to an HTTP source over the dev server. */
   aitSource?: AitSource;
+}
+
+/**
+ * Builds the `list_pages` dev-mode shim response.
+ * Returns the Vite dev URL as a single-entry page list with `devMode: true`.
+ */
+function buildDevListPagesResult(devtoolsUrl: string) {
+  return {
+    pages: [
+      {
+        url: devtoolsUrl,
+        title: 'dev fixture',
+        attached: true,
+      },
+    ],
+    tunnel: { up: false },
+    devMode: true,
+    singleAttachModel: true,
+  };
+}
+
+/**
+ * Builds the `get_diagnostics` dev-mode response.
+ * Probes the mock state endpoint reachability and returns server metadata.
+ */
+async function buildDevDiagnostics(
+  devtoolsUrl: string,
+  stateEndpoint: string,
+  fetchImpl: (url: string) => Promise<Response>,
+): Promise<Record<string, unknown>> {
+  let reachable = false;
+  let lastFetchError: string | null = null;
+  let lastFetchAt: string | null = null;
+
+  try {
+    const res = await fetchImpl(stateEndpoint);
+    reachable = res.ok;
+    lastFetchAt = new Date().toISOString();
+    if (!res.ok) {
+      lastFetchError = `HTTP ${res.status} ${res.statusText}`;
+    }
+  } catch (err) {
+    lastFetchError = err instanceof Error ? err.message : String(err);
+    lastFetchAt = new Date().toISOString();
+  }
+
+  return {
+    mode: 'dev',
+    devtoolsUrl,
+    mcpStateEndpoint: stateEndpoint,
+    mockStateEndpointReachable: reachable,
+    lastFetchAt,
+    lastFetchError,
+    environment: {
+      kind: 'mock',
+      reason: 'dev-mode — Vite HTTP endpoint, no CDP connection',
+    },
+    nextRecommendedAction: reachable
+      ? null
+      : 'mock state endpoint가 응답하지 않습니다. Vite dev 서버가 `mcp: true` 옵션으로 실행 중인지 확인하고, 필요하면 dev 서버를 재시작하세요.',
+  };
+}
+
+/**
+ * Builds the `measure_safe_area` dev-mode response from mock state.
+ * Reads `safeAreaInsets` from the AIT mock state and returns a parity-schema
+ * result with `source: 'mock-vite'`.
+ */
+async function buildDevMeasureSafeArea(aitSource: AitSource): Promise<Record<string, unknown>> {
+  const state = await aitSource.get('AIT.getMockState');
+  const raw = state as Record<string, unknown>;
+
+  // Extract safeAreaInsets from the mock state.
+  const rawInsets = raw.safeAreaInsets;
+  let sdkInsets: { top: number; right: number; bottom: number; left: number } | null = null;
+  if (rawInsets !== null && typeof rawInsets === 'object' && !Array.isArray(rawInsets)) {
+    const r = rawInsets as Record<string, unknown>;
+    sdkInsets = {
+      top: typeof r.top === 'number' ? r.top : 0,
+      right: typeof r.right === 'number' ? r.right : 0,
+      bottom: typeof r.bottom === 'number' ? r.bottom : 0,
+      left: typeof r.left === 'number' ? r.left : 0,
+    };
+  }
+
+  return {
+    source: 'mock-vite',
+    // CSS env() vars are not available from the server side — report zeros.
+    cssEnv: { top: 0, right: 0, bottom: 0, left: 0 },
+    sdkInsets,
+    sdkInsetsSource: sdkInsets !== null ? 'window.__ait' : null,
+    ...(sdkInsets === null
+      ? { sdkInsetsError: 'window.__ait.state.safeAreaInsets not found in mock state snapshot' }
+      : {}),
+    // Viewport geometry is not available from server side.
+    innerWidth: null,
+    innerHeight: null,
+    devicePixelRatio: null,
+    userAgent: null,
+    navBarHeight: null,
+    navBarHeightSource: 'not-available-in-dev-mode',
+  };
+}
+
+/**
+ * Builds the `call_sdk` dev-mode response.
+ *
+ * Supported methods are served from the mock state snapshot. Unsupported
+ * methods return `{ ok: false, error: 'dev-mode-unsupported: ...' }` so the
+ * agent gets an informative message rather than a generic failure.
+ */
+async function buildDevCallSdk(
+  methodName: string,
+  aitSource: AitSource,
+): Promise<Record<string, unknown>> {
+  switch (methodName) {
+    case 'getOperationalEnvironment': {
+      const env = await aitSource.get('AIT.getOperationalEnvironment');
+      return {
+        ok: true,
+        value: {
+          environment: env.environment,
+          sdkVersion: env.sdkVersion,
+        },
+      };
+    }
+    default: {
+      // For methods not readable from mock state, return a structured error.
+      return {
+        ok: false,
+        error:
+          `dev-mode-unsupported: "${methodName}"은 dev-mode에서 직접 호출할 수 없습니다. ` +
+          'CDP bridge(window.__sdkCall)가 없으므로 실제 SDK 호출은 `--mode=local` 또는 ' +
+          'debug 모드에서만 가능합니다. ' +
+          '지원 메서드: getOperationalEnvironment (mock state에서 읽음).',
+      };
+    }
+  }
 }
 
 /** Builds the dev-mode MCP server (does not connect a transport). */
@@ -120,19 +449,52 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
       return mcpError(`알 수 없는 tool: ${name}`);
     }
 
+    // CDP-only tools — tier-filter error with mode-switch hint.
+    if (CDP_ONLY_TOOL_NAMES.has(name)) {
+      return mcpError(`${name}: ${CDP_UNAVAILABLE_IN_DEV_MODE}`);
+    }
+
     try {
       // `devtools_get_mock_state` is an alias of `AIT.getMockState`.
       const effective = name === 'devtools_get_mock_state' ? 'AIT.getMockState' : name;
-      if (!isAitToolName(effective)) {
-        return mcpError(`알 수 없는 tool: ${name}`);
+
+      // AIT.* tools backed by HTTP mock-state endpoint.
+      if (isAitToolName(effective)) {
+        switch (effective) {
+          case 'AIT.getMockState':
+            return jsonResult(await getMockState(aitSource));
+          case 'AIT.getOperationalEnvironment':
+            return jsonResult(await getOperationalEnvironment(aitSource));
+          case 'AIT.getSdkCallHistory':
+            return jsonResult(await getSdkCallHistory(aitSource));
+          default:
+            return mcpError(`알 수 없는 tool: ${name}`);
+        }
       }
-      switch (effective) {
-        case 'AIT.getMockState':
-          return jsonResult(await getMockState(aitSource));
-        case 'AIT.getOperationalEnvironment':
-          return jsonResult(await getOperationalEnvironment(aitSource));
-        case 'AIT.getSdkCallHistory':
-          return jsonResult(await getSdkCallHistory(aitSource));
+
+      // Unified-surface tools (issue #305 shims).
+      switch (name) {
+        case 'list_pages':
+          return jsonResult(buildDevListPagesResult(devtoolsUrl));
+
+        case 'get_diagnostics':
+          return jsonResult(
+            await buildDevDiagnostics(devtoolsUrl, stateEndpoint, (url) => fetch(url)),
+          );
+
+        case 'measure_safe_area':
+          return jsonResult(await buildDevMeasureSafeArea(aitSource));
+
+        case 'call_sdk': {
+          const sdkName = request.params.arguments?.name;
+          if (typeof sdkName !== 'string' || sdkName === '') {
+            return mcpError(
+              'call_sdk: name 인자가 비어 있습니다. 호출할 메서드 이름을 전달하세요.',
+            );
+          }
+          return jsonResult(await buildDevCallSdk(sdkName, aitSource));
+        }
+
         default:
           return mcpError(`알 수 없는 tool: ${name}`);
       }
