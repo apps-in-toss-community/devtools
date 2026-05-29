@@ -56,20 +56,23 @@ import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
 import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
-import { acquireLock } from './server-lock.js';
+import { acquireLock, readServerLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
   callSdk,
   canOpenBrowser,
   DEBUG_TOOL_DEFINITIONS,
+  type DiagnosticsCollector,
   evaluate,
   filterToolsByEnvironment,
+  getDiagnostics,
   getDomDocument,
   getMockState,
   getOperationalEnvironment,
   getSdkCallHistory,
   getToolAvailability,
+  InMemoryDiagnosticsCollector,
   isAitToolName,
   isDebugToolName,
   isToolAvailableIn,
@@ -149,6 +152,12 @@ export interface DebugServerDeps {
   getEnvironment?: () => McpEnvironment;
   /** Resolves the reason for the current env decision (for logs). */
   getEnvironmentReason?: () => string;
+  /**
+   * Diagnostics collector — records server-side errors, attach/detach events,
+   * and surfaces them via `get_diagnostics`. When omitted a no-op collector is
+   * used (backwards-compatible with existing tests that don't inject one).
+   */
+  diagnosticsCollector?: DiagnosticsCollector;
 }
 
 /**
@@ -223,6 +232,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     qrHttpServer,
     getEnvironment: getEnvDep,
     getEnvironmentReason: getEnvReasonDep,
+    diagnosticsCollector: collectorDep,
   } = deps;
 
   // Env SSoT — production wires the real `getEnvironment` with the connection;
@@ -231,6 +241,11 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     getEnvDep ?? (() => getEnvironment({ connection }));
   const resolveEnvironmentReason: () => string =
     getEnvReasonDep ?? (() => getEnvironmentReason({ connection }));
+
+  // Diagnostics collector — production uses an `InMemoryDiagnosticsCollector`;
+  // tests may inject a no-op or fake. A no-op is created lazily when none
+  // is supplied so existing tests that don't inject one continue to work.
+  const collector: DiagnosticsCollector = collectorDep ?? new InMemoryDiagnosticsCollector();
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
@@ -296,6 +311,28 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           default:
             return unknownTool(name);
         }
+      } catch (err) {
+        return errorResult(err, name);
+      }
+    }
+
+    // get_diagnostics is a bootstrap tool — it works before any page attaches
+    // and must not require enableDomains. It aggregates all server state into a
+    // single response so the agent can diagnose session problems in one call.
+    if (name === 'get_diagnostics') {
+      try {
+        const rawLimit = request.params.arguments?.recent_errors_limit;
+        const recentErrorsLimit = typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 10;
+        const result = await getDiagnostics({
+          tunnel: getTunnelStatus(),
+          connection,
+          env: resolveEnvironment(),
+          envReason: resolveEnvironmentReason(),
+          collector,
+          readLock: readServerLock,
+          recentErrorsLimit,
+        });
+        return jsonResult(result);
       } catch (err) {
         return errorResult(err, name);
       }
@@ -862,6 +899,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   const devtoolsOpener = new AutoDevtoolsOpener();
 
+  // Diagnostics collector — records server-side errors and attach/detach events
+  // so `get_diagnostics` can surface them in a single call.
+  const diagnosticsCollector = new InMemoryDiagnosticsCollector();
+
   const server = createDebugServer({
     connection,
     aitSource,
@@ -869,6 +910,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     get qrHttpServer() {
       return qrServer;
     },
+    diagnosticsCollector,
   });
 
   const transport = new StdioServerTransport();
@@ -948,6 +990,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // AIT_AUTO_DEVTOOLS=0. The tunnel wssUrl may still be null here when
   // cloudflared is still starting; devtoolsOpener.open() guards against that.
   attachWatcher = startAttachWatcher(connection, server, 1_000, () => {
+    diagnosticsCollector.recordAttach();
     devtoolsOpener.open(tunnelStatus.wssUrl, getEnvironment({ connection }));
   });
 }
