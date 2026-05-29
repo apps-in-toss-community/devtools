@@ -148,6 +148,57 @@ export interface DebugServerDeps {
 }
 
 /**
+ * Waits for the first target matching `filterFn` to attach, using the
+ * event-driven `waitForFirstTarget()` on `ChiiCdpConnection` instances, or
+ * falling back to a polling loop for generic `CdpConnection` fakes (tests).
+ *
+ * This eliminates the polling-only race that previously caused `wait_for_attach`
+ * to resolve before the relay had observed the first inbound CDP message from
+ * the phone.
+ *
+ * @param connection - The CDP connection (production or fake).
+ * @param filterFn   - Resolves when this predicate is satisfied.
+ * @param timeoutMs  - Maximum wait time in ms.
+ * @param pollIntervalMs - Fallback poll interval for non-ChiiCdpConnection.
+ */
+function waitForAttachWithEvents(
+  connection: CdpConnection,
+  filterFn: (targets: ReturnType<CdpConnection['listTargets']>) => boolean,
+  timeoutMs: number,
+  pollIntervalMs = 1_000,
+): Promise<ReturnType<CdpConnection['listTargets']>> {
+  // Use event-driven path when available (ChiiCdpConnection production instances).
+  if (connection instanceof ChiiCdpConnection) {
+    return connection.waitForFirstTarget(filterFn, timeoutMs, pollIntervalMs);
+  }
+  // Generic fallback for test fakes that implement CdpConnection but not
+  // waitForFirstTarget (they don't emit 'target:attached').
+  return new Promise<ReturnType<CdpConnection['listTargets']>>((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    let settled = false;
+    const poll = setInterval(() => {
+      const targets = connection.listTargets();
+      if (filterFn(targets)) {
+        settled = true;
+        clearInterval(poll);
+        resolve(targets);
+      } else if (Date.now() >= deadline) {
+        settled = true;
+        clearInterval(poll);
+        reject(new Error(`waitForAttachWithEvents: 타임아웃 (${timeoutMs}ms)`));
+      }
+    }, pollIntervalMs);
+    // Also check immediately.
+    const targets = connection.listTargets();
+    if (!settled && filterFn(targets)) {
+      settled = true;
+      clearInterval(poll);
+      resolve(targets);
+    }
+  });
+}
+
+/**
  * Builds the debug-mode MCP server around an injected CDP connection + AIT
  * source + tunnel status getter. Pure wiring — does not start a relay or
  * tunnel, which is what makes the tool surface unit-testable.
@@ -327,23 +378,25 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               return { content: [{ type: 'text' as const, text: shortText }] };
             }
 
-            // wait_for_attach path (browser opened).
-            const POLL_INTERVAL_MS = 1000;
-            const TIMEOUT_MS = waitForAttachTimeoutMs;
-            const deadline = Date.now() + TIMEOUT_MS;
+            // wait_for_attach path (browser opened) — event-driven via waitForAttachWithEvents.
             let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
-            while (Date.now() < deadline) {
+            try {
+              attachedPages = await waitForAttachWithEvents(
+                connection,
+                isMatchingPage,
+                waitForAttachTimeoutMs,
+              );
+            } catch {
               attachedPages = connection.listTargets();
-              if (isMatchingPage(attachedPages)) break;
-              await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
-            }
-
-            if (!isMatchingPage(attachedPages)) {
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: buildTimeoutError(shortText, TIMEOUT_MS / 1000, attachedPages),
+                    text: buildTimeoutError(
+                      shortText,
+                      waitForAttachTimeoutMs / 1000,
+                      attachedPages,
+                    ),
                   },
                 ],
                 isError: true,
@@ -378,23 +431,21 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             return { content: [{ type: 'text' as const, text: baseText }] };
           }
 
-          // wait_for_attach + fallback path.
-          const POLL_INTERVAL_MS_FB = 1000;
-          const TIMEOUT_MS_FB = waitForAttachTimeoutMs;
-          const deadline2 = Date.now() + TIMEOUT_MS_FB;
+          // wait_for_attach + fallback path — event-driven via waitForAttachWithEvents.
           let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
-          while (Date.now() < deadline2) {
+          try {
+            attachedPagesFb = await waitForAttachWithEvents(
+              connection,
+              isMatchingPage,
+              waitForAttachTimeoutMs,
+            );
+          } catch {
             attachedPagesFb = connection.listTargets();
-            if (isMatchingPage(attachedPagesFb)) break;
-            await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS_FB));
-          }
-
-          if (!isMatchingPage(attachedPagesFb)) {
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text: buildTimeoutError(baseText, TIMEOUT_MS_FB / 1000, attachedPagesFb),
+                  text: buildTimeoutError(baseText, waitForAttachTimeoutMs / 1000, attachedPagesFb),
                 },
               ],
               isError: true,
@@ -422,28 +473,26 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
-        // wait_for_attach=true: poll listTargets until a matching page attaches or timeout.
+        // wait_for_attach=true: event-driven via waitForAttachWithEvents.
         // enableDomains is NOT called here — listTargets is a buffered target list
         // read and does not require domain negotiation.
         // The deploymentId filter (parsed above) ensures we don't return a stale
-        // page from a previous session — the break fires only when an attached page's
+        // page from a previous session — resolves only when an attached page's
         // URL contains the expected deploymentId.
-        const POLL_INTERVAL_MS = 1000;
-        const TIMEOUT_MS = waitForAttachTimeoutMs;
-        const deadline = Date.now() + TIMEOUT_MS;
         let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
-        while (Date.now() < deadline) {
+        try {
+          attachedPages = await waitForAttachWithEvents(
+            connection,
+            isMatchingPage,
+            waitForAttachTimeoutMs,
+          );
+        } catch {
           attachedPages = connection.listTargets();
-          if (isMatchingPage(attachedPages)) break;
-          await new Promise<void>((r) => setTimeout(r, POLL_INTERVAL_MS));
-        }
-
-        if (!isMatchingPage(attachedPages)) {
           return {
             content: [
               {
                 type: 'text' as const,
-                text: buildTimeoutError(baseText, TIMEOUT_MS / 1000, attachedPages),
+                text: buildTimeoutError(baseText, waitForAttachTimeoutMs / 1000, attachedPages),
               },
             ],
             isError: true,
@@ -472,6 +521,15 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       const message = err instanceof Error ? err.message : String(err);
       if (name === 'list_pages') {
         // list_pages is still useful pre-attach: report tunnel + empty pages.
+        // Refresh from relay first so evicted-then-reattached targets are not
+        // served as stale empty (#281 — stale cache diagnosis).
+        if (connection instanceof ChiiCdpConnection) {
+          try {
+            await connection.refreshTargets();
+          } catch {
+            // Ignore refresh errors — still return cached state.
+          }
+        }
         return jsonResult(listPages(connection, getTunnelStatus()));
       }
       return {
@@ -497,6 +555,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         case 'list_network_requests':
           return jsonResult(listNetworkRequests(connection));
         case 'list_pages':
+          // Refresh from relay so evict→reattach transitions are not served stale.
+          if (connection instanceof ChiiCdpConnection) {
+            try {
+              await connection.refreshTargets();
+            } catch {
+              // Ignore refresh errors — still return cached state.
+            }
+          }
           return jsonResult(listPages(connection, getTunnelStatus()));
         case 'get_dom_document':
           return jsonResult(await getDomDocument(connection));
@@ -558,13 +624,35 @@ function unknownTool(name: string) {
   return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
 }
 
+/**
+ * Detects whether an error is a relay/websocket disconnect error.
+ * These are distinguished from "no page attached yet" errors because they
+ * require enableDomains() to be called again (re-establish the websocket),
+ * not just waiting for a target to appear.
+ */
+function isDisconnectError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return (
+    msg.includes('relay에 연결되어 있지 않습니다') ||
+    msg.includes('relay WebSocket') ||
+    msg.includes('replaced-by-new-attach') ||
+    msg.includes('Chii relay connection closed')
+  );
+}
+
 function errorResult(err: unknown, name: string) {
   const message = err instanceof Error ? err.message : String(err);
+  // Provide disconnect-specific guidance so the agent knows to re-enable domains.
+  const hint = isDisconnectError(err)
+    ? '\n\nrelay 연결이 끊겼습니다. list_pages → enableDomains() 재호출로 재연결하세요. ' +
+      '폰이 백그라운드로 내려갔거나 미니앱이 종료됐을 수 있습니다.'
+    : '\nCall list_pages to confirm a mini-app has attached over the relay.';
   return {
     content: [
       {
         type: 'text' as const,
-        text: `${name} failed: ${message}\nCall list_pages to confirm a mini-app has attached over the relay.`,
+        text: `${name} failed: ${message}${hint}`,
       },
     ],
     isError: true,

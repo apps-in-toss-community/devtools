@@ -281,3 +281,42 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 `🟡 partial`은 대부분 실용에 충분 — native 런타임 의존(카메라 취소 감지, 실 결제 UI)이나 의도된 간소화(SafeAreaInsets 과호출)라 #190 비목표에 가깝다. `🟢 faithful`은 손댈 필요 없음.
 
 새 mock API를 추가하면 이 표에 행을 더한다 — 그게 fidelity 회귀를 막는 규약이다.
+
+---
+
+## 시나리오별 MCP tool 응답 diff snapshot (4겹 fidelity — #281)
+
+M1 acceptance 기준: 4 시나리오에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 호출이 동일 schema 응답.
+
+### `list_pages` — 시나리오별 예상 shape
+
+| 필드 | 환경 1 (로컬) | 환경 2 (PWA relay) | 환경 3 (intoss dev relay) | 환경 4 (live relay) |
+|---|---|---|---|---|
+| `pages` 길이 | 1 | 1 | 1 | 1 |
+| `pages[0].url` | `http://localhost:517x/` | `https://*.trycloudflare.com/` | `intoss-private://…?_deploymentId=<uuid>` | `intoss-private://…?_deploymentId=<uuid>` |
+| `tunnel.up` | false | true | true | true |
+| `source` (env) | mock | relay | relay | relay |
+| `lastSeenAt` | 현재 시각 | 현재 시각 | 현재 시각 | 현재 시각 |
+| `crashDetectedAt` | null | null | null | null |
+| `singleAttachModel` | true | true | true | true |
+
+### `measure_safe_area` — 시나리오별 예상 shape
+
+| 필드 | 환경 1 (로컬) | 환경 2·3·4 (relay) |
+|---|---|---|
+| `source` | `"mock"` | `"relay"` |
+| `sdkInsetsSource` | `"window.__ait"` | `"window.__sdk"` |
+| `sdkInsets.top` | 패널 설정값 (예: 47) | 실기기 측정값 (예: 44–54) |
+| `cssEnv.top` | CSS env var (panel context) | 0 (Toss host WebView override) |
+| `userAgent` | desktop Chrome UA | iOS/Android Toss WebView UA |
+| `devicePixelRatio` | 1–2 (desktop) | 2–3 (실기기) |
+
+### `call_sdk("getOperationalEnvironment", [])` — 시나리오별 예상 shape
+
+| 필드 | 환경 1 (mock) | 환경 2 (PWA non-dogfood) | 환경 3 (intoss dev dogfood) | 환경 4 (live dogfood) |
+|---|---|---|---|---|
+| `ok` | true | false | true | true |
+| `error` | — | `"window.__sdkCall is not available"` | — | — |
+| `value.environment` | `"sandbox"` 또는 패널 설정값 | — | `"dev"` | `"production"` |
+
+**schema 평행 기준**: `ok` 필드 존재, `value` 또는 `error` 필드 존재 — 즉 동일한 JSON envelope. 환경 2 non-dogfood에서 `ok: false`는 예상 결과(bridge 부재)이며 schema 위반이 아니다.
