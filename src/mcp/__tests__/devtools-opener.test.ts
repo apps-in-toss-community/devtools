@@ -7,7 +7,6 @@ import {
   AutoDevtoolsOpener,
   buildChromeDevtoolsUrl,
   isAutoDevtoolsDisabled,
-  openUrlInBrowser,
 } from '../devtools-opener.js';
 
 // ---------------------------------------------------------------------------
@@ -77,18 +76,8 @@ describe('isAutoDevtoolsDisabled', () => {
 });
 
 // ---------------------------------------------------------------------------
-// openUrlInBrowser
+// openUrlInBrowser — actual spawn is a side-effect; integration path is manual/E2E only.
 // ---------------------------------------------------------------------------
-
-describe('openUrlInBrowser', () => {
-  it('returns a boolean (smoke test — actual browser open is a side-effect)', () => {
-    // openUrlInBrowser wraps child_process.spawnSync; the exact return value
-    // depends on whether the platform open command is available. We only verify
-    // the return type contract here — the integration path is manual/E2E only.
-    const result = openUrlInBrowser('https://chrome-devtools-frontend.appspot.com');
-    expect(typeof result).toBe('boolean');
-  });
-});
 
 // ---------------------------------------------------------------------------
 // AutoDevtoolsOpener
