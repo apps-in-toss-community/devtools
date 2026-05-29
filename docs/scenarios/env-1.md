@@ -62,6 +62,17 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 # list_pages → measure_safe_area → call_sdk("getOperationalEnvironment", [])
 ```
 
+## 트러블슈팅
+
+### MCP 서버가 "이미 실행 중" 안내가 뜰 때
+
+`devtools-mcp`가 이미 실행 중인 세션을 감지하면 stderr에 PID + wssUrl + 회복 명령을 출력합니다.
+`--force` 플래그로 기존 세션을 종료하고 takeover할 수 있습니다:
+
+```bash
+npx @ait-co/devtools devtools-mcp --target=local --force
+```
+
 ## 환경 1 한계 (구조적 불가)
 
 - 실기기 WebKit 엔진 fidelity: 환경 2(PWA)로 보완

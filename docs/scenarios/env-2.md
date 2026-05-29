@@ -37,6 +37,17 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 2. QR 스캔 → 폰이 relay에 attach
 3. `list_pages`가 page 항목을 반환하면 이후 도구 사용 가능
 
+## 트러블슈팅
+
+### MCP 서버가 "이미 실행 중" 안내가 뜰 때
+
+`devtools-mcp`가 이미 실행 중인 세션을 감지하면 stderr에 PID + wssUrl + 회복 명령을 출력합니다.
+`--force` 플래그로 기존 세션을 종료하고 takeover할 수 있습니다:
+
+```bash
+npx @ait-co/devtools devtools-mcp --force
+```
+
 ## 환경 2 한계
 
 - 토스 WebView native bridge 없음 (검수 불필요하지만 bridge 부재)

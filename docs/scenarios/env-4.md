@@ -37,6 +37,17 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 - `evaluate` + `call_sdk` 사용 시 side-effect 있는 호출 주의.
 - 이 환경은 station 6(operate) 지원 — 배포 후 런타임 관측.
 
+## 트러블슈팅
+
+### MCP 서버가 "이미 실행 중" 안내가 뜰 때
+
+`devtools-mcp`가 이미 실행 중인 세션을 감지하면 stderr에 PID + wssUrl + 회복 명령을 출력합니다.
+`--force` 플래그로 기존 세션을 종료하고 takeover할 수 있습니다:
+
+```bash
+npx @ait-co/devtools devtools-mcp --force
+```
+
 ## 시나리오별 mock vs relay diff
 
 환경 1(mock)과 환경 3·4(relay)의 `measure_safe_area` 응답 비교:
