@@ -86,10 +86,12 @@ import {
 import { verifyTotp } from './totp.js';
 import {
   generateAttachToken,
+  makeTunnelStatus,
   printAttachBanner,
   type QuickTunnel,
   renderQr,
   startQuickTunnel,
+  startTunnelHealthProbe,
 } from './tunnel.js';
 
 /**
@@ -785,10 +787,13 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   logInfo('server.start', { port: relay.port, totpEnabled });
 
   let tunnel: QuickTunnel | null = null;
-  let tunnelStatus: TunnelStatus = { up: false, wssUrl: null };
+  let tunnelStatus: TunnelStatus = makeTunnelStatus(false, null);
   // generateAttachToken is kept for legacy/non-TOTP token use, but we no
   // longer print it in the banner to avoid accidental secret exposure.
   const _token = generateAttachToken();
+
+  // Health probe handle — started once the initial tunnel is up.
+  let tunnelProbe: { stop(): void } | null = null;
 
   // Bring the cloudflared tunnel up in the background so the MCP stdio
   // transport can answer `initialize` immediately. cloudflared has to lazy-
@@ -800,12 +805,33 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const tunnelReady = startQuickTunnel(relay.port).then(
     (t) => {
       tunnel = t;
-      tunnelStatus = { up: true, wssUrl: t.wssUrl };
+      tunnelStatus = makeTunnelStatus(true, t.wssUrl);
       // Update the lock file with the assigned tunnel URL so a second caller
       // can see the correct wssUrl in the conflict error message.
       lockHandle.updateWssUrl(t.wssUrl);
       // SECRET-HANDLING: wssUrl contains the relay host — do not log it directly.
       logInfo('tunnel.up', { totpEnabled });
+
+      // Start the health probe now that the tunnel URL is known.
+      // The probe runs every 60 s and attempts up to 3 reissues on drop.
+      tunnelProbe = startTunnelHealthProbe(t, relay.port, {
+        onReissue: (newTunnel) => {
+          tunnel = newTunnel;
+          tunnelStatus = makeTunnelStatus(true, newTunnel.wssUrl, null, 0);
+          lockHandle.updateWssUrl(newTunnel.wssUrl);
+          // Reprint the banner so the user (and agent) see the new URL + QR.
+          void printAttachBanner({ wssUrl: newTunnel.wssUrl, totpEnabled }).then(() => {
+            logInfo('tunnel.up', { totpEnabled, reissued: true });
+          });
+        },
+        onPermanentDrop: (droppedAt) => {
+          tunnelStatus = makeTunnelStatus(false, null, droppedAt, 3);
+          logError('tunnel.down', {
+            msg: `tunnel permanently dropped (${droppedAt}). Restart: npx @ait-co/devtools devtools-mcp`,
+          });
+        },
+      });
+
       return printAttachBanner({ wssUrl: t.wssUrl, totpEnabled });
     },
     (err) => {
@@ -864,6 +890,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     closed = true;
 
     attachWatcher?.stop();
+    tunnelProbe?.stop();
     connection.close();
     // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
     tunnel?.stop();
@@ -887,6 +914,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     if (!closed) {
       closed = true;
       attachWatcher?.stop();
+      tunnelProbe?.stop();
       tunnel?.stop();
       // Synchronous lock release — rmSync is safe from exit handlers.
       lockHandle.release();

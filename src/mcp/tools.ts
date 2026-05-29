@@ -49,6 +49,19 @@ export interface TunnelStatus {
   up: boolean;
   /** Public `wss://*.trycloudflare.com` relay URL the phone attaches to. */
   wssUrl: string | null;
+  /**
+   * ISO timestamp when a tunnel drop was first detected by the health probe.
+   * `null` means the tunnel has not dropped (or has recovered since the last
+   * drop). When non-null and `up` is false, the tunnel is down and the probe
+   * has exhausted all reissue attempts — the server must be restarted.
+   */
+  droppedAt?: string | null;
+  /**
+   * Number of automatic reissue attempts made after a drop was detected.
+   * Resets to 0 after a successful reissue. Reaches `MAX_REISSUE_ATTEMPTS`
+   * (3) before the probe gives up and enters the permanent-error state.
+   */
+  reissueAttempts?: number;
 }
 
 /**
@@ -94,6 +107,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'single-attach model). The result includes `singleAttachModel: true` so the agent ' +
       'knows the array is always 0 or 1 entries. ' +
       'Also returns whether the cloudflared tunnel is up and the public wss relay URL. ' +
+      'The `tunnel` field includes `droppedAt` (ISO timestamp or null/undefined): when non-null ' +
+      'the tunnel has permanently dropped after 3 failed reissue attempts — restart the debug ' +
+      'server with `npx @ait-co/devtools devtools-mcp`. ' +
       'Each page entry includes a `lastSeenAt` ISO timestamp (last inbound CDP message from ' +
       'that target — useful to detect stale entries when the phone app backgrounded). ' +
       'The result also includes `crashDetectedAt` (ISO timestamp or null): when non-null, ' +
