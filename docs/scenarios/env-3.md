@@ -5,8 +5,9 @@
 
 ## 전제조건
 
-- `MCP_ENV=relay npx @ait-co/devtools devtools-mcp` (debug 모드, relay env 명시)
-  - `MCP_ENV=relay`는 자동 감지보다 명시를 권장한다 — 터널 URL 패턴이 감지되기 전 bootstrap 단계에서도 relay tool이 노출된다.
+- `devtools-mcp` 실행 (debug 모드)
+  - **`MCP_ENV=relay-dev` 권장** (명시적으로 설정 — 환경 변수 미설정 시 CDP URL 패턴 자동 감지 + `defaultEnv=relay-dev`로 fallback되지만 명시가 안전함)
+  - `MCP_ENV=relay`도 동작 (backward-compat alias → `relay-dev`로 해석)
 - dogfood bundle deploy: `ait build && ait deploy --scheme-only`
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - 진입 경로: QR 스캔 (단일 정식 경로 — `test-push` 폐기됨)
@@ -59,6 +60,24 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 ```bash
 npx @ait-co/devtools devtools-mcp --force
 ```
+
+## get_diagnostics — environment 필드
+
+`get_diagnostics` 응답의 `environment` 필드:
+
+```json
+{
+  "kind": "relay-dev",
+  "env": "relay",
+  "reason": "env-var-relay-dev",
+  "liveGuardActive": false
+}
+```
+
+- `kind`: 정밀 세 값(`mock` | `relay-dev` | `relay-live`).
+- `env`: backward-compat 두 값(`mock` | `relay`). 기존 코드가 이 필드를 읽더라도 동작.
+- `liveGuardActive`: relay-dev에서는 `false` — side-effect 도구(`call_sdk`, `evaluate`) 자유롭게 호출 가능.
+
 
 ## 환경 3 한계
 

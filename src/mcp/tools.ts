@@ -41,6 +41,7 @@ import type {
 } from './cdp-connection.js';
 import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
 import type { McpEnvironment } from './environment.js';
+import { isLiveRelayEnv, isRelayEnv, toLegacyEnv } from './environment.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
 
 /** Tunnel state surfaced by `list_pages`. */
@@ -221,15 +222,27 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'CDP Runtime.evaluate (returnByValue: true) and returns the result. ' +
       'NOT read-only — the expression can have side effects (DOM mutations, SDK calls, ' +
       'state changes). Requires the relay to be attached — call list_pages first. ' +
-      'Throws if the evaluation throws an exception on the page. ' +
+      'Throws if the evaluation throws an exception on the page.\n\n' +
       'SECURITY: expression and result are not redacted — never include secrets or auth ' +
-      'tokens in the expression.',
+      'tokens in the expression.\n\n' +
+      'LIVE guard: when running against a live/production relay (relay-live env, ' +
+      'MCP_ENV=relay-live), this tool requires `confirm: true` to acknowledge that ' +
+      'the expression may affect real users. Without it the call is rejected with a ' +
+      'structured error. mock and relay-dev sessions are unaffected.',
     inputSchema: {
       type: 'object',
       properties: {
         expression: {
           type: 'string',
           description: 'JavaScript expression to evaluate in the page context.',
+        },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Required when MCP_ENV=relay-live. Set to `true` to explicitly acknowledge ' +
+            'that this expression may have side effects on real/live users. ' +
+            'Omitting this in a relay-live session results in a structured rejection error. ' +
+            'Has no effect in mock or relay-dev sessions.',
         },
       },
       required: ['expression'],
@@ -269,8 +282,12 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
       'the result also includes `recentException` for crash triage. ' +
       'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle) — ' +
-      'redeploy via dogfood channel: `ait build && aitcc app deploy`. ' +
+      'redeploy via dogfood channel: `ait build && aitcc app deploy`.\n\n' +
       'SECURITY: method name, args, and result value are not redacted — never include secrets.\n\n' +
+      'LIVE guard: when running against a live/production relay (relay-live env, ' +
+      'MCP_ENV=relay-live), this tool requires `confirm: true` to acknowledge that ' +
+      'the SDK call may affect real users. Without it the call is rejected with a ' +
+      'structured error. mock and relay-dev sessions are unaffected.\n\n' +
       'IMPORTANT — 인자 시그니처 (잘못된 인자로 호출하면 토스 앱 crash 위험):\n' +
       '  setDeviceOrientation:        call_sdk("setDeviceOrientation", [{ type: "landscape" }])  // NOT "landscape"\n' +
       '  setIosSwipeGestureEnabled:   call_sdk("setIosSwipeGestureEnabled", [{ isEnabled: false }])\n' +
@@ -295,6 +312,14 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'array',
           description: 'Arguments to pass to the SDK method (optional, default []).',
           items: {},
+        },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Required when MCP_ENV=relay-live. Set to `true` to explicitly acknowledge ' +
+            'that this SDK call may have side effects on real/live users. ' +
+            'Omitting this in a relay-live session results in a structured rejection error. ' +
+            'Has no effect in mock or relay-dev sessions.',
         },
       },
       required: ['name'],
@@ -335,7 +360,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'devtoolsVersion (@ait-co/devtools package version), tunnel (up/wssUrl/pid/startedAt), ' +
       'pages (list_pages result + lastSeenAt stats), lastAttachAt, lastDetachAt, ' +
       'recentErrors (last N server-side errors, PII/secret redacted), ' +
-      'environment (getEnvironment() result + reason), ' +
+      'environment (kind: mock|relay-dev|relay-live, env: mock|relay backward-compat, reason, ' +
+      'liveGuardActive: true when relay-live LIVE guard is active), ' +
       'serverLockHolder (pid + startedAt from the lock file, or null), ' +
       'nextRecommendedAction ({tool, reason} or null — the single next tool to call). ' +
       'All fields are nullable — missing data is null, not an error. ' +
@@ -381,11 +407,15 @@ export function getToolAvailability(name: string): ToolAvailability | undefined 
  * Returns true when the named tool is available in the given environment.
  * Unknown tools return `false` — callers should reject them as unknown rather
  * than as env-mismatched.
+ *
+ * Relay variants (`relay-dev`, `relay-live`) both satisfy the `'relay'`
+ * availability tier — `isRelayEnv()` is used for the check.
  */
 export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
   const availability = getToolAvailability(name);
   if (availability === undefined) return false;
   if (availability === 'both') return true;
+  if (availability === 'relay') return isRelayEnv(env);
   return availability === env;
 }
 
@@ -393,12 +423,19 @@ export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
  * Filters a `DEBUG_TOOL_DEFINITIONS`-shaped list to those whose `availableIn`
  * matches the given env. Pure — preserves order; both Tier C ("both") and the
  * matching single-env tier pass through.
+ *
+ * Relay variants (`relay-dev`, `relay-live`) both satisfy the `'relay'` tier.
  */
 export function filterToolsByEnvironment<T extends { name: string; availableIn: ToolAvailability }>(
   tools: ReadonlyArray<T>,
   env: McpEnvironment,
 ): T[] {
-  return tools.filter((t) => t.availableIn === 'both' || t.availableIn === env);
+  return tools.filter(
+    (t) =>
+      t.availableIn === 'both' ||
+      (t.availableIn === 'relay' && isRelayEnv(env)) ||
+      t.availableIn === env,
+  );
 }
 
 /**
@@ -993,9 +1030,13 @@ export type SdkInsetsSource = 'window.__sdk' | 'window.__ait' | null;
  */
 export interface SafeAreaMeasurement {
   /**
-   * MCP environment this measurement was taken in — `'mock'` for the dev
-   * browser panel, `'relay'` for the real-device WebView. Set by the caller
-   * (`measureSafeArea`) from the env detection SSoT (`getEnvironment`).
+   * MCP environment this measurement was taken in:
+   *   - `'mock'`       — dev browser panel
+   *   - `'relay-dev'`  — real-device WebView, dogfood build
+   *   - `'relay-live'` — real-device WebView, live/production build
+   *
+   * Set by the caller (`measureSafeArea`) from the env detection SSoT
+   * (`getEnvironment`).
    */
   source: McpEnvironment;
   /**
@@ -1519,10 +1560,21 @@ export interface DiagnosticsResult {
    * Redacted: `at=<redacted>`, cookie headers stripped, AITCC_API_KEY masked.
    */
   recentErrors: DiagnosticsError[];
-  /** Resolved environment (`mock` | `relay`) and the reason string. */
+  /**
+   * Resolved environment and the reason string.
+   *
+   * `kind` — the precise three-value environment (`mock` | `relay-dev` |
+   *   `relay-live`). Use this for new code.
+   * `env`  — backward-compat two-value alias (`mock` | `relay`). Kept so
+   *   existing callers that only distinguish mock vs relay continue to work.
+   */
   environment: {
-    env: McpEnvironment;
+    kind: McpEnvironment;
+    /** @deprecated Use `kind` instead. Kept for backward compatibility. */
+    env: 'mock' | 'relay';
     reason: string;
+    /** `true` when the LIVE side-effect guard is active (`kind === 'relay-live'`). */
+    liveGuardActive: boolean;
   };
   /**
    * Contents of `~/.ait-devtools/server.lock`, or `null` when absent.
@@ -1708,7 +1760,7 @@ export function computeNextRecommendedAction(
   }
 
   // Rule 2: tunnel up but no pages attached in relay env → start attach.
-  if (env === 'relay' && pages !== null && pages.pages.length === 0 && !pages.crashDetectedAt) {
+  if (isRelayEnv(env) && pages !== null && pages.pages.length === 0 && !pages.crashDetectedAt) {
     return {
       tool: 'build_attach_url',
       reason: 'tunnel ready, no pages attached — call build_attach_url to generate the attach QR',
@@ -1737,8 +1789,8 @@ export interface GetDiagnosticsInput {
    */
   connection?: CdpConnection;
   /**
-   * Resolved MCP environment (`mock` | `relay`). Caller obtains via
-   * `resolveEnvironment()`.
+   * Resolved MCP environment (`mock` | `relay-dev` | `relay-live`). Caller
+   * obtains via `resolveEnvironment()`.
    */
   env: McpEnvironment;
   /** Human-readable reason for the env decision. */
@@ -1816,7 +1868,12 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     lastAttachAt: collector.getLastAttachAt(),
     lastDetachAt: collector.getLastDetachAt(),
     recentErrors,
-    environment: { env, reason: envReason },
+    environment: {
+      kind: env,
+      env: toLegacyEnv(env),
+      reason: envReason,
+      liveGuardActive: isLiveRelayEnv(env),
+    },
     serverLockHolder,
     nextRecommendedAction,
   };

@@ -174,8 +174,8 @@ describe('measureSafeArea', () => {
     const conn = makeFakeConnection({
       'Runtime.evaluate': cannedEvalResult(payload),
     });
-    const result = await measureSafeArea(conn, 'relay');
-    expect(result.source).toBe('relay');
+    const result = await measureSafeArea(conn, 'relay-dev');
+    expect(result.source).toBe('relay-dev');
     expect(result.sdkInsets?.top).toBe(54);
     expect(result.sdkInsets?.bottom).toBe(34);
     expect(result.innerWidth).toBe(393);

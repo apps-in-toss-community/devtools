@@ -5,7 +5,8 @@
 
 ## 전제조건
 
-- `MCP_ENV=relay npx @ait-co/devtools devtools-mcp` (debug 모드, relay env 명시)
+- `devtools-mcp` 실행 (debug 모드)
+  - **`MCP_ENV=relay-live` 필수** — 환경 4(LIVE read-only)임을 명시. 미설정 시 CDP URL 패턴 자동 감지 + `defaultEnv=relay-dev` fallback으로 LIVE guard가 비활성화돼 사용자 영향 위험.
 - 검수 통과 + OPENED 상태의 앱 (`miniAppId: 31146`) — `aitcc app status 31146`으로 확인
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - QR 스캔 (단일 정식 경로)
@@ -35,10 +36,42 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
    - `ok: true`
    - `value.environment: "production"` (LIVE 앱)
 
+## LIVE side-effect guard
+
+`MCP_ENV=relay-live` 세션에서 `call_sdk` 또는 `evaluate`를 호출하면 **명시적 동의 인자(`confirm: true`)가 없을 때 거부된다**.
+
+```
+[LIVE relay guard] call_sdk은 현재 relay-live(실 출시 런타임) 세션에서 side-effect 호출입니다.
+...
+1. `confirm: true` 인자를 추가해 재호출: call_sdk(…, confirm: true)
+2. 읽기 전용 도구(list_pages, list_console_messages, take_screenshot 등)를 사용하세요.
+3. dogfood 빌드(relay-dev 환경)에서 먼저 검증 후 live에 적용하세요.
+```
+
+**동의 후 호출 예시**:
+
+```
+call_sdk("getOperationalEnvironment", [], confirm: true)
+evaluate("window.location.href", confirm: true)
+```
+
+읽기 전용 도구(`list_pages`, `list_console_messages`, `list_network_requests`, `take_screenshot`, `measure_safe_area`, `get_dom_document` 등)는 `confirm` 없이 자유롭게 호출 가능.
+
+`get_diagnostics` 응답의 `environment.liveGuardActive`가 `true`이면 guard 활성 상태:
+
+```json
+{
+  "kind": "relay-live",
+  "env": "relay",
+  "reason": "env-var-relay-live",
+  "liveGuardActive": true
+}
+```
+
 ## 주의사항
 
 - 환경 4는 read-only 디버깅용 — 상태 변경 SDK 호출(navigate, IAP 등)은 실유저에게 영향을 줌.
-- `evaluate` + `call_sdk` 사용 시 side-effect 있는 호출 주의.
+- `evaluate` + `call_sdk` 사용 시 side-effect 있는 호출은 `confirm: true` 필수(guard가 강제).
 - 이 환경은 station 6(operate) 지원 — 배포 후 런타임 관측.
 - dev-mode (`--mode=dev`) 미지원 — 이 환경은 debug-mode 전용.
 - `MCP_ENV=relay`를 명시하지 않으면 터널 URL 감지 전 bootstrap 단계에서 `build_attach_url`이 노출되지 않을 수 있다.

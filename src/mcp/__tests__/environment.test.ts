@@ -63,7 +63,7 @@ describe('getEnvironment — precedence chain', () => {
   });
 
   it('1. test override wins over everything', () => {
-    process.env.MCP_ENV = 'relay';
+    process.env.MCP_ENV = 'relay-dev';
     setEnvironmentOverride('mock');
     expect(
       getEnvironment({
@@ -73,10 +73,22 @@ describe('getEnvironment — precedence chain', () => {
     expect(getEnvironmentReason()).toBe('env-var-mock');
   });
 
-  it('2. MCP_ENV=relay wins over URL pattern + default', () => {
+  it('2. MCP_ENV=relay-dev wins over URL pattern + default', () => {
+    process.env.MCP_ENV = 'relay-dev';
+    expect(getEnvironment()).toBe('relay-dev');
+    expect(getEnvironmentReason()).toBe('env-var-relay-dev');
+  });
+
+  it('2. MCP_ENV=relay-live wins over URL pattern + default', () => {
+    process.env.MCP_ENV = 'relay-live';
+    expect(getEnvironment()).toBe('relay-live');
+    expect(getEnvironmentReason()).toBe('env-var-relay-live');
+  });
+
+  it('2. MCP_ENV=relay (backward-compat alias) → relay-dev', () => {
     process.env.MCP_ENV = 'relay';
-    expect(getEnvironment()).toBe('relay');
-    expect(getEnvironmentReason()).toBe('env-var-relay');
+    expect(getEnvironment()).toBe('relay-dev');
+    expect(getEnvironmentReason()).toBe('env-var-relay-compat');
   });
 
   it('2. MCP_ENV=mock wins over URL pattern', () => {
@@ -92,12 +104,12 @@ describe('getEnvironment — precedence chain', () => {
     expect(getEnvironmentReason()).toBe('default-mock');
   });
 
-  it('3. CDP target URL pattern → relay', () => {
+  it('3. CDP target URL pattern → relay-dev (conservative default)', () => {
     const conn = fakeConnection([
       { id: 't1', title: '', url: 'http://localhost:5173/' },
       { id: 't2', title: '', url: 'intoss-private://miniapp?_deploymentId=z' },
     ]);
-    expect(getEnvironment({ connection: conn })).toBe('relay');
+    expect(getEnvironment({ connection: conn })).toBe('relay-dev');
     expect(getEnvironmentReason({ connection: conn })).toBe('cdp-target-url-relay-pattern');
   });
 
@@ -114,8 +126,8 @@ describe('getEnvironment — precedence chain', () => {
 
   it('no connection passed → only env var + default consulted', () => {
     expect(getEnvironment()).toBe('mock');
-    process.env.MCP_ENV = 'relay';
-    expect(getEnvironment()).toBe('relay');
+    process.env.MCP_ENV = 'relay-dev';
+    expect(getEnvironment()).toBe('relay-dev');
   });
 
   // ---------------------------------------------------------------------------
@@ -125,9 +137,9 @@ describe('getEnvironment — precedence chain', () => {
   // attached target or `MCP_ENV` override.
   // ---------------------------------------------------------------------------
 
-  it('defaultEnv=relay → fresh session (no env var, no targets) resolves to relay', () => {
-    expect(getEnvironment({ defaultEnv: 'relay' })).toBe('relay');
-    expect(getEnvironmentReason({ defaultEnv: 'relay' })).toBe('default-relay');
+  it('defaultEnv=relay-dev → fresh session (no env var, no targets) resolves to relay-dev', () => {
+    expect(getEnvironment({ defaultEnv: 'relay-dev' })).toBe('relay-dev');
+    expect(getEnvironmentReason({ defaultEnv: 'relay-dev' })).toBe('default-relay-dev');
   });
 
   it('defaultEnv=mock (explicit) is identical to the historical default', () => {
@@ -137,30 +149,34 @@ describe('getEnvironment — precedence chain', () => {
 
   it('defaultEnv does NOT override MCP_ENV', () => {
     process.env.MCP_ENV = 'mock';
-    expect(getEnvironment({ defaultEnv: 'relay' })).toBe('mock');
-    expect(getEnvironmentReason({ defaultEnv: 'relay' })).toBe('env-var-mock');
+    expect(getEnvironment({ defaultEnv: 'relay-dev' })).toBe('mock');
+    expect(getEnvironmentReason({ defaultEnv: 'relay-dev' })).toBe('env-var-mock');
   });
 
   it('defaultEnv does NOT override CDP URL pattern (relay target wins)', () => {
-    // Even with defaultEnv=mock, a real-device URL forces relay.
+    // Even with defaultEnv=mock, a real-device URL forces relay-dev.
     const conn = fakeConnection([{ id: 't', title: '', url: 'intoss-private://miniapp' }]);
-    expect(getEnvironment({ connection: conn, defaultEnv: 'mock' })).toBe('relay');
+    expect(getEnvironment({ connection: conn, defaultEnv: 'mock' })).toBe('relay-dev');
     expect(getEnvironmentReason({ connection: conn, defaultEnv: 'mock' })).toBe(
       'cdp-target-url-relay-pattern',
     );
   });
 
-  it('defaultEnv=relay + connection with mundane targets → still relay (URL pattern absent)', () => {
+  it('defaultEnv=relay-dev + connection with mundane targets → still relay-dev (URL pattern absent)', () => {
     // No real-device URL → fallback to caller-stated default.
     const conn = fakeConnection([{ id: 't', title: '', url: 'http://localhost:5173/' }]);
-    expect(getEnvironment({ connection: conn, defaultEnv: 'relay' })).toBe('relay');
-    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'relay' })).toBe('default-relay');
+    expect(getEnvironment({ connection: conn, defaultEnv: 'relay-dev' })).toBe('relay-dev');
+    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'relay-dev' })).toBe(
+      'default-relay-dev',
+    );
   });
 
-  it('defaultEnv=relay + empty target list → relay (the M2-5 first-listTools path)', () => {
+  it('defaultEnv=relay-dev + empty target list → relay-dev (the M2-5 first-listTools path)', () => {
     const conn = fakeConnection([]);
-    expect(getEnvironment({ connection: conn, defaultEnv: 'relay' })).toBe('relay');
-    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'relay' })).toBe('default-relay');
+    expect(getEnvironment({ connection: conn, defaultEnv: 'relay-dev' })).toBe('relay-dev');
+    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'relay-dev' })).toBe(
+      'default-relay-dev',
+    );
   });
 });
 
@@ -168,8 +184,8 @@ describe('setEnvironmentOverride — test hook', () => {
   afterEach(() => setEnvironmentOverride(null));
 
   it('clears with null', () => {
-    setEnvironmentOverride('relay');
-    expect(getEnvironment()).toBe('relay');
+    setEnvironmentOverride('relay-dev');
+    expect(getEnvironment()).toBe('relay-dev');
     setEnvironmentOverride(null);
     expect(getEnvironment()).toBe('mock');
   });

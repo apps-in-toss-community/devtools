@@ -92,16 +92,18 @@ describe('tool-registry — pure helpers', () => {
   });
 
   it('isToolAvailableIn respects the env decision', () => {
-    // Tier B → relay only.
-    expect(isToolAvailableIn('build_attach_url', 'relay')).toBe(true);
+    // Tier B → relay only (both relay-dev and relay-live satisfy it).
+    expect(isToolAvailableIn('build_attach_url', 'relay-dev')).toBe(true);
+    expect(isToolAvailableIn('build_attach_url', 'relay-live')).toBe(true);
     expect(isToolAvailableIn('build_attach_url', 'mock')).toBe(false);
     // Tier C → both.
-    expect(isToolAvailableIn('measure_safe_area', 'relay')).toBe(true);
+    expect(isToolAvailableIn('measure_safe_area', 'relay-dev')).toBe(true);
+    expect(isToolAvailableIn('measure_safe_area', 'relay-live')).toBe(true);
     expect(isToolAvailableIn('measure_safe_area', 'mock')).toBe(true);
     expect(isToolAvailableIn('list_console_messages', 'mock')).toBe(true);
     // Unknown tools are not available in any env (caller treats as unknown).
     expect(isToolAvailableIn('does_not_exist', 'mock')).toBe(false);
-    expect(isToolAvailableIn('does_not_exist', 'relay')).toBe(false);
+    expect(isToolAvailableIn('does_not_exist', 'relay-dev')).toBe(false);
   });
 
   it('filterToolsByEnvironment hides Tier B in mock and keeps Tier C', () => {
@@ -112,11 +114,18 @@ describe('tool-registry — pure helpers', () => {
     expect(mockNames).toContain('AIT.getMockState');
   });
 
-  it('filterToolsByEnvironment keeps Tier B in relay', () => {
-    const relayTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay');
+  it('filterToolsByEnvironment keeps Tier B in relay-dev', () => {
+    const relayTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay-dev');
     const relayNames = relayTools.map((t) => t.name);
     expect(relayNames).toContain('build_attach_url');
     expect(relayNames).toContain('measure_safe_area');
+  });
+
+  it('filterToolsByEnvironment keeps Tier B in relay-live', () => {
+    const relayLiveTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay-live');
+    const relayLiveNames = relayLiveTools.map((t) => t.name);
+    expect(relayLiveNames).toContain('build_attach_url');
+    expect(relayLiveNames).toContain('measure_safe_area');
   });
 });
 
@@ -131,16 +140,24 @@ describe('tools/list — env filtering integration', () => {
     expect(names).toContain('measure_safe_area');
   });
 
-  it('relay env exposes build_attach_url (Tier B)', async () => {
-    const client = await makeClient('relay', /*attached*/ true);
+  it('relay-dev env exposes build_attach_url (Tier B)', async () => {
+    const client = await makeClient('relay-dev', /*attached*/ true);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
     expect(names).toContain('build_attach_url');
     expect(names).toContain('measure_safe_area');
   });
 
-  it('relay env unattached still exposes bootstrap tools (list_pages, build_attach_url)', async () => {
-    const client = await makeClient('relay', /*attached*/ false);
+  it('relay-live env exposes build_attach_url (Tier B)', async () => {
+    const client = await makeClient('relay-live', /*attached*/ true);
+    const list = await client.listTools();
+    const names = list.tools.map((t) => t.name);
+    expect(names).toContain('build_attach_url');
+    expect(names).toContain('measure_safe_area');
+  });
+
+  it('relay-dev env unattached still exposes bootstrap tools (list_pages, build_attach_url)', async () => {
+    const client = await makeClient('relay-dev', /*attached*/ false);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
     expect(names).toContain('build_attach_url');
@@ -209,8 +226,8 @@ describe('tools/list — defaultEnv from CLI mode intent (issue #309)', () => {
     else process.env.MCP_ENV = originalEnv;
   });
 
-  it('defaultEnv=relay (production relay-target wiring) exposes build_attach_url on first tools/list — unattached, no MCP_ENV', async () => {
-    const client = await makeRealEnvClient({ attached: false, defaultEnv: 'relay' });
+  it('defaultEnv=relay-dev (production relay-target wiring) exposes build_attach_url on first tools/list — unattached, no MCP_ENV', async () => {
+    const client = await makeRealEnvClient({ attached: false, defaultEnv: 'relay-dev' });
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
     // Bootstrap tier visible — Tier B `build_attach_url` is now listed because
@@ -230,10 +247,10 @@ describe('tools/list — defaultEnv from CLI mode intent (issue #309)', () => {
     expect(names).toContain('list_pages');
   });
 
-  it('defaultEnv=relay + URL pattern still wins (real-device target → relay regardless of default)', async () => {
-    // A real-device URL would have resolved to `relay` even without the
+  it('defaultEnv=relay-dev + URL pattern still wins (real-device target → relay-dev regardless of default)', async () => {
+    // A real-device URL would have resolved to `relay-dev` even without the
     // default, but we keep the assertion explicit.
-    const client = await makeRealEnvClient({ attached: true, defaultEnv: 'relay' });
+    const client = await makeRealEnvClient({ attached: true, defaultEnv: 'relay-dev' });
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
     expect(names).toContain('build_attach_url');

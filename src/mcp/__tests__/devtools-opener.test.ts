@@ -108,7 +108,7 @@ describe('AutoDevtoolsOpener', () => {
     // We don't actually open a browser in tests; we just verify the guard logic.
     // Patch openUrlInBrowser to a no-op by calling open() with a relay env
     // and checking stderr output (which is the observable side-effect in tests).
-    opener.open('wss://abc.trycloudflare.com', 'relay');
+    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
     expect(opener.opened).toBe(true);
     expect(stderrOutput).toContain('Chrome DevTools URL');
     expect(stderrOutput).toContain('abc.trycloudflare.com');
@@ -116,9 +116,9 @@ describe('AutoDevtoolsOpener', () => {
 
   it('is a no-op on second call (duplicate guard)', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://abc.trycloudflare.com', 'relay');
+    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
     stderrOutput = '';
-    opener.open('wss://abc.trycloudflare.com', 'relay');
+    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
     // Second call should not write to stderr.
     expect(stderrOutput).toBe('');
     expect(opener.opened).toBe(true);
@@ -133,14 +133,14 @@ describe('AutoDevtoolsOpener', () => {
 
   it('is a no-op when wssRelayUrl is null', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open(null, 'relay');
+    opener.open(null, 'relay-dev');
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
 
   it('is a no-op when wssRelayUrl is empty string', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('', 'relay');
+    opener.open('', 'relay-dev');
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
@@ -148,14 +148,14 @@ describe('AutoDevtoolsOpener', () => {
   it('is a no-op when AIT_AUTO_DEVTOOLS=0', () => {
     process.env.AIT_AUTO_DEVTOOLS = '0';
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://abc.trycloudflare.com', 'relay');
+    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
 
   it('writes the DevTools URL to stderr before attempting browser open', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://tunnel.trycloudflare.com', 'relay');
+    opener.open('wss://tunnel.trycloudflare.com', 'relay-dev');
     expect(stderrOutput).toContain('chrome-devtools-frontend.appspot.com');
     expect(stderrOutput).toContain('tunnel.trycloudflare.com');
   });
