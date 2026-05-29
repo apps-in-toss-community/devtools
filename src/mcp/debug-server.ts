@@ -54,6 +54,7 @@ import { getEnvironment, getEnvironmentReason, type McpEnvironment } from './env
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
+import { acquireLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
@@ -666,6 +667,11 @@ export function buildRelayVerifyAuth():
  *   4. expose the debug tools backed by a `ChiiCdpConnection` + `ChiiAitSource`.
  */
 export async function runDebugServer(options: RunDebugServerOptions = {}): Promise<void> {
+  // Enforce a single debug session per machine. If another server is alive,
+  // ServerLockConflictError is thrown — the MCP host surfaces the message to
+  // the agent without a relay or cloudflared ever starting.
+  const lockHandle = acquireLock();
+
   // Default 0: OS picks a free port. Prevents EADDRINUSE from stale cloudflared
   // orphans (SIGKILL survivors) that would otherwise block a fixed port and
   // cause -32000 MCP handshake failures on reconnect.
@@ -695,6 +701,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     (t) => {
       tunnel = t;
       tunnelStatus = { up: true, wssUrl: t.wssUrl };
+      // Update the lock file with the assigned tunnel URL so a second caller
+      // can see the correct wssUrl in the conflict error message.
+      lockHandle.updateWssUrl(t.wssUrl);
       return printAttachBanner({ wssUrl: t.wssUrl, totpEnabled });
     },
     (err) => {
@@ -761,6 +770,8 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     void relay.close();
     void server.close();
     void qrServer?.close();
+    // Remove the lock file so the next startup can proceed immediately.
+    lockHandle.release();
   };
 
   // Graceful termination signals.
@@ -776,6 +787,8 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       closed = true;
       attachWatcher?.stop();
       tunnel?.stop();
+      // Synchronous lock release — rmSync is safe from exit handlers.
+      lockHandle.release();
     }
   });
 
@@ -833,6 +846,9 @@ export interface RunLocalDebugServerOptions {
  * expected and noted in the PR as an explicit out-of-scope follow-up.
  */
 export async function runLocalDebugServer(options: RunLocalDebugServerOptions = {}): Promise<void> {
+  // Enforce a single debug session per machine (same lock as relay mode).
+  const lockHandle = acquireLock();
+
   const cdpPort = options.cdpPort ?? 0;
   const devUrl = options.devUrl ?? process.env.AIT_DEVTOOLS_URL ?? 'http://localhost:5173';
 
@@ -869,6 +885,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     connection.close();
     chromium.stop();
     void server.close();
+    // Remove the lock file so the next startup can proceed immediately.
+    lockHandle.release();
   };
 
   process.once('SIGINT', shutdown);
@@ -880,6 +898,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
       closed = true;
       attachWatcher?.stop();
       chromium.stop();
+      lockHandle.release();
     }
   });
 
