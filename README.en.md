@@ -946,13 +946,13 @@ AI coding agents (Claude Code, Cursor, etc.) can observe a running mini-app dire
 
 A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so every tool works identically in both environments — the only difference is the attach strategy (`--target=relay` vs `--target=local`).
 
-| Mode + target | Invocation | Target | Tools |
-|---|---|---|---|
-| `--mode=debug --target=relay` (default) | `devtools-mcp` | Production bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 2/3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
-| `--mode=debug --target=local` | `devtools-mcp --target=local` | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
-| `--mode=dev` | `devtools-mcp --mode=dev` | Mock state from a running Vite dev server | `AIT.*` (+ `devtools_get_mock_state` alias) |
+| Mode + target | Invocation | Env var | Target | Tools |
+|---|---|---|---|---|
+| `--mode=debug --target=relay` (default) | `MCP_ENV=relay devtools-mcp` | `MCP_ENV=relay` recommended | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 2/3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
+| `--mode=debug --target=local` | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
+| `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (auto) | Mock state from a running Vite dev server (AIT.* only, no CDP) | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server. All three combinations expose the same `AIT.*` tool surface to the agent.
+`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. For on-device sessions (env 3/4), setting `MCP_ENV=relay` explicitly ensures the relay tool surface is visible even before the tunnel URL is auto-detected.
 
 ### Debug mode (CDP via Chii)
 
@@ -967,11 +967,16 @@ Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assi
   "mcpServers": {
     "ait-debug": {
       "command": "pnpm",
-      "args": ["exec", "devtools-mcp"]
+      "args": ["exec", "devtools-mcp"],
+      "env": {
+        "MCP_ENV": "relay"
+      }
     }
   }
 }
 ```
+
+Setting `MCP_ENV=relay` explicitly ensures the relay tool surface is visible before the tunnel URL is auto-detected.
 
 | Tool | CDP / AIT backing | Description |
 |---|---|---|

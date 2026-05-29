@@ -51,8 +51,8 @@ export function tierRejectionError(
   const currentLabel = currentEnv === 'relay' ? 'relay' : 'mock';
   const hint =
     requiredEnv === 'relay'
-      ? 'build_attach_url → QR 스캔으로 실기기를 attach하세요.'
-      : 'MCP_ENV=mock 또는 relay 환경변수를 확인하세요.';
+      ? 'relay로 전환하려면 MCP_ENV=relay 설정 후 서버를 재시작하고 build_attach_url → QR 스캔으로 실기기를 attach하세요.'
+      : 'mock으로 전환하려면 MCP_ENV=mock 설정 후 서버를 재시작하세요.';
   const text =
     `${toolName}은 ${envLabel} 환경에서만 사용할 수 있습니다. ` +
     `현재 환경: ${currentLabel} (${reason}). ${hint}`;
@@ -86,7 +86,8 @@ export function pageMissingError(toolName?: string): McpErrorResult {
   const prefix = toolName ? `${toolName}: ` : '';
   return mcpError(
     `${prefix}페이지가 attach 안 됨. ` +
-      'build_attach_url로 deep link를 생성하고 QR을 스캔해 미니앱을 attach하세요.',
+      'dogfood 번들 배포 후 build_attach_url을 호출해 QR을 생성하세요: ' +
+      '`ait deploy --scheme-only` → `build_attach_url(scheme_url)` → QR 스캔.',
   );
 }
 
@@ -113,7 +114,8 @@ export function sdkAbsentError(toolName?: string): McpErrorResult {
   const prefix = toolName ? `${toolName}: ` : '';
   return mcpError(
     `${prefix}window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다). ` +
-      'dogfood 채널(intoss-private)로 번들을 재배포한 뒤 재시도하세요.',
+      'dogfood 채널(intoss-private)로 재배포 후 QR을 다시 스캔하세요: ' +
+      '`ait build && aitcc app deploy`.',
   );
 }
 

@@ -52,8 +52,12 @@ pnpm exec vite build --config e2e/fixture/vite.config.ts
 # 2. fixture 서버 실행
 pnpm exec vite preview --config e2e/fixture/vite.config.ts --port 4173 &
 
-# 3. MCP 서버 실행 (local 모드)
+# 3. MCP 서버 실행
+# DOM/screenshot/safe-area CDP tool 필요 시: --mode=local (로컬 Chromium CDP direct-attach)
 npx -y @ait-co/devtools devtools-mcp --mode=local
+
+# AIT mock state만 필요할 때: --mode=dev (Vite dev server mock state, CDP 없음)
+# npx -y @ait-co/devtools devtools-mcp --mode=dev
 ```
 
 ### 검증 명령 (에이전트에서 순서대로)
@@ -225,8 +229,8 @@ non-dogfood PWA의 경우:
 ### 진입 절차
 
 ```bash
-# 1. devtools MCP 실행 (debug 모드 기본)
-npx -y @ait-co/devtools devtools-mcp
+# 1. devtools MCP 실행 (debug 모드, relay env 명시)
+MCP_ENV=relay npx -y @ait-co/devtools devtools-mcp
 
 # 2. dogfood bundle deploy
 ait build
@@ -316,8 +320,8 @@ ait deploy --scheme-only
 ### 진입 절차
 
 ```bash
-# 1. devtools MCP 실행 (debug 모드)
-npx -y @ait-co/devtools devtools-mcp
+# 1. devtools MCP 실행 (debug 모드, relay env 명시)
+MCP_ENV=relay npx -y @ait-co/devtools devtools-mcp
 
 # 2. 검수 통과 + OPENED 상태의 앱 필요 (miniAppId: 31146)
 # aitcc app status 31146 으로 OPENED 확인
