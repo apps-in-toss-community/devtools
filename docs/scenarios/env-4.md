@@ -10,6 +10,10 @@
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - QR 스캔 (단일 정식 경로)
 
+> 참고 — debug-relay 모드는 환경 기본값을 `relay`로 둔다 (issue #309). 첫 `tools/list`부터
+> `build_attach_url`이 노출되므로 `MCP_ENV=relay` 강제 안내가 더는 필요 없다. `MCP_ENV`를
+> 명시하면 그 값이 우선한다.
+
 ## MCP 도구 acceptance 체크리스트
 
 ```

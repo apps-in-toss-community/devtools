@@ -162,6 +162,18 @@ export interface DebugServerDeps {
   /** Resolves the reason for the current env decision (for logs). */
   getEnvironmentReason?: () => string;
   /**
+   * Caller-stated default environment when no `MCP_ENV` is set and no URL
+   * pattern matches. The CLI passes `'relay'` for the relay-target debug mode
+   * (so bootstrap `tools/list` advertises Tier B `build_attach_url` on the
+   * very first call — resolving the M2-5 dead-lock, issue #309) and `'mock'`
+   * for the local-target debug mode (no relay tunnel exists). Tests omit this
+   * to preserve the historical `'mock'` default.
+   *
+   * Ignored when `getEnvironment`/`getEnvironmentReason` are explicitly
+   * provided — fake env resolvers fully control the env decision.
+   */
+  defaultEnv?: McpEnvironment;
+  /**
    * Diagnostics collector — records server-side errors, attach/detach events,
    * and surfaces them via `get_diagnostics`. When omitted a no-op collector is
    * used (backwards-compatible with existing tests that don't inject one).
@@ -242,14 +254,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     getEnvironment: getEnvDep,
     getEnvironmentReason: getEnvReasonDep,
     diagnosticsCollector: collectorDep,
+    defaultEnv,
   } = deps;
 
-  // Env SSoT — production wires the real `getEnvironment` with the connection;
-  // tests inject fakes. Lazy so each request reflects the live connection.
+  // Env SSoT — production wires the real `getEnvironment` with the connection
+  // plus the caller-stated `defaultEnv` (mode intent); tests inject fakes.
+  // Lazy so each request reflects the live connection.
   const resolveEnvironment: () => McpEnvironment =
-    getEnvDep ?? (() => getEnvironment({ connection }));
+    getEnvDep ?? (() => getEnvironment({ connection, defaultEnv }));
   const resolveEnvironmentReason: () => string =
-    getEnvReasonDep ?? (() => getEnvironmentReason({ connection }));
+    getEnvReasonDep ?? (() => getEnvironmentReason({ connection, defaultEnv }));
 
   // Diagnostics collector — production uses an `InMemoryDiagnosticsCollector`;
   // tests may inject a no-op or fake. A no-op is created lazily when none
@@ -997,6 +1011,12 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       return qrServer;
     },
     diagnosticsCollector,
+    // Relay-target debug mode: the user just launched a relay debug session,
+    // so the default env intent is `relay`. Without this, `getEnvironment()`
+    // would return `mock` until a target attaches — hiding Tier B
+    // `build_attach_url` from the very first `tools/list` and leaving the
+    // agent with no way to enter env 3/4 (issue #309).
+    defaultEnv: 'relay',
   });
 
   const transport = new StdioServerTransport();
@@ -1077,7 +1097,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // cloudflared is still starting; devtoolsOpener.open() guards against that.
   attachWatcher = startAttachWatcher(connection, server, 1_000, () => {
     diagnosticsCollector.recordAttach();
-    devtoolsOpener.open(tunnelStatus.wssUrl, getEnvironment({ connection }));
+    // Same defaultEnv intent as the server wiring above — keeps the env
+    // resolution coherent across the surface (env 3/4 attach → relay).
+    devtoolsOpener.open(tunnelStatus.wssUrl, getEnvironment({ connection, defaultEnv: 'relay' }));
   });
 }
 
@@ -1138,6 +1160,12 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     connection,
     aitSource,
     getTunnelStatus: () => tunnelStatus,
+    // Local-target debug mode: no relay tunnel exists by construction. The
+    // env intent is `mock` (local Chromium attaches to the dev panel), so
+    // `build_attach_url` (Tier B, relay-only) stays hidden — calling it would
+    // fail with `tunnel-down` anyway. Explicit for parity with the relay
+    // branch above.
+    defaultEnv: 'mock',
   });
 
   const transport = new StdioServerTransport();
