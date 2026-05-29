@@ -28,6 +28,7 @@ import type {
   CdpEventName,
   CdpTarget,
 } from './cdp-connection.js';
+import { logInfo } from './log.js';
 
 /** Max events retained per domain ring buffer. */
 const DEFAULT_BUFFER_SIZE = 500;
@@ -211,7 +212,9 @@ export class ChiiCdpConnection implements CdpConnection {
       newestTargetId !== this.activeTargetId
     ) {
       const prevId = this.activeTargetId;
-      process.stderr.write(`[ait-debug] 이전 page 세션 종료 — 새 attach로 교체 (prev=${prevId})\n`);
+      // SECRET-HANDLING: prevTargetId is a Chii internal ID (not a secret) but
+      // keep it short — no URL or credentials logged here.
+      logInfo('page.detached', { prevTargetId: prevId });
       this.evictTarget(prevId);
     }
 
