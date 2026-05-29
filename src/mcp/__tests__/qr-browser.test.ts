@@ -321,6 +321,49 @@ describe('openQrInBrowser', () => {
     expect(calls[1]?.[0]).toBe('sensible-browser');
   });
 
+  it('returns opened:true with retried:true when first attempt fails but retry succeeds', async () => {
+    setPlatform('darwin');
+    const { spawnSync } = await import('node:child_process');
+    // 1차 시도: 첫 번째 후보 ENOENT, 두 번째도 실패 → 1차 chain 전체 실패.
+    // 2차 retry: 첫 번째 후보 성공.
+    let callCount = 0;
+    (spawnSync as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      callCount++;
+      // 1차 chain 후보 수는 darwin에서 4개 — 4번까지 실패, 5번째(retry 첫 후보)에 성공.
+      if (callCount <= 4) {
+        return { error: new Error('ENOENT'), stderr: '', status: null };
+      }
+      return { status: 0, stderr: '', error: null };
+    });
+
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(true);
+    expect(result.retried).toBe(true);
+  });
+
+  it('returns opened:false when both attempts fail', async () => {
+    setPlatform('darwin');
+    const { spawnSync } = await import('node:child_process');
+    // 모든 시도 실패 (1차 + retry 모두).
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({
+      error: new Error('ENOENT'),
+      stderr: '',
+      status: null,
+    });
+
+    const result = await openQrInBrowser(
+      'http://127.0.0.1:12345/attach?u=foo',
+      'http://127.0.0.1:12345/qr.png?u=foo',
+    );
+
+    expect(result.opened).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
   it('SECRET: at= TOTP code in stderr is redacted in stderrSummary', async () => {
     setPlatform('darwin');
     const { spawnSync } = await import('node:child_process');

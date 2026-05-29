@@ -661,6 +661,11 @@ export interface OpenQrInBrowserResult {
   error?: string;
   /** Captured stderr from failed spawn attempts (at= 값은 redact됨). */
   stderrSummary?: string;
+  /**
+   * `true` when the first attempt failed but a retry succeeded.
+   * Helps distinguish "worked on first try" from "needed retry" in diagnostics.
+   */
+  retried?: boolean;
 }
 
 /** platform별 browser open 명령 후보 목록 — 앞에서부터 순차 시도. */
@@ -714,8 +719,9 @@ function isLaunchFailureStderr(stderr: string): boolean {
 /**
  * 로컬 HTTP 서버 URL(`http://127.0.0.1:<port>/attach?u=...`)을 OS 기본 브라우저로 연다.
  *
- * platform별 fallback chain으로 시도하며, 모두 실패해도 `opened: false` + `httpUrl`을
- * 반환해 사용자가 직접 브라우저에 붙여넣을 수 있게 한다.
+ * platform별 fallback chain으로 시도하며, 모두 실패하면 1회 retry를 수행한다
+ * (ephemeral process launch 타이밍 문제 대응). retry까지 실패해도 `opened: false` +
+ * `httpUrl`을 반환해 사용자가 직접 브라우저에 붙여넣을 수 있게 한다.
  *
  * SECRET-HANDLING:
  *   - tmp 파일을 만들지 않는다 (HTML/PNG는 HTTP 서버가 메모리에서 응답).
@@ -732,27 +738,42 @@ export async function openQrInBrowser(
 ): Promise<OpenQrInBrowserResult> {
   const { spawnSync } = await import('node:child_process');
 
-  const candidates = getBrowserCandidates(httpUrl);
+  /**
+   * 한 번의 fallback chain 시도. 성공하면 열린 후보 cmd를 반환, 실패하면 null.
+   * stderrLines에 각 후보의 stderr를 누적한다.
+   */
+  function tryOnce(stderrLines: string[]): boolean {
+    const candidates = getBrowserCandidates(httpUrl);
+    for (const { cmd, args } of candidates) {
+      const result = spawnSync(cmd, args, { encoding: 'utf8', timeout: 5000 });
+
+      if (result.error) {
+        stderrLines.push(`${cmd}: ${result.error.message}`);
+        continue;
+      }
+
+      const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+      if (stderr) {
+        stderrLines.push(`${cmd}: ${redactSecrets(stderr.trim())}`);
+      }
+
+      if (result.status === 0 && !isLaunchFailureStderr(stderr)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const stderrLines: string[] = [];
 
-  for (const { cmd, args } of candidates) {
-    const result = spawnSync(cmd, args, { encoding: 'utf8', timeout: 5000 });
+  // 1차 시도
+  if (tryOnce(stderrLines)) {
+    return { opened: true, httpUrl, pngUrl };
+  }
 
-    if (result.error) {
-      // 명령 자체를 실행하지 못한 경우 (ENOENT 등) — 다음 후보로.
-      stderrLines.push(`${cmd}: ${result.error.message}`);
-      continue;
-    }
-
-    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
-    if (stderr) {
-      stderrLines.push(`${cmd}: ${redactSecrets(stderr.trim())}`);
-    }
-
-    // exit 0이어도 stderr에 launch 실패 패턴이 있으면 실패로 취급.
-    if (result.status === 0 && !isLaunchFailureStderr(stderr)) {
-      return { opened: true, httpUrl, pngUrl };
-    }
+  // 1회 retry (ephemeral process launch 타이밍 문제 대응)
+  if (tryOnce(stderrLines)) {
+    return { opened: true, httpUrl, pngUrl, retried: true };
   }
 
   const stderrSummary = stderrLines.length > 0 ? stderrLines.join('\n') : undefined;
