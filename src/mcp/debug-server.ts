@@ -54,6 +54,7 @@ import { AutoDevtoolsOpener } from './devtools-opener.js';
 import { getEnvironment, getEnvironmentReason, type McpEnvironment } from './environment.js';
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
+import { logError, logInfo, logWarn } from './log.js';
 import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
 import { acquireLock } from './server-lock.js';
 import {
@@ -269,8 +270,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       const reason =
         `tool ${name} is available only in ${requiredEnv}. ` +
         `Current environment is ${env} (${resolveEnvironmentReason()}).`;
-      // Log to stderr (no secrets — only stable env strings + tool name).
-      process.stderr.write(`[ait-debug] tier-filter rejected ${name}: ${reason}\n`);
+      // Log structured (no secrets — only stable env strings + tool name).
+      logWarn('tool.error', { tool: name, reason, errorKind: 'tier-filter' });
       return {
         content: [{ type: 'text' as const, text: reason }],
         isError: true,
@@ -316,9 +317,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       // null → "no filter; match on presence only" (original behaviour preserved).
       const deploymentId = extractDeploymentId(schemeUrl);
       if (!deploymentId) {
-        process.stderr.write(
-          '[ait-debug] build_attach_url: no _deploymentId in scheme_url; matching on presence only\n',
-        );
+        logInfo('tool.call', {
+          tool: 'build_attach_url',
+          msg: 'no _deploymentId in scheme_url; matching on presence only',
+        });
       }
 
       /** Returns true when the page list satisfies the attach condition. */
@@ -780,6 +782,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   const relay = await startChiiRelay({ port: relayPort, verifyAuth });
   // relay.port is the actual OS-assigned port (may differ from relayPort when 0).
+  logInfo('server.start', { port: relay.port, totpEnabled });
 
   let tunnel: QuickTunnel | null = null;
   let tunnelStatus: TunnelStatus = { up: false, wssUrl: null };
@@ -801,14 +804,15 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       // Update the lock file with the assigned tunnel URL so a second caller
       // can see the correct wssUrl in the conflict error message.
       lockHandle.updateWssUrl(t.wssUrl);
+      // SECRET-HANDLING: wssUrl contains the relay host — do not log it directly.
+      logInfo('tunnel.up', { totpEnabled });
       return printAttachBanner({ wssUrl: t.wssUrl, totpEnabled });
     },
     (err) => {
       const message = err instanceof Error ? err.message : String(err);
-      process.stderr.write(
-        `[ait-debug] Failed to open cloudflared quick tunnel: ${message}\n` +
-          '[ait-debug] The relay is up locally; attach over the public URL is unavailable until the tunnel starts.\n',
-      );
+      logError('tunnel.down', {
+        msg: `Failed to open cloudflared quick tunnel: ${message}. The relay is up locally; attach over the public URL is unavailable until the tunnel starts.`,
+      });
     },
   );
   // Reference the promise to placate the linter — actual completion is observed
@@ -827,9 +831,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     qrServer = await startQrHttpServer();
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `[ait-debug] QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}\n`,
-    );
+    logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
   }
 
   const devtoolsOpener = new AutoDevtoolsOpener();
@@ -895,13 +897,16 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // unhandled errors. Covers cases where no signal is delivered (e.g. thrown
   // exception in async code that wasn't caught).
   process.on('uncaughtException', (err) => {
-    process.stderr.write(`[ait-debug] uncaughtException: ${String(err)}\n`);
+    logError('tool.error', { msg: `uncaughtException: ${String(err)}`, errorKind: 'uncaught' });
     shutdown();
     process.exit(1);
   });
 
   process.on('unhandledRejection', (reason) => {
-    process.stderr.write(`[ait-debug] unhandledRejection: ${String(reason)}\n`);
+    logError('tool.error', {
+      msg: `unhandledRejection: ${String(reason)}`,
+      errorKind: 'unhandled-rejection',
+    });
     shutdown();
     process.exit(1);
   });
@@ -1008,13 +1013,21 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   });
 
   process.on('uncaughtException', (err) => {
-    process.stderr.write(`[ait-local-debug] uncaughtException: ${String(err)}\n`);
+    logError('tool.error', {
+      msg: `uncaughtException: ${String(err)}`,
+      errorKind: 'uncaught',
+      mode: 'local',
+    });
     shutdown();
     process.exit(1);
   });
 
   process.on('unhandledRejection', (reason) => {
-    process.stderr.write(`[ait-local-debug] unhandledRejection: ${String(reason)}\n`);
+    logError('tool.error', {
+      msg: `unhandledRejection: ${String(reason)}`,
+      errorKind: 'unhandled-rejection',
+      mode: 'local',
+    });
     shutdown();
     process.exit(1);
   });
