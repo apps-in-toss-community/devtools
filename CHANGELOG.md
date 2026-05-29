@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.1.44
+
+### Patch Changes
+
+- d86c3ae: feat(mcp): add `get_diagnostics` tool — single-call server status snapshot (#286)
+
+  Returns mcpVersion, devtoolsVersion, tunnel state, list_pages result, lastAttachAt/lastDetachAt, recent server-side errors (PII/secret redacted), environment + reason, and serverLockHolder in one call. Tier C (both mock and relay). Bootstrap tier — available before any page attaches.
+
+- 0ece9b7: feat: JSON line server log + allowlist-based secret redact (#287)
+
+  - `src/mcp/log.ts` — structured JSON-line logger (`logInfo`/`logWarn`/`logError`) with event categories: `server.start`, `tunnel.up`, `tunnel.down`, `page.attached`, `page.detached`, `page.crashed`, `tool.call`, `tool.error`
+  - Allowlist field filter + value-level secret redact (TOTP 6-digit, Deploy Key `aitcc_` prefix, cookie values, WSS relay URLs)
+  - `debug-server.ts` and `chii-connection.ts` core paths migrated from free-form `process.stderr.write` to structured logger
+  - Unit tests in `src/mcp/__tests__/log.test.ts` covering redact matrix and JSON-line output contract
+
+- 8385204: MCP tool 거부/에러 응답을 한국어 "원인 + 다음 행동" 포맷으로 통일하고, tunnel 미가동·page 미attach·page crash·SDK 부재 4상태를 차별화.
+- 12183cb: test: 4-scenario QA checklist + fidelity-qa parity snapshot (#291)
+
+  - docs/qa/scenarios.md: 4 시나리오 수동 QA 체크리스트 (진입 절차/검증 명령/예상 응답/실패 처리/acceptance 매트릭스)
+  - scripts/fidelity-qa/probes/scenario-parity.ts: list_pages / measure_safe_area / call_sdk(getOperationalEnvironment) 3종 schema parity probe 추가
+  - --scenario-parity CLI 플래그로 활성화; WSS_URL 없으면 CI-safe mock-only 자동 downgrade
+  - whitelist.json에 3종 scenario-parity probe의 의도된 diff (source, sdkInsetsSource, userAgent, environment) 등록
+
+- 4bfdc45: fix: QR open in browser reliability + headless fallback (#288)
+
+  - `open_in_browser=true`인데 GUI 없는 환경(headless/remote)이면 자동으로 text QR fallback으로 폴백 + 안내 메시지
+  - 브라우저 열기 실패 시 `openResult: { attempted, succeeded, failureReason?, pngUrl? }` 구조화 필드를 응답에 포함해 에이전트가 실패 원인 파악 가능
+  - `openQrInBrowser` retry 1회 추가 (ephemeral process launch 타이밍 문제 대응)
+  - `canOpenBrowser()` 결과를 요청당 1회만 평가해 일관성 보장
+  - 기존 `브라우저 자동 열기에 실패했습니다` 안내에 `[open_in_browser]` prefix 추가로 구분
+
+- 2f5654b: docs: user-perspective README + 4-scenario quickstart (#289)
+- ecb5a6e: feat: tunnel drop recovery — periodic health probe + auto-reissue (#290)
+
+  cloudflared quick tunnel은 수 시간 후 drop될 수 있어, drop 시 다음 호출에서
+  timeout으로만 드러나 사용자가 원인을 알 수 없었음.
+
+  - `startTunnelHealthProbe`: 60초 간격 HTTP HEAD probe로 tunnel 생사 확인
+  - 2회 연속 실패 시 새 tunnel 자동 재발급 (옵션 A 채택)
+  - 재발급 성공 시 새 wssUrl로 attach 배너 재출력, 사용자에게 재스캔 안내
+  - 3회 재발급 모두 실패 시 permanent drop으로 마킹 (`droppedAt` 설정) +
+    서버 재시작 안내
+  - `TunnelStatus`에 `droppedAt` / `reissueAttempts` 필드 추가 →
+    `list_pages` 응답에 drop 상태 노출
+  - `makeTunnelStatus` 헬퍼로 TunnelStatus 생성 일원화
+
 ## 0.1.43
 
 ### Patch Changes
