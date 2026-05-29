@@ -238,7 +238,8 @@ describe('build_attach_url — response includes unicode QR', () => {
 
     expect(result.isError).toBe(true);
     const content = getContent(result);
-    expect(content[0]!.text).toMatch(/tunnel/i);
+    // 터널 미가동 에러는 한국어 "cloudflared 터널이 안 떠 있습니다" 메시지를 포함한다.
+    expect(content[0]!.text).toContain('터널');
   });
 });
 

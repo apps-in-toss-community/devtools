@@ -39,6 +39,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { HttpAitSource } from './ait-http-source.js';
 import type { AitSource } from './ait-source.js';
+import { mcpError } from './errors.js';
 import {
   getMockState,
   getOperationalEnvironment,
@@ -116,14 +117,14 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const name = request.params.name;
     if (!DEV_TOOL_NAMES.has(name)) {
-      return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+      return mcpError(`알 수 없는 tool: ${name}`);
     }
 
     try {
       // `devtools_get_mock_state` is an alias of `AIT.getMockState`.
       const effective = name === 'devtools_get_mock_state' ? 'AIT.getMockState' : name;
       if (!isAitToolName(effective)) {
-        return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+        return mcpError(`알 수 없는 tool: ${name}`);
       }
       switch (effective) {
         case 'AIT.getMockState':
@@ -133,22 +134,15 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
         case 'AIT.getSdkCallHistory':
           return jsonResult(await getSdkCallHistory(aitSource));
         default:
-          return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+          return mcpError(`알 수 없는 tool: ${name}`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              `${message}\n` +
-              'Is the Vite dev server running with the @ait-co/devtools unplugin option `mcp: true`? ' +
-              'Is AIT_DEVTOOLS_URL set correctly?',
-          },
-        ],
-        isError: true,
-      };
+      return mcpError(
+        `${name} 실패: ${message}\n` +
+          'Vite dev 서버가 @ait-co/devtools unplugin `mcp: true` 옵션으로 실행 중인지 확인하세요. ' +
+          'AIT_DEVTOOLS_URL 환경변수가 올바르게 설정됐는지도 확인하세요.',
+      );
     }
   });
 

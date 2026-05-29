@@ -209,7 +209,8 @@ describe('buildCallSdkExpression', () => {
   it('includes bridge-absent guard', () => {
     const expr = buildCallSdkExpression('foo', []);
     expect(expr).toContain('window.__sdkCall');
-    expect(expr).toContain('is not available');
+    // sdk-absent: 패턴으로 메시지가 시작해야 SDK 부재를 분류할 수 있다.
+    expect(expr).toContain('sdk-absent:');
   });
 
   it('uses spread to pass args', () => {
@@ -257,16 +258,17 @@ describe('callSdk', () => {
   });
 
   it('returns ok:false when window.__sdkCall is absent', async () => {
+    // SDK 부재 메시지는 'sdk-absent:' 접두사로 시작하도록 tools.ts에서 통일됨.
     const absenceMsg =
-      'window.__sdkCall is not available — is this a dogfood (__DEBUG_BUILD__) bundle?';
+      'sdk-absent: window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다). dogfood 채널로 재배포하세요.';
     const conn = makeFakeConnection({
       'Runtime.evaluate': cannedEvalValue(JSON.stringify({ ok: false, error: absenceMsg })),
     });
     const result = await callSdk(conn, 'anything', []);
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      expect(result.error).toContain('sdk-absent:');
       expect(result.error).toContain('window.__sdkCall');
-      expect(result.error).toContain('__DEBUG_BUILD__');
     }
   });
 
