@@ -110,6 +110,9 @@ export function isAutoDevtoolsDisabled(): boolean {
  * the URL to stderr as a fallback before calling this function.
  */
 export function openUrlInBrowser(url: string): boolean {
+  // Test hook: skip actual spawn when running in vitest / CI where the OS open
+  // command may hang or be absent. Production code never sets this.
+  if (process.env.AIT_AUTO_DEVTOOLS_TEST_SKIP_SPAWN === '1') return false;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { spawnSync } = require('node:child_process') as typeof import('node:child_process');
   const platform = process.platform;

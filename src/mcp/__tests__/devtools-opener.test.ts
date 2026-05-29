@@ -94,11 +94,13 @@ describe('AutoDevtoolsOpener', () => {
       return true;
     });
     delete process.env.AIT_AUTO_DEVTOOLS;
+    process.env.AIT_AUTO_DEVTOOLS_TEST_SKIP_SPAWN = '1';
   });
 
   afterEach(() => {
     stderrSpy.mockRestore();
     delete process.env.AIT_AUTO_DEVTOOLS;
+    delete process.env.AIT_AUTO_DEVTOOLS_TEST_SKIP_SPAWN;
   });
 
   it('opens once and marks _opened=true', () => {
