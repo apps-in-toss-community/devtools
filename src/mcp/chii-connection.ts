@@ -10,6 +10,12 @@
  * events in ring buffers the tool layer reads via `getBufferedEvents`.
  *
  * Node-only: imports `ws`. Never bundled into the browser/in-app entries.
+ *
+ * Attach reliability (#281):
+ *   `refreshTargets()` emits an internal 'target:attached' event whenever a
+ *   new target is added to the relay. `waitForFirstTarget()` awaits that event
+ *   (with a polling-interval fallback) so `build_attach_url wait_for_attach`
+ *   resolves deterministically rather than racing between polling rounds.
  */
 
 import { EventEmitter } from 'node:events';
@@ -228,11 +234,105 @@ export class ChiiCdpConnection implements CdpConnection {
       this.activeTargetId = null;
     }
 
-    return [...this.targets.values()];
+    const result = [...this.targets.values()];
+
+    // Emit 'target:attached' for every newly-seen target so waitForFirstTarget()
+    // can race against the next refreshTargets() polling round.
+    if (newestTargetId !== null) {
+      this.emitter.emit('target:attached', result);
+    }
+
+    return result;
   }
 
   listTargets(): CdpTarget[] {
     return [...this.targets.values()];
+  }
+
+  /**
+   * Waits until at least one target matching `filterFn` is attached, then
+   * resolves with the full target list at that moment.
+   *
+   * Resolution happens on whichever comes first:
+   *   (a) a `'target:attached'` event from `refreshTargets()` (triggered by
+   *       the /targets poll finding a new target), OR
+   *   (b) a `'target:attached'` event from `handleMessage()` (triggered by
+   *       the first inbound CDP message from a target — confirms the relay
+   *       websocket has data from the phone, not just a target entry in the map).
+   *
+   * This dual-signal approach eliminates the polling race that previously
+   * caused `wait_for_attach` to resolve before the first CDP message arrived.
+   *
+   * Falls back to checking `listTargets()` every `pollIntervalMs` in case the
+   * EventEmitter is missed (defensive belt-and-suspenders).
+   *
+   * @param filterFn  - Predicate that the returned targets must satisfy.
+   * @param timeoutMs - Reject after this many ms (default 90 000).
+   * @param pollIntervalMs - Fallback poll interval (default 500ms).
+   */
+  waitForFirstTarget(
+    filterFn: (targets: CdpTarget[]) => boolean,
+    timeoutMs = 90_000,
+    pollIntervalMs = 500,
+  ): Promise<CdpTarget[]> {
+    // Fast path: already attached.
+    const current = this.listTargets();
+    if (filterFn(current)) return Promise.resolve(current);
+
+    return new Promise<CdpTarget[]>((resolve, reject) => {
+      let settled = false;
+      let pollHandle: ReturnType<typeof setInterval> | null = null;
+
+      const settle = (targets: CdpTarget[]): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        if (pollHandle !== null) {
+          clearInterval(pollHandle);
+          pollHandle = null;
+        }
+        this.emitter.off('target:attached', onAttach);
+        resolve(targets);
+      };
+
+      const onAttach = (targets: CdpTarget[]): void => {
+        if (filterFn(targets)) settle(targets);
+      };
+
+      const timeoutHandle = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        if (pollHandle !== null) {
+          clearInterval(pollHandle);
+          pollHandle = null;
+        }
+        this.emitter.off('target:attached', onAttach);
+        reject(
+          new Error(
+            `waitForFirstTarget: 타임아웃 (${timeoutMs}ms) — 폰이 relay에 attach되지 않았습니다.`,
+          ),
+        );
+      }, timeoutMs);
+
+      // Primary: event-driven path.
+      this.emitter.on('target:attached', onAttach);
+
+      // Fallback: polling path — also calls refreshTargets() to keep the in-memory
+      // target map up-to-date. This ensures the polling path works even without
+      // a live WebSocket (pre-enableDomains) and catches targets that appear
+      // between 'target:attached' events.
+      pollHandle = setInterval(() => {
+        // Refresh from relay, then check. Errors are ignored — we keep polling.
+        this.refreshTargets().then(
+          (targets) => {
+            if (filterFn(targets)) settle(targets);
+          },
+          () => {
+            // Relay temporarily unreachable — keep polling.
+          },
+        );
+      }, pollIntervalMs);
+    });
   }
 
   /**
@@ -575,9 +675,19 @@ export class ChiiCdpConnection implements CdpConnection {
 
     // Any inbound message implies the connection is active — update lastSeenAt
     // for whichever target we currently know about (single-target model).
+    // Also emit 'target:attached' on the first inbound message from a target
+    // (targetLastSeenAt unset) so waitForFirstTarget() resolves on first CDP
+    // message, not just on the next /targets poll.
     const now = Date.now();
+    let firstMessageSeen = false;
     for (const targetId of this.targets.keys()) {
+      if (!this.targetLastSeenAt.has(targetId)) {
+        firstMessageSeen = true;
+      }
       this.targetLastSeenAt.set(targetId, now);
+    }
+    if (firstMessageSeen && this.targets.size > 0) {
+      this.emitter.emit('target:attached', [...this.targets.values()]);
     }
 
     if (typeof message.method !== 'string') return;

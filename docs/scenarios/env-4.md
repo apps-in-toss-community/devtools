@@ -1,0 +1,52 @@
+# 시나리오 4 — 배포된 앱 live relay debug (환경 4) acceptance 절차
+
+> 대상: 실기기 토스 앱 WebView(LIVE, 검수 통과) + CDP relay.
+> HMR X, relay O (read-only 디버깅).
+
+## 전제조건
+
+- `devtools-mcp` 실행 (debug 모드)
+- 검수 통과 + OPENED 상태의 앱 (`miniAppId: 31146`)
+- deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
+- QR 스캔 (단일 정식 경로)
+
+## MCP 도구 acceptance 체크리스트
+
+```
+list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
+```
+
+1. **`list_pages`**
+   - `pages[0].url`이 live deploymentId 포함
+   - `tunnel.up: true`
+   - `lastSeenAt`이 30초 이내
+   - `crashDetectedAt: null`
+
+2. **`measure_safe_area`**
+   - `source: "relay"`
+   - `sdkInsetsSource: "window.__sdk"`
+   - `sdkInsets.top`이 실기기 nav bar 높이
+
+3. **`call_sdk("getOperationalEnvironment", [])`**
+   - `ok: true`
+   - `value.environment: "production"` (LIVE 앱)
+
+## 주의사항
+
+- 환경 4는 read-only 디버깅용 — 상태 변경 SDK 호출(navigate, IAP 등)은 실유저에게 영향을 줌.
+- `evaluate` + `call_sdk` 사용 시 side-effect 있는 호출 주의.
+- 이 환경은 station 6(operate) 지원 — 배포 후 런타임 관측.
+
+## 시나리오별 mock vs relay diff
+
+환경 1(mock)과 환경 3·4(relay)의 `measure_safe_area` 응답 비교:
+
+| 필드 | 환경 1 (mock) | 환경 3·4 (relay) |
+|---|---|---|
+| `source` | `"mock"` | `"relay"` |
+| `sdkInsetsSource` | `"window.__ait"` | `"window.__sdk"` |
+| `sdkInsets.top` | DevTools panel 설정값 (예: 47) | 실기기 측정값 (예: 54) |
+| `cssEnv.top` | CSS env var (panel context) | 0 (Toss host WebView override) |
+| `userAgent` | desktop Chrome UA | iOS/Android Toss WebView UA |
+
+이 diff를 기준으로 mock preset을 실측값으로 업그레이드한다.
