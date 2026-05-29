@@ -86,5 +86,17 @@
   {
     "id": "auth.getAnonymousKey",
     "reason": "Mock returns {type:'HASH', hasHash:true} (mock state has anonymousKeyHash). Real device returns actual anonymous key or undefined."
+  },
+  {
+    "id": "scenario-parity.listPages.schema",
+    "reason": "Mock returns tunnel.up=false (no relay), relay returns tunnel.up=true. Page URL pattern also differs: mock uses localhost, relay uses trycloudflare.com or intoss-private://. Both satisfy the schema (pages[], tunnel.up boolean) — this is the intended fidelity difference between Env 1 (local) and Env 2–4 (relay). See docs/qa/scenarios.md."
+  },
+  {
+    "id": "scenario-parity.measureSafeArea.schema",
+    "reason": "Mock returns source='mock', sdkInsetsSource='window.__ait', desktop userAgent. Relay returns source='relay', sdkInsetsSource='window.__sdk', real device userAgent. sdkInsets.top differs: mock default=54 (preset-based), relay=real device nav bar height (44–54 CSS px, e.g. iPhone 15 Pro=54). cssEnv.top=0 on real device (Toss host WebView overrides notch env vars). All differences are intentional real-device fidelity — the normalized probe returns structural sentinel keys (source, sdkInsetsSource, cssEnvPresent, userAgentPresent) which differ expectedly. See docs/mock-fidelity-catalog.md §0.5."
+  },
+  {
+    "id": "scenario-parity.callSdkGetOpEnv.schema",
+    "reason": "Mock returns value.environment='sandbox' (mock state default). Relay (Env 3 dogfood) returns 'dev', Env 4 live returns 'production'. Env 2 non-dogfood PWA returns ok=false (bridge absent). The normalized probe returns environmentType='string' (mock) vs null/string (relay) — this environmentType field differs expectedly. The ok field and envelope structure are the invariant; the environment value is the intentional per-environment diff. See docs/qa/scenarios.md acceptance matrix."
   }
 ]
