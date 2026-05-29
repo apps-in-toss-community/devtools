@@ -678,6 +678,113 @@ describe('startAttachWatcher', () => {
 });
 
 // ---------------------------------------------------------------------------
+// build_attach_url — open_in_browser reliability (#288)
+// ---------------------------------------------------------------------------
+
+describe('build_attach_url — open_in_browser headless fallback (#288)', () => {
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+
+  it('when open_in_browser=true but canOpenBrowser()=false: response contains headless notice and text QR (no isError)', async () => {
+    // canOpenBrowser is already mocked to false in this file's module-level mock.
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://miniapp?_deploymentId=headless-test',
+        open_in_browser: true,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // 헤드리스 환경 안내 메시지가 포함되어야 함
+    expect(text).toContain('GUI 환경이 감지되지 않았습니다');
+    expect(text).toContain('open_in_browser=false로 자동 폴백');
+    // 텍스트 QR 경로로 폴백 — attachUrl, relayUrl이 포함
+    expect(text).toContain('attachUrl');
+    expect(text).toContain('relayUrl');
+  });
+
+  it('when browser open succeeds: openResult.succeeded=true is in JSON', async () => {
+    // canOpenBrowser를 true로 override하는 per-test mock
+    const toolsMod = await import('../tools.js');
+    (toolsMod.canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+
+    const fakeQrServer = {
+      port: 19999,
+      buildAttachPageUrl: (url: string) =>
+        `http://127.0.0.1:19999/attach?u=${encodeURIComponent(url)}`,
+      close: () => Promise.resolve(),
+    } as import('../qr-http-server.js').QrHttpServer;
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      qrHttpServer: fakeQrServer,
+    });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://miniapp?_deploymentId=browser-ok-test',
+        open_in_browser: true,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // openResult.succeeded: true가 JSON에 있어야 함
+    expect(text).toContain('"succeeded": true');
+    expect(text).toContain('브라우저에서 QR을 열었습니다');
+  });
+
+  it('when browser open fails: openResult.succeeded=false + pngUrl + failureReason in response', async () => {
+    // canOpenBrowser를 true로 override + spawnSync 실패
+    const toolsMod = await import('../tools.js');
+    (toolsMod.canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
+
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({
+      error: new Error('ENOENT'),
+      stderr: '',
+      status: null,
+    });
+
+    const fakeQrServer = {
+      port: 19998,
+      buildAttachPageUrl: (url: string) =>
+        `http://127.0.0.1:19998/attach?u=${encodeURIComponent(url)}`,
+      close: () => Promise.resolve(),
+    } as import('../qr-http-server.js').QrHttpServer;
+
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      qrHttpServer: fakeQrServer,
+    });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://miniapp?_deploymentId=browser-fail-test',
+        open_in_browser: true,
+      },
+    });
+
+    // 브라우저 열기 실패해도 isError가 아님 — text QR fallback으로 graceful degrade
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // openResult.succeeded: false
+    expect(text).toContain('"succeeded": false');
+    // pngUrl 안내 포함
+    expect(text).toContain('PNG로 받기');
+    // failureReason 포함
+    expect(text).toContain('failureReason');
+    // 브라우저 실패 안내 포함
+    expect(text).toContain('[open_in_browser]');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // build_attach_url — scheme authority warning (#221)
 // ---------------------------------------------------------------------------
 
@@ -766,7 +873,10 @@ describe('build_attach_url — open_in_browser', () => {
     const { canOpenBrowser } = await import('../tools.js');
     (canOpenBrowser as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
 
-    // spawnSync mock은 성공(status:0)으로 세팅돼 있음.
+    // spawnSync를 명시적으로 성공으로 세팅 — 이전 테스트에서 오염되지 않도록.
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({ status: 0, stderr: '', error: null });
+
     const fakeQrServer: import('../qr-http-server.js').QrHttpServer = {
       port: 19999,
       buildAttachPageUrl: (url) => `http://127.0.0.1:19999/attach?u=${encodeURIComponent(url)}`,

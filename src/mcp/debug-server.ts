@@ -400,8 +400,61 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         const header =
           'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
 
+        // canOpenBrowser()를 한 번만 호출하여 이 요청 안에서 일관된 값을 사용한다.
+        // mockReturnValueOnce 등 테스트 대역이 여러 번 호출로 소비되지 않도록.
+        const guiAvailable = canOpenBrowser();
+
+        // headless 환경 감지: open_in_browser=true인데 GUI가 없는 경우 안내 후 text QR fallback.
+        if (openInBrowser && !guiAvailable) {
+          const headlessNote =
+            '[open_in_browser] GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
+            'open_in_browser=false로 자동 폴백합니다. ' +
+            '텍스트 QR을 폰 카메라로 스캔하거나, 로컬 GUI 환경에서 실행하세요.\n\n';
+          const qrHeadless = await renderQr(attachUrl);
+          const headlessText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qrHeadless}`;
+
+          if (!waitForAttach) {
+            return { content: [{ type: 'text' as const, text: headlessText }] };
+          }
+
+          // wait_for_attach + headless fallback
+          let attachedPagesHl: ReturnType<CdpConnection['listTargets']> = [];
+          try {
+            attachedPagesHl = await waitForAttachWithEvents(
+              connection,
+              isMatchingPage,
+              waitForAttachTimeoutMs,
+            );
+          } catch {
+            attachedPagesHl = connection.listTargets();
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: buildTimeoutError(
+                    headlessText,
+                    waitForAttachTimeoutMs / 1000,
+                    attachedPagesHl,
+                  ),
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          const pagesResultHl = listPages(connection, getTunnelStatus());
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `${headlessText}\n\n${JSON.stringify(pagesResultHl, null, 2)}`,
+              },
+            ],
+          };
+        }
+
         // Try to open QR in browser when requested, a GUI is available, and the HTTP server is up.
-        if (openInBrowser && canOpenBrowser() && qrHttpServer) {
+        if (openInBrowser && guiAvailable && qrHttpServer) {
           const httpUrl = qrHttpServer.buildAttachPageUrl(attachUrl);
           const pngUrl = `http://127.0.0.1:${qrHttpServer.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
 
@@ -410,10 +463,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           if (browserResult.opened) {
             // Opened successfully — HTTP URL을 사용자에게 명시.
             // SECRET-HANDLING: attachUrl은 httpUrl query string 안에 있고, tool result에는 httpUrl만 노출.
+            const retriedNote = browserResult.retried ? ' (1회 retry 후 성공)' : '';
+            const openResult = {
+              attempted: true,
+              succeeded: true,
+              ...(browserResult.retried ? { retried: true } : {}),
+            };
             const shortText =
               `${warningPrefix}${header}\n` +
-              `${JSON.stringify({ relayUrl }, null, 2)}\n\n` +
-              `브라우저에서 QR을 열었습니다. 폰 카메라로 스캔하세요.\n` +
+              `${JSON.stringify({ relayUrl, openResult }, null, 2)}\n\n` +
+              `브라우저에서 QR을 열었습니다${retriedNote}. 폰 카메라로 스캔하세요.\n` +
               `URL: ${browserResult.httpUrl}`;
 
             if (!waitForAttach) {
@@ -456,18 +515,26 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             };
           }
 
-          // Browser open failed — URL + stderr 안내 후 text QR fallback.
+          // Browser open failed — openResult 포함 구조화 에러 + URL 안내 + text QR fallback.
+          const openResult = {
+            attempted: true,
+            succeeded: false,
+            failureReason: browserResult.error ?? '브라우저 실행 후보 모두 실패',
+            pngUrl: browserResult.pngUrl,
+            ...(browserResult.stderrSummary ? { stderrSummary: browserResult.stderrSummary } : {}),
+          };
           const stderrNote = browserResult.stderrSummary
             ? `\nstderr: ${browserResult.stderrSummary}`
             : '';
           const fallbackNote =
-            `브라우저 자동 열기에 실패했습니다. 다음 URL을 직접 브라우저에서 여세요:\n` +
+            `[open_in_browser] 브라우저 자동 열기에 실패했습니다. ` +
+            `다음 URL을 직접 브라우저에서 여세요:\n` +
             `${browserResult.httpUrl}\n` +
             `또는 PNG로 받기: ${browserResult.pngUrl}` +
             stderrNote +
             '\n\n';
           const qr = await renderQr(attachUrl);
-          const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
+          const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, openResult }, null, 2)}\n\n${qr}`;
 
           if (!waitForAttach) {
             return { content: [{ type: 'text' as const, text: baseText }] };
