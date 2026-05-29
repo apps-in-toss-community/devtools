@@ -32,6 +32,18 @@ M1 acceptance 기준: 4 시나리오 각각에서 `list_pages → measure_safe_a
 
 ### 진입 절차
 
+**방법 A: `--mode=dev` 권장 (Chromium 불필요)**
+
+```bash
+# 1. Vite dev 서버 실행 (unplugin mcp: true 옵션 필요)
+pnpm dev
+
+# 2. MCP 서버 실행 (dev 모드)
+npx -y @ait-co/devtools devtools-mcp --mode=dev
+```
+
+**방법 B: `--mode=local` (CDP 도구 포함, Chromium 자동 실행)**
+
 ```bash
 # 1. 빌드
 pnpm build
@@ -72,6 +84,16 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 
 #### `measure_safe_area`
 
+`--mode=dev`:
+```json
+{
+  "source": "mock-vite",
+  "sdkInsetsSource": "window.__ait",
+  "sdkInsets": { "top": 44, "bottom": 34, "left": 0, "right": 0 }
+}
+```
+
+`--mode=local`:
 ```json
 {
   "source": "mock",
@@ -82,8 +104,8 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 }
 ```
 
-- `source`: `"mock"`
-- `sdkInsetsSource`: `"window.__ait"`
+- `--mode=dev`: `source: "mock-vite"`, `sdkInsetsSource: "window.__ait"`
+- `--mode=local`: `source: "mock"`, `sdkInsetsSource: "window.__ait"`
 
 #### `call_sdk("getOperationalEnvironment", [])`
 
@@ -105,9 +127,12 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 
 | 증상 | 원인 | 처리 |
 |---|---|---|
-| `list_pages`가 빈 배열 | fixture 서버 미실행 또는 MCP 모드 불일치 | `--mode=local` 확인, 서버 재시작 |
-| `measure_safe_area` 에러 | MCP 서버가 mock 모드로 실행 안 됨 | `--mode=local` 또는 `MCP_ENV=mock` 확인 |
-| `call_sdk` `ok: false` | mock SDK 미주입 (fixture alias 누락) | `vite.config.ts`의 `resolve.alias` 확인 |
+| `list_pages`가 "Unknown tool" | MCP 서버가 이전 버전 | `@ait-co/devtools` 업데이트 후 서버 재시작 |
+| `list_pages`가 빈 배열 (`--mode=local`) | fixture 서버 미실행 | 서버 재시작 |
+| `measure_safe_area` `source: null` (`--mode=dev`) | Vite dev 서버 미실행 또는 `mcp: true` 옵션 누락 | dev 서버 재시작, unplugin 옵션 확인 |
+| `measure_safe_area` 에러 (`--mode=local`) | MCP 서버가 mock 모드로 실행 안 됨 | `--mode=local` 또는 `MCP_ENV=mock` 확인 |
+| `call_sdk` `ok: false` (dev-mode-unsupported) | 미지원 메서드 — `--mode=dev`에서 CDP bridge 없음 | `--mode=local`로 전환하거나 `getOperationalEnvironment` 사용 |
+| `call_sdk` `ok: false` (mock SDK 부재) | fixture alias 누락 | `vite.config.ts`의 `resolve.alias` 확인 |
 
 ---
 
@@ -370,7 +395,8 @@ ait deploy --scheme-only
 
 | 시나리오 | `list_pages` schema | `measure_safe_area` schema | `call_sdk` schema | 통과 일자 |
 |---|---|---|---|---|
-| 1 (로컬 브라우저) | `pages[]`, `tunnel.up: false` | `source: "mock"` | `ok: true` | — |
+| 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true` | — |
+| 1b (로컬 브라우저, `--mode=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | `ok: true` | — |
 | 2 (AITC Sandbox PWA) | `pages[]`, `tunnel.up: true` | `source: "relay"` | `ok` 필드 존재 | — |
 | 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "dev"` | — |
 | 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "production"` | — |
