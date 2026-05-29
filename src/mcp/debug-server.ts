@@ -50,6 +50,7 @@ import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
+import { AutoDevtoolsOpener } from './devtools-opener.js';
 import { getEnvironment, getEnvironmentReason, type McpEnvironment } from './environment.js';
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
@@ -579,6 +580,11 @@ function errorResult(err: unknown, name: string) {
  * `server.sendToolListChanged()` exactly once — on the first transition — then
  * clears itself. Shutdown calls `stop()` to clear the interval.
  *
+ * `onFirstAttach` is called once on the 0→N transition (or immediately when
+ * already attached). Use this to trigger side-effects such as auto-opening
+ * Chrome DevTools (issue #282). The callback is optional; omitting it preserves
+ * the previous behaviour exactly.
+ *
  * SECRET-HANDLING: target `id`/`title`/`url` are not written to any log here.
  * Only an attach-detected stderr line is emitted (no target details).
  *
@@ -588,11 +594,13 @@ export function startAttachWatcher(
   connection: CdpConnection,
   server: Server,
   intervalMs = 1_000,
+  onFirstAttach?: () => void,
 ): { stop(): void } {
   let wasAttached = connection.listTargets().length > 0;
   // If already attached when the watcher starts, send once immediately.
   if (wasAttached) {
     void server.sendToolListChanged();
+    onFirstAttach?.();
   }
 
   const handle = setInterval(() => {
@@ -601,6 +609,7 @@ export function startAttachWatcher(
       wasAttached = true;
       // Emit once on 0→N transition so the MCP client refreshes its tool list.
       void server.sendToolListChanged();
+      onFirstAttach?.();
       clearInterval(handle);
     }
   }, intervalMs);
@@ -726,6 +735,8 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     );
   }
 
+  const devtoolsOpener = new AutoDevtoolsOpener();
+
   const server = createDebugServer({
     connection,
     aitSource,
@@ -798,7 +809,13 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   // Start the attach watcher after the transport is connected so
   // sendToolListChanged has a live session to notify.
-  attachWatcher = startAttachWatcher(connection, server);
+  // The onFirstAttach callback auto-opens Chrome DevTools when a page attaches
+  // over the relay (issue #282). It is a no-op in mock env and when
+  // AIT_AUTO_DEVTOOLS=0. The tunnel wssUrl may still be null here when
+  // cloudflared is still starting; devtoolsOpener.open() guards against that.
+  attachWatcher = startAttachWatcher(connection, server, 1_000, () => {
+    devtoolsOpener.open(tunnelStatus.wssUrl, getEnvironment({ connection }));
+  });
 }
 
 export interface RunLocalDebugServerOptions {

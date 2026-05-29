@@ -625,6 +625,56 @@ describe('startAttachWatcher', () => {
       vi.useRealTimers();
     }
   });
+
+  it('calls onFirstAttach exactly once on 0→N transition', async () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new FakeCdpConnection([]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onFirstAttach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onFirstAttach);
+
+      await vi.advanceTimersByTimeAsync(150);
+      expect(onFirstAttach).not.toHaveBeenCalled();
+
+      const target: CdpTarget = { id: 'w4', title: 'Page', url: 'https://example.com' };
+      connection.setTargets([target]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onFirstAttach).toHaveBeenCalledTimes(1);
+
+      // Further ticks should NOT call onFirstAttach again.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onFirstAttach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('calls onFirstAttach immediately when already attached', () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'w5', title: 'Page', url: 'https://example.com' };
+      const connection = new FakeCdpConnection([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onFirstAttach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onFirstAttach);
+      expect(onFirstAttach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
