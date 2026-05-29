@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMode, parseTarget } from '../cli.js';
+import { parseForce, parseMode, parseTarget } from '../cli.js';
 
 describe('parseMode', () => {
   it('defaults to debug mode with no flag', () => {
@@ -54,5 +54,27 @@ describe('parseTarget', () => {
 
   it('ignores --mode when parsing target', () => {
     expect(parseTarget(['--mode=debug', '--target=local'])).toBe('local');
+  });
+});
+
+describe('parseForce', () => {
+  it('returns false with no flags', () => {
+    expect(parseForce([])).toBe(false);
+  });
+
+  it('returns true for --force', () => {
+    expect(parseForce(['--force'])).toBe(true);
+  });
+
+  it('returns true for --takeover', () => {
+    expect(parseForce(['--takeover'])).toBe(true);
+  });
+
+  it('returns true when --force is mixed with other flags', () => {
+    expect(parseForce(['--mode=debug', '--force', '--target=relay'])).toBe(true);
+  });
+
+  it('returns false when neither flag is present', () => {
+    expect(parseForce(['--mode=dev', '--target=local'])).toBe(false);
   });
 });

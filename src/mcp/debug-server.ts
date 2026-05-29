@@ -847,6 +847,13 @@ export interface RunDebugServerOptions {
    * only when a fixed port is specifically required (backwards-compatible).
    */
   relayPort?: number;
+  /**
+   * When `true`, terminates the process holding the existing server lock and
+   * takes over the session. Corresponds to `--force` / `--takeover` CLI flags.
+   *
+   * Default `false`.
+   */
+  force?: boolean;
 }
 
 /**
@@ -894,7 +901,8 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // Enforce a single debug session per machine. If another server is alive,
   // ServerLockConflictError is thrown — the MCP host surfaces the message to
   // the agent without a relay or cloudflared ever starting.
-  const lockHandle = acquireLock();
+  // `force: true` kills the existing process and takes over the lock.
+  const lockHandle = acquireLock({ force: options.force ?? false });
 
   // Default 0: OS picks a free port. Prevents EADDRINUSE from stale cloudflared
   // orphans (SIGKILL survivors) that would otherwise block a fixed port and
@@ -1092,6 +1100,13 @@ export interface RunLocalDebugServerOptions {
    * or `http://localhost:5173`.
    */
   devUrl?: string;
+  /**
+   * When `true`, terminates the process holding the existing server lock and
+   * takes over the session. Corresponds to `--force` / `--takeover` CLI flags.
+   *
+   * Default `false`.
+   */
+  force?: boolean;
 }
 
 /**
@@ -1114,7 +1129,8 @@ export interface RunLocalDebugServerOptions {
  */
 export async function runLocalDebugServer(options: RunLocalDebugServerOptions = {}): Promise<void> {
   // Enforce a single debug session per machine (same lock as relay mode).
-  const lockHandle = acquireLock();
+  // `force: true` kills the existing process and takes over the lock.
+  const lockHandle = acquireLock({ force: options.force ?? false });
 
   const cdpPort = options.cdpPort ?? 0;
   const devUrl = options.devUrl ?? process.env.AIT_DEVTOOLS_URL ?? 'http://localhost:5173';

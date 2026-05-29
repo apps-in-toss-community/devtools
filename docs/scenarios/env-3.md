@@ -44,6 +44,17 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 `AIT_DEBUG_TOTP_SECRET` 설정 시 relay 인증 활성화 — relay URL 유출 방어.
 시크릿 값은 절대 stdout/stderr/log 출력 금지.
 
+## 트러블슈팅
+
+### MCP 서버가 "이미 실행 중" 안내가 뜰 때
+
+`devtools-mcp`가 이미 실행 중인 세션을 감지하면 stderr에 PID + wssUrl + 회복 명령을 출력합니다.
+`--force` 플래그로 기존 세션을 종료하고 takeover할 수 있습니다:
+
+```bash
+npx @ait-co/devtools devtools-mcp --force
+```
+
 ## 환경 3 한계
 
 - HMR 없음 (토스 WebView cold-load만)

@@ -951,6 +951,24 @@ Turbopack은 unplugin을 지원하지 않으므로, `next.config.js`에서 `reso
 import '@ait-co/devtools/panel';
 ```
 
+### `devtools-mcp` — 이미 실행 중인 세션이 있을 때
+
+두 번째 `devtools-mcp` 실행 시 "기존 debug-mode 세션이 이미 실행 중" 메시지가 stderr에 출력됩니다. 기존 PID와 wssUrl이 함께 표시됩니다.
+
+회복 방법:
+
+```bash
+# 기존 세션을 직접 종료
+kill <PID>
+
+# 또는 --force 플래그로 기존 세션을 종료하고 takeover
+npx @ait-co/devtools devtools-mcp --force
+# local 모드라면:
+npx @ait-co/devtools devtools-mcp --target=local --force
+```
+
+`--takeover`도 `--force`의 alias로 동일하게 동작합니다.
+
 ## MCP Server
 
 AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)](https://modelcontextprotocol.io/)를

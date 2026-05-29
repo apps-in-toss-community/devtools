@@ -27,6 +27,16 @@ import { runDevServer } from './server.js';
 type Mode = 'debug' | 'dev';
 type Target = 'relay' | 'local';
 
+/**
+ * Returns `true` when `--force` or `--takeover` is present in argv.
+ *
+ * Both flags are accepted as aliases — `--force` is the short form listed in
+ * the `--help` output; `--takeover` is a longer synonym.
+ */
+export function parseForce(argv: readonly string[]): boolean {
+  return argv.includes('--force') || argv.includes('--takeover');
+}
+
 /** Parses `--mode=<value>` / `--mode <value>` from argv; default `debug`. */
 export function parseMode(argv: readonly string[]): Mode {
   for (let i = 0; i < argv.length; i++) {
@@ -90,10 +100,11 @@ async function main(): Promise<void> {
     await runDevServer();
   } else {
     const target = parseTarget(args);
+    const force = parseForce(args);
     if (target === 'local') {
-      await runLocalDebugServer();
+      await runLocalDebugServer({ force });
     } else {
-      await runDebugServer();
+      await runDebugServer({ force });
     }
   }
 }

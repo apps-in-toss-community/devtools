@@ -62,8 +62,10 @@ export class ServerLockConflictError extends Error {
   readonly existingPid: number;
   /** wssUrl from the existing lock — may be `null` if the tunnel is still starting. */
   readonly existingWssUrl: string | null;
+  /** ISO timestamp from the existing lock — when that session started. */
+  readonly existingStartedAt: string;
 
-  constructor(existingPid: number, existingWssUrl: string | null) {
+  constructor(existingPid: number, existingWssUrl: string | null, existingStartedAt: string) {
     const urlNote =
       existingWssUrl != null
         ? `  relay URL: ${existingWssUrl}\n`
@@ -79,6 +81,7 @@ export class ServerLockConflictError extends Error {
     this.name = 'ServerLockConflictError';
     this.existingPid = existingPid;
     this.existingWssUrl = existingWssUrl;
+    this.existingStartedAt = existingStartedAt;
   }
 }
 
@@ -165,6 +168,45 @@ function removeLock(lockPath: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Force-takeover helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Sends SIGTERM to `pid` and waits up to `graceMs` (default 2 000 ms) for it
+ * to exit; then falls back to SIGKILL.  Synchronous — uses a busy-wait loop so
+ * it is usable in the top-level startup path without async plumbing.
+ *
+ * Ignores errors from `process.kill` so that a race where the target exits
+ * between the alive check and the kill call does not crash the caller.
+ */
+function killAndWait(pid: number, graceMs = 2_000): void {
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // Already gone — nothing to do.
+    return;
+  }
+
+  const deadline = Date.now() + graceMs;
+  // Poll every 100 ms until the process is gone or the grace period expires.
+  while (isPidAlive(pid) && Date.now() < deadline) {
+    // Busy-wait: this is a very short window (≤2 s) at startup.
+    const end = Date.now() + 100;
+    while (Date.now() < end) {
+      // spin
+    }
+  }
+
+  if (isPidAlive(pid)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -178,28 +220,62 @@ export function readServerLock(): LockData | null {
   return readLock(lockFilePath());
 }
 
+/** Options for `acquireLock`. */
+export interface AcquireLockOptions {
+  /**
+   * When `true`, terminates the process holding the existing lock (SIGTERM →
+   * wait up to 2 s → SIGKILL) and takes over the lock.
+   *
+   * Corresponds to the `--force` / `--takeover` CLI flag.
+   */
+  force?: boolean;
+}
+
 /**
  * Attempts to acquire the server lock.
  *
  * - If no lock exists (or the lock is stale): writes a new lock and returns a
  *   `LockHandle` with `updateWssUrl` + `release`.
- * - If a live process holds the lock: throws `ServerLockConflictError`.
+ * - If a live process holds the lock and `force` is `false` (default): writes
+ *   a clear recovery message to stderr and throws `ServerLockConflictError`.
+ * - If a live process holds the lock and `force` is `true`: sends SIGTERM to
+ *   that process (waiting up to 2 s then SIGKILL) and takes over the lock.
  *
  * The initial `wssUrl` in the lock file is `null` — call
  * `handle.updateWssUrl(url)` once the cloudflared tunnel is ready.
  */
-export function acquireLock(): LockHandle {
+export function acquireLock(options: AcquireLockOptions = {}): LockHandle {
+  const { force = false } = options;
   const lockPath = lockFilePath();
   const existing = readLock(lockPath);
 
   if (existing !== null) {
     if (isPidAlive(existing.pid)) {
-      throw new ServerLockConflictError(existing.pid, existing.wssUrl);
+      if (force) {
+        // Force takeover: SIGTERM → 2 s grace → SIGKILL.
+        process.stderr.write(
+          `[ait-debug] --force: terminating existing session PID=${existing.pid} …\n`,
+        );
+        killAndWait(existing.pid);
+        process.stderr.write(`[ait-debug] --force: PID=${existing.pid} stopped, taking over.\n`);
+      } else {
+        // Emit a user-actionable message before throwing so the MCP host can
+        // surface it — the thrown message is included in the "process exited"
+        // log, but the stderr line is more prominent and machine-parseable.
+        const urlPart =
+          existing.wssUrl != null ? `wssUrl=${existing.wssUrl}` : 'wssUrl=(tunnel starting)';
+        process.stderr.write(
+          `[ait-debug] 기존 debug-mode 세션이 이미 실행 중 — PID=${existing.pid}, started ${existing.startedAt}, ${urlPart}\n` +
+            `[ait-debug] 회복: \`kill ${existing.pid}\` 또는 \`npx @ait-co/devtools devtools-mcp --force\`\n`,
+        );
+        throw new ServerLockConflictError(existing.pid, existing.wssUrl, existing.startedAt);
+      }
+    } else {
+      // Stale lock — previous process died without cleanup.
+      process.stderr.write(
+        `[ait-debug] stale lock from PID ${existing.pid} recovered — starting fresh.\n`,
+      );
     }
-    // Stale lock — previous process died without cleanup.
-    process.stderr.write(
-      `[ait-debug] stale lock from PID ${existing.pid} recovered — starting fresh.\n`,
-    );
   }
 
   const data: LockData = {
