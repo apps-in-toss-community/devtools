@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.1.42
+
+### Patch Changes
+
+- dad13a3: iPhone 15 Pro landscape safe-area 실측값 반영(#198/#232).
+
+  - iPhone 15 Pro preset에 landscape bottom inset 20 추가 + provenance `measured` 승급 (2026-05-28, portrait + landscape 양쪽 실측).
+  - `computeSafeAreaInsets` iPhone landscape 분기를 좌우 대칭으로 수정 — CSS env()와 SDK SafeAreaInsets 모두 `left=right=notchInset` (relay 세션 ground truth).
+  - `landscapeSide` 필드 + Panel UI select + state default 제거 (잘못된 mental model).
+
+- 333f0c1: MCP tool surface fidelity (#277): 환경 감지 SSoT + Tier A·B 필터링 + measure_safe_area mock 실측화.
+
+  - `src/mcp/environment.ts` 신규 — `MCP_ENV` 환경변수 → CDP target URL 패턴 → default mock 의 3단 우선순위로 단일 함수가 환경 결정.
+  - `src/mcp/tools.ts` 도구 declaration 에 `availableIn` 필드 추가 (Tier A 'mock', Tier B 'relay', Tier C 'both'). `tools/list` 가 환경에 맞는 도구만 노출하고, 호출 시 환경 불일치면 reason 을 담은 tool-result error 로 거부.
+  - `measure_safe_area` 가 양쪽 환경에서 같은 `Runtime.evaluate` probe 를 돌리고, 결과 wrapper 에 `source: 'mock' | 'relay'` 를 함께 반환 (Tier B→C 승격).
+
+- 983efc7: MCP attach 신뢰성 개선 + 4 시나리오 acceptance 문서화 (#281)
+
+  - `ChiiCdpConnection.waitForFirstTarget()` 추가: `refreshTargets()` 및 첫 inbound CDP 메시지 양쪽 이벤트를 감지해 `wait_for_attach` polling race 제거
+  - `list_pages` stale 캐시 수정: `ChiiCdpConnection` 환경에서 매 호출 시 `/targets` refresh
+  - MCP server disconnect 에러 메시지 개선: relay 끊김과 "page 미부착" 오류를 구별해 재연결 방법 명시
+  - `docs/scenarios/env-{1,2,3,4}.md` 시나리오별 acceptance 절차 문서화
+  - `docs/mock-fidelity-catalog.md`에 4 시나리오 MCP tool 응답 diff snapshot 추가
+
+- b07876d: partner safe-area 모델 정정 — 실기기 fidelity 맞춤(#275).
+
+  - `computeSafeAreaInsets` portrait top=0으로 정정. 토스 native nav bar는 partner WebView viewport 밖이라 SDK top=54는 정보용 — 소비자가 padding으로 적용하면 double-count. mock도 top=0을 반환해 실기기와 같은 결과를 낸다.
+  - `applyViewport` body `padding-top` 주입 제거. 실기기 WebView는 top=0부터 콘텐츠 시작.
+  - `computeSafeAreaInsets` 시그니처에서 `navBarVisible`/`navBarType` 파라미터 제거 (top이 0 고정이라 불필요).
+  - iPhone 15 Pro preset `height` 852→754. 실측: partner type innerHeight=754(native chrome 98pt가 WebView 바깥).
+  - fidelity-QA whitelist의 safe-area 항목 reason 갱신.
+
+- 51d7430: debug server에 singleton lock 추가 — 동시에 두 번째 `devtools-mcp` 프로세스를 시작하면 명시적 에러(PID + wssUrl)를 출력하고 즉시 종료. SIGKILL로 죽은 stale lock은 PID alive 검사로 자동 회수. graceful shutdown 시 lock file + cloudflared 자식 cleanup.
+
 ## 0.1.41
 
 ### Patch Changes
