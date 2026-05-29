@@ -299,6 +299,31 @@ export const DEBUG_TOOL_DEFINITIONS = [
     inputSchema: { type: 'object', properties: {}, required: [] },
     availableIn: 'both' as ToolAvailability,
   },
+  {
+    name: 'get_diagnostics',
+    description:
+      'Returns a single-call server status snapshot so the agent can diagnose "why is this not ' +
+      'working?" without calling multiple tools. Fields: mcpVersion (MCP SDK version), ' +
+      'devtoolsVersion (@ait-co/devtools package version), tunnel (up/wssUrl/pid/startedAt), ' +
+      'pages (list_pages result + lastSeenAt stats), lastAttachAt, lastDetachAt, ' +
+      'recentErrors (last N server-side errors, PII/secret redacted), ' +
+      'environment (getEnvironment() result + reason), ' +
+      'serverLockHolder (pid + startedAt from the lock file, or null). ' +
+      'All fields are nullable — missing data is null, not an error. ' +
+      'Tier C (both mock and relay). Call this first when debugging session state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        recent_errors_limit: {
+          type: 'number',
+          description:
+            'Maximum number of recent server-side errors to include (default 10, max 50).',
+        },
+      },
+      required: [],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
 ] as const;
 
 export type DebugToolName = (typeof DEBUG_TOOL_DEFINITIONS)[number]['name'];
@@ -357,6 +382,7 @@ export function filterToolsByEnvironment<T extends { name: string; availableIn: 
  */
 export const BOOTSTRAP_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'build_attach_url',
+  'get_diagnostics',
   'list_pages',
 ]);
 
@@ -1351,4 +1377,326 @@ export function getMockState(source: AitSource): Promise<AitMockState> {
 /** Returns the operational environment + SDK version (`AIT.getOperationalEnvironment`). */
 export function getOperationalEnvironment(source: AitSource): Promise<AitOperationalEnvironment> {
   return source.get('AIT.getOperationalEnvironment');
+}
+
+/* -------------------------------------------------------------------------- */
+/* get_diagnostics — single-call server status snapshot (#286)                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Represents a single redacted server-side error entry in the diagnostics
+ * snapshot. PII / secrets are scrubbed before this is returned.
+ */
+export interface DiagnosticsError {
+  /** ISO timestamp when the error was recorded. */
+  timestamp: string;
+  /** Error message with PII/secrets redacted (e.g. `at=<redacted>`). */
+  message: string;
+  /** Optional error category for quick triage. */
+  category?: string;
+}
+
+/**
+ * Tunnel state in the diagnostics snapshot. Same shape as `TunnelStatus` but
+ * extended with the lock-file data (pid, startedAt) when available.
+ */
+export interface DiagnosticsTunnelInfo {
+  /** Whether the cloudflared quick tunnel is currently up. */
+  up: boolean;
+  /** Public `wss://*.trycloudflare.com` relay URL, or `null`. */
+  wssUrl: string | null;
+  /**
+   * PID of the MCP server process that owns the tunnel (from the lock file),
+   * or `null` when no lock is present.
+   */
+  pid: number | null;
+  /**
+   * ISO timestamp when the owning server process started (from the lock file),
+   * or `null`.
+   */
+  startedAt: string | null;
+}
+
+/**
+ * Server-lock holder info from `~/.ait-devtools/server.lock`. `null` when
+ * no lock file exists (server was cleanly shut down or never started).
+ */
+export interface DiagnosticsLockHolder {
+  pid: number;
+  startedAt: string;
+  /** wssUrl recorded in the lock file — may be `null` when tunnel is still starting. */
+  wssUrl: string | null;
+}
+
+/**
+ * Full server status snapshot returned by `get_diagnostics`.
+ *
+ * All fields are nullable — a missing value means "not yet known" (e.g. tunnel
+ * not up yet) rather than an error. The schema is intentionally stable across
+ * versions: new optional fields may be added but existing fields are not
+ * removed or renamed.
+ *
+ * SECRET-HANDLING: No TOTP secret, cookie, deploy key, or `at=` code value
+ * appears in this snapshot. `recentErrors` entries are redacted before inclusion.
+ */
+export interface DiagnosticsResult {
+  /** `@modelcontextprotocol/sdk` package version string. */
+  mcpVersion: string | null;
+  /** `@ait-co/devtools` package version string. */
+  devtoolsVersion: string | null;
+  /** Tunnel state including lock-file pid/startedAt. */
+  tunnel: DiagnosticsTunnelInfo;
+  /** Current list_pages result (pages + crash info + singleAttachModel). */
+  pages: ListPagesResult | null;
+  /** ISO timestamp of the most recent page attach, or `null`. */
+  lastAttachAt: string | null;
+  /** ISO timestamp of the most recent page detach, or `null`. */
+  lastDetachAt: string | null;
+  /**
+   * Recent server-side errors (up to `recent_errors_limit`, default 10).
+   * Redacted: `at=<redacted>`, cookie headers stripped, AITCC_API_KEY masked.
+   */
+  recentErrors: DiagnosticsError[];
+  /** Resolved environment (`mock` | `relay`) and the reason string. */
+  environment: {
+    env: McpEnvironment;
+    reason: string;
+  };
+  /**
+   * Contents of `~/.ait-devtools/server.lock`, or `null` when absent.
+   * Useful for diagnosing stale-lock conflicts without running the full server.
+   */
+  serverLockHolder: DiagnosticsLockHolder | null;
+}
+
+/**
+ * Registry of server-side errors collected by `DiagnosticsCollector`.
+ * Injected into `createDebugServer` so it is testable without a real process.
+ */
+export interface DiagnosticsCollector {
+  /** Records a server-side error for later surfacing in `get_diagnostics`. */
+  recordError(message: string, category?: string): void;
+  /** Returns the most recent `limit` errors, oldest-first. */
+  getRecentErrors(limit: number): DiagnosticsError[];
+  /** Records an attach event (ISO timestamp stored). */
+  recordAttach(): void;
+  /** Records a detach event (ISO timestamp stored). */
+  recordDetach(): void;
+  /** Returns the ISO timestamp of the last attach, or `null`. */
+  getLastAttachAt(): string | null;
+  /** Returns the ISO timestamp of the last detach, or `null`. */
+  getLastDetachAt(): string | null;
+}
+
+/** Secret-redaction patterns applied before error messages enter the buffer. */
+const SECRET_REDACT_PATTERNS: ReadonlyArray<[RegExp, string]> = [
+  // TOTP at= code value.
+  [/\bat=([^&\s"']+)/g, 'at=<redacted>'],
+  // Cookie / Set-Cookie header values — replace everything after the colon.
+  [/((?:set-)?cookie)\s*:\s*.+/gi, '$1: <redacted>'],
+  // AITCC_API_KEY env-var-style references.
+  [/AITCC_API_KEY\s*=\s*\S+/gi, 'AITCC_API_KEY=<redacted>'],
+  // Authorization header (covers "Authorization: Bearer …" and bare "Bearer <token>").
+  [/Authorization\s*:\s*.+/gi, 'Authorization: <redacted>'],
+  [/\bBearer\s+\S+/g, 'Bearer <redacted>'],
+];
+
+/**
+ * Applies all secret-redaction patterns to an error message string.
+ * Used before storing errors in the `DiagnosticsCollector` ring buffer.
+ *
+ * SECRET-HANDLING: this is the single bottleneck for redaction — all error
+ * strings must pass through here before reaching the buffer.
+ */
+export function redactErrorMessage(message: string): string {
+  let result = message;
+  for (const [pattern, replacement] of SECRET_REDACT_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
+/** Default max buffer size for the error ring buffer. */
+const DEFAULT_ERROR_BUFFER_SIZE = 50;
+
+/**
+ * In-memory implementation of `DiagnosticsCollector`. Thread-safe in the
+ * single-threaded Node.js sense (synchronous mutations only).
+ */
+export class InMemoryDiagnosticsCollector implements DiagnosticsCollector {
+  private readonly buffer: DiagnosticsError[] = [];
+  private readonly maxSize: number;
+  private lastAttachAt: string | null = null;
+  private lastDetachAt: string | null = null;
+
+  constructor(maxSize = DEFAULT_ERROR_BUFFER_SIZE) {
+    this.maxSize = maxSize;
+  }
+
+  recordError(message: string, category?: string): void {
+    const entry: DiagnosticsError = {
+      timestamp: new Date().toISOString(),
+      message: redactErrorMessage(message),
+      ...(category !== undefined ? { category } : {}),
+    };
+    this.buffer.push(entry);
+    // Keep only the most recent `maxSize` entries.
+    if (this.buffer.length > this.maxSize) {
+      this.buffer.shift();
+    }
+  }
+
+  getRecentErrors(limit: number): DiagnosticsError[] {
+    const cap = Math.min(Math.max(1, limit), DEFAULT_ERROR_BUFFER_SIZE);
+    const sliced =
+      this.buffer.length > cap ? this.buffer.slice(this.buffer.length - cap) : [...this.buffer];
+    return sliced;
+  }
+
+  recordAttach(): void {
+    this.lastAttachAt = new Date().toISOString();
+  }
+
+  recordDetach(): void {
+    this.lastDetachAt = new Date().toISOString();
+  }
+
+  getLastAttachAt(): string | null {
+    return this.lastAttachAt;
+  }
+
+  getLastDetachAt(): string | null {
+    return this.lastDetachAt;
+  }
+}
+
+/**
+ * Reads the `@modelcontextprotocol/sdk` package version from the installed
+ * package's `package.json`. Returns `null` on any error (missing file, JSON
+ * parse failure, etc.) — diagnostics must never throw.
+ *
+ * Node-only — uses dynamic `import()` so it does not pollute the browser
+ * module graph.
+ */
+export async function readMcpSdkVersion(): Promise<string | null> {
+  try {
+    // Resolve the package.json adjacent to the installed SDK entry point.
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
+    const pkgPath = req.resolve('@modelcontextprotocol/sdk/package.json');
+    const { readFileSync } = await import('node:fs');
+    const raw = readFileSync(pkgPath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return typeof parsed.version === 'string' ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the `@ait-co/devtools` package version injected at build time via
+ * the `__VERSION__` define. Returns `null` when the global is absent (e.g. in
+ * some test environments that skip the build step).
+ */
+export function readDevtoolsVersion(): string | null {
+  try {
+    // `__VERSION__` is injected by tsdown / vite via `define`.
+    // biome-ignore lint/suspicious/noExplicitAny: intentional global check
+    const v = (globalThis as any).__VERSION__;
+    return typeof v === 'string' && v.length > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Input for `getDiagnostics`. */
+export interface GetDiagnosticsInput {
+  /** Current tunnel status (from the server's live `getTunnelStatus()`). */
+  tunnel: TunnelStatus;
+  /**
+   * CDP connection used to call `list_pages` — may be absent in edge cases
+   * (e.g. called from the dev-mode server which has no CDP connection).
+   */
+  connection?: CdpConnection;
+  /**
+   * Resolved MCP environment (`mock` | `relay`). Caller obtains via
+   * `resolveEnvironment()`.
+   */
+  env: McpEnvironment;
+  /** Human-readable reason for the env decision. */
+  envReason: string;
+  /** Diagnostics collector for errors / attach events. */
+  collector: DiagnosticsCollector;
+  /** Lock-file reader — injected so tests can override without touching the FS. */
+  readLock: () => import('./server-lock.js').LockData | null;
+  /** Maximum number of recent errors to include (default 10). */
+  recentErrorsLimit?: number;
+  /** Optional async resolver for the MCP SDK version. */
+  getMcpVersion?: () => Promise<string | null>;
+}
+
+/**
+ * Builds the `get_diagnostics` response. Pure — does not throw; missing data
+ * fields are `null`. Async because `readMcpSdkVersion` needs `import()`.
+ *
+ * SECRET-HANDLING:
+ *   - `recentErrors` messages are already redacted by `recordError` (via
+ *     `redactErrorMessage`). No additional redaction needed here.
+ *   - `tunnel.wssUrl` is a public cloudflared hostname — not a secret.
+ *   - Lock file data contains only pid + startedAt + wssUrl — no secrets.
+ */
+export async function getDiagnostics(input: GetDiagnosticsInput): Promise<DiagnosticsResult> {
+  const {
+    tunnel,
+    connection,
+    env,
+    envReason,
+    collector,
+    readLock: readLockFn,
+    recentErrorsLimit = 10,
+    getMcpVersion = readMcpSdkVersion,
+  } = input;
+
+  const [mcpVersion, devtoolsVersion] = await Promise.all([
+    getMcpVersion(),
+    Promise.resolve(readDevtoolsVersion()),
+  ]);
+
+  // Read lock file for serverLockHolder + tunnel pid/startedAt.
+  const lockData = readLockFn();
+  const serverLockHolder: DiagnosticsLockHolder | null = lockData
+    ? { pid: lockData.pid, startedAt: lockData.startedAt, wssUrl: lockData.wssUrl }
+    : null;
+
+  const tunnelInfo: DiagnosticsTunnelInfo = {
+    up: tunnel.up,
+    wssUrl: tunnel.wssUrl,
+    pid: lockData?.pid ?? null,
+    startedAt: lockData?.startedAt ?? null,
+  };
+
+  // list_pages — non-fatal; null on any error.
+  let pages: ListPagesResult | null = null;
+  if (connection !== undefined) {
+    try {
+      pages = listPages(connection, tunnel);
+    } catch {
+      // Ignore — pages stays null.
+    }
+  }
+
+  const limit = Math.min(Math.max(1, recentErrorsLimit), 50);
+  const recentErrors = collector.getRecentErrors(limit);
+
+  return {
+    mcpVersion,
+    devtoolsVersion,
+    tunnel: tunnelInfo,
+    pages,
+    lastAttachAt: collector.getLastAttachAt(),
+    lastDetachAt: collector.getLastDetachAt(),
+    recentErrors,
+    environment: { env, reason: envReason },
+    serverLockHolder,
+  };
 }

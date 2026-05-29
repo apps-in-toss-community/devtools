@@ -169,6 +169,16 @@ function removeLock(lockPath: string): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Reads the current lock file without acquiring it. Returns the parsed
+ * `LockData` when the file exists and is valid, otherwise `null`. Used by
+ * `get_diagnostics` to surface the `serverLockHolder` field without
+ * interfering with the running lock owner.
+ */
+export function readServerLock(): LockData | null {
+  return readLock(lockFilePath());
+}
+
+/**
  * Attempts to acquire the server lock.
  *
  * - If no lock exists (or the lock is stale): writes a new lock and returns a
