@@ -5,9 +5,17 @@
 ## 전제조건
 
 - `pnpm dev` (Vite dev server + unplugin `mcp: true`)  
-- `.mcp.json`의 `devtools-mcp --mode=dev` 활성화 (권장 — HTTP mock-state 기반, relay/Chromium 불필요)
+- `.mcp.json`의 `devtools-mcp --mode=dev` (권장 — HTTP mock-state 기반, relay/Chromium 불필요) 또는 `--mode=local` (CDP 필요 시)
+- 환경 변수: `MCP_ENV=mock` (명시 권장, 미설정 시 default mock으로 동일 동작)
 
-> **참고**: `--mode=local`은 로컬 Chromium을 자동 실행하는 별도 모드다. 환경 1에서 CDP 기능(`evaluate`, `take_screenshot` 등)이 필요하면 `--mode=local`을 쓴다. `--mode=dev`는 CDP 없이 Vite HTTP endpoint만 사용하며 CDP 도구는 tier-filter error로 안내한다.
+## `--mode=dev` vs `--mode=local` 선택 기준
+
+| 모드 | 언제 쓰나 | 특징 |
+|---|---|---|
+| `--mode=dev` | Vite HMR 루프에서 AIT mock state만 관측하고 싶을 때 | Vite dev server의 `/api/ait-devtools/state` endpoint를 읽음. CDP 없음 — DOM/screenshot 불가, tier-filter error로 안내. 빠르고 가볍다. |
+| `--mode=local` | DOM/screenshot/safe-area 등 CDP tool이 필요할 때 | MCP 서버가 로컬 Chromium을 직접 기동해 CDP direct-attach. relay·터널 불필요. CDP 전체 tool surface 사용 가능. |
+
+일반 mock 개발에서 AIT state 조회만 할 경우 `--mode=dev`가 충분하다. DOM 구조나 스크린샷까지 필요하면 `--mode=local`을 선택한다.
 
 ## MCP 도구 acceptance 체크리스트
 
@@ -75,5 +83,7 @@ npx @ait-co/devtools devtools-mcp --target=local --force
 
 ## 환경 1 한계 (구조적 불가)
 
-- 실기기 WebKit 엔진 fidelity: 환경 2(PWA)로 보완
-- 토스 WebView native bridge: 환경 3·4로 보완
+- 실기기 WebKit 엔진 fidelity: 환경 2(PWA, `/ait setup-phone-preview`)로 보완
+- 토스 WebView native bridge: 환경 3·4(`MCP_ENV=relay`, `devtools-mcp`)로 보완
+
+다음 단계: 실기기 검증이 필요하면 `MCP_ENV=relay npx @ait-co/devtools devtools-mcp` 실행 후 `get_diagnostics`로 상태 확인.

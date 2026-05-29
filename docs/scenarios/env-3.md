@@ -5,7 +5,8 @@
 
 ## 전제조건
 
-- `devtools-mcp` 실행 (debug 모드, 기본값)
+- `MCP_ENV=relay npx @ait-co/devtools devtools-mcp` (debug 모드, relay env 명시)
+  - `MCP_ENV=relay`는 자동 감지보다 명시를 권장한다 — 터널 URL 패턴이 감지되기 전 bootstrap 단계에서도 relay tool이 노출된다.
 - dogfood bundle deploy: `ait build && ait deploy --scheme-only`
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - 진입 경로: QR 스캔 (단일 정식 경로 — `test-push` 폐기됨)
@@ -59,3 +60,6 @@ npx @ait-co/devtools devtools-mcp --force
 
 - HMR 없음 (토스 WebView cold-load만)
 - OPENED 전환 전 `PREPARE` 상태 cold-load: 가능
+- dev-mode (`--mode=dev`) 미지원 — 이 환경은 debug-mode 전용
+
+다음 단계: live(OPENED) 앱 디버깅이 필요하면 환경 4(`docs/scenarios/env-4.md`)로 진입.

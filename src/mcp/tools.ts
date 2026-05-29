@@ -116,7 +116,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'a page crash was detected via Inspector.targetCrashed / Target.targetDestroyed since ' +
       'the last attach, the pages list will be empty, and `crashWarning` shows a Korean hint ' +
       'to re-attach. ' +
-      'Call this first to confirm a page is attached before reading console/network.',
+      'Call this first to confirm a page is attached before reading console/network. ' +
+      'When a page attaches or detaches the server emits notifications/tools/list_changed — ' +
+      'call tools/list again to get the full updated tool surface.',
     inputSchema: { type: 'object', properties: {}, required: [] },
     availableIn: 'both' as ToolAvailability,
   },
@@ -129,10 +131,14 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Returns the deep link JSON and a unicode QR of that deep link. Scan the QR with the phone ' +
       'camera to open the mini-app and attach it to this debug session (QR is the single entry ' +
       'path — no USB cable or platform CLI needed). Requires the tunnel to be up — call ' +
-      'list_pages first. Set wait_for_attach=true to block until the phone scans and a page ' +
-      'attaches (polls listTargets up to 90 s), then returns the attached page info too. ' +
+      'list_pages first. If the tunnel is not up, restart the MCP server: ' +
+      '`npx @ait-co/devtools devtools-mcp`. ' +
+      'Set wait_for_attach=true to block until the phone scans and a page attaches ' +
+      '(polls listTargets up to 30 s by default), then returns the attached page info too. ' +
+      'On timeout, call build_attach_url again to resume polling. ' +
       'When open_in_browser=true (default), saves the QR as a PNG and opens it in the OS default ' +
-      'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers).',
+      'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers). ' +
+      'Requires MCP_ENV=relay (set automatically when a relay tunnel is detected).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -147,8 +153,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'boolean',
           description:
             'If true, block after returning the QR until a page attaches to the relay (polls ' +
-            'listTargets ~1 s interval, timeout 90 s). On attach, the response includes the ' +
-            'attached page list. On timeout, returns an error with a list_pages retry hint.',
+            'listTargets ~1 s interval, timeout 30 s). On attach, the response includes the ' +
+            'attached page list. On timeout, call build_attach_url again to resume polling.',
         },
         open_in_browser: {
           type: 'boolean',
@@ -186,7 +192,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
     name: 'take_screenshot',
     description:
       'Captures a PNG screenshot of the attached mini-app page over CDP (Page.captureScreenshot) ' +
-      'so the agent can see the phone screen directly. Read-only. Returns an image content block.',
+      'so the agent can see the phone screen directly. Read-only. ' +
+      'Returns an image content block — this is the only debug tool that returns an image; ' +
+      'all other debug tools return text (JSON).',
     inputSchema: { type: 'object', properties: {}, required: [] },
     availableIn: 'both' as ToolAvailability,
   },
@@ -213,7 +221,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'CDP Runtime.evaluate (returnByValue: true) and returns the result. ' +
       'NOT read-only — the expression can have side effects (DOM mutations, SDK calls, ' +
       'state changes). Requires the relay to be attached — call list_pages first. ' +
-      'Throws if the evaluation throws an exception on the page.',
+      'Throws if the evaluation throws an exception on the page. ' +
+      'SECURITY: expression and result are not redacted — never include secrets or auth ' +
+      'tokens in the expression.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -258,7 +268,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
       'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
       'the result also includes `recentException` for crash triage. ' +
-      'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle).\n\n' +
+      'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle) — ' +
+      'redeploy via dogfood channel: `ait build && aitcc app deploy`. ' +
+      'SECURITY: method name, args, and result value are not redacted — never include secrets.\n\n' +
       'IMPORTANT — 인자 시그니처 (잘못된 인자로 호출하면 토스 앱 crash 위험):\n' +
       '  setDeviceOrientation:        call_sdk("setDeviceOrientation", [{ type: "landscape" }])  // NOT "landscape"\n' +
       '  setIosSwipeGestureEnabled:   call_sdk("setIosSwipeGestureEnabled", [{ isEnabled: false }])\n' +
@@ -324,8 +336,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'pages (list_pages result + lastSeenAt stats), lastAttachAt, lastDetachAt, ' +
       'recentErrors (last N server-side errors, PII/secret redacted), ' +
       'environment (getEnvironment() result + reason), ' +
-      'serverLockHolder (pid + startedAt from the lock file, or null). ' +
+      'serverLockHolder (pid + startedAt from the lock file, or null), ' +
+      'nextRecommendedAction ({tool, reason} or null — the single next tool to call). ' +
       'All fields are nullable — missing data is null, not an error. ' +
+      'debug-mode only — dev-mode (--mode=dev) does not support relay diagnostics. ' +
       'Tier C (both mock and relay). Call this first when debugging session state.',
     inputSchema: {
       type: 'object',
@@ -1466,6 +1480,17 @@ export interface DiagnosticsLockHolder {
 }
 
 /**
+ * The next recommended tool for the agent to call, based on the current server
+ * state snapshot. `null` means the session looks healthy — no specific action needed.
+ */
+export interface NextRecommendedAction {
+  /** MCP tool name to call next (e.g. `'build_attach_url'`, `'restart'`). */
+  tool: string;
+  /** Human-readable reason explaining why this action is recommended. */
+  reason: string;
+}
+
+/**
  * Full server status snapshot returned by `get_diagnostics`.
  *
  * All fields are nullable — a missing value means "not yet known" (e.g. tunnel
@@ -1504,6 +1529,18 @@ export interface DiagnosticsResult {
    * Useful for diagnosing stale-lock conflicts without running the full server.
    */
   serverLockHolder: DiagnosticsLockHolder | null;
+  /**
+   * Single next recommended action for the agent, or `null` when the session
+   * looks healthy. Derived deterministically from the other snapshot fields —
+   * the agent should call this tool next rather than inferring from raw fields.
+   *
+   * Branch rules (evaluated in priority order):
+   *   1. tunnel.up === false                          → restart
+   *   2. tunnel.up, pages empty, env === relay        → build_attach_url
+   *   3. pages[0] exists + crashDetectedAt non-null   → build_attach_url (re-attach)
+   *   4. otherwise                                    → null
+   */
+  nextRecommendedAction: NextRecommendedAction | null;
 }
 
 /**
@@ -1646,6 +1683,50 @@ export function readDevtoolsVersion(): string | null {
   }
 }
 
+/**
+ * Derives the next recommended action from a completed diagnostics snapshot.
+ *
+ * Branch rules (evaluated in priority order):
+ *   1. tunnel.up === false                        → restart
+ *   2. tunnel.up, pages empty, env === relay      → build_attach_url (start attach)
+ *   3. pages has entry + crashDetectedAt non-null → build_attach_url (re-attach after crash)
+ *   4. otherwise                                  → null (session looks healthy)
+ *
+ * Pure — does not throw; receives the final assembled snapshot fields.
+ */
+export function computeNextRecommendedAction(
+  tunnel: DiagnosticsTunnelInfo,
+  pages: ListPagesResult | null,
+  env: McpEnvironment,
+): NextRecommendedAction | null {
+  // Rule 1: tunnel is down — must restart the MCP server.
+  if (!tunnel.up) {
+    return {
+      tool: 'restart',
+      reason: 'tunnel not up — run `npx @ait-co/devtools devtools-mcp` to restart',
+    };
+  }
+
+  // Rule 2: tunnel up but no pages attached in relay env → start attach.
+  if (env === 'relay' && pages !== null && pages.pages.length === 0 && !pages.crashDetectedAt) {
+    return {
+      tool: 'build_attach_url',
+      reason: 'tunnel ready, no pages attached — call build_attach_url to generate the attach QR',
+    };
+  }
+
+  // Rule 3: crash detected — need to re-attach.
+  if (pages !== null && pages.crashDetectedAt !== null) {
+    return {
+      tool: 'build_attach_url',
+      reason: `page crashed at ${pages.crashDetectedAt} — call build_attach_url to re-attach`,
+    };
+  }
+
+  // Rule 4: session looks healthy.
+  return null;
+}
+
 /** Input for `getDiagnostics`. */
 export interface GetDiagnosticsInput {
   /** Current tunnel status (from the server's live `getTunnelStatus()`). */
@@ -1725,6 +1806,8 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
   const limit = Math.min(Math.max(1, recentErrorsLimit), 50);
   const recentErrors = collector.getRecentErrors(limit);
 
+  const nextRecommendedAction = computeNextRecommendedAction(tunnelInfo, pages, env);
+
   return {
     mcpVersion,
     devtoolsVersion,
@@ -1735,5 +1818,6 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     recentErrors,
     environment: { env, reason: envReason },
     serverLockHolder,
+    nextRecommendedAction,
   };
 }

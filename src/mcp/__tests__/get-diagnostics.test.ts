@@ -26,6 +26,7 @@ import type {
 import { createDebugServer } from '../debug-server.js';
 import type { McpEnvironment } from '../environment.js';
 import {
+  computeNextRecommendedAction,
   type DiagnosticsCollector,
   getDiagnostics,
   InMemoryDiagnosticsCollector,
@@ -378,5 +379,90 @@ describe('get_diagnostics MCP tool', () => {
     expect(pages).not.toBeNull();
     const pageList = pages.pages as unknown[];
     expect(pageList).toHaveLength(1);
+  });
+
+  it('nextRecommendedAction is null when a page is attached and healthy', async () => {
+    const connection = new FakeCdpConnection([
+      { id: 'tgt1', title: 'SDK Example', url: 'https://sdk-example.aitc.dev' },
+    ]);
+    const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+    const client = await makeClient({ connection, env: 'relay', tunnelStatus: tunnelUp });
+    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const data = parseResult(result) as Record<string, unknown>;
+    expect(data.nextRecommendedAction).toBeNull();
+  });
+});
+
+// ---- computeNextRecommendedAction unit tests --------------------------------
+
+describe('computeNextRecommendedAction', () => {
+  const tunnelDown: TunnelStatus = { up: false, wssUrl: null };
+
+  const tunnelInfoDown = { up: false, wssUrl: null, pid: null, startedAt: null };
+  const tunnelInfoUp = {
+    up: true,
+    wssUrl: 'wss://abc.trycloudflare.com',
+    pid: null,
+    startedAt: null,
+  };
+
+  // Build a minimal ListPagesResult for tests.
+  function makePages(
+    pages: Array<{ id: string; title: string; url: string }>,
+    crashDetectedAt: string | null = null,
+  ): import('../tools.js').ListPagesResult {
+    return {
+      pages: pages.map((p) => ({ ...p, lastSeenAt: null })),
+      tunnel: tunnelDown,
+      crashDetectedAt,
+      crashWarning: crashDetectedAt ? `[ait-debug] page crash 감지됨 — 새 attach 필요` : null,
+      singleAttachModel: true,
+    };
+  }
+
+  it('Rule 1: returns restart when tunnel is down', () => {
+    const action = computeNextRecommendedAction(tunnelInfoDown, null, 'relay');
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('restart');
+  });
+
+  it('Rule 1: tunnel down takes priority over everything else', () => {
+    const crashedPages = makePages([], '2026-01-01T00:00:00.000Z');
+    const action = computeNextRecommendedAction(tunnelInfoDown, crashedPages, 'relay');
+    expect(action!.tool).toBe('restart');
+  });
+
+  it('Rule 2: returns build_attach_url when tunnel up, no pages, relay env', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay');
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.reason).toContain('no pages');
+  });
+
+  it('Rule 2: does NOT trigger in mock env when no pages', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'mock');
+    // mock env + no pages = healthy (no relay needed)
+    expect(action).toBeNull();
+  });
+
+  it('Rule 3: returns build_attach_url when crash detected', () => {
+    const crashedPages = makePages([], '2026-01-01T00:00:00.000Z');
+    const action = computeNextRecommendedAction(tunnelInfoUp, crashedPages, 'relay');
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.reason).toContain('crashed');
+  });
+
+  it('Rule 4: returns null when tunnel up and page attached with no crash', () => {
+    const healthyPages = makePages([{ id: 'p1', title: 'App', url: 'intoss-private://app' }]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, healthyPages, 'relay');
+    expect(action).toBeNull();
+  });
+
+  it('returns null when pages is null and tunnel is up (mock env)', () => {
+    const action = computeNextRecommendedAction(tunnelInfoUp, null, 'mock');
+    expect(action).toBeNull();
   });
 });
