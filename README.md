@@ -18,6 +18,91 @@
 
 라이브 데모: <https://devtools.aitc.dev/> (이 repo의 `e2e/fixture/`를 GitHub Pages에 그대로 배포한 self-contained 데모).
 
+## 15초 quickstart — 내 상황에 맞는 환경 고르기
+
+4가지 실행 환경이 있습니다. 지금 상황에 맞는 카드 하나를 고르고, 해당 상세 시나리오 문서로 이동하세요.
+
+---
+
+**환경 1 — 로컬 브라우저** (가장 빠름, HMR O)
+
+데스크탑 Chrome에서 mock SDK + DevTools 패널로 개발합니다. 토스 앱·폰 없이 즉시 시작.
+
+```bash
+pnpm add -D @ait-co/devtools
+# vite.config.ts에 unplugin 추가 → pnpm dev
+```
+
+DevTools 패널: 화면 우하단 **AIT** 버튼. 상세: [`docs/scenarios/env-1.md`](./docs/scenarios/env-1.md)
+
+---
+
+**환경 2 — 실기기 PWA** (실 WebKit 엔진, HMR O, 토스 검수 불필요)
+
+폰에서 실기기 Safari/WebKit 엔진으로 미니앱을 확인합니다. launcher PWA를 한 번 설치하고, 매 세션마다 QR 스캔.
+
+```bash
+# vite.config.ts에 tunnel 옵션 추가 후:
+pnpm dev:phone          # AIT_TUNNEL=1 pnpm dev 와 동일
+# 터미널에 QR 출력 → 폰 카메라로 스캔 → launcher PWA에서 자동 열림
+```
+
+사전: 폰에 `https://devtools.aitc.dev/launcher/` 를 홈 화면에 한 번 추가. 상세: [`docs/scenarios/env-2.md`](./docs/scenarios/env-2.md)
+
+---
+
+**환경 3 — intoss-private** (토스 WebView, HMR X, debug 전용)
+
+실기기 토스 앱 WebView에서 dogfood 번들을 로드하고 MCP relay로 디버깅합니다.
+
+```bash
+devtools-mcp              # MCP 서버 시작 → QR 출력
+# ait build && ait deploy --scheme-only
+# build_attach_url 호출 → QR 스캔 → 토스 앱 로드 + relay attach
+```
+
+HMR 없음(토스 WebView cold-load만). 상세: [`docs/scenarios/env-3.md`](./docs/scenarios/env-3.md)
+
+---
+
+**환경 4 — 배포된 앱 (LIVE)** (검수 통과 앱, HMR X, read-only debug)
+
+검수를 통과하고 OPENED 상태인 실 출시 앱에 relay를 붙여 런타임을 관측합니다.
+
+```bash
+devtools-mcp              # MCP 서버 시작
+# build_attach_url 호출 → QR 스캔 → LIVE 앱 로드 + relay attach
+# call_sdk / evaluate 는 side-effect 주의 (실유저 영향)
+```
+
+상세: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
+
+---
+
+## 자주 겪는 문제 5가지
+
+**"QR 창이 안 열림"**
+
+`build_attach_url`을 먼저 호출하지 않았거나, GUI 없는 headless 환경에서 `open_in_browser`가 실패한 경우입니다. 터미널에 PNG 저장 경로가 출력됩니다 — 그 파일을 직접 열거나, 텍스트 QR을 터미널에서 스캔하세요. (관련: [#288](https://github.com/apps-in-toss-community/devtools/issues/288))
+
+**"page 미attach" — list_pages가 빈 배열 반환**
+
+relay에 붙은 페이지가 없는 상태입니다. `build_attach_url` → QR 스캔 순서로 폰을 다시 진입시키세요. MCP 에러 메시지가 "페이지가 attach 안 됨. build_attach_url → QR 스캔."으로 뜨면 이 케이스입니다.
+
+**"tunnel down" — 터널 응답 없음 또는 timeout**
+
+cloudflared quick tunnel은 수 시간 후 drop될 수 있습니다. `devtools-mcp` 프로세스를 재시작하면 새 tunnel URL이 발급됩니다. 재발급 후 QR을 다시 스캔하세요. (관련: [#290](https://github.com/apps-in-toss-community/devtools/issues/290))
+
+**"page crash" — list_pages에 crashDetectedAt이 찍힘**
+
+폰 측 페이지가 OOM·JS exception·native bridge crash로 죽은 상태입니다. 앱을 재실행 후 `build_attach_url` → QR 스캔으로 다시 attach하세요. (관련: [#265](https://github.com/apps-in-toss-community/devtools/issues/265))
+
+**"SDK 부재" — window.__sdkCall 미주입**
+
+`call_sdk` 호출 시 `ok: false, error: "window.__sdkCall is not available"` 에러가 뜨면 dogfood 빌드가 아닌 일반 번들이 로드된 것입니다. `__DEBUG_BUILD__` 플래그가 켜진 dogfood 채널로 재배포 후 다시 시도하세요. 환경 2(PWA)에서는 이 에러가 예상 결과입니다. (관련: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
+
+---
+
 ## 설치
 
 ```bash

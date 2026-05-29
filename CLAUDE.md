@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+## 이 파일의 독자
+
+이 파일(`CLAUDE.md`)은 **메인테이너/contributor 전용**이다 — 코드 구조, 컨벤션, 테스트 경계, SDK 대응 절차를 다룬다.
+
+사용자(미니앱 개발자) 진입점은 **`README.md`(한국어) / `README.en.md`(영어)** 다. README는 "15초 quickstart 4 시나리오 카드 + 자주 겪는 문제 5가지"로 시작해 환경 1·2·3·4를 한 페이지에서 안내한다. README와 CLAUDE.md는 독자가 다르므로 내용을 중복하지 않는다 — README는 사용자 관점의 진입 경로, CLAUDE.md는 메인테이너 관점의 구현·규약.
+
 ## 프로젝트 성격
 
 `apps-in-toss-community`는 토스/앱인토스 팀과 제휴 관계가 없는 커뮤니티 오픈소스 프로젝트다.
