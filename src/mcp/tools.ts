@@ -650,8 +650,8 @@ export interface BuildAttachUrlResult {
 export function buildAttachUrl(schemeUrl: string, tunnel: TunnelStatus): BuildAttachUrlResult {
   if (!tunnel.up || tunnel.wssUrl === null) {
     throw new Error(
-      'No relay URL yet — the cloudflared quick tunnel is not up. ' +
-        'Call list_pages to check tunnel status.',
+      'tunnel-down: cloudflared 터널이 안 떠 있습니다. ' +
+        'MCP 서버를 재시작하거나 잠시 후 list_pages로 터널 상태를 다시 확인하세요.',
     );
   }
   const authorityWarning = validateSchemeAuthority(schemeUrl) ?? undefined;
@@ -1238,7 +1238,7 @@ export function buildCallSdkExpression(name: string, args: unknown[]): string {
   return (
     `(async () => {` +
     ` if (typeof window.__sdkCall !== 'function') {` +
-    `  return JSON.stringify({ok:false,error:'window.__sdkCall is not available — is this a dogfood (__DEBUG_BUILD__) bundle?'});` +
+    `  return JSON.stringify({ok:false,error:'sdk-absent: window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다). dogfood 채널로 재배포하세요.'});` +
     ` }` +
     ` try {` +
     `  const r = await window.__sdkCall(${safeName}, ...${safeArgs});` +

@@ -52,6 +52,15 @@ import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import { AutoDevtoolsOpener } from './devtools-opener.js';
 import { getEnvironment, getEnvironmentReason, type McpEnvironment } from './environment.js';
+import {
+  classifyToolError,
+  mcpError,
+  pageCrashError,
+  pageMissingError,
+  relayDisconnectError,
+  sdkAbsentError,
+  tierRejectionError,
+} from './errors.js';
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
@@ -283,16 +292,17 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     // explanatory `data.reason` payload preserved as text.
     const env = resolveEnvironment();
     if (!isToolAvailableIn(name, env)) {
-      const requiredEnv = getToolAvailability(name);
-      const reason =
-        `tool ${name} is available only in ${requiredEnv}. ` +
-        `Current environment is ${env} (${resolveEnvironmentReason()}).`;
+      const requiredEnv = getToolAvailability(name) ?? 'unknown';
+      const envReason = resolveEnvironmentReason();
       // Log structured (no secrets — only stable env strings + tool name).
-      logWarn('tool.error', { tool: name, reason, errorKind: 'tier-filter' });
-      return {
-        content: [{ type: 'text' as const, text: reason }],
-        isError: true,
-      };
+      logWarn('tool.error', {
+        tool: name,
+        errorKind: 'tier-filter',
+        requiredEnv,
+        currentEnv: env,
+        envReason,
+      });
+      return tierRejectionError(name, requiredEnv, env, envReason);
     }
 
     // AIT.* tools are served by the AIT source. In production it rides the same
@@ -343,10 +353,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     if (name === 'build_attach_url') {
       const schemeUrl = request.params.arguments?.scheme_url;
       if (typeof schemeUrl !== 'string' || schemeUrl === '') {
-        return {
-          content: [{ type: 'text', text: 'build_attach_url requires a non-empty scheme_url.' }],
-          isError: true,
-        };
+        return mcpError(
+          'build_attach_url: scheme_url이 비어 있습니다. ' +
+            '`ait deploy --scheme-only`가 출력하는 intoss-private:// URL을 인자로 전달하세요.',
+        );
       }
       const waitForAttach = request.params.arguments?.wait_for_attach === true;
       // open_in_browser defaults to true when not explicitly set.
@@ -627,7 +637,6 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       // throws a clear message while no page is attached yet.
       await connection.enableDomains();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       if (name === 'list_pages') {
         // list_pages is still useful pre-attach: report tunnel + empty pages.
         // Refresh from relay first so evicted-then-reattached targets are not
@@ -641,15 +650,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         }
         return jsonResult(listPages(connection, getTunnelStatus()));
       }
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `${message}\nCall list_pages to confirm a mini-app has attached over the relay.`,
-          },
-        ],
-        isError: true,
-      };
+      // 4상태 분류: page 미attach vs crash vs relay disconnect
+      return classifyEnableDomainError(err, name);
     }
 
     try {
@@ -691,12 +693,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         case 'evaluate': {
           const expression = request.params.arguments?.expression;
           if (typeof expression !== 'string' || expression === '') {
-            return {
-              content: [
-                { type: 'text' as const, text: 'evaluate requires a non-empty expression.' },
-              ],
-              isError: true,
-            };
+            return mcpError(
+              'evaluate: expression 인자가 비어 있습니다. 평가할 JavaScript 표현식을 전달하세요.',
+            );
           }
           // SECRET-HANDLING: do not log expression or result value.
           return jsonResult(await evaluate(connection, expression));
@@ -704,15 +703,23 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         case 'call_sdk': {
           const sdkName = request.params.arguments?.name;
           if (typeof sdkName !== 'string' || sdkName === '') {
-            return {
-              content: [{ type: 'text' as const, text: 'call_sdk requires a non-empty name.' }],
-              isError: true,
-            };
+            return mcpError(
+              'call_sdk: name 인자가 비어 있습니다. 호출할 SDK 메서드 이름을 전달하세요.',
+            );
           }
           const rawArgs = request.params.arguments?.args;
           const sdkArgs: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
           // SECRET-HANDLING: do not log name, args, or result value.
-          return jsonResult(await callSdk(connection, sdkName, sdkArgs));
+          const sdkResult = await callSdk(connection, sdkName, sdkArgs);
+          // 상태 4: SDK 부재 — ok:false + 'sdk-absent:' 패턴은 isError로 승격
+          if (
+            !sdkResult.ok &&
+            typeof sdkResult.error === 'string' &&
+            sdkResult.error.startsWith('sdk-absent:')
+          ) {
+            return sdkAbsentError('call_sdk');
+          }
+          return jsonResult(sdkResult);
         }
         default:
           return unknownTool(name);
@@ -730,42 +737,54 @@ function jsonResult(value: unknown) {
 }
 
 function unknownTool(name: string) {
-  return { content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }], isError: true };
+  return mcpError(`알 수 없는 tool: ${name}`);
 }
 
 /**
- * Detects whether an error is a relay/websocket disconnect error.
- * These are distinguished from "no page attached yet" errors because they
- * require enableDomains() to be called again (re-establish the websocket),
- * not just waiting for a target to appear.
+ * enableDomains()가 던진 에러를 4상태로 분류해 적절한 메시지를 반환한다.
+ *
+ * - "No mini-app page attached" → page 미attach (상태 2)
+ * - crash/destroy/replaced 패턴 → page crash (상태 3)
+ * - relay disconnect 패턴 → relay 연결 끊김
+ * - 그 외 → 원본 메시지 + list_pages 안내
  */
-function isDisconnectError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message;
-  return (
-    msg.includes('relay에 연결되어 있지 않습니다') ||
-    msg.includes('relay WebSocket') ||
-    msg.includes('replaced-by-new-attach') ||
-    msg.includes('Chii relay connection closed')
-  );
+function classifyEnableDomainError(err: unknown, toolName: string) {
+  const message = err instanceof Error ? err.message : String(err);
+
+  // 상태 2: page 미attach
+  if (message.includes('No mini-app page attached') || message.includes('페이지가 attach 안')) {
+    return pageMissingError(toolName);
+  }
+
+  // 상태 3: page crash / target destroyed / replaced
+  if (
+    message.includes('replaced-by-new-attach') ||
+    message.includes('targetCrashed') ||
+    message.includes('targetDestroyed') ||
+    message.includes('detachedFromTarget')
+  ) {
+    return pageCrashError(toolName);
+  }
+
+  // relay 연결 끊김
+  if (
+    message.includes('relay에 연결되어 있지 않습니다') ||
+    message.includes('relay WebSocket') ||
+    message.includes('Chii relay connection closed')
+  ) {
+    return relayDisconnectError(toolName);
+  }
+
+  // 그 외
+  return classifyToolError(err, toolName);
 }
 
+/**
+ * CDP/AIT 명령 실행 중 catch된 에러를 4상태로 분류해 tool 결과로 반환한다.
+ * debug-server 내부 try/catch 블록에서 공통으로 사용한다.
+ */
 function errorResult(err: unknown, name: string) {
-  const message = err instanceof Error ? err.message : String(err);
-  // Provide disconnect-specific guidance so the agent knows to re-enable domains.
-  const hint = isDisconnectError(err)
-    ? '\n\nrelay 연결이 끊겼습니다. list_pages → enableDomains() 재호출로 재연결하세요. ' +
-      '폰이 백그라운드로 내려갔거나 미니앱이 종료됐을 수 있습니다.'
-    : '\nCall list_pages to confirm a mini-app has attached over the relay.';
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: `${name} failed: ${message}${hint}`,
-      },
-    ],
-    isError: true,
-  };
+  return classifyToolError(err, name);
 }
 
 /**
