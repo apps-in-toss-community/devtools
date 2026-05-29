@@ -18,6 +18,91 @@ Lets you develop and test Apps in Toss mini-apps in a **regular browser** — wi
 
 Live demo: <https://devtools.aitc.dev/> (the `e2e/fixture/` from this repo deployed to GitHub Pages as a self-contained demo).
 
+## 15-second quickstart — pick your environment
+
+There are four runtime environments. Pick the card that fits your situation and follow the link to the detailed scenario doc.
+
+---
+
+**Environment 1 — Local browser** (fastest, HMR on)
+
+Develop with the mock SDK + DevTools panel in desktop Chrome. No Toss app or phone needed.
+
+```bash
+pnpm add -D @ait-co/devtools
+# add the unplugin to vite.config.ts → pnpm dev
+```
+
+DevTools panel: click the **AIT** button in the bottom-right corner. Details: [`docs/scenarios/env-1.md`](./docs/scenarios/env-1.md)
+
+---
+
+**Environment 2 — Real-device PWA** (real WebKit engine, HMR on, no Toss review required)
+
+Preview your mini-app on a real phone using Safari/WebKit. Install the launcher PWA once, then scan a QR code each session.
+
+```bash
+# add the tunnel option to vite.config.ts, then:
+pnpm dev:phone          # same as AIT_TUNNEL=1 pnpm dev
+# QR appears in the terminal → scan with your phone camera → opens in the launcher PWA
+```
+
+One-time prerequisite: add `https://devtools.aitc.dev/launcher/` to your phone's home screen. Details: [`docs/scenarios/env-2.md`](./docs/scenarios/env-2.md)
+
+---
+
+**Environment 3 — intoss-private** (Toss WebView, HMR off, debug only)
+
+Load a dogfood bundle in the real Toss app WebView and debug it via the MCP relay.
+
+```bash
+devtools-mcp              # start MCP server → QR printed in terminal
+# ait build && ait deploy --scheme-only
+# call build_attach_url → scan QR → Toss app loads bundle + relay attaches
+```
+
+No HMR (Toss WebView cold-load only). Details: [`docs/scenarios/env-3.md`](./docs/scenarios/env-3.md)
+
+---
+
+**Environment 4 — Live deployed app** (passed review, HMR off, read-only debug)
+
+Attach a relay to a live OPENED app to observe runtime behavior.
+
+```bash
+devtools-mcp              # start MCP server
+# call build_attach_url → scan QR → live app loads + relay attaches
+# call_sdk / evaluate: watch for side effects (real users may be affected)
+```
+
+Details: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
+
+---
+
+## Five common problems
+
+**"QR window doesn't open"**
+
+Either `build_attach_url` wasn't called first, or `open_in_browser` failed silently in a headless environment. The terminal output includes a path to a saved PNG — open that file directly, or scan the text QR printed in the terminal. (Related: [#288](https://github.com/apps-in-toss-community/devtools/issues/288))
+
+**"Page not attached" — list_pages returns an empty array**
+
+No page has joined the relay yet. Re-enter via `build_attach_url` → QR scan on your phone. When the MCP error message reads "page not attached — run build_attach_url then scan QR", this is the case.
+
+**"Tunnel down" — no response or timeout**
+
+A cloudflared quick tunnel can drop after a few hours. Restart the `devtools-mcp` process to get a new tunnel URL, then scan the new QR. (Related: [#290](https://github.com/apps-in-toss-community/devtools/issues/290))
+
+**"Page crash" — list_pages shows a non-null crashDetectedAt**
+
+The page on the phone died (OOM, JS exception, or native bridge crash). Relaunch the app, then re-attach via `build_attach_url` → QR scan. (Related: [#265](https://github.com/apps-in-toss-community/devtools/issues/265))
+
+**"SDK not available" — window.__sdkCall not injected**
+
+When `call_sdk` returns `ok: false, error: "window.__sdkCall is not available"`, a non-dogfood bundle is loaded. Redeploy through the dogfood channel with the `__DEBUG_BUILD__` flag enabled and try again. This error is the expected result in environment 2 (PWA). (Related: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
+
+---
+
 ## Install
 
 ```bash
