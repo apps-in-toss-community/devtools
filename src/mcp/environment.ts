@@ -22,7 +22,23 @@
  *                                         real-device WebView pattern (intoss-
  *                                         private:// scheme, *.trycloudflare.com
  *                                         host) it is `relay`.
- *   3. default                         — `mock` (zero external side effect).
+ *   3. caller-stated default           — `defaultEnv` from the input. The CLI
+ *                                         entry point passes the mode's intent
+ *                                         here: debug-mode relay target passes
+ *                                         `'relay'` so the default reflects
+ *                                         "user just launched a relay debug
+ *                                         session", which is the dominant case.
+ *                                         Local debug + dev mode + tests with no
+ *                                         input fall back to `'mock'`.
+ *   4. baked-in default                — `mock` (zero external side effect).
+ *
+ * The `defaultEnv` precedence step (3) is what resolves the M2-5 dead-lock
+ * (issue #309): without it, a fresh debug-mode session with no `MCP_ENV` and no
+ * attached target resolved to `mock` and Tier B `build_attach_url` was hidden
+ * from `tools/list` — leaving the agent with no way to enter env 3/4. By
+ * letting the CLI pass `defaultEnv: 'relay'` for the relay-target debug mode,
+ * the bootstrap tool surface advertises `build_attach_url` from the first
+ * `tools/list` call without forcing the user to set `MCP_ENV=relay` explicitly.
  *
  * The env decision is intentionally *sticky* per process. Switching env should
  * be a process restart, not a runtime toggle — the RFC's reasoning is that mid-
@@ -47,7 +63,8 @@ export type EnvironmentReason =
   | 'env-var-mock'
   | 'env-var-relay'
   | 'cdp-target-url-relay-pattern'
-  | 'default-mock';
+  | 'default-mock'
+  | 'default-relay';
 
 /**
  * URL patterns that mark a CDP target as a real-device WebView relay.
@@ -113,6 +130,18 @@ export interface EnvironmentInput {
    * real-device pattern, the env resolves to `relay`. Optional.
    */
   connection?: Pick<CdpConnection, 'listTargets'>;
+  /**
+   * Caller-stated default when no env var is set and no URL pattern matches.
+   * The CLI entry point uses this to encode each mode's *intent* (debug-mode
+   * relay target = `'relay'`, local/dev = `'mock'`) without baking the mode
+   * into this module. Defaults to `'mock'` (backwards-compatible — tests and
+   * legacy callers see the original behaviour).
+   *
+   * This is precedence step 3 (caller-stated default) — it only kicks in after
+   * `MCP_ENV` and the URL pattern have been consulted, so an explicit env var
+   * or a real-device URL still wins.
+   */
+  defaultEnv?: McpEnvironment;
 }
 
 /**
@@ -120,20 +149,21 @@ export interface EnvironmentInput {
  *   1. test override (if set)
  *   2. `MCP_ENV` env var
  *   3. CDP target URL pattern match
- *   4. default `mock`
+ *   4. caller-stated `defaultEnv` (intent hint from the CLI mode)
+ *   5. baked-in default `mock`
  */
 export function getEnvironment(input: EnvironmentInput = {}): McpEnvironment {
   if (envOverride !== null) return envOverride;
   const fromEnv = readEnvVar();
   if (fromEnv !== undefined) return fromEnv;
-  const { connection } = input;
+  const { connection, defaultEnv } = input;
   if (connection !== undefined) {
     const targets = connection.listTargets();
     for (const t of targets) {
       if (isRelayUrl(t.url)) return 'relay';
     }
   }
-  return 'mock';
+  return defaultEnv ?? 'mock';
 }
 
 /**
@@ -147,12 +177,12 @@ export function getEnvironmentReason(input: EnvironmentInput = {}): EnvironmentR
   const fromEnv = readEnvVar();
   if (fromEnv === 'mock') return 'env-var-mock';
   if (fromEnv === 'relay') return 'env-var-relay';
-  const { connection } = input;
+  const { connection, defaultEnv } = input;
   if (connection !== undefined) {
     const targets = connection.listTargets();
     for (const t of targets) {
       if (isRelayUrl(t.url)) return 'cdp-target-url-relay-pattern';
     }
   }
-  return 'default-mock';
+  return defaultEnv === 'relay' ? 'default-relay' : 'default-mock';
 }

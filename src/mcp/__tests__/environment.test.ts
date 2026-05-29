@@ -5,7 +5,8 @@
  *   1. test override (setEnvironmentOverride)
  *   2. MCP_ENV env var
  *   3. CDP target URL pattern match
- *   4. default mock
+ *   4. caller-stated defaultEnv (CLI mode intent — issue #309)
+ *   5. baked-in default mock
  *
  * Plus the URL pattern matcher (`isRelayUrl`) directly.
  */
@@ -115,6 +116,51 @@ describe('getEnvironment — precedence chain', () => {
     expect(getEnvironment()).toBe('mock');
     process.env.MCP_ENV = 'relay';
     expect(getEnvironment()).toBe('relay');
+  });
+
+  // ---------------------------------------------------------------------------
+  // defaultEnv (caller-stated default) — precedence step 3.
+  // Resolves the M2-5 dead-lock (issue #309) — debug-mode relay target needs
+  // `build_attach_url` visible from the first `tools/list` even without any
+  // attached target or `MCP_ENV` override.
+  // ---------------------------------------------------------------------------
+
+  it('defaultEnv=relay → fresh session (no env var, no targets) resolves to relay', () => {
+    expect(getEnvironment({ defaultEnv: 'relay' })).toBe('relay');
+    expect(getEnvironmentReason({ defaultEnv: 'relay' })).toBe('default-relay');
+  });
+
+  it('defaultEnv=mock (explicit) is identical to the historical default', () => {
+    expect(getEnvironment({ defaultEnv: 'mock' })).toBe('mock');
+    expect(getEnvironmentReason({ defaultEnv: 'mock' })).toBe('default-mock');
+  });
+
+  it('defaultEnv does NOT override MCP_ENV', () => {
+    process.env.MCP_ENV = 'mock';
+    expect(getEnvironment({ defaultEnv: 'relay' })).toBe('mock');
+    expect(getEnvironmentReason({ defaultEnv: 'relay' })).toBe('env-var-mock');
+  });
+
+  it('defaultEnv does NOT override CDP URL pattern (relay target wins)', () => {
+    // Even with defaultEnv=mock, a real-device URL forces relay.
+    const conn = fakeConnection([{ id: 't', title: '', url: 'intoss-private://miniapp' }]);
+    expect(getEnvironment({ connection: conn, defaultEnv: 'mock' })).toBe('relay');
+    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'mock' })).toBe(
+      'cdp-target-url-relay-pattern',
+    );
+  });
+
+  it('defaultEnv=relay + connection with mundane targets → still relay (URL pattern absent)', () => {
+    // No real-device URL → fallback to caller-stated default.
+    const conn = fakeConnection([{ id: 't', title: '', url: 'http://localhost:5173/' }]);
+    expect(getEnvironment({ connection: conn, defaultEnv: 'relay' })).toBe('relay');
+    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'relay' })).toBe('default-relay');
+  });
+
+  it('defaultEnv=relay + empty target list → relay (the M2-5 first-listTools path)', () => {
+    const conn = fakeConnection([]);
+    expect(getEnvironment({ connection: conn, defaultEnv: 'relay' })).toBe('relay');
+    expect(getEnvironmentReason({ connection: conn, defaultEnv: 'relay' })).toBe('default-relay');
   });
 });
 

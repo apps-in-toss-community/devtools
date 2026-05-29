@@ -13,7 +13,7 @@
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { AitMethodMap, AitMethodName, AitSource } from '../ait-source.js';
 import type {
   CdpCommandMap,
@@ -157,6 +157,87 @@ describe('tools/list — env filtering integration', () => {
     expect(names).not.toContain('build_attach_url');
     // list_pages (bootstrap + Tier C) is still listed.
     expect(names).toContain('list_pages');
+  });
+});
+
+// ----- defaultEnv resolves the M2-5 dead-lock (issue #309) ------------------
+
+describe('tools/list — defaultEnv from CLI mode intent (issue #309)', () => {
+  /**
+   * End-to-end variant of the M2-5 path: a server wired with `defaultEnv:
+   * 'relay'` (the production relay-target debug mode wiring) must advertise
+   * `build_attach_url` in the very first `tools/list`, with NO `MCP_ENV` set
+   * and NO targets attached. Before the fix, the env resolved to `'mock'` →
+   * Tier B `build_attach_url` was hidden → agent had no env 3/4 entry.
+   *
+   * This test calls the production `createDebugServer` with a real env resolver
+   * (no `getEnvironment` injection) so the precedence chain is exercised end-
+   * to-end.
+   */
+  async function makeRealEnvClient(opts: {
+    attached: boolean;
+    defaultEnv: McpEnvironment;
+  }): Promise<Client> {
+    const targets: CdpTarget[] = opts.attached
+      ? [{ id: 't1', title: 'app', url: 'intoss-private://miniapp' }]
+      : [];
+    const connection = new FakeCdpConnection(targets);
+    const tunnel: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+    const server = createDebugServer({
+      connection,
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnel,
+      defaultEnv: opts.defaultEnv,
+      // NOTE: no `getEnvironment`/`getEnvironmentReason` injection — exercise
+      // the real precedence chain.
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'm2-5-test', version: '0.0.0' });
+    await client.connect(clientTransport);
+    return client;
+  }
+
+  // Guard against ambient MCP_ENV leaking from the host shell. The precedence
+  // chain says env var wins, so we must scrub it for these cases.
+  const originalEnv = process.env.MCP_ENV;
+  beforeAll(() => {
+    delete process.env.MCP_ENV;
+  });
+  afterAll(() => {
+    if (originalEnv === undefined) delete process.env.MCP_ENV;
+    else process.env.MCP_ENV = originalEnv;
+  });
+
+  it('defaultEnv=relay (production relay-target wiring) exposes build_attach_url on first tools/list — unattached, no MCP_ENV', async () => {
+    const client = await makeRealEnvClient({ attached: false, defaultEnv: 'relay' });
+    const list = await client.listTools();
+    const names = list.tools.map((t) => t.name);
+    // Bootstrap tier visible — Tier B `build_attach_url` is now listed because
+    // the env resolves to `relay` via the caller-stated default.
+    expect(names).toContain('build_attach_url');
+    expect(names).toContain('list_pages');
+    expect(names).toContain('get_diagnostics');
+    // Attach-dependent tools are still hidden pre-attach (orthogonal to env).
+    expect(names).not.toContain('measure_safe_area');
+  });
+
+  it('defaultEnv=mock (production local-target wiring) keeps build_attach_url hidden', async () => {
+    const client = await makeRealEnvClient({ attached: false, defaultEnv: 'mock' });
+    const list = await client.listTools();
+    const names = list.tools.map((t) => t.name);
+    expect(names).not.toContain('build_attach_url');
+    expect(names).toContain('list_pages');
+  });
+
+  it('defaultEnv=relay + URL pattern still wins (real-device target → relay regardless of default)', async () => {
+    // A real-device URL would have resolved to `relay` even without the
+    // default, but we keep the assertion explicit.
+    const client = await makeRealEnvClient({ attached: true, defaultEnv: 'relay' });
+    const list = await client.listTools();
+    const names = list.tools.map((t) => t.name);
+    expect(names).toContain('build_attach_url');
+    expect(names).toContain('measure_safe_area');
   });
 });
 
