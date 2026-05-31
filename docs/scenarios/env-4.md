@@ -18,7 +18,7 @@
 ## MCP 도구 acceptance 체크리스트
 
 ```
-list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
+list_pages → measure_safe_area → call_sdk(getOperationalEnvironment, [], confirm: true)
 ```
 
 1. **`list_pages`**
@@ -28,13 +28,15 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
    - `crashDetectedAt: null`
 
 2. **`measure_safe_area`**
-   - `source: "relay"`
+   - `source: "relay-live"`
    - `sdkInsetsSource: "window.__sdk"`
    - `sdkInsets.top`이 실기기 nav bar 높이
 
-3. **`call_sdk("getOperationalEnvironment", [])`**
+3. **`call_sdk("getOperationalEnvironment", [], confirm: true)`**
    - `ok: true`
-   - `value.environment: "production"` (LIVE 앱)
+   - `value: "toss"` (LIVE 앱 — 실기기 토큰. 실기기 검증 후 확정 필요: `'toss' | 'sandbox'` 중 하나)
+   - LIVE guard 우회를 위해 `confirm: true` 필수 (없으면 거부됨 — 위 "LIVE side-effect guard" 섹션 참조)
+   - 참고: `AIT.getOperationalEnvironment`(mock-only)는 `{environment, sdkVersion}` 객체를 반환하지만, `call_sdk("getOperationalEnvironment", [])`는 scalar `value`를 포함한 `{ok, value}` envelope를 반환한다
 
 ## LIVE side-effect guard
 
@@ -85,7 +87,7 @@ troubleshooting: QR 스캔했는데 relay가 인증 실패 → `totp.expiresAt` 
 - `evaluate` + `call_sdk` 사용 시 side-effect 있는 호출은 `confirm: true` 필수(guard가 강제).
 - 이 환경은 station 6(operate) 지원 — 배포 후 런타임 관측.
 - dev-mode (`--mode=dev`) 미지원 — 이 환경은 debug-mode 전용.
-- `MCP_ENV=relay`를 명시하지 않으면 터널 URL 감지 전 bootstrap 단계에서 `build_attach_url`이 노출되지 않을 수 있다.
+- 환경 3(`relay-dev`)은 `confirm` 없이 자유롭게 `call_sdk` 호출 가능. 환경 4(`relay-live`)는 LIVE guard 때문에 `confirm: true` 필수.
 
 다음 단계: 운영 문제 발견 시 환경 3에서 dogfood 번들로 재현 후 `list_exceptions`·`take_screenshot`으로 진단.
 
@@ -104,12 +106,12 @@ npx @ait-co/devtools devtools-mcp --force
 
 환경 1(mock)과 환경 3·4(relay)의 `measure_safe_area` 응답 비교:
 
-| 필드 | 환경 1 (mock) | 환경 3·4 (relay) |
-|---|---|---|
-| `source` | `"mock"` | `"relay"` |
-| `sdkInsetsSource` | `"window.__ait"` | `"window.__sdk"` |
-| `sdkInsets.top` | DevTools panel 설정값 (예: 47) | 실기기 측정값 (예: 54) |
-| `cssEnv.top` | CSS env var (panel context) | 0 (Toss host WebView override) |
-| `userAgent` | desktop Chrome UA | iOS/Android Toss WebView UA |
+| 필드 | 환경 1 (mock) | 환경 3 (relay-dev) | 환경 4 (relay-live) |
+|---|---|---|---|
+| `source` | `"mock"` | `"relay-dev"` | `"relay-live"` |
+| `sdkInsetsSource` | `"window.__ait"` | `"window.__sdk"` | `"window.__sdk"` |
+| `sdkInsets.top` | DevTools panel 설정값 (예: 47) | 실기기 측정값 (예: 54) | 실기기 측정값 (예: 54) |
+| `cssEnv.top` | CSS env var (panel context) | 0 (Toss host WebView override) | 0 (Toss host WebView override) |
+| `userAgent` | desktop Chrome UA | iOS/Android Toss WebView UA | iOS/Android Toss WebView UA |
 
 이 diff를 기준으로 mock preset을 실측값으로 업그레이드한다.

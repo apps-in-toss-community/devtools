@@ -295,21 +295,21 @@ M1 acceptance 기준: 4 시나리오에서 `list_pages → measure_safe_area →
 | `pages` 길이 | 1 | 1 | 1 | 1 |
 | `pages[0].url` | `http://localhost:517x/` | `https://*.trycloudflare.com/` | `intoss-private://…?_deploymentId=<uuid>` | `intoss-private://…?_deploymentId=<uuid>` |
 | `tunnel.up` | false | true | true | true |
-| `source` (env) | mock | relay | relay | relay |
+| `source` (env) | mock | relay | relay-dev | relay-live |
 | `lastSeenAt` | 현재 시각 | 현재 시각 | 현재 시각 | 현재 시각 |
 | `crashDetectedAt` | null | null | null | null |
 | `singleAttachModel` | true | true | true | true |
 
 ### `measure_safe_area` — 시나리오별 예상 shape
 
-| 필드 | 환경 1 (로컬) | 환경 2·3·4 (relay) |
-|---|---|---|
-| `source` | `"mock"` | `"relay"` |
-| `sdkInsetsSource` | `"window.__ait"` | `"window.__sdk"` |
-| `sdkInsets.top` | 패널 설정값 (예: 47) | 실기기 측정값 (예: 44–54) |
-| `cssEnv.top` | CSS env var (panel context) | 0 (Toss host WebView override) |
-| `userAgent` | desktop Chrome UA | iOS/Android Toss WebView UA |
-| `devicePixelRatio` | 1–2 (desktop) | 2–3 (실기기) |
+| 필드 | 환경 1 (로컬) | 환경 2 (PWA) | 환경 3 (relay-dev) | 환경 4 (relay-live) |
+|---|---|---|---|---|
+| `source` | `"mock"` | `"relay"` (토큰 확정 미정) | `"relay-dev"` | `"relay-live"` |
+| `sdkInsetsSource` | `"window.__ait"` | `"window.__ait"` | `"window.__sdk"` | `"window.__sdk"` |
+| `sdkInsets.top` | 패널 설정값 (예: 47) | 실기기 측정값 | 실기기 측정값 (예: 44–54) | 실기기 측정값 (예: 44–54) |
+| `cssEnv.top` | CSS env var (panel context) | 실기기 측정값 | 0 (Toss host WebView override) | 0 (Toss host WebView override) |
+| `userAgent` | desktop Chrome UA | iOS/Android Safari UA | iOS/Android Toss WebView UA | iOS/Android Toss WebView UA |
+| `devicePixelRatio` | 1–2 (desktop) | 2–3 (실기기) | 2–3 (실기기) | 2–3 (실기기) |
 
 ### `call_sdk("getOperationalEnvironment", [])` — 시나리오별 예상 shape
 
@@ -317,6 +317,8 @@ M1 acceptance 기준: 4 시나리오에서 `list_pages → measure_safe_area →
 |---|---|---|---|---|
 | `ok` | true | false | true | true |
 | `error` | — | `"window.__sdkCall is not available"` | — | — |
-| `value.environment` | `"sandbox"` 또는 패널 설정값 | — | `"dev"` | `"production"` |
+| `value` | `"sandbox"` (scalar) 또는 패널 설정값 | — | scalar string (`'toss' \| 'sandbox'`) | scalar string (`'toss' \| 'sandbox'`) |
+
+`value`는 scalar string(`'toss' | 'sandbox'`)이다 — `{environment, sdkVersion}` 객체 형태는 `AIT.getOperationalEnvironment`(mock-only)의 응답이며 `call_sdk` envelope과 다르다. 실기기 실측 토큰은 검증 후 확정.
 
 **schema 평행 기준**: `ok` 필드 존재, `value` 또는 `error` 필드 존재 — 즉 동일한 JSON envelope. 환경 2 non-dogfood에서 `ok: false`는 예상 결과(bridge 부재)이며 schema 위반이 아니다.
