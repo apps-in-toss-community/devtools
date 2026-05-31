@@ -22,7 +22,7 @@ M1 acceptance 기준: 환경 1(로컬 브라우저), 환경 3(intoss relay dev),
 | `measure_safe_area` | `source`, `sdkInsetsSource`, `sdkInsets`, `cssEnv`, `userAgent` | string, string, object, object, string |
 | `call_sdk` | `ok` (boolean), `value` 또는 `error` | — |
 
-환경 1 (`--mode=local`) non-dogfood fixture와 환경 2 non-dogfood에서 `call_sdk` 결과 `ok: false`는 예상된 결과이며 schema 위반이 아니다. `window.__sdkCall` bridge는 dogfood 빌드(`__DEBUG_BUILD__` 정의)에서만 주입된다. `--mode=dev`는 mock state HTTP 폴링을 사용하므로 dogfood 빌드 없이 `ok: true`를 반환한다.
+환경 1 (`--target=local`) non-dogfood fixture와 환경 2 non-dogfood에서 `call_sdk` 결과 `ok: false`는 예상된 결과이며 schema 위반이 아니다. `window.__sdkCall` bridge는 dogfood 빌드(`__DEBUG_BUILD__` 정의)에서만 주입된다. `--mode=dev`는 mock state HTTP 폴링을 사용하므로 dogfood 빌드 없이 `ok: true`를 반환한다.
 
 ---
 
@@ -118,25 +118,25 @@ npx -y @ait-co/devtools devtools-mcp --target=local
 { "ok": true, "value": "sandbox" }
 ```
 
-**`--mode=local`, non-dogfood fixture** (bridge 부재 — 예상된 결과):
+**`--target=local`, non-dogfood fixture** (bridge 부재 — 예상된 결과):
 ```json
 { "ok": false, "error": "window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다)" }
 ```
 
-**`--mode=local`, dogfood 빌드 fixture** (`__DEBUG_BUILD__` 정의, bridge 주입):
+**`--target=local`, dogfood 빌드 fixture** (`__DEBUG_BUILD__` 정의, bridge 주입):
 ```json
 { "ok": true, "value": "sandbox" }
 ```
 
 - `call_sdk("getOperationalEnvironment", [])` 응답의 `value`는 scalar string (`'toss' | 'sandbox'`) — `{environment, sdkVersion}` 객체가 아니다. 객체 형태는 `AIT.getOperationalEnvironment`(mock-only 도구)의 응답이다.
 - `--mode=dev`: `ok: true` — dev-mode는 mock state로 답하므로 dogfood 빌드 불필요.
-- `--mode=local`, non-dogfood: `ok: false`는 예상된 결과 (bridge 부재) — schema 위반 아님. 환경 2 non-dogfood 정책과 동일.
-- `--mode=local`, dogfood: `ok: true`, `value: "sandbox"` (또는 패널 설정값).
+- `--target=local`, non-dogfood: `ok: false`는 예상된 결과 (bridge 부재) — schema 위반 아님. 환경 2 non-dogfood 정책과 동일.
+- `--target=local`, dogfood: `ok: true`, `value: "sandbox"` (또는 패널 설정값).
 
 ### 체크리스트
 
 - [ ] `list_pages` — `pages` 배열 1개, `tunnel.up: false`
-- [ ] `measure_safe_area` — `source: "mock"` (`--mode=local`) 또는 `source: "mock-vite"` (`--mode=dev`), `sdkInsetsSource: "window.__ait"`
+- [ ] `measure_safe_area` — `source: "mock"` (`--target=local`) 또는 `source: "mock-vite"` (`--mode=dev`), `sdkInsetsSource: "window.__ait"`
 - [ ] `call_sdk` — `ok` 필드 존재. `--mode=dev` 또는 dogfood fixture면 `ok: true`, non-dogfood local fixture면 `ok: false` (예상된 결과)
 - [ ] 3종 응답 모두 JSON envelope 완전
 

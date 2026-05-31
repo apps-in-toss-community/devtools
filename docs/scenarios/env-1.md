@@ -37,9 +37,9 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
    - `sdkInsets` 값이 DevTools 패널의 현재 viewport preset과 일치
 
 3. **`call_sdk("getOperationalEnvironment", [])`**
-   - `--mode=dev`: mock state HTTP 폴링 경로를 사용하므로 `ok: true`, `value.environment`가 mock state와 일치 (예: `"dev"`).
-   - `--mode=local` (non-dogfood fixture): `window.__sdkCall` bridge가 없으므로 `ok: false, error: "window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다)"` — **예상된 결과이며 schema 위반이 아니다.** dev-mode는 mock state로 답하지만, local 모드는 `window.__sdkCall` 직접 호출이라 dogfood 빌드(`__DEBUG_BUILD__` 정의)가 아니면 bridge가 없다. 환경 2 non-dogfood와 동일한 정책.
-   - `--mode=local` (dogfood 빌드 fixture): `ok: true`, `value.environment: "sandbox"` (또는 패널 설정값). dogfood 빌드 생성은 `__DEBUG_BUILD__` 전처리 변수 정의 필요 — sdk-example의 `ait build` 패턴과 동일.
+   - `--mode=dev`: mock state HTTP 폴링 경로를 사용하므로 `ok: true`, `value`가 mock state의 environment scalar string과 일치 (예: `"sandbox"`).
+   - `--target=local` (non-dogfood fixture): `window.__sdkCall` bridge가 없으므로 `ok: false, error: "window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다)"` — **예상된 결과이며 schema 위반이 아니다.** dev-mode는 mock state로 답하지만, local 모드는 `window.__sdkCall` 직접 호출이라 dogfood 빌드(`__DEBUG_BUILD__` 정의)가 아니면 bridge가 없다. 환경 2 non-dogfood와 동일한 정책.
+   - `--target=local` (dogfood 빌드 fixture): `ok: true`, `value: "sandbox"` (또는 패널 설정값). dogfood 빌드 생성은 `__DEBUG_BUILD__` 전처리 변수 정의 필요 — sdk-example의 `ait build` 패턴과 동일.
 
 ## 검증 스크립트
 
@@ -73,9 +73,9 @@ npx -y @ait-co/devtools devtools-mcp --target=local
 
 ## 트러블슈팅
 
-### `--mode=local`에서 `call_sdk` `ok: false` ("dogfood 빌드가 아닙니다")
+### `--target=local`에서 `call_sdk` `ok: false` ("dogfood 빌드가 아닙니다")
 
-`--mode=local`에서 `call_sdk("getOperationalEnvironment", [])` 결과 `ok: false`는 **예상된 동작**이다 — `window.__sdkCall` bridge는 dogfood 빌드(`__DEBUG_BUILD__` 전처리 변수 정의)에서만 주입된다. fixture가 일반 dev/production 빌드면 bridge가 없어 `ok: false`가 반환된다.
+`--target=local`에서 `call_sdk("getOperationalEnvironment", [])` 결과 `ok: false`는 **예상된 동작**이다 — `window.__sdkCall` bridge는 dogfood 빌드(`__DEBUG_BUILD__` 전처리 변수 정의)에서만 주입된다. fixture가 일반 dev/production 빌드면 bridge가 없어 `ok: false`가 반환된다.
 
 `call_sdk`를 `ok: true`로 검증하려면 두 가지 옵션 중 하나를 택한다:
 
