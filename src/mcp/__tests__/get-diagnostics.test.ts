@@ -229,7 +229,7 @@ describe('getDiagnostics helper', () => {
       lastAttachAt: null,
       lastDetachAt: null,
       recentErrors: [],
-      environment: { env: 'mock', reason: 'default-mock' },
+      environment: { kind: 'mock', env: 'mock', reason: 'default-mock', liveGuardActive: false },
       serverLockHolder: null,
     });
     // versions may be null in test env but the fields must exist
@@ -244,7 +244,7 @@ describe('getDiagnostics helper', () => {
     const result = await getDiagnostics({
       tunnel: tunnelDown,
       connection,
-      env: 'relay',
+      env: 'relay-dev',
       envReason: 'cdp-target-url-relay-pattern',
       collector: new InMemoryDiagnosticsCollector(),
       readLock: () => null,
@@ -263,8 +263,8 @@ describe('getDiagnostics helper', () => {
     };
     const result = await getDiagnostics({
       tunnel: tunnelUp,
-      env: 'relay',
-      envReason: 'env-var-relay',
+      env: 'relay-dev',
+      envReason: 'env-var-relay-dev',
       collector: new InMemoryDiagnosticsCollector(),
       readLock: () => lockData,
     });
@@ -324,20 +324,43 @@ describe('get_diagnostics MCP tool', () => {
     const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = parseResult(result) as Record<string, unknown>;
-    expect(data.environment).toMatchObject({ env: 'mock', reason: 'test-pinned-mock' });
+    expect(data.environment).toMatchObject({
+      kind: 'mock',
+      env: 'mock',
+      reason: 'test-pinned-mock',
+      liveGuardActive: false,
+    });
   });
 
-  it('is available in relay env', async () => {
-    const client = await makeClient({ env: 'relay' });
+  it('is available in relay-dev env', async () => {
+    const client = await makeClient({ env: 'relay-dev' });
     const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = parseResult(result) as Record<string, unknown>;
-    expect(data.environment).toMatchObject({ env: 'relay', reason: 'test-pinned-relay' });
+    // kind = relay-dev, legacy env = relay (backward-compat), liveGuardActive = false
+    expect(data.environment).toMatchObject({
+      kind: 'relay-dev',
+      env: 'relay',
+      reason: 'test-pinned-relay-dev',
+      liveGuardActive: false,
+    });
+  });
+
+  it('is available in relay-live env and sets liveGuardActive', async () => {
+    const client = await makeClient({ env: 'relay-live' });
+    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const data = parseResult(result) as Record<string, unknown>;
+    expect(data.environment).toMatchObject({
+      kind: 'relay-live',
+      env: 'relay',
+      liveGuardActive: true,
+    });
   });
 
   it('returns the current tunnel status', async () => {
     const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
-    const client = await makeClient({ env: 'relay', tunnelStatus: tunnelUp });
+    const client = await makeClient({ env: 'relay-dev', tunnelStatus: tunnelUp });
     const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
     const data = parseResult(result) as Record<string, unknown>;
     const tunnel = data.tunnel as Record<string, unknown>;
@@ -372,7 +395,7 @@ describe('get_diagnostics MCP tool', () => {
     const connection = new FakeCdpConnection([
       { id: 'tgt1', title: 'SDK Example', url: 'https://sdk-example.aitc.dev' },
     ]);
-    const client = await makeClient({ connection, env: 'relay' });
+    const client = await makeClient({ connection, env: 'relay-dev' });
     const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
     const data = parseResult(result) as Record<string, unknown>;
     const pages = data.pages as Record<string, unknown>;
@@ -386,7 +409,7 @@ describe('get_diagnostics MCP tool', () => {
       { id: 'tgt1', title: 'SDK Example', url: 'https://sdk-example.aitc.dev' },
     ]);
     const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
-    const client = await makeClient({ connection, env: 'relay', tunnelStatus: tunnelUp });
+    const client = await makeClient({ connection, env: 'relay-dev', tunnelStatus: tunnelUp });
     const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
     const data = parseResult(result) as Record<string, unknown>;
     expect(data.nextRecommendedAction).toBeNull();
@@ -421,20 +444,20 @@ describe('computeNextRecommendedAction', () => {
   }
 
   it('Rule 1: returns restart when tunnel is down', () => {
-    const action = computeNextRecommendedAction(tunnelInfoDown, null, 'relay');
+    const action = computeNextRecommendedAction(tunnelInfoDown, null, 'relay-dev');
     expect(action).not.toBeNull();
     expect(action!.tool).toBe('restart');
   });
 
   it('Rule 1: tunnel down takes priority over everything else', () => {
     const crashedPages = makePages([], '2026-01-01T00:00:00.000Z');
-    const action = computeNextRecommendedAction(tunnelInfoDown, crashedPages, 'relay');
+    const action = computeNextRecommendedAction(tunnelInfoDown, crashedPages, 'relay-dev');
     expect(action!.tool).toBe('restart');
   });
 
   it('Rule 2: returns build_attach_url when tunnel up, no pages, relay env', () => {
     const emptyPages = makePages([]);
-    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay');
+    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay-dev');
     expect(action).not.toBeNull();
     expect(action!.tool).toBe('build_attach_url');
     expect(action!.reason).toContain('no pages');
@@ -449,7 +472,7 @@ describe('computeNextRecommendedAction', () => {
 
   it('Rule 3: returns build_attach_url when crash detected', () => {
     const crashedPages = makePages([], '2026-01-01T00:00:00.000Z');
-    const action = computeNextRecommendedAction(tunnelInfoUp, crashedPages, 'relay');
+    const action = computeNextRecommendedAction(tunnelInfoUp, crashedPages, 'relay-dev');
     expect(action).not.toBeNull();
     expect(action!.tool).toBe('build_attach_url');
     expect(action!.reason).toContain('crashed');
@@ -457,7 +480,7 @@ describe('computeNextRecommendedAction', () => {
 
   it('Rule 4: returns null when tunnel up and page attached with no crash', () => {
     const healthyPages = makePages([{ id: 'p1', title: 'App', url: 'intoss-private://app' }]);
-    const action = computeNextRecommendedAction(tunnelInfoUp, healthyPages, 'relay');
+    const action = computeNextRecommendedAction(tunnelInfoUp, healthyPages, 'relay-dev');
     expect(action).toBeNull();
   });
 

@@ -51,9 +51,15 @@ import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import { AutoDevtoolsOpener } from './devtools-opener.js';
-import { getEnvironment, getEnvironmentReason, type McpEnvironment } from './environment.js';
+import {
+  getEnvironment,
+  getEnvironmentReason,
+  isLiveRelayEnv,
+  type McpEnvironment,
+} from './environment.js';
 import {
   classifyToolError,
+  liveGuardError,
   mcpError,
   pageCrashError,
   pageMissingError,
@@ -711,6 +717,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               'evaluate: expression 인자가 비어 있습니다. 평가할 JavaScript 표현식을 전달하세요.',
             );
           }
+          // LIVE guard: relay-live 환경에서 confirm: true 없이 side-effect 호출 차단.
+          if (isLiveRelayEnv(env) && request.params.arguments?.confirm !== true) {
+            return liveGuardError('evaluate');
+          }
           // SECRET-HANDLING: do not log expression or result value.
           return jsonResult(await evaluate(connection, expression));
         }
@@ -723,6 +733,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           }
           const rawArgs = request.params.arguments?.args;
           const sdkArgs: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
+          // LIVE guard: relay-live 환경에서 confirm: true 없이 side-effect 호출 차단.
+          if (isLiveRelayEnv(env) && request.params.arguments?.confirm !== true) {
+            return liveGuardError('call_sdk');
+          }
           // SECRET-HANDLING: do not log name, args, or result value.
           const sdkResult = await callSdk(connection, sdkName, sdkArgs);
           // 상태 4: SDK 부재 — ok:false + 'sdk-absent:' 패턴은 isError로 승격
@@ -1024,7 +1038,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // would return `mock` until a target attaches — hiding Tier B
     // `build_attach_url` from the very first `tools/list` and leaving the
     // agent with no way to enter env 3/4 (issue #309).
-    defaultEnv: 'relay',
+    defaultEnv: 'relay-dev',
   });
 
   const transport = new StdioServerTransport();
@@ -1107,7 +1121,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     diagnosticsCollector.recordAttach();
     // Same defaultEnv intent as the server wiring above — keeps the env
     // resolution coherent across the surface (env 3/4 attach → relay).
-    devtoolsOpener.open(tunnelStatus.wssUrl, getEnvironment({ connection, defaultEnv: 'relay' }));
+    devtoolsOpener.open(
+      tunnelStatus.wssUrl,
+      getEnvironment({ connection, defaultEnv: 'relay-dev' }),
+    );
   });
 }
 

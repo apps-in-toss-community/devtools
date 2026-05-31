@@ -109,8 +109,8 @@ interface MakeClientOptions {
   qrHttpServer?: import('../qr-http-server.js').QrHttpServer;
   /**
    * Pin the env reported by `getEnvironment()` for this server. Defaults to
-   * `'relay'` because this test file exercises relay-only tools (build_attach_url).
-   * Set to `'mock'` for env-mismatch tests.
+   * `'relay-dev'` because this test file exercises relay-only tools (build_attach_url).
+   * Set to `'mock'` for env-mismatch tests, `'relay-live'` for LIVE guard tests.
    */
   env?: McpEnvironment;
 }
@@ -121,7 +121,7 @@ async function makeClient({
   connection,
   waitForAttachTimeoutMs,
   qrHttpServer,
-  env = 'relay',
+  env = 'relay-dev',
 }: MakeClientOptions): Promise<Client> {
   const server = createDebugServer({
     connection: connection ?? new FakeCdpConnection(),

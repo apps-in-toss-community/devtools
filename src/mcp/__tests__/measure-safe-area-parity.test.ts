@@ -97,7 +97,7 @@ describe('measure_safe_area Tier C parity (RFC #277)', () => {
     const relayConn = new RecordingCdpConnection(relayPayload());
 
     await measureSafeArea(mockConn, 'mock');
-    await measureSafeArea(relayConn, 'relay');
+    await measureSafeArea(relayConn, 'relay-dev');
 
     expect(mockConn.evaluateCalls).toHaveLength(1);
     expect(relayConn.evaluateCalls).toHaveLength(1);
@@ -114,10 +114,17 @@ describe('measure_safe_area Tier C parity (RFC #277)', () => {
     expect(result.sdkInsetsSource).toBe('window.__ait');
   });
 
-  it('attaches source: "relay" when caller env is relay', async () => {
+  it('attaches source: "relay-dev" when caller env is relay-dev', async () => {
     const conn = new RecordingCdpConnection(relayPayload());
-    const result = await measureSafeArea(conn, 'relay');
-    expect(result.source).toBe('relay');
+    const result = await measureSafeArea(conn, 'relay-dev');
+    expect(result.source).toBe('relay-dev');
+    expect(result.sdkInsetsSource).toBe('window.__sdk');
+  });
+
+  it('attaches source: "relay-live" when caller env is relay-live', async () => {
+    const conn = new RecordingCdpConnection(relayPayload());
+    const result = await measureSafeArea(conn, 'relay-live');
+    expect(result.source).toBe('relay-live');
     expect(result.sdkInsetsSource).toBe('window.__sdk');
   });
 
@@ -127,7 +134,7 @@ describe('measure_safe_area Tier C parity (RFC #277)', () => {
     const relayConn = new RecordingCdpConnection(relayPayload());
 
     const mockResult = await measureSafeArea(mockConn, 'mock');
-    const relayResult = await measureSafeArea(relayConn, 'relay');
+    const relayResult = await measureSafeArea(relayConn, 'relay-dev');
 
     // Same top-level keys — schema parity.
     expect(Object.keys(mockResult).sort()).toEqual(Object.keys(relayResult).sort());

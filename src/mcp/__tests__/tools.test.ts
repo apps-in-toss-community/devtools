@@ -364,7 +364,7 @@ function makeProbeJson(overrides: Record<string, unknown> = {}): string {
 
 describe('normalizeSafeAreaResult', () => {
   it('parses a successful SafeAreaInsets.get() result (no sdkInsetsError)', () => {
-    const result = normalizeSafeAreaResult(makeProbeJson(), 'relay');
+    const result = normalizeSafeAreaResult(makeProbeJson(), 'relay-dev');
     expect(result.sdkInsets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
     expect(result.sdkInsetsError).toBeUndefined();
     expect(result.navBarHeight).toBeNull();
@@ -393,7 +393,7 @@ describe('normalizeSafeAreaResult', () => {
       sdkInsets: null,
       sdkInsetsError: 'neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk',
     });
-    const result = normalizeSafeAreaResult(json, 'relay');
+    const result = normalizeSafeAreaResult(json, 'relay-dev');
     expect(result.sdkInsets).toBeNull();
     expect(result.sdkInsetsError).toBe(
       'neither SafeAreaInsets.get nor getSafeAreaInsets found on window.__sdk',
@@ -405,14 +405,14 @@ describe('normalizeSafeAreaResult', () => {
       sdkInsets: null,
       sdkInsetsError: 'TypeError: sdk.SafeAreaInsets.get is not a function',
     });
-    const result = normalizeSafeAreaResult(json, 'relay');
+    const result = normalizeSafeAreaResult(json, 'relay-dev');
     expect(result.sdkInsets).toBeNull();
     expect(result.sdkInsetsError).toBe('TypeError: sdk.SafeAreaInsets.get is not a function');
   });
 
   it('reads navBarHeight from dom-.ait-navbar source when present', () => {
     const json = makeProbeJson({ navBarHeight: 48, navBarHeightSource: 'dom-.ait-navbar' });
-    const result = normalizeSafeAreaResult(json, 'relay');
+    const result = normalizeSafeAreaResult(json, 'relay-dev');
     expect(result.navBarHeight).toBe(48);
     expect(result.navBarHeightSource).toBe('dom-.ait-navbar');
   });
@@ -436,8 +436,8 @@ describe('measureSafeArea (Phase 2)', () => {
         },
       },
     });
-    const measurement = await measureSafeArea(connection, 'relay');
-    expect(measurement.source).toBe('relay');
+    const measurement = await measureSafeArea(connection, 'relay-dev');
+    expect(measurement.source).toBe('relay-dev');
     expect(measurement.sdkInsets).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
     expect(measurement.sdkInsetsSource).toBe('window.__sdk');
     expect(measurement.sdkInsetsError).toBeUndefined();
