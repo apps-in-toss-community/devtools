@@ -101,6 +101,10 @@ cloudflared quick tunnel은 수 시간 후 drop될 수 있습니다. `devtools-m
 
 `call_sdk` 호출 시 `ok: false, error: "window.__sdkCall is not available"` 에러가 뜨면 dogfood 빌드가 아닌 일반 번들이 로드된 것입니다. `__DEBUG_BUILD__` 플래그가 켜진 dogfood 채널로 재배포 후 다시 시도하세요. 환경 2(PWA)에서는 이 에러가 예상 결과입니다. (관련: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
 
+**"QR 스캔했는데 인증 실패" — TOTP 만료**
+
+`AIT_DEBUG_TOTP_SECRET` 설정 시 `build_attach_url`이 반환하는 attachUrl에는 30초 유효 TOTP 코드(`at=`)가 자동으로 포함됩니다. 응답의 `totp.expiresAt` 이후 스캔하면 relay가 인증을 거부합니다. 해결: `build_attach_url`을 재호출해 새 URL과 QR을 발급받은 뒤 30초 이내에 스캔하세요.
+
 ---
 
 ## 설치
