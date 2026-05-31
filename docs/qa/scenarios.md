@@ -22,7 +22,7 @@ M1 acceptance 기준: 4 시나리오 각각에서 `list_pages → measure_safe_a
 | `measure_safe_area` | `source`, `sdkInsetsSource`, `sdkInsets`, `cssEnv`, `userAgent` | string, string, object, object, string |
 | `call_sdk` | `ok` (boolean), `value` 또는 `error` | — |
 
-환경 2 non-dogfood에서 `call_sdk` 결과 `ok: false`는 예상된 결과이며 schema 위반이 아니다.
+환경 1 (`--mode=local`) non-dogfood fixture와 환경 2 non-dogfood에서 `call_sdk` 결과 `ok: false`는 예상된 결과이며 schema 위반이 아니다. `window.__sdkCall` bridge는 dogfood 빌드(`__DEBUG_BUILD__` 정의)에서만 주입된다. `--mode=dev`는 mock state HTTP 폴링을 사용하므로 dogfood 빌드 없이 `ok: true`를 반환한다.
 
 ---
 
@@ -113,18 +113,30 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 
 #### `call_sdk("getOperationalEnvironment", [])`
 
+**`--mode=dev`** (mock state 폴링, dogfood 빌드 불필요):
+```json
+{ "ok": true, "value": { "environment": "dev" } }
+```
+
+**`--mode=local`, non-dogfood fixture** (bridge 부재 — 예상된 결과):
+```json
+{ "ok": false, "error": "window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다)" }
+```
+
+**`--mode=local`, dogfood 빌드 fixture** (`__DEBUG_BUILD__` 정의, bridge 주입):
 ```json
 { "ok": true, "value": { "environment": "sandbox" } }
 ```
 
-- `ok`: `true`
-- `value.environment`: `"sandbox"` (또는 패널 설정값)
+- `--mode=dev`: `ok: true` — dev-mode는 mock state로 답하므로 dogfood 빌드 불필요.
+- `--mode=local`, non-dogfood: `ok: false`는 예상된 결과 (bridge 부재) — schema 위반 아님. 환경 2 non-dogfood 정책과 동일.
+- `--mode=local`, dogfood: `ok: true`, `value.environment: "sandbox"` (또는 패널 설정값).
 
 ### 체크리스트
 
 - [ ] `list_pages` — `pages` 배열 1개, `tunnel.up: false`
-- [ ] `measure_safe_area` — `source: "mock"`, `sdkInsetsSource: "window.__ait"`
-- [ ] `call_sdk` — `ok: true`, `value.environment` 존재
+- [ ] `measure_safe_area` — `source: "mock"` (`--mode=local`) 또는 `source: "mock-vite"` (`--mode=dev`), `sdkInsetsSource: "window.__ait"`
+- [ ] `call_sdk` — `ok` 필드 존재. `--mode=dev` 또는 dogfood fixture면 `ok: true`, non-dogfood local fixture면 `ok: false` (예상된 결과)
 - [ ] 3종 응답 모두 JSON envelope 완전
 
 ### 실패 처리
@@ -135,6 +147,7 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 | `list_pages`가 빈 배열 (`--mode=local`) | fixture 서버 미실행 | 서버 재시작 |
 | `measure_safe_area` `source: null` (`--mode=dev`) | Vite dev 서버 미실행 또는 `mcp: true` 옵션 누락 | dev 서버 재시작, unplugin 옵션 확인 |
 | `measure_safe_area` 에러 (`--mode=local`) | MCP 서버가 mock 모드로 실행 안 됨 | `--mode=local` 또는 `MCP_ENV=mock` 확인 |
+| `call_sdk` `ok: false` ("dogfood 빌드가 아닙니다") | `--mode=local`에서 non-dogfood fixture 실행 중 — `window.__sdkCall` bridge 없음 | **예상된 결과**. `--mode=dev`로 전환하거나 dogfood 빌드(`__DEBUG_BUILD__` 정의) fixture 사용. schema 위반 아님 |
 | `call_sdk` `ok: false` (dev-mode-unsupported) | 미지원 메서드 — `--mode=dev`에서 CDP bridge 없음 | `--mode=local`로 전환하거나 `getOperationalEnvironment` 사용 |
 | `call_sdk` `ok: false` (mock SDK 부재) | fixture alias 누락 | `vite.config.ts`의 `resolve.alias` 확인 |
 
@@ -399,8 +412,8 @@ ait deploy --scheme-only
 
 | 시나리오 | `list_pages` schema | `measure_safe_area` schema | `call_sdk` schema | 통과 일자 |
 |---|---|---|---|---|
-| 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true` | — |
-| 1b (로컬 브라우저, `--mode=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | `ok: true` | — |
+| 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true` (mock state 폴링, dogfood 불필요) | — |
+| 1b (로컬 브라우저, `--mode=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true` | — |
 | 2 (AITC Sandbox PWA) | `pages[]`, `tunnel.up: true` | `source: "relay"` | `ok` 필드 존재 | — |
 | 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "dev"` | — |
 | 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "production"` | — |
