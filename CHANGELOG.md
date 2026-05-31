@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.50
+
+### Patch Changes
+
+- c142328: docs(qa): 환경 3·4 runtime 검증 가이드 추가 — 사용자 폰 + QR 스캔 1세션에 효율적으로 끝낼 수 있도록 절차·acceptance·SECRET-HANDLING 박제
+- 89ebe7b: fix(mcp): --mode=dev call_sdk(getOperationalEnvironment) value를 scalar string으로 정정. docs(qa/scenarios.md) 정본과 일치.
+  docs(scenarios): env-1.md / qa/scenarios.md의 --mode=local 표기를 실제 CLI flag --target=local로 정정.
+
 ## 0.1.49
 
 ### Patch Changes
