@@ -370,7 +370,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'environment (kind: mock|relay-dev|relay-live, env: mock|relay backward-compat, reason, ' +
       'liveGuardActive: true when relay-live LIVE guard is active), ' +
       'serverLockHolder (pid + startedAt from the lock file, or null), ' +
-      'nextRecommendedAction ({tool, reason} or null — the single next tool to call). ' +
+      'nextRecommendedAction ({tool, reason} or null — the single next tool to call; ' +
+      'in local-target mode tunnel.up=false is normal so "restart" is never recommended). ' +
       'All fields are nullable — missing data is null, not an error. ' +
       'debug-mode only — dev-mode (--mode=dev) does not support relay diagnostics. ' +
       'Tier C (both mock and relay). Call this first when debugging session state.',
@@ -1649,7 +1650,8 @@ export interface DiagnosticsResult {
    * the agent should call this tool next rather than inferring from raw fields.
    *
    * Branch rules (evaluated in priority order):
-   *   1. tunnel.up === false                          → restart
+   *   1. tunnel.up === false AND relay env            → restart
+   *   1b. tunnel.up === false AND mock env, no pages  → wait_for_page (local target is tunnel-less)
    *   2. tunnel.up, pages empty, env === relay        → build_attach_url
    *   3. pages[0] exists + crashDetectedAt non-null   → build_attach_url (re-attach)
    *   4. otherwise                                    → null
@@ -1801,7 +1803,8 @@ export function readDevtoolsVersion(): string | null {
  * Derives the next recommended action from a completed diagnostics snapshot.
  *
  * Branch rules (evaluated in priority order):
- *   1. tunnel.up === false                        → restart
+ *   1. tunnel.up === false AND env is relay       → restart (relay needs a live tunnel)
+ *   1b. tunnel.up === false AND env is mock       → wait_for_page (local target: tunnel-less is normal)
  *   2. tunnel.up, pages empty, env === relay      → build_attach_url (start attach)
  *   3. pages has entry + crashDetectedAt non-null → build_attach_url (re-attach after crash)
  *   4. otherwise                                  → null (session looks healthy)
@@ -1813,12 +1816,30 @@ export function computeNextRecommendedAction(
   pages: ListPagesResult | null,
   env: McpEnvironment,
 ): NextRecommendedAction | null {
-  // Rule 1: tunnel is down — must restart the MCP server.
+  // Rule 1: tunnel is down.
   if (!tunnel.up) {
-    return {
-      tool: 'restart',
-      reason: 'tunnel not up — run `npx @ait-co/devtools devtools-mcp` to restart',
-    };
+    // Rule 1b: local-target (mock env) runs without a relay tunnel by design —
+    // tunnel.up === false is the expected steady state. Instead of recommending
+    // a server restart, guide the agent to wait for the page to load.
+    if (!isRelayEnv(env)) {
+      // Only surface wait_for_page when no page is attached yet; once a page
+      // attaches the session is healthy and null is the correct return value.
+      if (pages !== null && pages.pages.length === 0 && !pages.crashDetectedAt) {
+        return {
+          tool: 'wait_for_page',
+          reason:
+            'local Chromium spawn 직후 — 페이지 로드를 기다리거나 list_pages를 재호출하세요 ' +
+            '(local 모드는 tunnel이 없는 게 정상입니다)',
+        };
+      }
+      // Page already attached or crash detected — fall through to other rules.
+    } else {
+      // Rule 1 (relay env): tunnel must be up for relay to work — restart.
+      return {
+        tool: 'restart',
+        reason: 'tunnel not up — run `npx @ait-co/devtools devtools-mcp` to restart',
+      };
+    }
   }
 
   // Rule 2: tunnel up but no pages attached in relay env → start attach.

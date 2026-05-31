@@ -42,7 +42,7 @@ pnpm dev
 npx -y @ait-co/devtools devtools-mcp --mode=dev
 ```
 
-**방법 B: `--mode=local` (CDP 도구 포함, Chromium 자동 실행)**
+**방법 B: `--target=local` (CDP 도구 포함, Chromium 자동 실행)**
 
 ```bash
 # 1. 빌드
@@ -53,8 +53,8 @@ pnpm exec vite build --config e2e/fixture/vite.config.ts
 pnpm exec vite preview --config e2e/fixture/vite.config.ts --port 4173 &
 
 # 3. MCP 서버 실행
-# DOM/screenshot/safe-area CDP tool 필요 시: --mode=local (로컬 Chromium CDP direct-attach)
-npx -y @ait-co/devtools devtools-mcp --mode=local
+# DOM/screenshot/safe-area CDP tool 필요 시: --target=local (로컬 Chromium CDP direct-attach)
+npx -y @ait-co/devtools devtools-mcp --target=local
 
 # AIT mock state만 필요할 때: --mode=dev (Vite dev server mock state, CDP 없음)
 # npx -y @ait-co/devtools devtools-mcp --mode=dev
@@ -97,7 +97,7 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 }
 ```
 
-`--mode=local`:
+`--target=local`:
 ```json
 {
   "source": "mock",
@@ -109,7 +109,7 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 ```
 
 - `--mode=dev`: `source: "mock-vite"`, `sdkInsetsSource: "window.__ait"`
-- `--mode=local`: `source: "mock"`, `sdkInsetsSource: "window.__ait"`
+- `--target=local`: `source: "mock"`, `sdkInsetsSource: "window.__ait"`
 
 #### `call_sdk("getOperationalEnvironment", [])`
 
@@ -144,11 +144,11 @@ npx -y @ait-co/devtools devtools-mcp --mode=local
 | 증상 | 원인 | 처리 |
 |---|---|---|
 | `list_pages`가 "Unknown tool" | MCP 서버가 이전 버전 | `@ait-co/devtools` 업데이트 후 서버 재시작 |
-| `list_pages`가 빈 배열 (`--mode=local`) | fixture 서버 미실행 | 서버 재시작 |
+| `list_pages`가 빈 배열 (`--target=local`) | fixture 서버 미실행 | 서버 재시작 |
 | `measure_safe_area` `source: null` (`--mode=dev`) | Vite dev 서버 미실행 또는 `mcp: true` 옵션 누락 | dev 서버 재시작, unplugin 옵션 확인 |
-| `measure_safe_area` 에러 (`--mode=local`) | MCP 서버가 mock 모드로 실행 안 됨 | `--mode=local` 또는 `MCP_ENV=mock` 확인 |
-| `call_sdk` `ok: false` ("dogfood 빌드가 아닙니다") | `--mode=local`에서 non-dogfood fixture 실행 중 — `window.__sdkCall` bridge 없음 | **예상된 결과**. `--mode=dev`로 전환하거나 dogfood 빌드(`__DEBUG_BUILD__` 정의) fixture 사용. schema 위반 아님 |
-| `call_sdk` `ok: false` (dev-mode-unsupported) | 미지원 메서드 — `--mode=dev`에서 CDP bridge 없음 | `--mode=local`로 전환하거나 `getOperationalEnvironment` 사용 |
+| `measure_safe_area` 에러 (`--target=local`) | MCP 서버가 mock 모드로 실행 안 됨 | `--target=local` 또는 `MCP_ENV=mock` 확인 |
+| `call_sdk` `ok: false` ("dogfood 빌드가 아닙니다") | `--target=local`에서 non-dogfood fixture 실행 중 — `window.__sdkCall` bridge 없음 | **예상된 결과**. `--mode=dev`로 전환하거나 dogfood 빌드(`__DEBUG_BUILD__` 정의) fixture 사용. schema 위반 아님 |
+| `call_sdk` `ok: false` (dev-mode-unsupported) | 미지원 메서드 — `--mode=dev`에서 CDP bridge 없음 | `--target=local`로 전환하거나 `getOperationalEnvironment` 사용 |
 | `call_sdk` `ok: false` (mock SDK 부재) | fixture alias 누락 | `vite.config.ts`의 `resolve.alias` 확인 |
 
 ---
@@ -413,7 +413,7 @@ ait deploy --scheme-only
 | 시나리오 | `list_pages` schema | `measure_safe_area` schema | `call_sdk` schema | 통과 일자 |
 |---|---|---|---|---|
 | 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true` (mock state 폴링, dogfood 불필요) | — |
-| 1b (로컬 브라우저, `--mode=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true` | — |
+| 1b (로컬 브라우저, `--target=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true` | — |
 | 2 (AITC Sandbox PWA) | `pages[]`, `tunnel.up: true` | `source: "relay"` | `ok` 필드 존재 | — |
 | 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "dev"` | — |
 | 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "production"` | — |

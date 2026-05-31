@@ -5,17 +5,17 @@
 ## 전제조건
 
 - `pnpm dev` (Vite dev server + unplugin `mcp: true`)  
-- `.mcp.json`의 `devtools-mcp --mode=dev` (권장 — HTTP mock-state 기반, relay/Chromium 불필요) 또는 `--mode=local` (CDP 필요 시)
+- `.mcp.json`의 `devtools-mcp --mode=dev` (권장 — HTTP mock-state 기반, relay/Chromium 불필요) 또는 `--target=local` (CDP 필요 시)
 - 환경 변수: `MCP_ENV=mock` (명시 권장, 미설정 시 default mock으로 동일 동작)
 
-## `--mode=dev` vs `--mode=local` 선택 기준
+## `--mode=dev` vs `--target=local` 선택 기준
 
-| 모드 | 언제 쓰나 | 특징 |
+| 모드/타깃 | 언제 쓰나 | 특징 |
 |---|---|---|
 | `--mode=dev` | Vite HMR 루프에서 AIT mock state만 관측하고 싶을 때 | Vite dev server의 `/api/ait-devtools/state` endpoint를 읽음. CDP 없음 — DOM/screenshot 불가, tier-filter error로 안내. 빠르고 가볍다. |
-| `--mode=local` | DOM/screenshot/safe-area 등 CDP tool이 필요할 때 | MCP 서버가 로컬 Chromium을 직접 기동해 CDP direct-attach. relay·터널 불필요. CDP 전체 tool surface 사용 가능. |
+| `--target=local` | DOM/screenshot/safe-area 등 CDP tool이 필요할 때 | `--mode=debug --target=local`의 단축형. MCP 서버가 로컬 Chromium을 직접 기동해 CDP direct-attach. relay·터널 불필요. CDP 전체 tool surface 사용 가능. |
 
-일반 mock 개발에서 AIT state 조회만 할 경우 `--mode=dev`가 충분하다. DOM 구조나 스크린샷까지 필요하면 `--mode=local`을 선택한다.
+일반 mock 개발에서 AIT state 조회만 할 경우 `--mode=dev`가 충분하다. DOM 구조나 스크린샷까지 필요하면 `--target=local`을 선택한다.
 
 ## MCP 도구 acceptance 체크리스트
 
@@ -33,7 +33,7 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 
 2. **`measure_safe_area`**
    - `--mode=dev`: `source: "mock-vite"`, `sdkInsetsSource: "window.__ait"` — mock state snapshot에서 읽음
-   - `--mode=local`: `source: "mock"`, `sdkInsetsSource: "window.__ait"` — CDP Runtime.evaluate probe
+   - `--target=local`: `source: "mock"`, `sdkInsetsSource: "window.__ait"` — CDP Runtime.evaluate probe
    - `sdkInsets` 값이 DevTools 패널의 현재 viewport preset과 일치
 
 3. **`call_sdk("getOperationalEnvironment", [])`**
@@ -56,7 +56,7 @@ npx -y @ait-co/devtools devtools-mcp --mode=dev
 # list_pages → measure_safe_area → call_sdk("getOperationalEnvironment", [])
 ```
 
-### B. `--mode=local` (CDP 도구 포함, 로컬 Chromium 자동 실행)
+### B. `--target=local` (CDP 도구 포함, 로컬 Chromium 자동 실행)
 
 ```bash
 # 1. 빌드 + 픽스처 실행
@@ -64,8 +64,8 @@ pnpm build
 pnpm exec vite build --config e2e/fixture/vite.config.ts
 pnpm exec vite preview --config e2e/fixture/vite.config.ts --port 4173 &
 
-# 2. MCP 서버 실행 (local 모드 — Chromium을 자동 실행하고 CDP로 연결)
-npx -y @ait-co/devtools devtools-mcp --mode=local
+# 2. MCP 서버 실행 (local 타깃 — Chromium을 자동 실행하고 CDP로 연결)
+npx -y @ait-co/devtools devtools-mcp --target=local
 
 # 3. 에이전트에서 순서대로 호출
 # list_pages → measure_safe_area → call_sdk("getOperationalEnvironment", [])
