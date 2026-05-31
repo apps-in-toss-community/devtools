@@ -113,6 +113,11 @@ interface MakeClientOptions {
    * Set to `'mock'` for env-mismatch tests, `'relay-live'` for LIVE guard tests.
    */
   env?: McpEnvironment;
+  /**
+   * Hex-encoded TOTP secret for build_attach_url auto-splice tests.
+   * When provided, the server will splice `at=<code>` into attachUrl.
+   */
+  totpSecret?: string;
 }
 
 /** Connects a createDebugServer instance via InMemoryTransport and returns a ready Client. */
@@ -122,6 +127,7 @@ async function makeClient({
   waitForAttachTimeoutMs,
   qrHttpServer,
   env = 'relay-dev',
+  totpSecret,
 }: MakeClientOptions): Promise<Client> {
   const server = createDebugServer({
     connection: connection ?? new FakeCdpConnection(),
@@ -131,6 +137,7 @@ async function makeClient({
     qrHttpServer,
     getEnvironment: () => env,
     getEnvironmentReason: () => `test-pinned-${env}`,
+    ...(totpSecret !== undefined ? { totpSecret } : {}),
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -942,5 +949,72 @@ describe('build_attach_url — open_in_browser', () => {
     expect(text).toContain('http://127.0.0.1:19999/attach');
     // text QR fallback: attachUrl JSON should be in the QR path too.
     expect(text).toContain('attachUrl');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// build_attach_url — TOTP auto-splice (#310)
+// ---------------------------------------------------------------------------
+
+describe('build_attach_url — TOTP auto-splice', () => {
+  /** Dummy 32-byte hex secret — not a real secret value. */
+  const DUMMY_SECRET = 'deadbeef'.repeat(8);
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+
+  it('includes at=<6-digit-code> in attachUrl when totpSecret is set', async () => {
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      totpSecret: DUMMY_SECRET,
+    });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
+        open_in_browser: false,
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // attachUrl in the JSON must contain at=<6-digit-code>
+    expect(text).toMatch(/at=\d{6}/);
+  });
+
+  it('includes totp.enabled=true in the JSON response', async () => {
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      totpSecret: DUMMY_SECRET,
+    });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
+        open_in_browser: false,
+      },
+    });
+
+    const text = getContent(result)[0]!.text!;
+    // The totp block must be in the JSON output.
+    expect(text).toContain('"enabled": true');
+    expect(text).toContain('"ttlSeconds": 30');
+    expect(text).toContain('"expiresAt"');
+  });
+
+  it('does NOT include at= in attachUrl when totpSecret is not set', async () => {
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
+        open_in_browser: false,
+      },
+    });
+
+    const text = getContent(result)[0]!.text!;
+    expect(text).not.toMatch(/[?&]at=\d/);
+    expect(text).not.toContain('"totp"');
   });
 });

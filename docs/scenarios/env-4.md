@@ -68,6 +68,17 @@ evaluate("window.location.href", confirm: true)
 }
 ```
 
+## TOTP (권장)
+
+LIVE 환경에서는 `AIT_DEBUG_TOTP_SECRET` 설정을 권장한다 — relay URL이 유출되면 임의의 클라이언트가 attach할 수 있으므로 TOTP로 gate를 닫는다.
+
+- `build_attach_url` 호출 시 현재 유효 TOTP 코드(`at=<code>`)가 attachUrl에 **자동 splice**된다.
+- 응답에 `totp.expiresAt` (ISO timestamp) 포함 — 이 시각 이후 스캔 시 relay가 인증 실패.
+  만료 시 `build_attach_url`을 재호출하면 새 코드가 포함된 URL을 발급받는다.
+- 시크릿 값과 `at=` 코드는 절대 stdout/stderr/log 출력 금지.
+
+troubleshooting: QR 스캔했는데 relay가 인증 실패 → `totp.expiresAt` 확인 후 `build_attach_url` 재호출.
+
 ## 주의사항
 
 - 환경 4는 read-only 디버깅용 — 상태 변경 SDK 호출(navigate, IAP 등)은 실유저에게 영향을 줌.

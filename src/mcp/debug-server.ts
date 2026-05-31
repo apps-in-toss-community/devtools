@@ -186,6 +186,21 @@ export interface DebugServerDeps {
    * used (backwards-compatible with existing tests that don't inject one).
    */
   diagnosticsCollector?: DiagnosticsCollector;
+  /**
+   * Hex-encoded TOTP secret for `build_attach_url` auto-splice.
+   *
+   * When set, `build_attach_url` generates a fresh TOTP code on every call and
+   * splices it as `at=<code>` into the returned `attachUrl`. The response also
+   * includes a `totp` field with `ttlSeconds` and `expiresAt` so callers know
+   * when to re-invoke.
+   *
+   * SECRET-HANDLING: this value is captured in a closure and MUST NOT be logged
+   * or included in any output other than the `at=` param inside `attachUrl`.
+   *
+   * Production: passed from `process.env.AIT_DEBUG_TOTP_SECRET` by
+   * `runDebugServer`. Tests inject a dummy hex string or omit it.
+   */
+  totpSecret?: string;
 }
 
 /**
@@ -262,6 +277,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     getEnvironmentReason: getEnvReasonDep,
     diagnosticsCollector: collectorDep,
     defaultEnv,
+    totpSecret,
   } = deps;
 
   // Env SSoT — production wires the real `getEnvironment` with the connection
@@ -421,9 +437,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       };
 
       try {
-        const { attachUrl, relayUrl, authorityWarning } = buildAttachUrl(
+        // SECRET-HANDLING: totpSecret is passed to buildAttachUrl only; it is
+        // never logged or included in output other than the at= param in attachUrl.
+        const { attachUrl, relayUrl, authorityWarning, totp } = buildAttachUrl(
           schemeUrl,
           getTunnelStatus(),
+          totpSecret,
         );
 
         // Prepend a non-fatal authority warning when the scheme URL host looks wrong.
@@ -443,7 +462,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             'open_in_browser=false로 자동 폴백합니다. ' +
             '텍스트 QR을 폰 카메라로 스캔하거나, 로컬 GUI 환경에서 실행하세요.\n\n';
           const qrHeadless = await renderQr(attachUrl);
-          const headlessText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qrHeadless}`;
+          const headlessText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qrHeadless}`;
 
           if (!waitForAttach) {
             return { content: [{ type: 'text' as const, text: headlessText }] };
@@ -503,7 +522,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             };
             const shortText =
               `${warningPrefix}${header}\n` +
-              `${JSON.stringify({ relayUrl, openResult }, null, 2)}\n\n` +
+              `${JSON.stringify({ relayUrl, openResult, ...(totp ? { totp } : {}) }, null, 2)}\n\n` +
               `브라우저에서 QR을 열었습니다${retriedNote}. 폰 카메라로 스캔하세요.\n` +
               `URL: ${browserResult.httpUrl}`;
 
@@ -566,7 +585,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             stderrNote +
             '\n\n';
           const qr = await renderQr(attachUrl);
-          const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, openResult }, null, 2)}\n\n${qr}`;
+          const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, openResult, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qr}`;
 
           if (!waitForAttach) {
             return { content: [{ type: 'text' as const, text: baseText }] };
@@ -606,7 +625,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
 
         // open_in_browser=false or no GUI available or no HTTP server: text QR fallback.
         const qr = await renderQr(attachUrl);
-        const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl }, null, 2)}\n\n${qr}`;
+        const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qr}`;
 
         if (!waitForAttach) {
           return {
@@ -1055,11 +1074,15 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     },
     diagnosticsCollector,
     // Relay-target debug mode: the user just launched a relay debug session,
-    // so the default env intent is `relay`. Without this, `getEnvironment()`
+    // so the default env intent is `relay-dev`. Without this, `getEnvironment()`
     // would return `mock` until a target attaches — hiding Tier B
     // `build_attach_url` from the very first `tools/list` and leaving the
     // agent with no way to enter env 3/4 (issue #309).
     defaultEnv: 'relay-dev',
+    // SECRET-HANDLING: totpSecret is read from env once at startup and passed
+    // through to buildAttachUrl where it is used only to generate the at= code.
+    // It is never logged or surfaced in any output.
+    ...(process.env.AIT_DEBUG_TOTP_SECRET ? { totpSecret: process.env.AIT_DEBUG_TOTP_SECRET } : {}),
   });
 
   const transport = new StdioServerTransport();

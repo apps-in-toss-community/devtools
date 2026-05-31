@@ -43,6 +43,7 @@ import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
 import type { McpEnvironment } from './environment.js';
 import { isLiveRelayEnv, isRelayEnv, toLegacyEnv } from './environment.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
+import { generateTotp } from './totp.js';
 
 /** Tunnel state surfaced by `list_pages`. */
 export interface TunnelStatus {
@@ -139,7 +140,13 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'On timeout, call build_attach_url again to resume polling. ' +
       'When open_in_browser=true (default), saves the QR as a PNG and opens it in the OS default ' +
       'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers). ' +
-      'Requires MCP_ENV=relay (set automatically when a relay tunnel is detected).',
+      'Requires MCP_ENV=relay-dev or relay-live (set automatically in debug-mode default).\n\n' +
+      'TOTP auth: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the returned attachUrl ' +
+      'automatically includes the current one-time code (at=<code>) — the URL is single-use for ' +
+      'that 30-second step. The response includes a `totp` field with `expiresAt` (ISO timestamp). ' +
+      'If the phone scan happens after expiresAt, the relay will reject the code — just call ' +
+      'build_attach_url again to get a fresh one-time URL. ' +
+      'Without AIT_DEBUG_TOTP_SECRET, the attachUrl has no expiry.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -674,7 +681,7 @@ export function listPages(connection: CdpConnection, tunnel: TunnelStatus): List
 
 /** A `build_attach_url` result: the spliced deep link the phone should open. */
 export interface BuildAttachUrlResult {
-  /** The scheme URL with `debug=1&relay=<wss>` spliced in. */
+  /** The scheme URL with `debug=1&relay=<wss>[&at=<totp-code>]` spliced in. */
   attachUrl: string;
   /** The relay URL that was spliced in (this session's quick tunnel). */
   relayUrl: string;
@@ -684,6 +691,21 @@ export interface BuildAttachUrlResult {
    * help the user catch a malformed URL early.
    */
   authorityWarning?: string;
+  /**
+   * TOTP metadata — present when `AIT_DEBUG_TOTP_SECRET` is set.
+   *
+   * SECRET-HANDLING: the `at=` code value is spliced into `attachUrl` only.
+   * It is never surfaced separately here to avoid inadvertent logging of the
+   * one-time code outside of the URL.
+   */
+  totp?: {
+    /** `true` when a TOTP code was spliced into `attachUrl`. */
+    enabled: true;
+    /** RFC 6238 step duration in seconds. */
+    ttlSeconds: number;
+    /** ISO timestamp when the current step expires. Rescan or call build_attach_url again after this. */
+    expiresAt: string;
+  };
 }
 
 /**
@@ -691,14 +713,34 @@ export interface BuildAttachUrlResult {
  * URL plus this session's live relay. Throws if the tunnel is not up yet (no
  * relay URL to splice in) — the caller surfaces that as a tool error.
  *
+ * When `AIT_DEBUG_TOTP_SECRET` is set, generates the current TOTP code and
+ * splices it as `at=<code>` into the attach URL. The code is valid for one
+ * 30-second time step (±1 skew accepted by the relay, so the effective window
+ * is up to 90 s). If the scan happens after `totp.expiresAt`, call
+ * `build_attach_url` again to get a fresh code.
+ *
  * Also validates the scheme URL's authority. A suspicious authority (empty,
  * "web", "localhost", etc.) is surfaced as a non-fatal `authorityWarning` on
  * the result so the caller can show a helpful hint without blocking the link
  * generation (the warning is consistent with how other validation in
  * `buildDeepLinkAttachUrl` works — hard errors for relay, soft warning for
  * the scheme authority which is in the caller's input, not ours to own).
+ *
+ * SECRET-HANDLING: `totpSecret` (if provided) is used only to compute a code
+ * and must never appear in any log, error message, or output outside of the
+ * spliced `at=` param in `attachUrl`.
+ *
+ * @param schemeUrl - The `intoss-private://…?_deploymentId=<uuid>` URL.
+ * @param tunnel - Current tunnel status from the running debug server.
+ * @param totpSecret - Optional hex-encoded TOTP secret (from
+ *   `AIT_DEBUG_TOTP_SECRET`). When provided, the current code is spliced into
+ *   the attach URL as `at=<code>`.
  */
-export function buildAttachUrl(schemeUrl: string, tunnel: TunnelStatus): BuildAttachUrlResult {
+export function buildAttachUrl(
+  schemeUrl: string,
+  tunnel: TunnelStatus,
+  totpSecret?: string,
+): BuildAttachUrlResult {
   if (!tunnel.up || tunnel.wssUrl === null) {
     throw new Error(
       'tunnel-down: cloudflared 터널이 안 떠 있습니다. ' +
@@ -706,10 +748,30 @@ export function buildAttachUrl(schemeUrl: string, tunnel: TunnelStatus): BuildAt
     );
   }
   const authorityWarning = validateSchemeAuthority(schemeUrl) ?? undefined;
+
+  // Generate a live TOTP code when a secret is provided.
+  // SECRET-HANDLING: the code value is placed into attachUrl only — not logged.
+  let totpCode: string | undefined;
+  let totpMeta: BuildAttachUrlResult['totp'];
+  if (totpSecret !== undefined && totpSecret !== '') {
+    const now = Date.now();
+    totpCode = generateTotp(totpSecret, now);
+    const STEP_SECONDS = 30;
+    // Current step number (floor). The step expires at the start of the NEXT step.
+    const currentStep = Math.floor(now / 1000 / STEP_SECONDS);
+    const expiresAtMs = (currentStep + 1) * STEP_SECONDS * 1000;
+    totpMeta = {
+      enabled: true,
+      ttlSeconds: STEP_SECONDS,
+      expiresAt: new Date(expiresAtMs).toISOString(),
+    };
+  }
+
   return {
-    attachUrl: buildDeepLinkAttachUrl(schemeUrl, tunnel.wssUrl),
+    attachUrl: buildDeepLinkAttachUrl(schemeUrl, tunnel.wssUrl, totpCode),
     relayUrl: tunnel.wssUrl,
     ...(authorityWarning !== undefined ? { authorityWarning } : {}),
+    ...(totpMeta !== undefined ? { totp: totpMeta } : {}),
   };
 }
 

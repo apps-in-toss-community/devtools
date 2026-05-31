@@ -48,7 +48,14 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 ## TOTP (선택)
 
 `AIT_DEBUG_TOTP_SECRET` 설정 시 relay 인증 활성화 — relay URL 유출 방어.
-시크릿 값은 절대 stdout/stderr/log 출력 금지.
+
+- `build_attach_url` 호출 시 현재 유효 TOTP 코드(`at=<code>`)가 attachUrl에 **자동 splice**된다.
+  별도 작업 불필요 — `build_attach_url`을 호출하면 최신 코드가 항상 포함된다.
+- 응답에 `totp.expiresAt` (ISO timestamp) 포함 — 이 시각 이후 스캔 시 relay가 인증 실패.
+  만료 시 `build_attach_url`을 재호출하면 새 코드가 포함된 URL을 발급받는다.
+- 시크릿 값과 `at=` 코드는 절대 stdout/stderr/log 출력 금지.
+
+troubleshooting: QR 스캔했는데 relay가 인증 실패 → `totp.expiresAt` 확인 후 `build_attach_url` 재호출.
 
 ## 트러블슈팅
 

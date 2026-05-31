@@ -101,6 +101,10 @@ The page on the phone died (OOM, JS exception, or native bridge crash). Relaunch
 
 When `call_sdk` returns `ok: false, error: "window.__sdkCall is not available"`, a non-dogfood bundle is loaded. Redeploy through the dogfood channel with the `__DEBUG_BUILD__` flag enabled and try again. This error is the expected result in environment 2 (PWA). (Related: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
 
+**"QR scanned but auth rejected" — TOTP code expired**
+
+When `AIT_DEBUG_TOTP_SECRET` is set, `build_attach_url` automatically splices the current one-time TOTP code (`at=`) into the returned `attachUrl`. The code is valid for a 30-second step. Scanning after `totp.expiresAt` causes the relay to reject the request. Fix: call `build_attach_url` again to get a fresh URL and QR, then scan within 30 seconds.
+
 ---
 
 ## Install
