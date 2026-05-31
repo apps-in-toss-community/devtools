@@ -451,10 +451,7 @@ async function buildDevCallSdk(
       const env = await aitSource.get('AIT.getOperationalEnvironment');
       return {
         ok: true,
-        value: {
-          environment: env.environment,
-          sdkVersion: env.sdkVersion,
-        },
+        value: env.environment,
       };
     }
     default: {

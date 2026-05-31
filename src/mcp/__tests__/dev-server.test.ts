@@ -408,7 +408,7 @@ describe('call_sdk shim', () => {
     }
   });
 
-  it('getOperationalEnvironment returns ok: true with mock state values (via data)', async () => {
+  it('getOperationalEnvironment returns ok: true with scalar value (via data)', async () => {
     const source = new FakeAitSource({ environment: 'sandbox', appVersion: '2.5.0' });
     const { client, cleanup } = await setupDevClient(source);
     try {
@@ -420,7 +420,8 @@ describe('call_sdk shim', () => {
       const raw = parseContent(result) as Record<string, unknown>;
       const data = raw.data as Record<string, unknown>;
       expect(data.ok).toBe(true);
-      expect((data.value as Record<string, unknown>).environment).toBe('sandbox');
+      // value is a scalar string, not an object — aligns with relay/--target=local schema
+      expect(data.value).toBe('sandbox');
     } finally {
       await cleanup();
     }
