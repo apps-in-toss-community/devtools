@@ -1,6 +1,6 @@
 # 4 시나리오 수동 QA 체크리스트
 
-M1 acceptance 기준: 4 시나리오 각각에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 MCP 도구 호출이 동일 JSON envelope(schema 평행성)로 응답해야 한다.
+M1 acceptance 기준: 환경 1(로컬 브라우저), 환경 3(intoss relay dev), 환경 4(live relay)에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 MCP 도구 호출이 동일 JSON envelope(schema 평행성)로 응답해야 한다. 환경 2(AITC Sandbox PWA)는 MCP relay 대상이 아니므로 별도 acceptance 기준을 따른다 — cloudflared 터널 기동 + 실기기 Safari/WebKit에서 `env(safe-area-inset-*)` 실값 관측.
 
 이 문서는 각 환경 진입 절차, 검증 명령, 예상 응답, 실패 처리를 체크리스트로 정리한다. 각 시나리오의 상세 절차는 `docs/scenarios/env-{1,2,3,4}.md`를 함께 참조한다.
 
@@ -158,6 +158,8 @@ npx -y @ait-co/devtools devtools-mcp --target=local
 
 상세 절차: [`docs/scenarios/env-2.md`](../scenarios/env-2.md)
 
+환경 2는 MCP relay 대상이 아니다(환경 3·4가 relay). cloudflared 터널은 데스크톱 vite dev 서버를 폰의 PWA iframe이 fetch하기 위한 HTTP 미리보기 채널이다. 관측은 데스크톱 Safari 원격 검사 또는 화면 관찰로 한다.
+
 ### 진입 절차
 
 ```bash
@@ -170,69 +172,46 @@ AIT_TUNNEL=1 pnpm exec vite --config e2e/fixture/vite.config.ts
 # 폰: https://devtools.aitc.dev/launcher/ 에서 launcher PWA 설치 후 QR 스캔
 ```
 
-### 검증 명령
+### 관측 방법
 
-```
-1. build_attach_url(scheme_url, wait_for_attach=true)
-2. list_pages
-3. measure_safe_area
-4. call_sdk("getOperationalEnvironment", [])
-```
+#### `env(safe-area-inset-*)` CSS 실값 (주 관측 지표)
 
-### 예상 응답
+데스크톱 Safari 원격 검사 (Develop 메뉴 → 기기 선택 → 현재 탭 inspect):
 
-#### `list_pages`
-
-```json
-{
-  "pages": [{ "url": "https://<hash>.trycloudflare.com/", "lastSeenAt": "<iso8601>" }],
-  "tunnel": { "up": true, "wssUrl": "wss://<hash>.trycloudflare.com" },
-  "singleAttachModel": true,
-  "crashDetectedAt": null
-}
+```js
+const el = document.createElement('div');
+el.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+el.style.paddingTop = 'env(safe-area-inset-top)';
+document.body.appendChild(el);
+console.log('safe-area-inset-top:', getComputedStyle(el).paddingTop);
+document.body.removeChild(el);
 ```
 
-- `pages[0].url`: `*.trycloudflare.com`
-- `tunnel.up`: `true`
-- `lastSeenAt`: 현재 시각에서 30초 이내
+- **환경 2 기대값**: 노치 있는 기기에서 `"47px"` 등 양수 (기기 모델에 따라 다름)
+- **환경 1 기준값**: `"0px"` (desktop Chromium — safe-area inset 없음)
 
-#### `measure_safe_area`
+Safari 원격 검사를 사용할 수 없는 경우, launcher setup 화면의 padding이 노치 아래에서 시작하는지 눈으로 확인한다.
 
-```json
-{
-  "source": "relay",
-  "sdkInsetsSource": "window.__ait",
-  "userAgent": "<iOS/Android Safari UA>"
-}
-```
+#### SDK 호출 확인
 
-- `source`: `"relay"`
-- `userAgent`: iOS/Android 실기기 UA 포함
+환경 2는 토스 WebView 브리지가 없으므로 `getOperationalEnvironment()` 호출 시 mock 응답(`'toss' | 'sandbox'`) 반환 — 실 SDK 응답이 아님(예상된 결과).
 
-#### `call_sdk("getOperationalEnvironment", [])`
-
-non-dogfood PWA의 경우:
-```json
-{ "ok": false, "error": "window.__sdkCall is not available" }
-```
-
-- `ok: false`는 예상 결과 (bridge 부재) — schema 위반 아님
+실기기에서 SDK 동작 검증이 필요하면 환경 3으로 진행한다.
 
 ### 체크리스트
 
-- [ ] `build_attach_url` — QR/deep-link 생성 성공
-- [ ] `list_pages` — `tunnel.up: true`, `lastSeenAt` 30초 이내
-- [ ] `measure_safe_area` — `source: "relay"`, 실기기 `userAgent`
-- [ ] `call_sdk` — `ok` 필드 존재 (false여도 schema 통과)
-- [ ] 3종 응답 모두 JSON envelope 완전
+- [ ] `AIT_TUNNEL=1 pnpm exec vite ...` 기동 시 터미널에 `*.trycloudflare.com` URL과 QR 출력됨
+- [ ] launcher에서 QR 스캔 또는 URL 붙여넣기 후 dev 앱이 iframe 전체 화면으로 로드됨
+- [ ] 환경 2에서 `env(safe-area-inset-top)` 또는 `env(safe-area-inset-bottom)` 값이 양수로 관측됨 (또는 화면 관찰로 대체)
+- [ ] 환경 1(데스크톱 브라우저)에서 동일 값이 `0px`임을 확인
 
 ### 실패 처리
 
 | 증상 | 원인 | 처리 |
 |---|---|---|
-| `list_pages` 빈 배열 | 폰이 relay에 미연결 | QR 재스캔, `lastSeenAt` 확인 |
-| `tunnel.up: false` | cloudflared 터널 미실행 | `AIT_TUNNEL=1 pnpm exec vite ...` 재실행 |
-| `measure_safe_area` `source: "mock"` | 폰이 아닌 로컬 브라우저에 연결됨 | 폰 QR 스캔 확인 |
+| launcher iframe 빈 화면 / CORS 오류 | cloudflared 터널 미실행 또는 URL 오입력 | `AIT_TUNNEL=1 pnpm exec vite ...` 재실행 후 URL 재확인 |
+| `env(safe-area-inset-top)` 값이 `0px` | 노치 없는 기기이거나 standalone 모드 아님 | 홈 화면 아이콘으로 재진입 (standalone 모드 확인) |
+| Safari 원격 검사에 기기 미노출 | Mac Safari "웹 개발자용 기능" 미활성화 또는 USB 미연결 | Safari 설정 → 고급 → "웹 개발자용 기능" 활성화 후 USB 재연결 |
 
 ---
 
@@ -422,7 +401,7 @@ ait deploy --scheme-only
 |---|---|---|---|---|
 | 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true`, `value` scalar string (mock state 폴링, dogfood 불필요) | — |
 | 1b (로컬 브라우저, `--target=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true`, `value` scalar | — |
-| 2 (AITC Sandbox PWA) | `pages[]`, `tunnel.up: true` | `source: "relay"` (환경 2는 토스 WebView 미사용 — relay 토큰 확정 미정) | `ok` 필드 존재 | — |
+| 2 (AITC Sandbox PWA) | cloudflared 터널 URL + QR 출력 | `env(safe-area-inset-*)` 실값이 양수 (실기기 WebKit 검증) | `getOperationalEnvironment()` mock 응답 반환 (`'toss' \| 'sandbox'`) | — |
 | 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay-dev"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `value` scalar string | — |
 | 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay-live"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `value` scalar string (`confirm: true`로 호출) | — |
 
