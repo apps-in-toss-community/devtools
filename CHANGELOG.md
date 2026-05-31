@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.45
+
+### Patch Changes
+
+- dc726cf: dev-mode MCP server에 `list_pages`, `get_diagnostics`, `measure_safe_area`, `call_sdk` 도구를 추가하고, CDP 의존 도구들에 tier-filter error를 반환해 "Unknown tool" 실패를 제거한다 (#305).
+- cd60044: MCP tool descriptions, error messages, and docs polished for faster agent onboarding (M1.5 patch bundle #311).
+
+  Key changes: `get_diagnostics` response gains `nextRecommendedAction` field with deterministic branch rules (tunnel-down → restart, no-pages relay → build_attach_url, crash → re-attach); error messages for `pageMissingError`, `sdkAbsentError`, and `tierRejectionError` now include exact recovery commands; `evaluate`/`call_sdk` descriptions add explicit secret-safety warnings; `take_screenshot` clarifies it is the only image-returning tool; `build_attach_url` default polling timeout updated to 30 s with retry guidance; `list_pages` description adds `tools/list_changed` notification hint; `get_diagnostics` description notes dev-mode limitation; `docs/scenarios/env-{1,3,4}.md` and `docs/qa/scenarios.md` now consistently show `MCP_ENV=relay` for on-device sessions and document the `--mode=dev` vs `--mode=local` selection criteria; README MCP section tables and config examples updated to match.
+
+- 411e67e: fix(mcp): expose `build_attach_url` on first `tools/list` in debug-relay mode
+
+  debug-mode MCP server now passes a caller-stated `defaultEnv: 'relay'` to
+  `getEnvironment()` (precedence step 3), so a fresh session with no `MCP_ENV`
+  and no attached target advertises Tier B `build_attach_url` from the very
+  first `tools/list` — resolving the M2-5 dead-lock where the agent saw the
+  tool hidden, concluded "this MCP doesn't support env 3/4", and gave up.
+
+  The env decision still respects `MCP_ENV` (precedence 1) and the CDP URL
+  pattern (precedence 2). Local-target debug mode keeps `defaultEnv: 'mock'`
+  because no relay tunnel exists there. RFC #277 Tier A/B/C semantics are
+  unchanged.
+
+- 6823c6c: feat(mcp): split relay into relay-dev/relay-live with LIVE side-effect guard (#307)
+
+  `McpEnvironment` 타입을 `'mock' | 'relay-dev' | 'relay-live'`로 확장하고,
+  `relay-live` 환경에서 `call_sdk`/`evaluate` 호출 시 `confirm: true` 미명시 시 명시적 거부한다.
+
+  Backward compat: `MCP_ENV=relay`는 `relay-dev`로 폴백, `filterToolsByEnvironment`/`isToolAvailableIn`은 두 relay 변형을 모두 허용, `get_diagnostics` 응답에 legacy `env` 필드 유지.
+
+- ca6572c: feat(mcp): --force flag for server-lock takeover + clear conflict guidance
+
+  두 번째 `devtools-mcp` spawn 시 stderr에 기존 세션의 PID·wssUrl·startedAt과
+  회복 명령(`kill <pid>` 또는 `devtools-mcp --force`)을 출력합니다.
+
+  `--force` (alias `--takeover`) 플래그를 추가하면 기존 세션에 SIGTERM → 2s 대기 →
+  SIGKILL을 보내고 lock을 takeover합니다. stale lock(dead PID) 자동 회수는 기존과
+  동일하게 유지됩니다. `ServerLockConflictError`에 `existingStartedAt` 필드를 추가했습니다.
+
 ## 0.1.44
 
 ### Patch Changes
