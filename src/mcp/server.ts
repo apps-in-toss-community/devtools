@@ -60,7 +60,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { HttpAitSource } from './ait-http-source.js';
 import type { AitSource } from './ait-source.js';
-import { mcpError } from './errors.js';
+import { wrapEnvelope } from './envelope.js';
+import { mcpError, tierRejectionError } from './errors.js';
 import {
   getMockState,
   getOperationalEnvironment,
@@ -191,6 +192,41 @@ const DEV_TOOL_DEFINITIONS = [
     availableIn: 'both' as ToolAvailability,
   },
   /* ------------------------------------------------------------------ */
+  /* Tier B tool — tier-filter stub (issue #323)                         */
+  /*                                                                      */
+  /* build_attach_url is relay-only (Tier B per RFC #277). Listing it   */
+  /* here in dev-mode ensures agents don't hit "Unknown tool" and get a  */
+  /* clear hand-off hint toward --mode=debug (station 2 → 3 seam).      */
+  /* ------------------------------------------------------------------ */
+  {
+    name: 'build_attach_url',
+    description:
+      'Turns an `ait deploy --scheme-only` URL into a self-attaching deep link for a real device. ' +
+      'NOT available in dev-mode — requires a live cloudflared relay (Tier B, relay-only). ' +
+      'To use this tool: restart the MCP server with `--mode=debug` (or omit --mode) and set ' +
+      'MCP_ENV=relay, then call build_attach_url to generate the QR for phone scanning. ' +
+      'See: https://docs.aitc.dev/guides/debug-relay',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scheme_url: {
+          type: 'string',
+          description: 'The intoss-private:// URL from `ait deploy --scheme-only`.',
+        },
+        wait_for_attach: {
+          type: 'boolean',
+          description: 'If true, block until a page attaches.',
+        },
+        open_in_browser: {
+          type: 'boolean',
+          description: 'If true (default), open the QR PNG in the OS browser.',
+        },
+      },
+      required: ['scheme_url'],
+    },
+    availableIn: 'relay' as ToolAvailability,
+  },
+  /* ------------------------------------------------------------------ */
   /* CDP-only tools — tier-filter stubs so agents see a clear error      */
   /* instead of "Unknown tool" (issue #305)                              */
   /* ------------------------------------------------------------------ */
@@ -284,6 +320,13 @@ const CDP_ONLY_TOOL_NAMES = new Set<string>([
   'list_network_requests',
   'list_exceptions',
 ]);
+
+/**
+ * Tier B tools — relay-only per RFC #277.
+ * Listed in dev-mode tool surface (issue #323) so agents get a hand-off hint
+ * toward `--mode=debug` instead of "Unknown tool".
+ */
+const TIER_B_TOOL_NAMES = new Set<string>(['build_attach_url']);
 
 export interface CreateDevServerDeps {
   /** AIT source for the dev tools. Defaults to an HTTP source over the dev server. */
@@ -454,6 +497,19 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
       return mcpError(`${name}: ${CDP_UNAVAILABLE_IN_DEV_MODE}`);
     }
 
+    // Tier B tools (relay-only) — return a tier-filter error with a hand-off
+    // hint toward --mode=debug so the station 2 → 3 seam is explicit.
+    // (issue #323, Option B: list Tier B in dev tools/list + reject on call)
+    if (TIER_B_TOOL_NAMES.has(name)) {
+      return tierRejectionError(
+        name,
+        'relay',
+        'mock',
+        'dev-mode — Vite HTTP endpoint, no CDP/relay connection. ' +
+          '`--mode=debug` (または `devtools-mcp` without --mode) + MCP_ENV=relay로 재시작하세요.',
+      );
+    }
+
     try {
       // `devtools_get_mock_state` is an alias of `AIT.getMockState`.
       const effective = name === 'devtools_get_mock_state' ? 'AIT.getMockState' : name;
@@ -473,17 +529,20 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
       }
 
       // Unified-surface tools (issue #305 shims).
+      // Responses are wrapped in ToolEnvelope (issue #322) so agents use the
+      // same {ok, data, meta} parser regardless of dev vs debug mode.
       switch (name) {
         case 'list_pages':
-          return jsonResult(buildDevListPagesResult(devtoolsUrl));
+          return envelopeResult('list_pages', buildDevListPagesResult(devtoolsUrl));
 
         case 'get_diagnostics':
-          return jsonResult(
+          return envelopeResult(
+            'get_diagnostics',
             await buildDevDiagnostics(devtoolsUrl, stateEndpoint, (url) => fetch(url)),
           );
 
         case 'measure_safe_area':
-          return jsonResult(await buildDevMeasureSafeArea(aitSource));
+          return envelopeResult('measure_safe_area', await buildDevMeasureSafeArea(aitSource));
 
         case 'call_sdk': {
           const sdkName = request.params.arguments?.name;
@@ -492,7 +551,7 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
               'call_sdk: name 인자가 비어 있습니다. 호출할 메서드 이름을 전달하세요.',
             );
           }
-          return jsonResult(await buildDevCallSdk(sdkName, aitSource));
+          return envelopeResult('call_sdk', await buildDevCallSdk(sdkName, aitSource));
         }
 
         default:
@@ -513,6 +572,20 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
+}
+
+/**
+ * Wraps `value` in a `ToolEnvelope` (when compat mode is off) and returns it
+ * as a text content block. In dev-mode `env` is always `'mock'` and
+ * `attached` is always `true` (the Vite dev server is the single implicit
+ * "attached" page).
+ *
+ * When `AIT_MCP_COMPAT=chrome-devtools` the envelope is skipped and the raw
+ * value is returned — identical to `jsonResult` (0.1.x back-compat).
+ */
+function envelopeResult(tool: string, value: unknown) {
+  const wrapped = wrapEnvelope(value, { tool, env: 'mock', attached: true });
+  return { content: [{ type: 'text' as const, text: JSON.stringify(wrapped, null, 2) }] };
 }
 
 /** Builds the dev-mode server and connects it over stdio. */
