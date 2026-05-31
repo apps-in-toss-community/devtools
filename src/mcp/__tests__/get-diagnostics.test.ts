@@ -496,4 +496,35 @@ describe('computeNextRecommendedAction', () => {
     const action = computeNextRecommendedAction(tunnelInfoUp, null, 'mock');
     expect(action).toBeNull();
   });
+
+  // ---- local-target (mock env) tunnel-down cases (#325) --------------------
+
+  it('Rule 1b: mock env + tunnel down + no pages → wait_for_page (NOT restart)', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(tunnelInfoDown, emptyPages, 'mock');
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('wait_for_page');
+    // Must NOT recommend restart — tunnel-less is the normal state for local target.
+    expect(action!.tool).not.toBe('restart');
+  });
+
+  it('Rule 1b: mock env + tunnel down + null pages → null (no guidance yet)', () => {
+    // No pages result available: cannot determine whether a page is attached.
+    const action = computeNextRecommendedAction(tunnelInfoDown, null, 'mock');
+    expect(action).toBeNull();
+  });
+
+  it('Rule 1b: mock env + tunnel down + page attached → null (healthy local session)', () => {
+    const attachedPages = makePages([
+      { id: 'p1', title: 'Dev App', url: 'http://localhost:5173/' },
+    ]);
+    const action = computeNextRecommendedAction(tunnelInfoDown, attachedPages, 'mock');
+    expect(action).toBeNull();
+  });
+
+  it('Rule 1 still triggers for relay-live with tunnel down', () => {
+    const action = computeNextRecommendedAction(tunnelInfoDown, null, 'relay-live');
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('restart');
+  });
 });
