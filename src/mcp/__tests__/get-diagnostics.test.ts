@@ -9,6 +9,7 @@
  *   - redactErrorMessage: secrets never appear in output
  *   - InMemoryDiagnosticsCollector: recordError / getRecentErrors / attach-detach
  *   - getDiagnostics helper: lock holder, pages, env fields
+ *   - Envelope (#306): MCP tool results are wrapped in ToolEnvelope by default
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -119,7 +120,14 @@ async function makeClient(opts: {
 
 function parseResult(result: Awaited<ReturnType<Client['callTool']>>): unknown {
   const content = result.content as Array<{ type: string; text?: string }>;
-  return JSON.parse(content[0]!.text!);
+  const raw = JSON.parse(content[0]!.text!);
+  // When the envelope is active (AIT_MCP_COMPAT !== 'chrome-devtools') the
+  // result is wrapped: { ok: true, data: <payload>, meta: { … } }.
+  // Return data.data so tests assert on the actual diagnostics payload.
+  if (typeof raw === 'object' && raw !== null && 'ok' in raw && 'data' in raw && 'meta' in raw) {
+    return (raw as Record<string, unknown>).data;
+  }
+  return raw;
 }
 
 // ---- redactErrorMessage -----------------------------------------------------
