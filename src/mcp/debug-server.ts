@@ -51,6 +51,7 @@ import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import { AutoDevtoolsOpener } from './devtools-opener.js';
+import { wrapEnvelope } from './envelope.js';
 import {
   getEnvironment,
   getEnvironmentReason,
@@ -362,7 +363,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           readLock: readServerLock,
           recentErrorsLimit,
         });
-        return jsonResult(result);
+        const attached = connection.listTargets().length > 0;
+        return envelopeResult(result, name, resolveEnvironment(), attached);
       } catch (err) {
         return errorResult(err, name);
       }
@@ -668,7 +670,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             // Ignore refresh errors — still return cached state.
           }
         }
-        return jsonResult(listPages(connection, getTunnelStatus()));
+        const pagesData = listPages(connection, getTunnelStatus());
+        const attached = connection.listTargets().length > 0;
+        return envelopeResult(pagesData, name, resolveEnvironment(), attached);
       }
       // 4상태 분류: page 미attach vs crash vs relay disconnect
       return classifyEnableDomainError(err, name);
@@ -685,7 +689,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         }
         case 'list_network_requests':
           return jsonResult(listNetworkRequests(connection));
-        case 'list_pages':
+        case 'list_pages': {
           // Refresh from relay so evict→reattach transitions are not served stale.
           if (connection instanceof ChiiCdpConnection) {
             try {
@@ -694,7 +698,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               // Ignore refresh errors — still return cached state.
             }
           }
-          return jsonResult(listPages(connection, getTunnelStatus()));
+          const listPagesData = listPages(connection, getTunnelStatus());
+          const listPagesAttached = connection.listTargets().length > 0;
+          return envelopeResult(listPagesData, name, resolveEnvironment(), listPagesAttached);
+        }
         case 'get_dom_document':
           return jsonResult(await getDomDocument(connection));
         case 'take_snapshot':
@@ -705,11 +712,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             content: [{ type: 'image' as const, data: shot.data, mimeType: shot.mimeType }],
           };
         }
-        case 'measure_safe_area':
+        case 'measure_safe_area': {
           // Pass env to attach `source: 'mock' | 'relay'` to the result (Tier C
           // parity per RFC #277 — the same Runtime.evaluate probe runs in both
           // envs; only the provenance label differs).
-          return jsonResult(await measureSafeArea(connection, resolveEnvironment()));
+          const safeAreaData = await measureSafeArea(connection, resolveEnvironment());
+          const safeAreaAttached = connection.listTargets().length > 0;
+          return envelopeResult(safeAreaData, name, resolveEnvironment(), safeAreaAttached);
+        }
         case 'evaluate': {
           const expression = request.params.arguments?.expression;
           if (typeof expression !== 'string' || expression === '') {
@@ -747,7 +757,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           ) {
             return sdkAbsentError('call_sdk');
           }
-          return jsonResult(sdkResult);
+          const callSdkAttached = connection.listTargets().length > 0;
+          return envelopeResult(sdkResult, name, resolveEnvironment(), callSdkAttached);
         }
         default:
           return unknownTool(name);
@@ -762,6 +773,16 @@ export function createDebugServer(deps: DebugServerDeps): Server {
 
 function jsonResult(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
+}
+
+/**
+ * Wraps `value` in a `ToolEnvelope` (when compat mode is off) and returns it
+ * as a text content block. When `AIT_MCP_COMPAT=chrome-devtools` is set the
+ * envelope is skipped and the raw value is returned — identical to `jsonResult`.
+ */
+function envelopeResult(value: unknown, tool: string, env: McpEnvironment, attached: boolean) {
+  const wrapped = wrapEnvelope(value, { tool, env, attached });
+  return { content: [{ type: 'text' as const, text: JSON.stringify(wrapped, null, 2) }] };
 }
 
 function unknownTool(name: string) {
