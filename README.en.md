@@ -70,12 +70,12 @@ No HMR (Toss WebView cold-load only). Details: [`docs/scenarios/env-3.md`](./doc
 Attach a relay to a live OPENED app to observe runtime behavior.
 
 ```bash
-devtools-mcp              # start MCP server
+MCP_ENV=relay-live devtools-mcp   # start MCP server (LIVE guard enabled)
 # call build_attach_url → scan QR → live app loads + relay attaches
-# call_sdk / evaluate: watch for side effects (real users may be affected)
+# call_sdk / evaluate: confirm: true required (LIVE guard — real users affected)
 ```
 
-Details: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
+`MCP_ENV=relay-live` is required — without it the LIVE side-effect guard is inactive and SDK calls can affect real users. Details: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
 
 ---
 
@@ -952,11 +952,12 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 
 | Mode + target | Invocation | Env var | Target | Tools |
 |---|---|---|---|---|
-| `--mode=debug --target=relay` (default) | `MCP_ENV=relay devtools-mcp` | `MCP_ENV=relay` recommended | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 2/3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
+| `--mode=debug --target=relay` (default) | `MCP_ENV=relay-dev devtools-mcp` | `MCP_ENV=relay-dev` recommended (env 3, dogfood) | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
+| `--mode=debug --target=relay` LIVE | `MCP_ENV=relay-live devtools-mcp` | `MCP_ENV=relay-live` **required** (env 4, LIVE guard enabled) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
 | `--mode=debug --target=local` | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
 | `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (auto) | Mock state from a running Vite dev server (AIT.* only, no CDP) | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. For on-device sessions (env 3/4), setting `MCP_ENV=relay` explicitly ensures the relay tool surface is visible even before the tunnel URL is auto-detected.
+`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. For on-device sessions (env 3), setting `MCP_ENV=relay-dev` explicitly ensures the relay tool surface is visible before the tunnel URL is auto-detected. For env 4 (LIVE), `MCP_ENV=relay-live` is required — only this value activates the LIVE side-effect guard that protects real users.
 
 ### Debug mode (CDP via Chii)
 
@@ -966,6 +967,8 @@ Read-only tools only. Tools are registered in two tiers based on attach state �
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
+Environment 3 (dogfood relay):
+
 ```json
 {
   "mcpServers": {
@@ -973,14 +976,30 @@ Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assi
       "command": "pnpm",
       "args": ["exec", "devtools-mcp"],
       "env": {
-        "MCP_ENV": "relay"
+        "MCP_ENV": "relay-dev"
       }
     }
   }
 }
 ```
 
-Setting `MCP_ENV=relay` explicitly ensures the relay tool surface is visible before the tunnel URL is auto-detected.
+Environment 4 (LIVE relay, LIVE guard enabled):
+
+```json
+{
+  "mcpServers": {
+    "ait-debug": {
+      "command": "pnpm",
+      "args": ["exec", "devtools-mcp"],
+      "env": {
+        "MCP_ENV": "relay-live"
+      }
+    }
+  }
+}
+```
+
+Setting `MCP_ENV=relay-dev` explicitly ensures the relay tool surface is visible before the tunnel URL is auto-detected. `MCP_ENV=relay-live` activates the LIVE side-effect guard — any `call_sdk`/`evaluate` call without `confirm: true` is rejected to protect real users. `MCP_ENV=relay` is a backward-compat alias for `relay-dev`, so **always use `relay-live` explicitly for env 4**.
 
 | Tool | CDP / AIT backing | Description |
 |---|---|---|
@@ -993,7 +1012,7 @@ Setting `MCP_ENV=relay` explicitly ensures the relay tool surface is visible bef
 | `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |
 | `measure_safe_area` | `Runtime.evaluate` | Runs a safe-area probe on the attached page → returns normalized safe-area insets, viewport geometry, DPR, and User-Agent. Read-only. Use in a relay session to get ground-truth values for upgrading a viewport preset from extrapolated/placeholder to measured. Requires attach (`list_pages` first) |
 | `evaluate` | `Runtime.evaluate` | Evaluates an arbitrary JS expression on the attached page (returnByValue) and returns the result. **Not read-only** — the expression can have side effects (DOM mutations, SDK calls, state changes). Requires attach |
-| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dogfood SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 2/3, mock SDK on env 1. Requires attach. Returns `{ok,value}` / `{ok,error}` |
+| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dogfood SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 3/4, mock SDK on env 1. Env 2 (PWA) does not inject the SDK — not available there. On env 4, `confirm: true` is required (LIVE guard). Requires attach. Returns `{ok,value}` / `{ok,error}` |
 | `AIT.getSdkCallHistory` | AIT domain | SDK call trace (method, args, result/error, timestamp) |
 | `AIT.getMockState` | AIT domain | Mock state snapshot (`window.__ait`) |
 | `AIT.getOperationalEnvironment` | AIT domain | `getOperationalEnvironment()` + SDK version |

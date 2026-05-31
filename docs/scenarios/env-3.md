@@ -28,15 +28,15 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
    - `lastSeenAt`이 30초 이내
 
 2. **`measure_safe_area`**
-   - `source: "relay"`
+   - `source: "relay-dev"`
    - `sdkInsetsSource: "window.__sdk"`
    - `sdkInsets.top`이 토스 앱 nav bar 높이 (일반적으로 44–54 CSS px)
    - `userAgent`에 Toss WebView / Mobile Safari 포함
 
 3. **`call_sdk("getOperationalEnvironment", [])`**
    - `ok: true`
-   - `value.environment: "dev"` (dogfood)
-   - `value.sdkVersion` 포함
+   - `value: "toss"` (dogfood — 실기기 토큰. 실기기 검증 후 확정 필요: `'toss' | 'sandbox'` 중 하나)
+   - 참고: `AIT.getOperationalEnvironment`(mock-only)는 `{environment, sdkVersion}` 객체를 반환하지만, `call_sdk("getOperationalEnvironment", [])`는 scalar `value`를 포함한 `{ok, value}` envelope를 반환한다
 
 ## attach 절차
 

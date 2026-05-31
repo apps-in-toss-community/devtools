@@ -115,7 +115,7 @@ npx -y @ait-co/devtools devtools-mcp --target=local
 
 **`--mode=dev`** (mock state 폴링, dogfood 빌드 불필요):
 ```json
-{ "ok": true, "value": { "environment": "dev" } }
+{ "ok": true, "value": "sandbox" }
 ```
 
 **`--mode=local`, non-dogfood fixture** (bridge 부재 — 예상된 결과):
@@ -125,12 +125,13 @@ npx -y @ait-co/devtools devtools-mcp --target=local
 
 **`--mode=local`, dogfood 빌드 fixture** (`__DEBUG_BUILD__` 정의, bridge 주입):
 ```json
-{ "ok": true, "value": { "environment": "sandbox" } }
+{ "ok": true, "value": "sandbox" }
 ```
 
+- `call_sdk("getOperationalEnvironment", [])` 응답의 `value`는 scalar string (`'toss' | 'sandbox'`) — `{environment, sdkVersion}` 객체가 아니다. 객체 형태는 `AIT.getOperationalEnvironment`(mock-only 도구)의 응답이다.
 - `--mode=dev`: `ok: true` — dev-mode는 mock state로 답하므로 dogfood 빌드 불필요.
 - `--mode=local`, non-dogfood: `ok: false`는 예상된 결과 (bridge 부재) — schema 위반 아님. 환경 2 non-dogfood 정책과 동일.
-- `--mode=local`, dogfood: `ok: true`, `value.environment: "sandbox"` (또는 패널 설정값).
+- `--mode=local`, dogfood: `ok: true`, `value: "sandbox"` (또는 패널 설정값).
 
 ### 체크리스트
 
@@ -285,14 +286,14 @@ ait deploy --scheme-only
 
 ```json
 {
-  "source": "relay",
+  "source": "relay-dev",
   "sdkInsetsSource": "window.__sdk",
   "sdkInsets": { "top": 44, "bottom": 34, "left": 0, "right": 0 },
   "userAgent": "<Toss WebView UA>"
 }
 ```
 
-- `source`: `"relay"`
+- `source`: `"relay-dev"`
 - `sdkInsetsSource`: `"window.__sdk"`
 - `sdkInsets.top`: 44–54 CSS px (토스 앱 nav bar 높이)
 - `userAgent`: `Toss WebView` / `Mobile Safari` 포함
@@ -300,18 +301,18 @@ ait deploy --scheme-only
 #### `call_sdk("getOperationalEnvironment", [])`
 
 ```json
-{ "ok": true, "value": { "environment": "dev", "sdkVersion": "<version>" } }
+{ "ok": true, "value": "toss" }
 ```
 
 - `ok`: `true`
-- `value.environment`: `"dev"`
-- `value.sdkVersion` 포함
+- `value`: scalar string (`'toss' | 'sandbox'` — 실기기 검증 후 확정 필요)
+- 참고: `value`는 scalar이며 `{environment, sdkVersion}` 객체가 아니다
 
 ### 체크리스트
 
 - [ ] `list_pages` — `intoss-private://` scheme, `tunnel.up: true`, `lastSeenAt` 30초 이내
-- [ ] `measure_safe_area` — `source: "relay"`, `sdkInsetsSource: "window.__sdk"`, `sdkInsets.top` 44–54
-- [ ] `call_sdk` — `ok: true`, `value.environment: "dev"`
+- [ ] `measure_safe_area` — `source: "relay-dev"`, `sdkInsetsSource: "window.__sdk"`, `sdkInsets.top` 44–54
+- [ ] `call_sdk` — `ok: true`, `value` scalar string 존재
 - [ ] 3종 응답 모두 JSON envelope 완전
 - [ ] `measure_safe_area` diff vs 환경 1: `source`, `sdkInsetsSource`, `userAgent`, `sdkInsets.top` 모두 의도된 diff (whitelist 등록됨)
 
@@ -333,8 +334,10 @@ ait deploy --scheme-only
 ### 진입 절차
 
 ```bash
-# 1. devtools MCP 실행 (debug 모드, relay env 명시)
-MCP_ENV=relay npx -y @ait-co/devtools devtools-mcp
+# 1. devtools MCP 실행 (debug 모드, LIVE env 명시 — relay-live 필수)
+MCP_ENV=relay-live npx -y @ait-co/devtools devtools-mcp
+# MCP_ENV=relay-live 만 LIVE side-effect guard를 활성화한다
+# MCP_ENV=relay 또는 미설정 시 relay-dev fallback → LIVE guard 비활성화(실유저 영향 위험)
 
 # 2. 검수 통과 + OPENED 상태의 앱 필요 (miniAppId: 31146)
 # aitcc app status 31146 으로 OPENED 확인
@@ -352,8 +355,10 @@ ait deploy --scheme-only
 1. build_attach_url(scheme_url, wait_for_attach=true)
 2. list_pages
 3. measure_safe_area
-4. call_sdk("getOperationalEnvironment", [])
+4. call_sdk("getOperationalEnvironment", [], confirm: true)
 ```
+
+`call_sdk`에 `confirm: true` 필수 — LIVE guard가 없으면 side-effect 호출을 거부한다.
 
 ### 예상 응답
 
@@ -372,37 +377,40 @@ ait deploy --scheme-only
 
 ```json
 {
-  "source": "relay",
+  "source": "relay-live",
   "sdkInsetsSource": "window.__sdk",
   "sdkInsets": { "top": 44, "bottom": 34, "left": 0, "right": 0 },
   "userAgent": "<Toss WebView UA>"
 }
 ```
 
-#### `call_sdk("getOperationalEnvironment", [])`
+#### `call_sdk("getOperationalEnvironment", [], confirm: true)`
 
 ```json
-{ "ok": true, "value": { "environment": "production" } }
+{ "ok": true, "value": "toss" }
 ```
 
 - `ok`: `true`
-- `value.environment`: `"production"`
+- `value`: scalar string (`'toss' | 'sandbox'` — 실기기 검증 후 확정 필요)
+- 참고: `value`는 scalar이며 `{environment, sdkVersion}` 객체가 아니다
 
 ### 체크리스트
 
 - [ ] `list_pages` — live `_deploymentId` 포함, `tunnel.up: true`, `crashDetectedAt: null`
-- [ ] `measure_safe_area` — `source: "relay"`, `sdkInsetsSource: "window.__sdk"`
-- [ ] `call_sdk` — `ok: true`, `value.environment: "production"`
+- [ ] `measure_safe_area` — `source: "relay-live"`, `sdkInsetsSource: "window.__sdk"`
+- [ ] `call_sdk` — `ok: true`, `value` scalar string 존재 (`confirm: true`로 호출)
 - [ ] 3종 응답 모두 JSON envelope 완전
-- [ ] read-only 모드 준수 — side-effect 있는 SDK 호출(navigate, IAP 등) 금지
+- [ ] read-only 모드 준수 — side-effect 있는 SDK 호출(navigate, IAP 등)은 `confirm: true` 후 호출
 
 ### 실패 처리
 
 | 증상 | 원인 | 처리 |
 |---|---|---|
-| `call_sdk` `value.environment: "dev"` | dogfood(dev) bundle로 진입 | live bundle `_deploymentId` 확인 |
+| `call_sdk` LIVE guard 거부 | `confirm: true` 누락 | `call_sdk("getOperationalEnvironment", [], confirm: true)`로 재호출 |
+| `call_sdk` `value: "sandbox"` 또는 dev 토큰 | dogfood(dev) bundle로 진입 | live bundle `_deploymentId` 확인 |
 | `list_pages` `crashDetectedAt` non-null | 앱 크래시 | crash report 분리 후 환경 3에서 디버깅 |
 | 앱이 OPENED 상태 아님 | 검수 미완료 | `aitcc app status 31146` 확인 |
+| `measure_safe_area` `source: "relay-dev"` | `MCP_ENV=relay-live` 미설정 | `MCP_ENV=relay-live` 확인 후 서버 재시작 |
 
 ---
 
@@ -412,11 +420,11 @@ ait deploy --scheme-only
 
 | 시나리오 | `list_pages` schema | `measure_safe_area` schema | `call_sdk` schema | 통과 일자 |
 |---|---|---|---|---|
-| 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true` (mock state 폴링, dogfood 불필요) | — |
-| 1b (로컬 브라우저, `--target=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true` | — |
-| 2 (AITC Sandbox PWA) | `pages[]`, `tunnel.up: true` | `source: "relay"` | `ok` 필드 존재 | — |
-| 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "dev"` | — |
-| 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `env: "production"` | — |
+| 1a (로컬 브라우저, `--mode=dev`) | `pages[]`, `tunnel.up: false`, `devMode: true` | `source: "mock-vite"` | `ok: true`, `value` scalar string (mock state 폴링, dogfood 불필요) | — |
+| 1b (로컬 브라우저, `--target=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true`, `value` scalar | — |
+| 2 (AITC Sandbox PWA) | `pages[]`, `tunnel.up: true` | `source: "relay"` (환경 2는 토스 WebView 미사용 — relay 토큰 확정 미정) | `ok` 필드 존재 | — |
+| 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay-dev"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `value` scalar string | — |
+| 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay-live"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `value` scalar string (`confirm: true`로 호출) | — |
 
 통과 후 이 표의 "통과 일자"를 채우고, [#291](https://github.com/apps-in-toss-community/devtools/issues/291)의 체크리스트 항목을 닫는다.
 

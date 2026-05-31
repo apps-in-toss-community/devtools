@@ -214,7 +214,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Read-only — does not modify page state. ' +
       'Tier C per RFC #277: the same Runtime.evaluate probe runs in both `mock` (devtools panel ' +
       'page with window.__ait state) and `relay` (real-device WebView with window.__sdk). ' +
-      'The result includes a `source: "mock" | "relay"` field so consumers can identify ' +
+      'The result includes a `source: "mock" | "relay-dev" | "relay-live"` field so consumers can identify ' +
       'provenance without inspecting payload values. ' +
       'Use in a relay session (phone attached) to get ground-truth values for upgrading a ' +
       'viewport preset from extrapolated/placeholder to measured. ' +
@@ -283,8 +283,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Calls a dogfood SDK method via the window.__sdkCall bridge ' +
       '(exported by @apps-in-toss/web-framework only in __DEBUG_BUILD__ bundles). ' +
       'NOT read-only — SDK calls have side effects (navigation, payments, permissions, etc.). ' +
-      'On env 2/3 (real device relay) this hits the real SDK; on env 1 (local mock) it hits ' +
-      'the mock SDK. Requires the relay to be attached — call list_pages first. ' +
+      'On env 3/4 (real device relay) this hits the real SDK; on env 1 (local mock) it hits ' +
+      'the mock SDK. (env 2 PWA does not inject the SDK — call_sdk is not available there.) ' +
+      'Requires the relay to be attached — call list_pages first. ' +
       'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
       'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
       'the result also includes `recentException` for crash triage. ' +
