@@ -5,16 +5,16 @@
 
 ## 전제조건
 
-- `devtools-mcp` 실행 (debug 모드)
-  - **`MCP_ENV=relay-dev` 권장** (명시적으로 설정 — 환경 변수 미설정 시 CDP URL 패턴 자동 감지 + `defaultEnv=relay-dev`로 fallback되지만 명시가 안전함)
-  - `MCP_ENV=relay`도 동작 (backward-compat alias → `relay-dev`로 해석)
+- `devtools-mcp` 실행 후 `start_debug({mode: 'relay-dev'})` 호출 (debug 모드)
+  - MCP 기동: `npx @ait-co/devtools devtools-mcp`
+  - 그런 다음 Claude Code에서: `start_debug({mode: 'relay-dev'})`
+  - `MCP_ENV=relay-dev` / `MCP_ENV=relay` 는 deprecated back-compat 별칭 — 새 세션에서는 `start_debug` 사용
 - dogfood bundle deploy: `ait build && ait deploy --scheme-only`
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - 진입 경로: QR 스캔 (단일 정식 경로 — `test-push` 폐기됨)
 
-> 참고 — `devtools-mcp`의 debug-relay 모드는 기본 환경을 `relay`로 가정한다 (issue #309).
-> 즉 빈 세션의 첫 `tools/list`부터 `build_attach_url`이 노출돼 `MCP_ENV=relay`를 강제할
-> 필요가 없다. `MCP_ENV`를 명시하면 그 값이 우선한다.
+> 참고 — `devtools-mcp` 기동 직후 `start_debug({mode: 'relay-dev'})`를 호출하면 relay connection이 준비된다.
+> `--target=local`로 기동했어도 `start_debug`로 relay로 hot-switch 가능하다(#356 DualConnectionRouter 대칭화 — 재시작 불필요).
 
 ## MCP 도구 acceptance 체크리스트
 
@@ -76,7 +76,7 @@ npx @ait-co/devtools devtools-mcp --force
 {
   "kind": "relay-dev",
   "env": "relay",
-  "reason": "env-var-relay-dev",
+  "reason": "derived:kind=relay,liveIntent=false",
   "liveGuardActive": false
 }
 ```

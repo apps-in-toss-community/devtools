@@ -222,18 +222,21 @@ Safari 원격 검사를 사용할 수 없는 경우, launcher setup 화면의 pa
 ### 진입 절차
 
 ```bash
-# 1. devtools MCP 실행 (debug 모드, relay env 명시)
-MCP_ENV=relay npx -y @ait-co/devtools devtools-mcp
+# 1. devtools MCP 실행 (debug 모드)
+npx -y @ait-co/devtools devtools-mcp
 
-# 2. dogfood bundle deploy
+# 2. relay-dev로 진입 (MCP 세션에서)
+# start_debug({mode: 'relay-dev'})
+
+# 3. dogfood bundle deploy
 ait build
 ait deploy --scheme-only
 # → intoss-private://aitc-sdk-example?_deploymentId=<uuid> 출력
 
-# 3. relay URL 포함 deep-link 생성
+# 4. relay URL 포함 deep-link 생성
 # build_attach_url 도구로 scheme URL + debug=1&relay=<wss> 생성
 
-# 4. QR 스캔 (단일 정식 경로)
+# 5. QR 스캔 (단일 정식 경로)
 # 실기기 토스 앱에서 QR 스캔
 ```
 
@@ -313,12 +316,14 @@ ait deploy --scheme-only
 ### 진입 절차
 
 ```bash
-# 1. devtools MCP 실행 (debug 모드, LIVE env 명시 — relay-live 필수)
-MCP_ENV=relay-live npx -y @ait-co/devtools devtools-mcp
-# MCP_ENV=relay-live 만 LIVE side-effect guard를 활성화한다
-# MCP_ENV=relay 또는 미설정 시 relay-dev fallback → LIVE guard 비활성화(실유저 영향 위험)
+# 1. devtools MCP 실행 (debug 모드)
+npx -y @ait-co/devtools devtools-mcp
 
-# 2. 검수 통과 + OPENED 상태의 앱 필요 (miniAppId: 31146)
+# 2. LIVE 진입 — confirm:true 필수 (1차 LIVE gate)
+# start_debug({mode: 'relay-live', confirm: true})
+# confirm 없이 호출하면 거부됨
+
+# 3. 검수 통과 + OPENED 상태의 앱 필요 (miniAppId: 31146)
 # aitcc app status 31146 으로 OPENED 확인
 
 # 3. live bundle scheme URL 획득
@@ -389,7 +394,7 @@ ait deploy --scheme-only
 | `call_sdk` `value: "sandbox"` 또는 dev 토큰 | dogfood(dev) bundle로 진입 | live bundle `_deploymentId` 확인 |
 | `list_pages` `crashDetectedAt` non-null | 앱 크래시 | crash report 분리 후 환경 3에서 디버깅 |
 | 앱이 OPENED 상태 아님 | 검수 미완료 | `aitcc app status 31146` 확인 |
-| `measure_safe_area` `source: "relay-dev"` | `MCP_ENV=relay-live` 미설정 | `MCP_ENV=relay-live` 확인 후 서버 재시작 |
+| `measure_safe_area` `source: "relay-dev"` | `start_debug(relay-live)` 미호출 | `start_debug({mode: 'relay-live', confirm: true})`로 진입 후 재시도 |
 
 ---
 

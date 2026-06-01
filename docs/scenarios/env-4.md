@@ -5,15 +5,18 @@
 
 ## 전제조건
 
-- `devtools-mcp` 실행 (debug 모드)
-  - **`MCP_ENV=relay-live` 필수** — 환경 4(LIVE read-only)임을 명시. 미설정 시 CDP URL 패턴 자동 감지 + `defaultEnv=relay-dev` fallback으로 LIVE guard가 비활성화돼 사용자 영향 위험.
+- `devtools-mcp` 실행 후 `start_debug({mode: 'relay-live', confirm: true})` 호출 (debug 모드)
+  - MCP 기동: `npx @ait-co/devtools devtools-mcp`
+  - 그런 다음 Claude Code에서: `start_debug({mode: 'relay-live', confirm: true})`
+  - `confirm: true` 없이 `relay-live` 호출하면 즉시 거부됨 — LIVE 진입 1차 게이트
+  - `MCP_ENV=relay-live` 는 deprecated back-compat 별칭 (부팅 시 liveIntent 시드용). 새 세션에서는 `start_debug` 사용
 - 검수 통과 + OPENED 상태의 앱 (`miniAppId: 31146`) — `aitcc app status 31146`으로 확인
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - QR 스캔 (단일 정식 경로)
 
-> 참고 — debug-relay 모드는 환경 기본값을 `relay`로 둔다 (issue #309). 첫 `tools/list`부터
-> `build_attach_url`이 노출되므로 `MCP_ENV=relay` 강제 안내가 더는 필요 없다. `MCP_ENV`를
-> 명시하면 그 값이 우선한다.
+> 참고 — `start_debug({mode: 'relay-live', confirm: true})`가 LIVE guard를 무재구동으로 arms한다.
+> `--target=local`로 기동했어도 `start_debug`로 relay-live로 hot-switch 가능하다(#356 DualConnectionRouter 대칭화).
+> local 계열로 전환하면 LIVE guard가 자동 disarm된다.
 
 ## MCP 도구 acceptance 체크리스트
 
@@ -40,7 +43,7 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment, [], con
 
 ## LIVE side-effect guard
 
-`MCP_ENV=relay-live` 세션에서 `call_sdk` 또는 `evaluate`를 호출하면 **명시적 동의 인자(`confirm: true`)가 없을 때 거부된다**.
+`relay-live` 세션(`start_debug({mode: 'relay-live', confirm: true})` 이후)에서 `call_sdk` 또는 `evaluate`를 호출하면 **명시적 동의 인자(`confirm: true`)가 없을 때 거부된다**.
 
 ```
 [LIVE relay guard] call_sdk은 현재 relay-live(실 출시 런타임) 세션에서 side-effect 호출입니다.
@@ -65,7 +68,7 @@ evaluate("window.location.href", confirm: true)
 {
   "kind": "relay-live",
   "env": "relay",
-  "reason": "env-var-relay-live",
+  "reason": "derived:kind=relay,liveIntent=true",
   "liveGuardActive": true
 }
 ```
