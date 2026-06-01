@@ -80,7 +80,19 @@ export { requestNotificationAgreement } from './notification.js';
 // --- 파트너 ---
 export { partner } from './partner/index.js';
 // --- 권한 (bridge-core 호환) ---
-export { getPermission, openPermissionDialog, requestPermission } from './permissions.js';
+export {
+  FetchAlbumPhotosPermissionError,
+  FetchContactsPermissionError,
+  GetClipboardTextPermissionError,
+  GetCurrentLocationPermissionError,
+  getPermission,
+  OpenCameraPermissionError,
+  openPermissionDialog,
+  PermissionError,
+  requestPermission,
+  SetClipboardTextPermissionError,
+  StartUpdateLocationPermissionError,
+} from './permissions.js';
 export {
   deleteUserPreset,
   listUserPresets,

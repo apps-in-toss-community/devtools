@@ -53,7 +53,6 @@ import {
   IAP,
   isMinVersionSupported,
   loadFullScreenAd,
-  onVisibilityChangedByTransparentServiceWeb,
   openCamera,
   openGameCenterLeaderboard,
   openPermissionDialog,
@@ -526,12 +525,5 @@ if (!app) throw new Error('#app not found');
   });
   apiSubscriber(s, 'events-tds', (onEvent) => {
     tdsEvent.addEventListener('navigationAccessoryEvent', { onEvent: (e) => onEvent(e) });
-  });
-  apiSubscriber(s, 'events-visibility', (onEvent) => {
-    onVisibilityChangedByTransparentServiceWeb({
-      options: { callbackId: 'fixture-vis' },
-      onEvent: (v) => onEvent({ isVisible: v }),
-      onError: (e) => onEvent({ error: String(e) }),
-    });
   });
 }

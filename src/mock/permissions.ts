@@ -6,6 +6,68 @@
 import { aitState } from './state.js';
 import type { PermissionName, PermissionStatus } from './types.js';
 
+// --- PermissionError 계층 (web-framework 3.0+ 신규) ---
+// instanceof 호환성을 위한 stub 클래스. checkPermission() 동작은 별도 이슈에서 처리.
+
+/**
+ * web-framework 3.0+ 권한 에러 기반 클래스.
+ * `instanceof PermissionError`로 체크하는 코드와 호환된다.
+ */
+export class PermissionError extends Error {
+  constructor({ methodName, message }: { methodName: string; message?: string }) {
+    super(message ?? `${methodName}: permission denied`);
+    this.name = `${methodName}PermissionError`;
+  }
+}
+
+/** openCamera 권한 에러 */
+export class OpenCameraPermissionError extends PermissionError {
+  constructor() {
+    super({ methodName: 'openCamera' });
+  }
+}
+
+/** fetchAlbumPhotos 권한 에러 */
+export class FetchAlbumPhotosPermissionError extends PermissionError {
+  constructor() {
+    super({ methodName: 'fetchAlbumPhotos' });
+  }
+}
+
+/** fetchContacts 권한 에러 */
+export class FetchContactsPermissionError extends PermissionError {
+  constructor() {
+    super({ methodName: 'fetchContacts' });
+  }
+}
+
+/** getCurrentLocation 권한 에러 */
+export class GetCurrentLocationPermissionError extends PermissionError {
+  constructor() {
+    super({ methodName: 'getCurrentLocation' });
+  }
+}
+
+/** getClipboardText 권한 에러 */
+export class GetClipboardTextPermissionError extends PermissionError {
+  constructor() {
+    super({ methodName: 'getClipboardText' });
+  }
+}
+
+/** setClipboardText 권한 에러 */
+export class SetClipboardTextPermissionError extends PermissionError {
+  constructor() {
+    super({ methodName: 'setClipboardText' });
+  }
+}
+
+/**
+ * startUpdateLocation 권한 에러.
+ * web-framework 3.0에서 GetCurrentLocationPermissionError의 alias.
+ */
+export const StartUpdateLocationPermissionError = GetCurrentLocationPermissionError;
+
 export async function getPermission(name: PermissionName): Promise<PermissionStatus> {
   return aitState.state.permissions[name];
 }
