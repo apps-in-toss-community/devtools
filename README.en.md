@@ -6,7 +6,7 @@
 
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
-A mock library for the `@apps-in-toss/web-framework` SDK. Imports of `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` are also mocked.
+A mock library for the `@apps-in-toss/web-framework` SDK. Imports of `@apps-in-toss/webview-bridge` are also mocked. (2.x packages `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` are supported for back-compat.)
 
 Lets you develop and test Apps in Toss mini-apps in a **regular browser** — without the Toss app. All SDK features are simulated so you can move fast.
 
@@ -115,13 +115,9 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> **Supported SDK version**: `@apps-in-toss/web-framework >=2.5.0 <2.6.0` (peer, required).
+> **Supported SDK version**: `@apps-in-toss/web-framework 3.0.0-beta.9d42c0b` (beta, peer optional).
 >
-> devtools is only verified against SDK versions within that range. Installing an out-of-range SDK version
-> will cause the package manager to emit a peer warning at install time. Additionally, calling an API that
-> devtools has not yet mocked will throw a runtime error — this is intentional to prevent the
-> "works in devtools but fails with the real SDK" type of production incident. For missing APIs,
-> please [file an issue](https://github.com/apps-in-toss-community/devtools/issues).
+> devtools currently tracks the web-framework **3.0.0-beta** pre-release. Since beta versions are not resolved by `^3.0.0`, install using an exact pin: `@apps-in-toss/web-framework@3.0.0-beta.9d42c0b`. The peer range and pin will be updated when stable 3.0.0 GA ships. Calling an API that devtools has not yet mocked will throw a runtime error — please [file an issue](https://github.com/apps-in-toss-community/devtools/issues) for missing APIs.
 
 ## Reference consumer
 
@@ -158,17 +154,16 @@ config.plugins.push(aitDevtools.webpack());
 
 Turbopack does not support a plugin system, so use `resolveAlias` instead.
 
-- You also need to alias `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics`.
+- You also need to alias `@apps-in-toss/webview-bridge`. (If you're on 2.x, alias `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` instead.)
 - Turbopack is generally only used with `next dev`, so no extra production guard is needed.
 
 ```js
-// next.config.js (Next.js 15+)
+// next.config.js (Next.js 15+, web-framework 3.0+)
 module.exports = {
   turbo: {
     resolveAlias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
+      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 };
@@ -177,14 +172,13 @@ module.exports = {
 For Next.js 14 and below, use `experimental.turbo`:
 
 ```js
-// next.config.js (Next.js 14 and below)
+// next.config.js (Next.js 14 and below, web-framework 3.0+)
 module.exports = {
   experimental: {
     turbo: {
       resolveAlias: {
         '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-        '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
-        '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
+        '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
       },
     },
   },
@@ -220,28 +214,26 @@ module.exports = {
 You can also configure the bundler's `resolve.alias` directly:
 
 ```ts
-// vite.config.ts
+// vite.config.ts (web-framework 3.0+)
 import { defineConfig } from 'vite';
 
 export default defineConfig({
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
+      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 });
 ```
 
 ```js
-// webpack.config.js (Webpack requires absolute paths)
+// webpack.config.js (Webpack requires absolute paths, web-framework 3.0+)
 module.exports = {
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': require.resolve('@ait-co/devtools/mock'),
-      '@apps-in-toss/web-bridge': require.resolve('@ait-co/devtools/mock'),
-      '@apps-in-toss/web-analytics': require.resolve('@ait-co/devtools/mock'),
+      '@apps-in-toss/webview-bridge': require.resolve('@ait-co/devtools/mock'),
     },
   },
 };

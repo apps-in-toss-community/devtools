@@ -107,7 +107,7 @@ src/
 
 ## SDK 업데이트 대응
 
-devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 지원. devDep은 `2.5.0` 한 버전 고정. (후속 PR에서 CI matrix `compat-check`로 양 끝 버전 typecheck 자동화 예정.)
+devtools는 `@apps-in-toss/web-framework` **3.0.0-beta** 프리릴리즈를 추적. devDep은 `3.0.0-beta.9d42c0b` exact pin. peer range는 `>=2.6.0 <2.7.0` (published `latest` 태그 2.x 소비자 보호용 유지 — devtools beta dist-tag는 별도 publish). (후속 PR에서 CI matrix `compat-check`로 버전 typecheck 자동화 예정.)
 
 - peer는 `peerDependenciesMeta.optional: true`. devDep은 고정.
   - **이유**: 이 패키지는 두 사용자 그룹을 함께 다룬다 — (a) mock SDK 사용자(번들러 alias로 unplugin), (b) MCP-only 사용자(`.mcp.json`의 `npx -y @ait-co/devtools devtools-mcp` 진입). (b)는 mock SDK를 절대 import하지 않으므로 peer를 required로 두면 SDK + 그 RN/Babel/Metro 트랜지티브 거대 트리(~분 단위 install)가 강제 설치되어 MCP server spawn이 timeout. (a)는 본인 프로젝트에서 SDK를 직접 import하므로 누락은 빌드 단계에서 명시적으로 깨진다 (vite/webpack resolve fail) — npm missing peer warning에 의존할 필요가 없다. optional로 두어도 (a)의 신뢰성은 손상되지 않는다.
@@ -115,7 +115,7 @@ devtools는 `@apps-in-toss/web-framework`의 좁은 범위(`>=2.5.0 <2.6.0`)만 
 - `src/mock/proxy.ts`의 `createMockProxy`는 미구현 API 접근 시 **throw** — "잘 되는 척" 방지.
 - `.github/workflows/check-sdk-update.yml`이 매주 월요일 새 버전 감지 → 이슈 생성.
 
-**지원 범위 확장 (예: 2.5.1 publish됨):** `pnpm add -D @apps-in-toss/web-framework@2.5.1` → `pnpm typecheck`로 시그니처 변경 확인 → `package.json` peer range를 `>=2.5.0 <2.5.2`로 → (matrix 도입 후) CI matrix에 `2.5.1` 추가 → 단일 PR로 일관된 상태 유지.
+**지원 범위 확장:** `pnpm add -D @apps-in-toss/web-framework@<version>` → `pnpm typecheck`로 시그니처 변경 확인 → `package.json` devDep pin 갱신 → 단일 PR로 일관된 상태 유지. (3.0 GA 시 peer range도 `>=3.0.0 <4.0.0`으로 교체.)
 
 **SDK breaking change 대응:** 한 devtools 패키지가 호환되지 않는 SDK를 동시 지원하지 않는다 — devtools도 함께 bump한다.
 
