@@ -31,6 +31,8 @@ import {
   type DiagnosticsCollector,
   getDiagnostics,
   InMemoryDiagnosticsCollector,
+  readDevtoolsVersion,
+  readMcpSdkVersion,
   redactErrorMessage,
   type TunnelStatus,
 } from '../tools.js';
@@ -638,5 +640,32 @@ describe('computeNextRecommendedAction', () => {
     const healthyPages = makePages([{ id: 'p1', title: 'App', url: 'intoss-private://app' }]);
     const action = computeNextRecommendedAction(tunnelInfoUp, healthyPages, 'relay-dev');
     expect(action).toBeNull();
+  });
+});
+
+// Issue #361 — the version resolvers must read the build-time `define`
+// (bare identifier `__VERSION__` / `__MCP_SDK_VERSION__`), NOT
+// `globalThis.__VERSION__`. The old `globalThis.__VERSION__` access always read
+// `undefined`, so `get_diagnostics` reported `devtoolsVersion: null` in every
+// real bundle. vitest.config supplies the same defines tsdown does, so these
+// pin that the resolvers return the (non-null) define value.
+//
+// NOTE on the globalThis distinction: under a real tsdown build the bare token
+// is substituted with a string literal at compile time, so a `globalThis`
+// property could never shadow it. We deliberately do NOT assert that here — in
+// vitest a bare undefined identifier falls back to a global lookup (vite's
+// define transform differs from rolldown's), which is a test-runtime artifact,
+// not the shipped behavior. The shipped behavior (bare literal, globalThis
+// irrelevant) is proven by the env-1 runtime acceptance against a real bundle.
+describe('version resolvers (issue #361 — build-define, not globalThis)', () => {
+  it('readDevtoolsVersion returns the build-time __VERSION__ define value', () => {
+    // vitest.config defines __VERSION__ = '0.0.0-test'.
+    expect(readDevtoolsVersion()).toBe('0.0.0-test');
+  });
+
+  it('readMcpSdkVersion returns a non-null version via the build-define path', async () => {
+    // vitest.config mirrors the tsdown __MCP_SDK_VERSION__ define so the
+    // primary (no-throw, no req.resolve) path is exercised.
+    expect(await readMcpSdkVersion()).toBe('0.0.0-test-sdk');
   });
 });

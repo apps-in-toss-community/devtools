@@ -1,7 +1,34 @@
+import { createRequire } from 'node:module';
 import { defineConfig, type Options } from 'tsdown';
 import pkg from './package.json' with { type: 'json' };
 
-// __VERSION__ is defined in all entries so any source file can reference it.
+// `@modelcontextprotocol/sdk` does not expose `./package.json` in its
+// `exports` map, so `require.resolve('@modelcontextprotocol/sdk/package.json')`
+// throws `ERR_PACKAGE_PATH_NOT_EXPORTED` at runtime — which is exactly why the
+// old runtime `readMcpSdkVersion()` always returned `null` in a real bundle
+// (issue #361). Reading the installed version here at BUILD time and baking it
+// into a define sidesteps the exports restriction entirely. Resolved via the
+// main entry's directory so we read the actually-installed version, not the
+// range. Falls back to `null` if resolution ever changes shape.
+const mcpSdkVersion = ((): string | null => {
+  try {
+    const req = createRequire(import.meta.url);
+    // Resolve the installed entry, then read its sibling package.json by path
+    // (bypasses the `exports` gate that blocks the subpath specifier).
+    const entry = req.resolve('@modelcontextprotocol/sdk');
+    const marker = '@modelcontextprotocol/sdk';
+    const root = entry.slice(0, entry.indexOf(marker) + marker.length);
+    const sdkPkg = req(`${root}/package.json`) as { version?: unknown };
+    return typeof sdkPkg.version === 'string' ? sdkPkg.version : null;
+  } catch {
+    return null;
+  }
+})();
+
+// __VERSION__ / __MCP_SDK_VERSION__ are defined in all entries so any source
+// file can reference them as bare identifiers (NOT via `globalThis` — `define`
+// only substitutes the bare token; a `globalThis.__VERSION__` property access
+// reads `undefined`, the root cause of issue #361).
 //
 // Note: there is no `__DEBUG_BUILD__` define here. That constant belongs to
 // the CONSUMER's build, not this package's. The consumer guards its
@@ -11,6 +38,7 @@ import pkg from './package.json' with { type: 'json' };
 // shipped package and is therefore meaningless — see src/in-app/gate.ts.
 const define = {
   __VERSION__: JSON.stringify(pkg.version),
+  __MCP_SDK_VERSION__: JSON.stringify(mcpSdkVersion),
 };
 
 // `package.json` exports expect `.js` (ESM) and `.cjs` (CJS) extensions,

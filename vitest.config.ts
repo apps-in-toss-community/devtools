@@ -3,6 +3,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   define: {
     __VERSION__: JSON.stringify('0.0.0-test'),
+    // Mirror the tsdown build define so `readMcpSdkVersion()`'s primary
+    // (bare-identifier) path is exercised under vitest too (issue #361).
+    __MCP_SDK_VERSION__: JSON.stringify('0.0.0-test-sdk'),
   },
   test: {
     environment: 'jsdom',

@@ -1830,21 +1830,35 @@ export class InMemoryDiagnosticsCollector implements DiagnosticsCollector {
 }
 
 /**
- * Reads the `@modelcontextprotocol/sdk` package version from the installed
- * package's `package.json`. Returns `null` on any error (missing file, JSON
- * parse failure, etc.) — diagnostics must never throw.
+ * Returns the `@modelcontextprotocol/sdk` version baked in at build time via
+ * the `__MCP_SDK_VERSION__` define (see `tsdown.config.ts`). Returns `null`
+ * when the define is absent (unbundled test runs) and the runtime fallback
+ * below also fails — diagnostics must never throw.
  *
- * Node-only — uses dynamic `import()` so it does not pollute the browser
- * module graph.
+ * The old implementation resolved `@modelcontextprotocol/sdk/package.json` at
+ * runtime, but that subpath is NOT in the SDK's `exports` map, so the resolve
+ * threw `ERR_PACKAGE_PATH_NOT_EXPORTED` and this always returned `null` in a
+ * real bundle (issue #361). The build-time define sidesteps the exports gate.
+ *
+ * Kept `async` for call-site compatibility (`Promise.all` at the caller); the
+ * body is synchronous apart from the best-effort fallback.
  */
 export async function readMcpSdkVersion(): Promise<string | null> {
+  // Primary: build-time define (bare identifier, substituted by tsdown).
+  if (typeof __MCP_SDK_VERSION__ === 'string' && __MCP_SDK_VERSION__.length > 0) {
+    return __MCP_SDK_VERSION__;
+  }
+  // Fallback for unbundled runs (the define never ran): resolve the installed
+  // SDK entry and read its sibling package.json by path — bypassing the
+  // `exports` gate that blocks the `/package.json` subpath specifier.
   try {
-    // Resolve the package.json adjacent to the installed SDK entry point.
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
-    const pkgPath = req.resolve('@modelcontextprotocol/sdk/package.json');
+    const entry = req.resolve('@modelcontextprotocol/sdk');
+    const marker = '@modelcontextprotocol/sdk';
+    const root = entry.slice(0, entry.indexOf(marker) + marker.length);
     const { readFileSync } = await import('node:fs');
-    const raw = readFileSync(pkgPath, 'utf8');
+    const raw = readFileSync(`${root}/package.json`, 'utf8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     return typeof parsed.version === 'string' ? parsed.version : null;
   } catch {
@@ -1858,14 +1872,15 @@ export async function readMcpSdkVersion(): Promise<string | null> {
  * some test environments that skip the build step).
  */
 export function readDevtoolsVersion(): string | null {
-  try {
-    // `__VERSION__` is injected by tsdown / vite via `define`.
-    // biome-ignore lint/suspicious/noExplicitAny: intentional global check
-    const v = (globalThis as any).__VERSION__;
-    return typeof v === 'string' && v.length > 0 ? v : null;
-  } catch {
-    return null;
-  }
+  // `__VERSION__` is a bare identifier replaced at build time by the tsdown
+  // `define` (see `tsdown.config.ts`) — the SAME mechanism `debug-server.ts`
+  // and `server.ts` use for the MCP server `version`. It must be referenced as
+  // a bare identifier, not `globalThis.__VERSION__`: `define` only substitutes
+  // the bare token, so the property access always read `undefined` and this
+  // function always returned `null` in a real bundle (issue #361). The
+  // `typeof` guard keeps it null-safe in unbundled test runs where the define
+  // never ran.
+  return typeof __VERSION__ === 'string' && __VERSION__.length > 0 ? __VERSION__ : null;
 }
 
 /**
