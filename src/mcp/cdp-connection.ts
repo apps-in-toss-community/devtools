@@ -247,4 +247,40 @@ export interface CdpConnection {
     method: M,
     params?: CdpCommandMap[M]['params'],
   ): Promise<CdpCommandMap[M]['result']>;
+
+  /**
+   * Close the underlying transport and reject any in-flight commands.
+   * Optional so that minimal test fakes that don't need teardown remain
+   * compatible without change. Both `ChiiCdpConnection` and
+   * `LocalCdpConnection` already implement this.
+   */
+  close?(): void;
+
+  /**
+   * Refresh the attached-target list from the relay and return the result.
+   * Emits an internal `'target:attached'` event when a new target appears so
+   * that {@link waitForFirstTarget} can race against the polling round.
+   *
+   * Optional — only `ChiiCdpConnection` (relay mode) supports this; local
+   * connections and test fakes may omit it. Callers should guard with
+   * `connection.refreshTargets?.()`.
+   */
+  refreshTargets?(): Promise<CdpTarget[]>;
+
+  /**
+   * Waits until at least one target satisfying `filterFn` is attached, then
+   * resolves with the full target list at that moment.
+   *
+   * Optional — only `ChiiCdpConnection` provides the event-driven
+   * implementation. When absent, callers fall back to a generic polling loop.
+   *
+   * @param filterFn      - Predicate the resolved targets must satisfy.
+   * @param timeoutMs     - Reject after this many ms (default 90 000).
+   * @param pollIntervalMs - Fallback poll interval (default 500 ms).
+   */
+  waitForFirstTarget?(
+    filterFn: (targets: CdpTarget[]) => boolean,
+    timeoutMs?: number,
+    pollIntervalMs?: number,
+  ): Promise<CdpTarget[]>;
 }
