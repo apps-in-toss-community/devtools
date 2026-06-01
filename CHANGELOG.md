@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.52
+
+### Patch Changes
+
+- add2f36: debug MCP: a `--target=local` start can now hot-switch into relay (and back) without restarting the daemon. The `DualConnectionRouter` is generalized to be direction-neutral — an eager family booted at startup plus a lazily-booted opposite-kind family — so both entry points (`runDebugServer` relay-eager and `runLocalDebugServer` local-eager) share the same bidirectional `start_debug` swap. Previously only the default relay-target start carried the dual router; a local start pinned a single-connection router and rejected cross-family switches as "restart required", breaking the env 1 → env 3 fidelity-ladder flow at that entry point.
+- 4141b3b: debug MCP: fix a per-call env snapshot regression and a LIVE side-effect guard race introduced with `start_debug(mode)` dual-connection routing. The `CallTool` handler now snapshots the derived environment (`env`/`envReason`) once at entry and reuses it at every output site, so a concurrent `start_debug` swap mid-`await` can no longer stamp the wrong env into a response envelope. The `evaluate` / `call_sdk` LIVE guard now evaluates `connection.kind === 'relay' && getLiveIntent()` with a snapshot `conn.kind` plus a fresh `liveIntent` read at the side-effect boundary — closing a race where a concurrent `start_debug('relay-live')` armed `liveIntent` while a relay-dev call was parked on an await, previously letting a LIVE side-effect run without `confirm: true`.
+- c3cfd3d: debug MCP: `start_debug(mode)` single entry to switch environments (env 1/3/4) in-place — one daemon now holds both a local and a relay CDP connection at once and flips the active pointer with no Claude Code restart or MCP re-handshake (warm attach survives the switch). Replaces the URL-sniffing `getEnvironment()` precedence chain with a derived model: `mock` vs `relay-*` comes free from `connection.kind`, and `relay-dev` vs `relay-live` is a single operator-supplied `liveIntent` bit armed only by `start_debug({ mode: 'relay-live' })`. The LIVE side-effect guard collapses to `connection.kind === 'relay' && liveIntent`, so switching back to a local target auto-disarms it. `--mode`/`--target`/`MCP_ENV` (incl. `MCP_ENV=relay-live` seeding LIVE intent) remain as back-compat aliases.
+
 ## 0.1.51
 
 ### Patch Changes
