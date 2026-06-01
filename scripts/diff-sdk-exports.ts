@@ -31,15 +31,40 @@ const PACKAGE = '@apps-in-toss/web-framework';
 function getInstalledVersion(): string {
   // pnpm workspace에서 `npm list`는 신뢰할 수 없다 — node resolver로 실제 resolve된
   // package.json의 version을 읽는다.
+  // 3.0+ 패키지는 exports map에 ./package.json을 노출하지 않으므로,
+  // node_modules 내 package.json 경로를 직접 구성한다.
   try {
     const pkgPath = require.resolve(`${PACKAGE}/package.json`);
     return JSON.parse(readFileSync(pkgPath, 'utf-8')).version ?? 'unknown';
   } catch {
-    return 'unknown';
+    // fallback: resolve main entry, then derive the package directory from the
+    // known node_modules layout (works for pnpm and npm both).
+    try {
+      const main = require.resolve(PACKAGE);
+      // Find the package root by locating the last occurrence of the package
+      // name segments in the resolved path (handles scoped packages like @a/b).
+      const pkgSegment = `node_modules${join('/', ...PACKAGE.split('/'))}`;
+      const idx = main.lastIndexOf(pkgSegment);
+      if (idx === -1) return 'unknown';
+      const pkgDir = main.slice(0, idx + pkgSegment.length);
+      return JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf-8')).version ?? 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
 }
 
 function resolveLatestVersion(): string {
+  // TODO: revert to `version` (latest dist-tag) at GA when web-framework 3.0.0 stable ships.
+  // During the prerelease window we track the `beta` dist-tag instead.
+  try {
+    const betaResult = execSync(`npm view ${PACKAGE} dist-tags.beta`, {
+      encoding: 'utf-8',
+    }).trim();
+    if (betaResult && betaResult !== 'undefined') return betaResult;
+  } catch {
+    // fall through to latest
+  }
   return execSync(`npm view ${PACKAGE} version`, { encoding: 'utf-8' }).trim();
 }
 
@@ -62,10 +87,17 @@ async function exportsOf(version: string): Promise<Set<string>> {
     const installed = join(dir, 'node_modules', ...PACKAGE.split('/'));
     const pkgJson = JSON.parse(readFileSync(join(installed, 'package.json'), 'utf-8'));
     const exp = pkgJson.exports?.['.'];
-    const entryRel: string | undefined =
-      (typeof exp === 'string' ? exp : exp?.default || exp?.import) ||
-      pkgJson.module ||
-      pkgJson.main;
+    // Resolve potentially nested conditions: { import: { types, default }, require: ... }
+    function resolveEntry(v: unknown): string | undefined {
+      if (typeof v === 'string') return v;
+      if (v && typeof v === 'object') {
+        const obj = v as Record<string, unknown>;
+        // Prefer ESM: import > default > require
+        return resolveEntry(obj.import) ?? resolveEntry(obj.default) ?? resolveEntry(obj.require);
+      }
+      return undefined;
+    }
+    const entryRel: string | undefined = resolveEntry(exp) ?? pkgJson.module ?? pkgJson.main;
     if (!entryRel) throw new Error(`web entry를 찾지 못했어요: ${PACKAGE}@${version}`);
 
     const entry = pathToFileURL(join(installed, entryRel)).href;

@@ -22,6 +22,11 @@ function getInstalledVersion(): string {
 
 function getLatestVersion(): string {
   try {
+    // TODO: revert to `version` (latest dist-tag) at GA when web-framework 3.0.0 stable ships.
+    // During the prerelease window we track the `beta` dist-tag instead so CI
+    // sees the same prerelease that devtools is pinned to.
+    const betaResult = execSync(`npm view ${PACKAGE} dist-tags.beta`, { encoding: 'utf-8' }).trim();
+    if (betaResult && betaResult !== 'undefined') return betaResult;
     const result = execSync(`npm view ${PACKAGE} version`, { encoding: 'utf-8' });
     return result.trim();
   } catch {

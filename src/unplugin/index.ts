@@ -86,8 +86,9 @@ export interface AitDevtoolsOptions {
 }
 
 const FRAMEWORK_ID = '@apps-in-toss/web-framework';
-const BRIDGE_ID = '@apps-in-toss/web-bridge';
-const ANALYTICS_ID = '@apps-in-toss/web-analytics';
+const BRIDGE_ID = '@apps-in-toss/web-bridge'; // back-compat (2.x)
+const ANALYTICS_ID = '@apps-in-toss/web-analytics'; // back-compat (2.x)
+const WEBVIEW_BRIDGE_ID = '@apps-in-toss/webview-bridge'; // 3.0+
 
 /** MCP state endpoint path — browser panel POSTs here, MCP server GETs here */
 const MCP_STATE_PATH = '/api/ait-devtools/state';
@@ -116,7 +117,12 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
     resolveId(id: string) {
       if (!shouldMock) return null;
       // @apps-in-toss/web-framework → @ait-co/devtools/mock (absolute path)
-      if (id === FRAMEWORK_ID || id === BRIDGE_ID || id === ANALYTICS_ID) {
+      if (
+        id === FRAMEWORK_ID ||
+        id === WEBVIEW_BRIDGE_ID ||
+        id === BRIDGE_ID ||
+        id === ANALYTICS_ID
+      ) {
         return MOCK_PATH;
       }
       return null;

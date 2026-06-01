@@ -179,10 +179,7 @@ type _ShowFullScreenAd = Assert<typeof Mock.showFullScreenAd, typeof Original.sh
 type _GraniteEvent = Assert<typeof Mock.graniteEvent, typeof Original.graniteEvent>;
 type _TdsEvent = Assert<typeof Mock.tdsEvent, typeof Original.tdsEvent>;
 type _AppsInTossEvent = Assert<typeof Mock.appsInTossEvent, typeof Original.appsInTossEvent>;
-type _OnVisibilityChanged = Assert<
-  typeof Mock.onVisibilityChangedByTransparentServiceWeb,
-  typeof Original.onVisibilityChangedByTransparentServiceWeb
->;
+// onVisibilityChangedByTransparentServiceWeb is removed in web-framework 3.0 — no Assert.
 
 // --- 게임/프로모션 ---
 type _GrantPromotionReward = Assert<
@@ -252,6 +249,37 @@ type _OpenPermissionDialog = Assert<
   typeof Original.openPermissionDialog
 >;
 type _RequestPermission = Assert<typeof Mock.requestPermission, typeof Original.requestPermission>;
+
+// --- PermissionError 계층 (web-framework 3.0+ 신규, runtime class) ---
+type _PermissionError = Assert<typeof Mock.PermissionError, typeof Original.PermissionError>;
+type _FetchAlbumPhotosPermissionError = Assert<
+  typeof Mock.FetchAlbumPhotosPermissionError,
+  typeof Original.FetchAlbumPhotosPermissionError
+>;
+type _FetchContactsPermissionError = Assert<
+  typeof Mock.FetchContactsPermissionError,
+  typeof Original.FetchContactsPermissionError
+>;
+type _GetClipboardTextPermissionError = Assert<
+  typeof Mock.GetClipboardTextPermissionError,
+  typeof Original.GetClipboardTextPermissionError
+>;
+type _GetCurrentLocationPermissionError = Assert<
+  typeof Mock.GetCurrentLocationPermissionError,
+  typeof Original.GetCurrentLocationPermissionError
+>;
+type _OpenCameraPermissionError = Assert<
+  typeof Mock.OpenCameraPermissionError,
+  typeof Original.OpenCameraPermissionError
+>;
+type _SetClipboardTextPermissionError = Assert<
+  typeof Mock.SetClipboardTextPermissionError,
+  typeof Original.SetClipboardTextPermissionError
+>;
+type _StartUpdateLocationPermissionError = Assert<
+  typeof Mock.StartUpdateLocationPermissionError,
+  typeof Original.StartUpdateLocationPermissionError
+>;
 
 // --- 알림 ---
 type _RequestNotificationAgreement = Assert<

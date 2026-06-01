@@ -207,6 +207,9 @@ export const tdsEvent = {
   },
 };
 
+/**
+ * @deprecated web-framework 3.0 에서 제거됨. 2.x 소비자 back-compat용으로 유지.
+ */
 export function onVisibilityChangedByTransparentServiceWeb(eventParams: {
   options: { callbackId: string };
   onEvent: (isVisible: boolean) => void;

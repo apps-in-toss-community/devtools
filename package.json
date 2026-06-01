@@ -80,7 +80,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@apps-in-toss/web-framework": "2.6.0",
+    "@apps-in-toss/web-framework": "3.0.0-beta.9d42c0b",
     "@biomejs/biome": "2.4.15",
     "@changesets/cli": "^2.31.0",
     "@khmyznikov/pwa-install": "^0.6.3",

@@ -6,7 +6,7 @@
 
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
-`@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics` import도 함께 mock됩니다.
+`@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/webview-bridge` import도 함께 mock됩니다. (2.x의 `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 back-compat으로 지원.)
 
 앱인토스(Apps in Toss) 미니앱을 **일반 브라우저**에서 개발하고 테스트할 수 있게 해줍니다. 토스 앱 없이도 SDK의 모든 기능을 시뮬레이션하여 빠른 개발 사이클을 지원합니다.
 
@@ -115,13 +115,9 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> **지원 SDK 버전**: `@apps-in-toss/web-framework >=2.5.0 <2.6.0` (peer, required).
+> **지원 SDK 버전**: `@apps-in-toss/web-framework 3.0.0-beta.9d42c0b` (beta, peer optional).
 >
-> devtools는 위 범위의 SDK 버전에서만 동작이 검증됩니다. 범위 밖 SDK를 설치하면
-> 패키지 매니저가 install-time에 peer 경고를 표시합니다. 또한 devtools가 아직 mock하지
-> 않은 API를 호출하면 런타임에 에러가 발생합니다 — "devtools에서는 잘 되는데 실제 SDK에서는
-> 안 되는" 상황을 방지하기 위한 의도적 동작입니다. 누락된 API는
-> [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
+> 현재 devtools는 web-framework **3.0.0-beta** 프리릴리즈를 추적합니다. beta 버전은 `^3.0.0`으로 resolve되지 않으므로 설치 시 exact pin(`@apps-in-toss/web-framework@3.0.0-beta.9d42c0b`)을 사용하세요. stable 3.0.0 GA 출시 후 peer range와 pin이 업데이트됩니다. devtools가 아직 mock하지 않은 API를 호출하면 런타임에 에러가 발생합니다 — 누락된 API는 [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
 
 ## Reference consumer
 
@@ -158,17 +154,16 @@ config.plugins.push(aitDevtools.webpack());
 
 Turbopack은 플러그인 시스템을 지원하지 않으므로 `resolveAlias`를 사용합니다.
 
-- `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 함께 alias해야 합니다.
+- `@apps-in-toss/webview-bridge`도 함께 alias해야 합니다. (2.x를 사용 중이라면 `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 추가.)
 - Turbopack은 일반적으로 `next dev`에서만 사용되므로 별도의 production 가드가 필요하지 않습니다.
 
 ```js
-// next.config.js (Next.js 15+)
+// next.config.js (Next.js 15+, web-framework 3.0+)
 module.exports = {
   turbo: {
     resolveAlias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
+      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 };
@@ -177,14 +172,13 @@ module.exports = {
 Next.js 14 이하에서는 `experimental.turbo`를 사용합니다:
 
 ```js
-// next.config.js (Next.js 14 이하)
+// next.config.js (Next.js 14 이하, web-framework 3.0+)
 module.exports = {
   experimental: {
     turbo: {
       resolveAlias: {
         '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-        '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
-        '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
+        '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
       },
     },
   },
@@ -220,28 +214,26 @@ module.exports = {
 번들러의 `resolve.alias` 설정으로 직접 지정할 수도 있습니다:
 
 ```ts
-// vite.config.ts
+// vite.config.ts (web-framework 3.0+)
 import { defineConfig } from 'vite';
 
 export default defineConfig({
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-bridge': '@ait-co/devtools/mock',
-      '@apps-in-toss/web-analytics': '@ait-co/devtools/mock',
+      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 });
 ```
 
 ```js
-// webpack.config.js (Webpack은 절대 경로 필요)
+// webpack.config.js (Webpack은 절대 경로 필요, web-framework 3.0+)
 module.exports = {
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': require.resolve('@ait-co/devtools/mock'),
-      '@apps-in-toss/web-bridge': require.resolve('@ait-co/devtools/mock'),
-      '@apps-in-toss/web-analytics': require.resolve('@ait-co/devtools/mock'),
+      '@apps-in-toss/webview-bridge': require.resolve('@ait-co/devtools/mock'),
     },
   },
 };
