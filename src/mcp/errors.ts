@@ -39,7 +39,8 @@ export function mcpError(message: string): McpErrorResult {
  * @param toolName    - 거부된 tool 이름.
  * @param requiredEnv - 해당 tool이 요구하는 환경 ('mock' | 'relay').
  * @param currentEnv  - 현재 세션 환경.
- * @param reason      - 환경이 결정된 근거 (EnvironmentReason 문자열).
+ * @param reason      - 환경이 결정된 근거를 나타내는 파생 문자열
+ *                      (예: `derived:kind=relay,liveIntent=true`).
  */
 export function tierRejectionError(
   toolName: string,
