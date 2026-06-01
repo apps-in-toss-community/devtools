@@ -205,8 +205,10 @@ export interface DebugServerDeps {
 
 /**
  * Waits for the first target matching `filterFn` to attach, using the
- * event-driven `waitForFirstTarget()` on `ChiiCdpConnection` instances, or
- * falling back to a polling loop for generic `CdpConnection` fakes (tests).
+ * event-driven `waitForFirstTarget()` when the connection supports it
+ * (interface-optional member, present on `ChiiCdpConnection`), or falling
+ * back to a polling loop for connections that don't implement it (test fakes,
+ * `LocalCdpConnection`).
  *
  * This eliminates the polling-only race that previously caused `wait_for_attach`
  * to resolve before the relay had observed the first inbound CDP message from
@@ -215,7 +217,7 @@ export interface DebugServerDeps {
  * @param connection - The CDP connection (production or fake).
  * @param filterFn   - Resolves when this predicate is satisfied.
  * @param timeoutMs  - Maximum wait time in ms.
- * @param pollIntervalMs - Fallback poll interval for non-ChiiCdpConnection.
+ * @param pollIntervalMs - Fallback poll interval for connections without waitForFirstTarget.
  */
 function waitForAttachWithEvents(
   connection: CdpConnection,
@@ -223,12 +225,13 @@ function waitForAttachWithEvents(
   timeoutMs: number,
   pollIntervalMs = 1_000,
 ): Promise<ReturnType<CdpConnection['listTargets']>> {
-  // Use event-driven path when available (ChiiCdpConnection production instances).
-  if (connection instanceof ChiiCdpConnection) {
+  // Use event-driven path when available (CdpConnection.waitForFirstTarget is
+  // optional; ChiiCdpConnection implements it, LocalCdpConnection and test fakes do not).
+  if (connection.waitForFirstTarget) {
     return connection.waitForFirstTarget(filterFn, timeoutMs, pollIntervalMs);
   }
-  // Generic fallback for test fakes that implement CdpConnection but not
-  // waitForFirstTarget (they don't emit 'target:attached').
+  // Generic fallback for connections without waitForFirstTarget
+  // (test fakes, LocalCdpConnection — they don't emit 'target:attached').
   return new Promise<ReturnType<CdpConnection['listTargets']>>((resolve, reject) => {
     const deadline = Date.now() + timeoutMs;
     let settled = false;
@@ -682,12 +685,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // list_pages is still useful pre-attach: report tunnel + empty pages.
         // Refresh from relay first so evicted-then-reattached targets are not
         // served as stale empty (#281 — stale cache diagnosis).
-        if (connection instanceof ChiiCdpConnection) {
-          try {
-            await connection.refreshTargets();
-          } catch {
-            // Ignore refresh errors — still return cached state.
-          }
+        try {
+          await connection.refreshTargets?.();
+        } catch {
+          // Ignore refresh errors — still return cached state.
         }
         const pagesData = listPages(connection, getTunnelStatus());
         const attached = connection.listTargets().length > 0;
@@ -710,12 +711,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           return jsonResult(listNetworkRequests(connection));
         case 'list_pages': {
           // Refresh from relay so evict→reattach transitions are not served stale.
-          if (connection instanceof ChiiCdpConnection) {
-            try {
-              await connection.refreshTargets();
-            } catch {
-              // Ignore refresh errors — still return cached state.
-            }
+          try {
+            await connection.refreshTargets?.();
+          } catch {
+            // Ignore refresh errors — still return cached state.
           }
           const listPagesData = listPages(connection, getTunnelStatus());
           const listPagesAttached = connection.listTargets().length > 0;
@@ -1026,6 +1025,20 @@ export function buildRelayVerifyAuth():
 }
 
 /**
+ * Factory that constructs a `ChiiCdpConnection` for the given relay base URL.
+ *
+ * Introduced as a named seam so PR-2 (dual-connection, #348) can defer
+ * construction to first-activation time by moving or replacing this call —
+ * without changing the current eager construction order at startup.
+ *
+ * The relay base URL is only available after `startChiiRelay()` resolves, so
+ * the factory is called right after that point (same as before this refactor).
+ */
+function createRelayConnection(relayBaseUrl: string): ChiiCdpConnection {
+  return new ChiiCdpConnection({ relayBaseUrl });
+}
+
+/**
  * Boots the live debug stack and serves it over stdio:
  *   1. start the Chii relay on an OS-assigned port (with TOTP auth if
  *      AIT_DEBUG_TOTP_SECRET is set),
@@ -1112,7 +1125,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // via the side-effects on `tunnelStatus` from inside `.then`.
   void tunnelReady;
 
-  const connection = new ChiiCdpConnection({ relayBaseUrl: relay.baseUrl });
+  const connection = createRelayConnection(relay.baseUrl);
   // AIT.* methods ride the same Chii channel as CDP commands.
   const aitSource = new ChiiAitSource(connection);
 
