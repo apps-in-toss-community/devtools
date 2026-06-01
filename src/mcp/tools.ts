@@ -1836,9 +1836,13 @@ export class InMemoryDiagnosticsCollector implements DiagnosticsCollector {
  * below also fails — diagnostics must never throw.
  *
  * The old implementation resolved `@modelcontextprotocol/sdk/package.json` at
- * runtime, but that subpath is NOT in the SDK's `exports` map, so the resolve
- * threw `ERR_PACKAGE_PATH_NOT_EXPORTED` and this always returned `null` in a
- * real bundle (issue #361). The build-time define sidesteps the exports gate.
+ * runtime, but that subpath is NOT in the SDK's `exports` map. The main entry
+ * (`.`) also fails under pnpm's CJS virtual-store resolution (confirmed on
+ * 1.29.0 + pnpm 10 — `MODULE_NOT_FOUND` for `dist/cjs/index.js`). Both
+ * failures meant `mcpVersion` was always `null` in a real bundle (#361 +
+ * follow-up). The build-time define (populated via subpath anchor in
+ * `tsdown.config.ts`) is the primary fix; the fallback here independently uses
+ * the same subpath anchor so it works even when the define is absent.
  *
  * Kept `async` for call-site compatibility (`Promise.all` at the caller); the
  * body is synchronous apart from the best-effort fallback.
@@ -1848,15 +1852,17 @@ export async function readMcpSdkVersion(): Promise<string | null> {
   if (typeof __MCP_SDK_VERSION__ === 'string' && __MCP_SDK_VERSION__.length > 0) {
     return __MCP_SDK_VERSION__;
   }
-  // Fallback for unbundled runs (the define never ran): resolve the installed
-  // SDK entry and read its sibling package.json by path — bypassing the
-  // `exports` gate that blocks the `/package.json` subpath specifier.
+  // Fallback for unbundled runs (the define never ran): anchor on a subpath
+  // this package already imports (`server/index.js` — always in the exports
+  // map), walk up to the package root, and read package.json by filesystem
+  // path — bypassing the exports gate. The main entry ('.') is NOT used here
+  // because it is unreliable under pnpm's CJS resolution (see tsdown.config.ts).
   try {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
-    const entry = req.resolve('@modelcontextprotocol/sdk');
+    const sub = req.resolve('@modelcontextprotocol/sdk/server/index.js');
     const marker = '@modelcontextprotocol/sdk';
-    const root = entry.slice(0, entry.indexOf(marker) + marker.length);
+    const root = sub.slice(0, sub.indexOf(marker) + marker.length);
     const { readFileSync } = await import('node:fs');
     const raw = readFileSync(`${root}/package.json`, 'utf8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;

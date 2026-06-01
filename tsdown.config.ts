@@ -4,20 +4,21 @@ import pkg from './package.json' with { type: 'json' };
 
 // `@modelcontextprotocol/sdk` does not expose `./package.json` in its
 // `exports` map, so `require.resolve('@modelcontextprotocol/sdk/package.json')`
-// throws `ERR_PACKAGE_PATH_NOT_EXPORTED` at runtime — which is exactly why the
-// old runtime `readMcpSdkVersion()` always returned `null` in a real bundle
-// (issue #361). Reading the installed version here at BUILD time and baking it
-// into a define sidesteps the exports restriction entirely. Resolved via the
-// main entry's directory so we read the actually-installed version, not the
-// range. Falls back to `null` if resolution ever changes shape.
+// throws `ERR_PACKAGE_PATH_NOT_EXPORTED`. The main entry (`.`) is also absent
+// from some pnpm virtual-store CJS resolution paths — `req.resolve('@modelcontextprotocol/sdk')`
+// throws `MODULE_NOT_FOUND` there too (confirmed on 1.29.0 + pnpm 10). Using a
+// known-exported subpath (`server/index.js`, which this package already imports
+// in debug-server.ts/server.ts) as the anchor lets us walk up to the package
+// root and read package.json by filesystem path — bypassing the exports gate
+// entirely. Falls back to `null` if the subpath ever disappears.
 const mcpSdkVersion = ((): string | null => {
   try {
     const req = createRequire(import.meta.url);
-    // Resolve the installed entry, then read its sibling package.json by path
-    // (bypasses the `exports` gate that blocks the subpath specifier).
-    const entry = req.resolve('@modelcontextprotocol/sdk');
+    // Anchor on a subpath this package already imports (always exported).
+    // The main entry ('.') is unreliable under pnpm's CJS resolution (#361 follow-up).
+    const sub = req.resolve('@modelcontextprotocol/sdk/server/index.js');
     const marker = '@modelcontextprotocol/sdk';
-    const root = entry.slice(0, entry.indexOf(marker) + marker.length);
+    const root = sub.slice(0, sub.indexOf(marker) + marker.length);
     const sdkPkg = req(`${root}/package.json`) as { version?: unknown };
     return typeof sdkPkg.version === 'string' ? sdkPkg.version : null;
   } catch {
