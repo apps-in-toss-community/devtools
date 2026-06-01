@@ -5,6 +5,9 @@
  * - deriveTargetScriptUrl: URL transformation cases
  * - maybeAttach: gate-pass → script injected; gate-block → no injection;
  *   idempotency (calling twice → only one script element)
+ * - keepAwake behavior: setScreenAwakeMode called on attach, not on block,
+ *   respects noKeepAwake=1 opt-out, swallows rejection, is idempotent,
+ *   and restores on beforeunload.
  *
  * The `maybeAttach` optional `gateResult` param is used as a testability seam
  * so tests don't need to manipulate window.location.
@@ -15,6 +18,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GateResult } from '../in-app/index.js';
+
+// ---------------------------------------------------------------------------
+// @apps-in-toss/web-framework mock
+// vi.mock is hoisted to the top of the file by vitest. The factory is
+// re-evaluated after each vi.resetModules() so the spy instance is fresh.
+// We retrieve the current spy via the dynamic import of the mocked module.
+// ---------------------------------------------------------------------------
+vi.mock('@apps-in-toss/web-framework', () => ({
+  setScreenAwakeMode: vi.fn(() => Promise.resolve({ enabled: true })),
+}));
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -156,5 +169,78 @@ describe('maybeAttach', () => {
     maybeAttach(passResult('wss://relay.example.com:9100/ws'));
     const script = document.head.querySelector('script');
     expect(script?.src).toBe('https://relay.example.com:9100/target.js');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// keepAwake behavior
+// ---------------------------------------------------------------------------
+
+describe('keepAwake behavior', () => {
+  let maybeAttach: (gate?: GateResult) => void;
+  let setScreenAwakeMode: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    document.head.innerHTML = '';
+    // Re-import both the mocked framework and attach after resetting modules
+    // so the fresh spy instance is captured.
+    const framework = await import('@apps-in-toss/web-framework');
+    setScreenAwakeMode = framework.setScreenAwakeMode as ReturnType<typeof vi.fn>;
+    setScreenAwakeMode.mockClear();
+    setScreenAwakeMode.mockResolvedValue({ enabled: true });
+    ({ maybeAttach } = await import('../in-app/attach.js'));
+  });
+
+  it('calls setScreenAwakeMode({ enabled: true }) when gate passes', async () => {
+    maybeAttach(passResult());
+    await vi.waitFor(() => expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: true }));
+  });
+
+  it('does NOT call setScreenAwakeMode when gate blocks', async () => {
+    maybeAttach(blockResult('opt-in'));
+    // Flush microtasks — should stay uncalled
+    await Promise.resolve();
+    expect(setScreenAwakeMode).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call setScreenAwakeMode when noKeepAwake=1 is in search params', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: '?noKeepAwake=1' },
+      writable: true,
+      configurable: true,
+    });
+    maybeAttach(passResult());
+    await Promise.resolve();
+    expect(setScreenAwakeMode).not.toHaveBeenCalled();
+    // Restore
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: '' },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('swallows rejection — no unhandled rejection and maybeAttach does not throw', async () => {
+    setScreenAwakeMode.mockRejectedValue(new Error('platform unsupported'));
+    expect(() => maybeAttach(passResult())).not.toThrow();
+    // Flush promise chain — rejection must be swallowed
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it('is idempotent — setScreenAwakeMode called only once even if maybeAttach called twice', async () => {
+    const gate = passResult();
+    maybeAttach(gate);
+    maybeAttach(gate);
+    await vi.waitFor(() => expect(setScreenAwakeMode).toHaveBeenCalledTimes(1));
+  });
+
+  it('calls setScreenAwakeMode({ enabled: false }) when beforeunload fires after successful attach', async () => {
+    maybeAttach(passResult());
+    // Wait for the enabled:true call and the beforeunload registration
+    await vi.waitFor(() => expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: true }));
+    // Dispatch beforeunload — the handler must call setScreenAwakeMode({ enabled: false })
+    window.dispatchEvent(new Event('beforeunload'));
+    await vi.waitFor(() => expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: false }));
   });
 });
