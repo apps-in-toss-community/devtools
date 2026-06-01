@@ -44,6 +44,9 @@ type CommandResults = {
  * uses an injectable CDP connection mocked in tests".
  */
 class FakeCdpConnection implements CdpConnection {
+  /** Test fake — relay-kind (issue #348); env is injected so the value is inert here. */
+  readonly kind = 'relay' as const;
+
   private readonly targets: CdpTarget[];
   private readonly buffers: {
     [E in CdpEventName]: CdpEventMap[E][];

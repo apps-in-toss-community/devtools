@@ -15,6 +15,13 @@
  *   --mode=dev — dev mode — reads the live browser mock state from a running
  *     Vite dev server (the devtools#130 `devtools_get_mock_state` surface).
  *
+ * Back-compat (issue #348): the legacy `--mode`/`--target` flags and `MCP_ENV`
+ * still work. `--target=relay`/`local` select the initial active connection;
+ * the in-session `start_debug(mode)` MCP tool can then flip between them with no
+ * restart. `MCP_ENV=relay-live` seeds LIVE intent at boot (deprecated alias);
+ * `MCP_ENV=mock|relay|relay-dev` are accepted and ignored for env derivation
+ * (the active connection's `kind` is authoritative).
+ *
  * Node-only stdio process.
  */
 
@@ -22,7 +29,22 @@ import { realpathSync } from 'node:fs';
 import { argv } from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { runDebugServer, runLocalDebugServer } from './debug-server.js';
+import { setLiveIntent } from './environment.js';
 import { runDevServer } from './server.js';
+
+/**
+ * Seeds the module-level `liveIntent` bit from the deprecated `MCP_ENV` alias
+ * (issue #348). `MCP_ENV=relay-live` is the only value that matters now — it
+ * arms LIVE intent at boot so a session launched straight into env 4 has the
+ * guard active without a `start_debug({ mode: 'relay-live' })` round-trip. All
+ * other `MCP_ENV` values (`mock`, `relay`, `relay-dev`) are accepted-and-ignored
+ * for env derivation — the active connection's `kind` is authoritative.
+ *
+ * SECRET-HANDLING: reads only the env-var string; never logs a secret.
+ */
+export function seedLiveIntentFromEnv(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.MCP_ENV === 'relay-live') setLiveIntent(true);
+}
 
 type Mode = 'debug' | 'dev';
 type Target = 'relay' | 'local';
@@ -95,6 +117,8 @@ function normalizeTarget(value: string): Target {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+  // Back-compat (issue #348): `MCP_ENV=relay-live` seeds LIVE intent at boot.
+  seedLiveIntentFromEnv();
   const mode = parseMode(args);
   if (mode === 'dev') {
     await runDevServer();

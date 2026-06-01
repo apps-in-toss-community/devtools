@@ -362,6 +362,46 @@ export const DEBUG_TOOL_DEFINITIONS = [
     availableIn: 'both' as ToolAvailability,
   },
   {
+    name: 'start_debug',
+    description:
+      'Switches the active debug environment in-place (issue #348) — no Claude Code restart and ' +
+      'no MCP re-handshake. One daemon holds both a local (env 1, mock SDK in a Chromium) and a ' +
+      'relay (env 3/4, real-device Toss WebView over the Chii relay + cloudflared tunnel) ' +
+      'connection at once; this tool flips which one every other tool reads from, lazily booting ' +
+      "the requested family's infra on first use and keeping the inactive one warm so an existing " +
+      'attach survives the switch. After switching it emits notifications/tools/list_changed — ' +
+      'call tools/list again to see the updated tool surface for the new environment.\n\n' +
+      'modes:\n' +
+      '  local-browser-dev / local-browser-cdp — local Chromium CDP attach (env 1, mock). ' +
+      'Both route to the local connection; the names preserve dev-vs-cdp intent.\n' +
+      '  relay-dev  — real-device dogfood relay (env 3). Side-effect tools run unguarded.\n' +
+      '  relay-live — real-device live/production relay (env 4, read-only debugging). Arms the ' +
+      'LIVE guard: call_sdk/evaluate then require confirm: true. Entering relay-live ALSO requires ' +
+      'confirm: true on this call to acknowledge LIVE intent.\n\n' +
+      'Switching back to a local mode automatically disarms the LIVE guard.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['local-browser-dev', 'local-browser-cdp', 'relay-dev', 'relay-live'],
+          description:
+            'Target environment to switch to. relay-live additionally requires confirm: true.',
+        },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Required when mode=relay-live — set true to acknowledge entering LIVE (env 4) ' +
+            'debugging that can affect real users. Ignored for the other modes.',
+        },
+      },
+      required: ['mode'],
+    },
+    // Tier C — always callable so the agent can enter any environment from any
+    // starting environment (including a fresh, unattached session).
+    availableIn: 'both' as ToolAvailability,
+  },
+  {
     name: 'get_diagnostics',
     description:
       'Returns a single-call server status snapshot so the agent can diagnose "why is this not ' +
@@ -461,6 +501,9 @@ export const BOOTSTRAP_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'build_attach_url',
   'get_diagnostics',
   'list_pages',
+  // start_debug must be visible from the very first tools/list (before any
+  // attach) so the agent can switch environments to bootstrap an attach.
+  'start_debug',
 ]);
 
 /** Normalized console message returned by `list_console_messages`. */

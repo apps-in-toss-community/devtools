@@ -37,6 +37,7 @@ type CannedResults = Partial<{
 
 function makeFakeConnection(canned: CannedResults = {}): CdpConnection {
   return {
+    kind: 'relay' as const,
     enableDomains: () => Promise.resolve(),
     listTargets: (): CdpTarget[] => [],
     getBufferedEvents: <E extends CdpEventName>(_event: E): ReadonlyArray<CdpEventMap[E]> => [],
@@ -70,6 +71,7 @@ function connWithSuccess(value: unknown): CdpConnection {
 /** bridge에 도달하면 fail시키는 connection — validation에서 reject되어야 bridge를 안 타야 함 */
 function connThatShouldNotBeReached(): CdpConnection {
   return {
+    kind: 'relay' as const,
     enableDomains: () => Promise.resolve(),
     listTargets: (): CdpTarget[] => [],
     getBufferedEvents: <E extends CdpEventName>(_event: E): ReadonlyArray<CdpEventMap[E]> => [],

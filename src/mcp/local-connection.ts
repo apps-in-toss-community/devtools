@@ -104,6 +104,9 @@ export interface LocalCdpConnectionOptions {
  * `about:blank`, `about:newtab`, or a devtools:// URL.
  */
 export class LocalCdpConnection implements CdpConnection {
+  /** Authoritative connection kind (issue #348) — local Chromium CDP. */
+  readonly kind = 'local' as const;
+
   private readonly devtoolsHttpUrl: string;
   private readonly bufferSize: number;
   private readonly emitter = new EventEmitter();

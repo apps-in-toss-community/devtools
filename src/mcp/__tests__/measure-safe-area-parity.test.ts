@@ -30,6 +30,9 @@ import { measureSafeArea, SAFE_AREA_PROBE_EXPRESSION } from '../tools.js';
  * assert the same probe string is used regardless of env.
  */
 class RecordingCdpConnection implements CdpConnection {
+  /** Test fake — relay-kind (issue #348); env is injected so the value is inert here. */
+  readonly kind = 'relay' as const;
+
   public readonly evaluateCalls: Array<{ expression: string }> = [];
 
   constructor(private readonly probeJson: string) {}

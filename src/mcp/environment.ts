@@ -1,92 +1,62 @@
 /**
- * MCP environment detection — single source of truth for `mock` vs `relay-dev`
- * vs `relay-live`.
+ * MCP environment — derived from two orthogonal axes (issue #348).
  *
- * RFC #277 ("MCP tool surface fidelity") asks us to decide *once* per process
- * whether the agent is operating against:
- *   - `mock`       — a local dev browser running the @ait-co/devtools mock SDK
- *                    (env 1 in the 4-environments fidelity ladder), or
- *   - `relay-dev`  — a real device WebView attached through the Chii relay +
- *                    cloudflared quick tunnel, dogfood bundle (env 3), or
- *   - `relay-live` — a live/production WebView attached through the relay
- *                    (env 4 in the ladder, read-only debugging).
+ * Before #348 the environment was a single sticky decision made once per
+ * process by `getEnvironment()` via a 5-step precedence chain (env var → URL
+ * pattern sniffing → caller-stated default → baked-in default). That model
+ * could not express a daemon that holds two live connections at once and swaps
+ * the active one without a restart — the dual-connection design (#348).
  *
- * The env decides two things:
+ * The 3-value `McpEnvironment` is now *derived* from two cheap signals rather
+ * than detected:
  *
- *   1. Which tools appear on `tools/list` (Tier A → mock-only, Tier B → relay-only,
- *      Tier C → both). Tier filtering happens in `tools.ts` registry and the
- *      `CallTool` handler in `debug-server.ts` / `server.ts`.
- *   2. Which code path `measure_safe_area` and other Tier C tools take when they
- *      need to attach a `source: 'mock' | 'relay-dev' | 'relay-live'` provenance
- *      label to results.
+ *   1. `mock` vs `relay-*`  — free from `connection.kind` (`'local'` | `'relay'`,
+ *      see `cdp-connection.ts`). Authoritative, known before any target
+ *      attaches, and swappable at runtime by pointing at a different connection.
  *
- * Detection precedence (highest → lowest):
- *   1. `MCP_ENV=mock|relay-dev|relay-live|relay`  — explicit env var, always
- *      wins. `relay` is a backward-compat alias for `relay-dev`.
- *   2. CDP target URL pattern                       — when a target URL matches a
- *      known real-device WebView pattern (intoss-private:// scheme,
- *      *.trycloudflare.com host) it is `relay-dev` (conservative — LIVE
- *      requires explicit MCP_ENV=relay-live opt-in).
- *   3. caller-stated default                        — `defaultEnv` from the
- *      input. The CLI entry point passes the mode's intent: debug-mode relay
- *      target passes `'relay-dev'` so the default reflects "user just launched
- *      a relay debug session", which is the dominant case. Local debug + dev
- *      mode + tests with no input fall back to `'mock'`.
- *   4. baked-in default                             — `mock` (zero external
- *      side effect).
+ *   2. `relay-dev` vs `relay-live` — physically underivable (dogfood and
+ *      production relays are byte-identical on the wire), so it is a single
+ *      operator-supplied bit, `liveIntent`. It is armed only by
+ *      `start_debug({ mode: 'relay-live' })` and is inert whenever the active
+ *      connection is local.
  *
- * The `defaultEnv` precedence step (3) resolves the M2-5 dead-lock (issue
- * #309): without it, a fresh debug-mode session with no `MCP_ENV` and no
- * attached target resolved to `mock` and Tier B `build_attach_url` was hidden
- * from `tools/list` — leaving the agent with no way to enter env 3/4. By
- * letting the CLI pass `defaultEnv: 'relay-dev'` for the relay-target debug
- * mode, the bootstrap tool surface advertises `build_attach_url` from the
- * first `tools/list` call without forcing the user to set `MCP_ENV` explicitly.
- * LIVE-side guard still requires explicit `MCP_ENV=relay-live` opt-in.
+ * `McpEnvironment` survives as an OUTPUT-BOUNDARY type — `get_diagnostics` and
+ * the envelope `meta.env` field still surface the precise three-value string —
+ * but it is reconstructed from `(connection.kind, liveIntent)` via
+ * {@link deriveEnvironment}, never sniffed.
  *
- * The env decision is intentionally *sticky* per process. Switching env should
- * be a process restart, not a runtime toggle — the RFC's reasoning is that mid-
- * session env flips silently invalidate everything an agent has learned.
- *
- * LIVE side-effect guard: when env is `relay-live`, the `call_sdk` and
- * `evaluate` tools require an explicit `confirm: true` argument. Without it,
- * the tool handler returns a structured error explaining the requirement. This
- * prevents accidental side effects on real users in the live production WebView.
+ * LIVE side-effect guard (relay-live, env 4): the `call_sdk` / `evaluate` tools
+ * require an explicit `confirm: true`. The guard now reads to a single line in
+ * `debug-server.ts`: `connection.kind === 'relay' && liveIntent && !confirm`.
+ * `relay && liveIntent` together means a stale `liveIntent` bit is inert
+ * against a local target (it only fires when the active connection is relay).
  *
  * Backward compatibility:
- *   - `MCP_ENV=relay` still works (resolves to `relay-dev`).
- *   - Tools that accepted `McpEnvironment` of `'relay'` now work with
- *     `isRelayEnv(env)` which returns true for both `relay-dev` and
- *     `relay-live`.
- *   - `get_diagnostics` `environment` field keeps the legacy `env` key
- *     (`'mock' | 'relay'`) alongside the new `kind` key.
+ *   - `MCP_ENV=relay-live` is a deprecated alias that seeds `liveIntent=true`
+ *     at boot (see `cli.ts`). `MCP_ENV=mock|relay|relay-dev` are accepted and
+ *     ignored for env derivation (kind is authoritative) — they only matter for
+ *     `relay-live`'s liveIntent seed.
+ *   - `isRelayEnv()` / `isLiveRelayEnv()` / `toLegacyEnv()` are unchanged.
  *
  * SECRET-HANDLING: this module never reads the TOTP secret, deploy key, or any
- * URL component other than the scheme/host. The pattern matching uses public
- * surface only (intoss-private://… authority, *.trycloudflare.com host suffix).
+ * URL. It deals only in the connection kind and a single boolean.
  */
 
-import type { CdpConnection } from './cdp-connection.js';
-
 /**
- * The three environments the MCP server can operate in (issue #307).
+ * The three environments the MCP server can surface in its output (issue #307).
  *
- *   - `mock`       — local dev browser + mock SDK (env 1).
- *   - `relay-dev`  — real-device dogfood bundle relay (env 3).
- *   - `relay-live` — real-device live/production relay, read-only guard active
- *                    (env 4).
+ *   - `mock`       — local Chromium + mock SDK (env 1) — active connection is local.
+ *   - `relay-dev`  — real-device dogfood relay (env 3) — relay connection, liveIntent off.
+ *   - `relay-live` — real-device live/production relay (env 4) — relay connection,
+ *                    liveIntent on, read-only LIVE guard active.
  *
- * Backward-compat: the old `'relay'` value is no longer in the union type;
- * callers that need "any relay" should use the `isRelayEnv()` helper.
+ * This is a derived OUTPUT string (see module docstring) — not a detected,
+ * sticky decision.
  */
 export type McpEnvironment = 'mock' | 'relay-dev' | 'relay-live';
 
-/**
- * Legacy environment union that includes the deprecated `'relay'` alias.
- * Used only for `MCP_ENV` env-var parsing and backward-compat `env` field in
- * `get_diagnostics`. New code should use `McpEnvironment`.
- */
-type LegacyMcpEnvVar = McpEnvironment | 'relay';
+/** Connection kind — the authoritative `mock` vs `relay` signal (issue #348). */
+export type ConnectionKind = 'relay' | 'local';
 
 /**
  * Returns `true` when the environment is any relay variant (`relay-dev` or
@@ -105,7 +75,7 @@ export function isLiveRelayEnv(env: McpEnvironment): boolean {
 }
 
 /**
- * Maps the new `McpEnvironment` union to the legacy two-value union
+ * Maps the `McpEnvironment` union to the legacy two-value union
  * (`'mock' | 'relay'`) for backward-compatible fields in diagnostics output.
  */
 export function toLegacyEnv(env: McpEnvironment): 'mock' | 'relay' {
@@ -114,55 +84,68 @@ export function toLegacyEnv(env: McpEnvironment): 'mock' | 'relay' {
 }
 
 /**
- * Why a given environment was chosen. Stable strings suitable for stderr logs
- * and the `data.reason` field on rejection errors. Does NOT include any URL,
- * secret, or other potentially-sensitive value.
+ * Reconstructs the three-value `McpEnvironment` output string from the two
+ * orthogonal signals (issue #348):
+ *
+ *   - `kind === 'local'`                 → `'mock'`
+ *   - `kind === 'relay'` &&  liveIntent  → `'relay-live'`
+ *   - `kind === 'relay'` && !liveIntent  → `'relay-dev'`
+ *
+ * Pure — used at every output boundary (envelope `meta.env`, `get_diagnostics`,
+ * `measure_safe_area` provenance) so the surface never sniffs a URL again.
  */
-export type EnvironmentReason =
-  | 'env-var-mock'
-  | 'env-var-relay-dev'
-  | 'env-var-relay-live'
-  | 'env-var-relay-compat'
-  | 'cdp-target-url-relay-pattern'
-  | 'default-mock'
-  | 'default-relay-dev'
-  | 'default-relay-live';
+export function deriveEnvironment(kind: ConnectionKind, liveIntent: boolean): McpEnvironment {
+  if (kind === 'local') return 'mock';
+  return liveIntent ? 'relay-live' : 'relay-dev';
+}
+
+/* -------------------------------------------------------------------------- */
+/* liveIntent — the single operator-supplied bit (relay-dev vs relay-live)    */
+/* -------------------------------------------------------------------------- */
 
 /**
- * URL patterns that mark a CDP target as a real-device WebView relay.
+ * Module-level `relay-dev` vs `relay-live` intent bit (issue #348).
  *
- * - `intoss-private://` is the Toss in-app private scheme — only ever observed
- *   inside the real Toss app WebView.
- * - `*.trycloudflare.com` (host suffix) is the cloudflared quick tunnel used as
- *   the relay transport. A target whose URL is on that host is, by construction,
- *   reached over the relay.
+ * Armed by `start_debug({ mode: 'relay-live' })` (and seeded at boot by the
+ * deprecated `MCP_ENV=relay-live` alias). Disarming is implicit: when the
+ * active connection becomes local, the LIVE guard reads
+ * `connection.kind === 'relay' && liveIntent`, so a stale `true` bit is inert.
  *
- * Pattern-only matches — no specific tunnel host or deploymentId is hard-coded.
+ * SECRET-HANDLING: this is a boolean — never a secret. Safe to read in logs.
  */
-const RELAY_URL_PATTERNS: ReadonlyArray<RegExp> = [
-  /^intoss-private:\/\//i,
-  /:\/\/[a-z0-9-]+\.trycloudflare\.com(\/|$|:|\?)/i,
-];
+let liveIntent = false;
 
-/**
- * Returns true when the URL string looks like a real-device WebView attached
- * over the Chii relay. Used for `getEnvironment()` precedence step 2.
- */
-export function isRelayUrl(url: string): boolean {
-  if (typeof url !== 'string' || url.length === 0) return false;
-  return RELAY_URL_PATTERNS.some((p) => p.test(url));
+/** Returns the current `liveIntent` bit. */
+export function getLiveIntent(): boolean {
+  return liveIntent;
 }
 
 /**
- * Test/override hook — when non-null, `getEnvironment()` returns this value
- * regardless of env vars or connection state. Cleared with `null`.
+ * Sets the `liveIntent` bit. Called by `start_debug` (true for `relay-live`,
+ * false for every other mode) and once at boot by the `MCP_ENV=relay-live`
+ * deprecated alias.
+ */
+export function setLiveIntent(value: boolean): void {
+  liveIntent = value;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Test override hook (narrow)                                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Test/override hook — when non-null, callers that consult
+ * {@link getEnvironmentOverride} return this value regardless of the live
+ * connection kind. Production code never sets it; it exists so a unit test can
+ * pin a precise `McpEnvironment` without constructing a real connection.
+ *
+ * This is intentionally NARROW: it no longer drives a precedence chain. The
+ * authoritative production signal is `connection.kind` + `liveIntent`; this
+ * override is a pure test affordance.
  */
 let envOverride: McpEnvironment | null = null;
 
-/**
- * Sets a sticky environment override. Intended for tests; production code paths
- * should leave the override `null` and let the precedence rules decide.
- */
+/** Sets a sticky environment override. Intended for tests only. */
 export function setEnvironmentOverride(env: McpEnvironment | null): void {
   envOverride = env;
 }
@@ -170,106 +153,4 @@ export function setEnvironmentOverride(env: McpEnvironment | null): void {
 /** Reads the current override (test inspection). */
 export function getEnvironmentOverride(): McpEnvironment | null {
   return envOverride;
-}
-
-/**
- * Parses the `MCP_ENV` env var into a `McpEnvironment` if valid.
- *
- * Accepted values:
- *   - `mock`        → `mock`
- *   - `relay-dev`   → `relay-dev`
- *   - `relay-live`  → `relay-live`
- *   - `relay`       → `relay-dev`  (backward-compat alias — resolves to relay-dev)
- *
- * Any other value is ignored and falls through to the next precedence step.
- */
-function readEnvVar(): McpEnvironment | undefined {
-  const raw = process.env.MCP_ENV as LegacyMcpEnvVar | string | undefined;
-  if (raw === 'mock') return 'mock';
-  if (raw === 'relay-dev') return 'relay-dev';
-  if (raw === 'relay-live') return 'relay-live';
-  if (raw === 'relay') return 'relay-dev'; // backward-compat alias
-  return undefined;
-}
-
-/**
- * Decision input for `getEnvironment` / `getEnvironmentReason`. The connection
- * is optional — when omitted, only the env var and default are consulted.
- *
- * Production callers pass the live `CdpConnection` so the URL-pattern step
- * (precedence 2) can fire. Tests can omit it to exercise pure precedence.
- */
-export interface EnvironmentInput {
-  /**
-   * Live CDP connection — when its `listTargets()` includes a URL matching the
-   * real-device pattern, the env resolves to `relay`. Optional.
-   */
-  connection?: Pick<CdpConnection, 'listTargets'>;
-  /**
-   * Caller-stated default when no env var is set and no URL pattern matches.
-   * The CLI entry point uses this to encode each mode's *intent* (debug-mode
-   * relay target = `'relay'`, local/dev = `'mock'`) without baking the mode
-   * into this module. Defaults to `'mock'` (backwards-compatible — tests and
-   * legacy callers see the original behaviour).
-   *
-   * This is precedence step 3 (caller-stated default) — it only kicks in after
-   * `MCP_ENV` and the URL pattern have been consulted, so an explicit env var
-   * or a real-device URL still wins.
-   */
-  defaultEnv?: McpEnvironment;
-}
-
-/**
- * Returns the current MCP environment, applying the precedence rules:
- *   1. test override (if set)
- *   2. `MCP_ENV` env var
- *   3. CDP target URL pattern match → `relay-dev` (conservative — LIVE
- *      requires explicit MCP_ENV=relay-live opt-in)
- *   4. caller-stated `defaultEnv` (intent hint from the CLI mode)
- *   5. baked-in default `mock`
- */
-export function getEnvironment(input: EnvironmentInput = {}): McpEnvironment {
-  if (envOverride !== null) return envOverride;
-  const fromEnv = readEnvVar();
-  if (fromEnv !== undefined) return fromEnv;
-  const { connection, defaultEnv } = input;
-  if (connection !== undefined) {
-    const targets = connection.listTargets();
-    for (const t of targets) {
-      if (isRelayUrl(t.url)) return 'relay-dev';
-    }
-  }
-  return defaultEnv ?? 'mock';
-}
-
-/**
- * Returns the `EnvironmentReason` that drove the current `getEnvironment()`
- * result. Used by stderr logs and the rejection-reason payload on Tier A/B
- * mismatch errors. SECRET-HANDLING: only stable enum strings — no URL or
- * secret value is ever returned.
- */
-export function getEnvironmentReason(input: EnvironmentInput = {}): EnvironmentReason {
-  if (envOverride !== null) {
-    if (envOverride === 'mock') return 'env-var-mock';
-    if (envOverride === 'relay-live') return 'env-var-relay-live';
-    return 'env-var-relay-dev';
-  }
-  const rawVar = process.env.MCP_ENV;
-  const fromEnv = readEnvVar();
-  if (fromEnv === 'mock') return 'env-var-mock';
-  if (fromEnv === 'relay-live') return 'env-var-relay-live';
-  if (fromEnv === 'relay-dev') {
-    // Distinguish explicit `relay-dev` from backward-compat `relay` alias.
-    return rawVar === 'relay' ? 'env-var-relay-compat' : 'env-var-relay-dev';
-  }
-  const { connection, defaultEnv } = input;
-  if (connection !== undefined) {
-    const targets = connection.listTargets();
-    for (const t of targets) {
-      if (isRelayUrl(t.url)) return 'cdp-target-url-relay-pattern';
-    }
-  }
-  if (defaultEnv === 'relay-live') return 'default-relay-live';
-  if (defaultEnv === 'relay-dev') return 'default-relay-dev';
-  return 'default-mock';
 }

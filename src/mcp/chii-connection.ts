@@ -125,6 +125,9 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30_000;
  * opens a client websocket to it, enables Phase 1 domains, and buffers events.
  */
 export class ChiiCdpConnection implements CdpConnection {
+  /** Authoritative connection kind (issue #348) — relay-backed. */
+  readonly kind = 'relay' as const;
+
   private readonly relayBaseUrl: string;
   private readonly bufferSize: number;
   private readonly commandTimeoutMs: number;

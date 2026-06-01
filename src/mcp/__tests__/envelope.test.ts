@@ -31,6 +31,9 @@ import type { TunnelStatus } from '../tools.js';
 // ---- Fakes ------------------------------------------------------------------
 
 class FakeCdpConnection implements CdpConnection {
+  /** Test fake — relay-kind (issue #348); env is injected so the value is inert here. */
+  readonly kind = 'relay' as const;
+
   private _targets: CdpTarget[];
   private _commandResults: Map<string, unknown>;
 

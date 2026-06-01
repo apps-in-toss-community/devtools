@@ -223,6 +223,23 @@ export type CdpCommandName = keyof CdpCommandMap;
  */
 export interface CdpConnection {
   /**
+   * Authoritative kind of this connection's transport (issue #348).
+   *
+   * - `'relay'` — backed by the Chii relay + cloudflared tunnel (a real-device
+   *   WebView, env 3/4). `ChiiCdpConnection`.
+   * - `'local'` — backed by a direct CDP websocket to a local Chromium (env 1).
+   *   `LocalCdpConnection`.
+   *
+   * This replaces the old `getEnvironment()` URL-pattern sniffing: the
+   * `mock` vs `relay` split is now a free, authoritative property of the
+   * connection itself, known before any target attaches. The `relay-dev` vs
+   * `relay-live` distinction is orthogonal (operator-supplied `liveIntent`,
+   * see `environment.ts`) because dogfood and production relays are
+   * byte-identical on the wire.
+   */
+  readonly kind: 'relay' | 'local';
+
+  /**
    * Enable the CDP domains Phase 1 needs (`Runtime.enable`, `Network.enable`).
    * Idempotent. Resolves once the relay has acknowledged (or immediately for a
    * fake connection).
