@@ -43,6 +43,7 @@ import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
 import type { McpEnvironment } from './environment.js';
 import { isLiveRelayEnv, isRelayEnv, toLegacyEnv } from './environment.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
+import { isPidAlive } from './server-lock.js';
 import { generateTotp } from './totp.js';
 
 /** Tunnel state surfaced by `list_pages`. */
@@ -1571,6 +1572,17 @@ export interface DiagnosticsTunnelInfo {
    * or `null`.
    */
   startedAt: string | null;
+  /**
+   * ISO timestamp when the tunnel permanently dropped (health probe exhausted
+   * all reissue attempts). `null` when the tunnel has not permanently dropped.
+   * When non-null, the MCP server must be restarted to recover.
+   */
+  droppedAt: string | null;
+  /**
+   * Number of automatic reissue attempts made before the permanent drop.
+   * 0 when no drop has occurred.
+   */
+  reissueAttempts: number;
 }
 
 /**
@@ -1646,11 +1658,24 @@ export interface DiagnosticsResult {
    */
   serverLockHolder: DiagnosticsLockHolder | null;
   /**
+   * Basic process identity for the running MCP server daemon.
+   * Useful for diagnosing orphaned daemons and stale parent associations.
+   */
+  process: {
+    /** PID of this MCP server process. */
+    pid: number;
+    /** Parent PID at the time `get_diagnostics` was called. */
+    ppid: number;
+    /** Whether the parent process is still alive at snapshot time. */
+    parentAlive: boolean;
+  };
+  /**
    * Single next recommended action for the agent, or `null` when the session
    * looks healthy. Derived deterministically from the other snapshot fields —
    * the agent should call this tool next rather than inferring from raw fields.
    *
    * Branch rules (evaluated in priority order):
+   *   0. tunnel.droppedAt non-null                   → restart (permanent tunnel drop)
    *   1. tunnel.up === false AND relay env            → restart
    *   1b. tunnel.up === false AND mock env, no pages  → wait_for_page (local target is tunnel-less)
    *   2. tunnel.up, pages empty, env === relay        → build_attach_url
@@ -1804,6 +1829,7 @@ export function readDevtoolsVersion(): string | null {
  * Derives the next recommended action from a completed diagnostics snapshot.
  *
  * Branch rules (evaluated in priority order):
+ *   0. tunnel.droppedAt non-null                  → restart (permanent tunnel drop — highest priority)
  *   1. tunnel.up === false AND env is relay       → restart (relay needs a live tunnel)
  *   1b. tunnel.up === false AND env is mock       → wait_for_page (local target: tunnel-less is normal)
  *   2. tunnel.up, pages empty, env === relay      → build_attach_url (start attach)
@@ -1817,6 +1843,17 @@ export function computeNextRecommendedAction(
   pages: ListPagesResult | null,
   env: McpEnvironment,
 ): NextRecommendedAction | null {
+  // Rule 0: permanent tunnel drop — highest priority, beats crash / empty-pages rules.
+  // droppedAt is set by the health probe after exhausting all reissue attempts.
+  if (tunnel.droppedAt != null) {
+    return {
+      tool: 'restart',
+      reason:
+        `tunnel permanently dropped at ${tunnel.droppedAt} after ${tunnel.reissueAttempts} reissue attempt(s) — ` +
+        'restart the MCP server (npx @ait-co/devtools devtools-mcp)',
+    };
+  }
+
   // Rule 1: tunnel is down.
   if (!tunnel.up) {
     // Rule 1b: local-target (mock env) runs without a relay tunnel by design —
@@ -1887,6 +1924,11 @@ export interface GetDiagnosticsInput {
   recentErrorsLimit?: number;
   /** Optional async resolver for the MCP SDK version. */
   getMcpVersion?: () => Promise<string | null>;
+  /**
+   * Injectable parent-alive check for testability.
+   * Defaults to `() => isPidAlive(process.ppid)` in production.
+   */
+  checkParentAlive?: () => boolean;
 }
 
 /**
@@ -1909,6 +1951,7 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     readLock: readLockFn,
     recentErrorsLimit = 10,
     getMcpVersion = readMcpSdkVersion,
+    checkParentAlive = () => isPidAlive(process.ppid),
   } = input;
 
   const [mcpVersion, devtoolsVersion] = await Promise.all([
@@ -1927,6 +1970,8 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     wssUrl: tunnel.wssUrl,
     pid: lockData?.pid ?? null,
     startedAt: lockData?.startedAt ?? null,
+    droppedAt: tunnel.droppedAt ?? null,
+    reissueAttempts: tunnel.reissueAttempts ?? 0,
   };
 
   // list_pages — non-fatal; null on any error.
@@ -1959,6 +2004,11 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
       liveGuardActive: isLiveRelayEnv(env),
     },
     serverLockHolder,
+    process: {
+      pid: process.pid,
+      ppid: process.ppid,
+      parentAlive: checkParentAlive(),
+    },
     nextRecommendedAction,
   };
 }

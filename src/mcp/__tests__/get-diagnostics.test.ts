@@ -315,6 +315,71 @@ describe('getDiagnostics helper', () => {
     expect(result.lastAttachAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(result.lastDetachAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+
+  it('copies droppedAt and reissueAttempts from TunnelStatus into tunnel info', async () => {
+    const droppedTunnel: TunnelStatus = {
+      up: false,
+      wssUrl: null,
+      droppedAt: '2026-06-01T10:00:00.000Z',
+      reissueAttempts: 3,
+    };
+    const result = await getDiagnostics({
+      tunnel: droppedTunnel,
+      env: 'relay-dev',
+      envReason: 'test',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+    expect(result.tunnel.droppedAt).toBe('2026-06-01T10:00:00.000Z');
+    expect(result.tunnel.reissueAttempts).toBe(3);
+  });
+
+  it('sets droppedAt=null and reissueAttempts=0 when TunnelStatus has no drop info', async () => {
+    const result = await getDiagnostics({
+      tunnel: tunnelDown,
+      env: 'mock',
+      envReason: 'default-mock',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+    expect(result.tunnel.droppedAt).toBeNull();
+    expect(result.tunnel.reissueAttempts).toBe(0);
+  });
+
+  it('includes process.{pid, ppid, parentAlive} block', async () => {
+    const result = await getDiagnostics({
+      tunnel: tunnelDown,
+      env: 'mock',
+      envReason: 'default-mock',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+      checkParentAlive: () => true,
+    });
+    expect(typeof result.process.pid).toBe('number');
+    expect(typeof result.process.ppid).toBe('number');
+    expect(result.process.parentAlive).toBe(true);
+  });
+
+  it('process.parentAlive reflects the injected checkParentAlive result', async () => {
+    const resultAlive = await getDiagnostics({
+      tunnel: tunnelDown,
+      env: 'mock',
+      envReason: 'default-mock',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+      checkParentAlive: () => true,
+    });
+    const resultDead = await getDiagnostics({
+      tunnel: tunnelDown,
+      env: 'mock',
+      envReason: 'default-mock',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+      checkParentAlive: () => false,
+    });
+    expect(resultAlive.process.parentAlive).toBe(true);
+    expect(resultDead.process.parentAlive).toBe(false);
+  });
 });
 
 // ---- MCP tool via createDebugServer -----------------------------------------
@@ -429,12 +494,21 @@ describe('get_diagnostics MCP tool', () => {
 describe('computeNextRecommendedAction', () => {
   const tunnelDown: TunnelStatus = { up: false, wssUrl: null };
 
-  const tunnelInfoDown = { up: false, wssUrl: null, pid: null, startedAt: null };
+  const tunnelInfoDown = {
+    up: false,
+    wssUrl: null,
+    pid: null,
+    startedAt: null,
+    droppedAt: null,
+    reissueAttempts: 0,
+  };
   const tunnelInfoUp = {
     up: true,
     wssUrl: 'wss://abc.trycloudflare.com',
     pid: null,
     startedAt: null,
+    droppedAt: null,
+    reissueAttempts: 0,
   };
 
   // Build a minimal ListPagesResult for tests.
@@ -526,5 +600,40 @@ describe('computeNextRecommendedAction', () => {
     const action = computeNextRecommendedAction(tunnelInfoDown, null, 'relay-live');
     expect(action).not.toBeNull();
     expect(action!.tool).toBe('restart');
+  });
+
+  // ---- Rule 0: permanent tunnel drop (#347) ----------------------------------
+
+  it('Rule 0: droppedAt non-null → restart with timestamped reason', () => {
+    const droppedTunnelInfo = {
+      ...tunnelInfoDown,
+      droppedAt: '2026-06-01T10:00:00.000Z',
+      reissueAttempts: 3,
+    };
+    const action = computeNextRecommendedAction(droppedTunnelInfo, null, 'relay-dev');
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('restart');
+    expect(action!.reason).toContain('2026-06-01T10:00:00.000Z');
+    expect(action!.reason).toContain('3');
+  });
+
+  it('Rule 0: beats Rule 3 (tunnel dropped even when crash detected)', () => {
+    const droppedTunnelInfo = {
+      ...tunnelInfoUp,
+      droppedAt: '2026-06-01T10:00:00.000Z',
+      reissueAttempts: 3,
+    };
+    const crashedPages = makePages([], '2026-01-01T00:00:00.000Z');
+    const action = computeNextRecommendedAction(droppedTunnelInfo, crashedPages, 'relay-dev');
+    // Rule 0 (permanent drop) must beat Rule 3 (crash re-attach).
+    expect(action!.tool).toBe('restart');
+    expect(action!.reason).toContain('permanently dropped');
+  });
+
+  it('Rule 0: droppedAt=null does NOT trigger restart on its own (no drop)', () => {
+    // tunnelInfoUp already has droppedAt: null, reissueAttempts: 0
+    const healthyPages = makePages([{ id: 'p1', title: 'App', url: 'intoss-private://app' }]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, healthyPages, 'relay-dev');
+    expect(action).toBeNull();
   });
 });

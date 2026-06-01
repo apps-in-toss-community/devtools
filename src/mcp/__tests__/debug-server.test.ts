@@ -22,7 +22,7 @@ import type {
   CdpEventName,
   CdpTarget,
 } from '../cdp-connection.js';
-import { createDebugServer, startAttachWatcher } from '../debug-server.js';
+import { createDebugServer, startAttachWatcher, startParentWatcher } from '../debug-server.js';
 import type { McpEnvironment } from '../environment.js';
 import type { TunnelStatus } from '../tools.js';
 import { BOOTSTRAP_TOOL_NAMES, DEBUG_TOOL_DEFINITIONS } from '../tools.js';
@@ -679,6 +679,150 @@ describe('startAttachWatcher', () => {
       expect(onFirstAttach).toHaveBeenCalledTimes(1);
 
       watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startParentWatcher — orphan self-termination (#347)
+// ---------------------------------------------------------------------------
+
+describe('startParentWatcher', () => {
+  it('fires onOrphaned once when getPpid() changes from initialPpid', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOrphaned = vi.fn();
+      let currentPpid = 1234;
+
+      const watcher = startParentWatcher(onOrphaned, {
+        intervalMs: 100,
+        initialPpid: 1234,
+        isAlive: () => true, // parent still alive by kill(0)
+        getPpid: () => currentPpid, // ppid changes = re-parented
+        log: () => {},
+      });
+
+      // No change yet — onOrphaned must not fire.
+      await vi.advanceTimersByTimeAsync(150);
+      expect(onOrphaned).not.toHaveBeenCalled();
+
+      // Simulate ppid change (parent died and init/launchd adopted us).
+      currentPpid = 1;
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onOrphaned).toHaveBeenCalledTimes(1);
+
+      // Should NOT fire again on further ticks.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onOrphaned).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires onOrphaned once when isAlive(initialPpid) returns false', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOrphaned = vi.fn();
+      let parentAlive = true;
+
+      const watcher = startParentWatcher(onOrphaned, {
+        intervalMs: 100,
+        initialPpid: 5678,
+        isAlive: (pid) => (pid === 5678 ? parentAlive : true),
+        getPpid: () => 5678,
+        log: () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(150);
+      expect(onOrphaned).not.toHaveBeenCalled();
+
+      // Parent dies — kill(pid, 0) returns ESRCH.
+      parentAlive = false;
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onOrphaned).toHaveBeenCalledTimes(1);
+
+      // Idempotent — only fires once.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onOrphaned).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT fire while parent is alive and ppid is stable across many ticks', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOrphaned = vi.fn();
+
+      const watcher = startParentWatcher(onOrphaned, {
+        intervalMs: 100,
+        initialPpid: 9999,
+        isAlive: () => true,
+        getPpid: () => 9999,
+        log: () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(2000); // 20 ticks
+      expect(onOrphaned).not.toHaveBeenCalled();
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('initialPpid <= 1 → never schedules an interval and never fires', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOrphaned = vi.fn();
+      const logs: string[] = [];
+
+      const watcher = startParentWatcher(onOrphaned, {
+        intervalMs: 100,
+        initialPpid: 1,
+        isAlive: () => false, // would fire if interval ran
+        getPpid: () => 2, // would fire if interval ran
+        log: (msg) => logs.push(msg),
+      });
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(onOrphaned).not.toHaveBeenCalled();
+      // The no-parent log should have been emitted.
+      expect(logs.some((m) => m.includes('ppid<=1'))).toBe(true);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stop() prevents onOrphaned from firing after being called', async () => {
+    vi.useFakeTimers();
+    try {
+      const onOrphaned = vi.fn();
+      let parentAlive = true;
+
+      const watcher = startParentWatcher(onOrphaned, {
+        intervalMs: 100,
+        initialPpid: 4321,
+        isAlive: () => parentAlive,
+        getPpid: () => 4321,
+        log: () => {},
+      });
+
+      // Stop the watcher before the parent dies.
+      watcher.stop();
+
+      // Now kill the parent — should have no effect since interval is cleared.
+      parentAlive = false;
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onOrphaned).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
