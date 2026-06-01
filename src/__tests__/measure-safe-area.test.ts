@@ -41,6 +41,7 @@ type CannedResults = Partial<{
  */
 function makeFakeConnection(canned: CannedResults = {}): CdpConnection {
   return {
+    kind: 'relay' as const,
     enableDomains: () => Promise.resolve(),
     listTargets: (): CdpTarget[] => [],
     getBufferedEvents: <E extends CdpEventName>(_event: E): ReadonlyArray<CdpEventMap[E]> => [],
