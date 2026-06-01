@@ -13,7 +13,7 @@
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { AitMethodMap, AitMethodName, AitSource } from '../ait-source.js';
 import type {
   CdpCommandMap,
@@ -24,7 +24,7 @@ import type {
   CdpTarget,
 } from '../cdp-connection.js';
 import { createDebugServer } from '../debug-server.js';
-import type { McpEnvironment } from '../environment.js';
+import { type McpEnvironment, setLiveIntent } from '../environment.js';
 import type { TunnelStatus } from '../tools.js';
 
 // ---- Minimal fakes -----------------------------------------------------------
@@ -69,6 +69,12 @@ class FakeAitSource implements AitSource {
 }
 
 async function makeClient(env: McpEnvironment): Promise<Client> {
+  // The LIVE guard reads the live `conn.kind === 'relay' && getLiveIntent()`
+  // (race fix #354) — NOT the injected env. So arm the module-level liveIntent
+  // bit to match the env under test: `relay-live` arms it, everything else
+  // leaves it off. The fake connection is always relay-kind, so for the `mock`
+  // case the guard stays inert solely because liveIntent is false.
+  setLiveIntent(env === 'relay-live');
   const tunnel: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
   const server = createDebugServer({
     connection: new FakeCdpConnection(),
@@ -83,6 +89,9 @@ async function makeClient(env: McpEnvironment): Promise<Client> {
   await client.connect(clientTransport);
   return client;
 }
+
+// Reset the module-level liveIntent bit so it never leaks across tests/files.
+afterEach(() => setLiveIntent(false));
 
 function getText(result: Awaited<ReturnType<Client['callTool']>>): string {
   return (result.content as Array<{ text?: string }>)[0]?.text ?? '';

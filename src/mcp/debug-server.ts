@@ -55,7 +55,6 @@ import { wrapEnvelope } from './envelope.js';
 import {
   deriveEnvironment,
   getLiveIntent,
-  isLiveRelayEnv,
   type McpEnvironment,
   setLiveIntent,
 } from './environment.js';
@@ -429,15 +428,23 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       }
     }
 
+    // PER-CALL SNAPSHOT of the derived environment (issue #348 / #354 regression
+    // fix). Capture `env` + `envReason` exactly once, right after the start_debug
+    // branch (so this call sees the post-switch env when it *is* a switch) and
+    // before the first `await`. Every site below reuses these locals instead of
+    // re-calling `resolveEnvironment()`/`resolveEnvironmentReason()` — those
+    // closures re-read `router.active.kind` + `getLiveIntent()` live, so a
+    // concurrent `start_debug` swap mid-await would otherwise corrupt the env
+    // stamped into this call's envelope / provenance label.
+    const env = resolveEnvironment();
+    const envReason = resolveEnvironmentReason();
     // Tier A/B env-mismatch guard (RFC #277). Tier C tools pass through.
     // We return a tool-result error (not an MCP protocol error) so the client
     // sees a structured isError + reason text rather than a thrown exception —
     // the MCP SDK still surfaces this as an error to the agent, but with the
     // explanatory `data.reason` payload preserved as text.
-    const env = resolveEnvironment();
     if (!isToolAvailableIn(name, env)) {
       const requiredEnv = getToolAvailability(name) ?? 'unknown';
-      const envReason = resolveEnvironmentReason();
       // Log structured (no secrets — only stable env strings + tool name).
       logWarn('tool.error', {
         tool: name,
@@ -480,14 +487,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         const result = await getDiagnostics({
           tunnel: getTunnelStatus(),
           connection: conn,
-          env: resolveEnvironment(),
-          envReason: resolveEnvironmentReason(),
+          env,
+          envReason,
           collector,
           readLock: readServerLock,
           recentErrorsLimit,
         });
         const attached = conn.listTargets().length > 0;
-        return envelopeResult(result, name, resolveEnvironment(), attached);
+        return envelopeResult(result, name, env, attached);
       } catch (err) {
         return errorResult(err, name);
       }
@@ -796,7 +803,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         }
         const pagesData = listPages(conn, getTunnelStatus());
         const attached = conn.listTargets().length > 0;
-        return envelopeResult(pagesData, name, resolveEnvironment(), attached);
+        return envelopeResult(pagesData, name, env, attached);
       }
       // 4상태 분류: page 미attach vs crash vs relay disconnect
       return classifyEnableDomainError(err, name);
@@ -822,7 +829,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           }
           const listPagesData = listPages(conn, getTunnelStatus());
           const listPagesAttached = conn.listTargets().length > 0;
-          return envelopeResult(listPagesData, name, resolveEnvironment(), listPagesAttached);
+          return envelopeResult(listPagesData, name, env, listPagesAttached);
         }
         case 'get_dom_document':
           return jsonResult(await getDomDocument(conn));
@@ -835,12 +842,15 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
         case 'measure_safe_area': {
-          // Pass env to attach `source: 'mock' | 'relay'` to the result (Tier C
-          // parity per RFC #277 — the same Runtime.evaluate probe runs in both
-          // envs; only the provenance label differs).
-          const safeAreaData = await measureSafeArea(conn, resolveEnvironment());
+          // Pass the SNAPSHOT env to attach `source: 'mock' | 'relay'` to the
+          // result (Tier C parity per RFC #277 — the same Runtime.evaluate probe
+          // runs in both envs; only the provenance label differs). The label must
+          // match the `conn` the probe actually ran on, so it reads the snapshot
+          // `env` (entry-time, same as `conn`) — not a freshly re-derived env that
+          // a concurrent swap could have moved.
+          const safeAreaData = await measureSafeArea(conn, env);
           const safeAreaAttached = conn.listTargets().length > 0;
-          return envelopeResult(safeAreaData, name, resolveEnvironment(), safeAreaAttached);
+          return envelopeResult(safeAreaData, name, env, safeAreaAttached);
         }
         case 'evaluate': {
           const expression = request.params.arguments?.expression;
@@ -849,13 +859,19 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               'evaluate: expression 인자가 비어 있습니다. 평가할 JavaScript 표현식을 전달하세요.',
             );
           }
-          // LIVE guard (issue #348): fires iff the active connection is relay
-          // AND liveIntent is armed (= resolved env is `relay-live`) AND no
-          // `confirm: true`. `isLiveRelayEnv(env)` is exactly the design's
-          // `conn.kind === 'relay' && liveIntent` one-liner — so a stale
-          // liveIntent is inert against a local target (DISARM is automatic on
-          // swap to local, no bit reset needed).
-          if (isLiveRelayEnv(env) && request.params.arguments?.confirm !== true) {
+          // LIVE guard (issue #348, race fix #354). Evaluated at the side-effect
+          // boundary with a SNAPSHOT `conn.kind` + a FRESH `getLiveIntent()` — not
+          // the stale entry-time `env`. The side effect always runs on `conn`, so
+          // the guard judges by `conn.kind`; reading `liveIntent` fresh closes the
+          // false→true race where a concurrent `start_debug('relay-live')` arms
+          // liveIntent while this call is parked on an `await`, after the stale
+          // entry-time `env` was already computed as non-live. A stale `true`
+          // bit stays inert against a local target (conn.kind !== 'relay').
+          if (
+            conn.kind === 'relay' &&
+            getLiveIntent() &&
+            request.params.arguments?.confirm !== true
+          ) {
             return liveGuardError('evaluate');
           }
           // SECRET-HANDLING: do not log expression or result value.
@@ -870,9 +886,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           }
           const rawArgs = request.params.arguments?.args;
           const sdkArgs: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
-          // LIVE guard (issue #348): see `evaluate` above — relay + liveIntent
-          // (resolved env relay-live) without `confirm: true` is rejected.
-          if (isLiveRelayEnv(env) && request.params.arguments?.confirm !== true) {
+          // LIVE guard (issue #348, race fix #354): see `evaluate` above —
+          // snapshot `conn.kind` + fresh `getLiveIntent()` so the false→true
+          // race (concurrent `start_debug('relay-live')` mid-await) is rejected.
+          if (
+            conn.kind === 'relay' &&
+            getLiveIntent() &&
+            request.params.arguments?.confirm !== true
+          ) {
             return liveGuardError('call_sdk');
           }
           // SECRET-HANDLING: do not log name, args, or result value.
@@ -886,7 +907,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             return sdkAbsentError('call_sdk');
           }
           const callSdkAttached = conn.listTargets().length > 0;
-          return envelopeResult(sdkResult, name, resolveEnvironment(), callSdkAttached);
+          return envelopeResult(sdkResult, name, env, callSdkAttached);
         }
         default:
           return unknownTool(name);
