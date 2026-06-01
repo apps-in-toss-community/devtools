@@ -668,4 +668,26 @@ describe('version resolvers (issue #361 — build-define, not globalThis)', () =
     // primary (no-throw, no req.resolve) path is exercised.
     expect(await readMcpSdkVersion()).toBe('0.0.0-test-sdk');
   });
+
+  // The build-define path (above) is the shipped primary, but #363 left
+  // mcpVersion: null in the real bundle because BOTH the build-time resolve
+  // (tsdown.config.ts) and this fallback used the bare `@modelcontextprotocol/sdk`
+  // main entry — which the SDK does NOT export, so it threw MODULE_NOT_FOUND and
+  // the define baked `null`. This pins the resolution the fix relies on: the
+  // `./server/mcp.js` subpath IS exported and the marker-walk reaches a real
+  // package.json version. If the SDK ever drops that subpath, this fails loudly
+  // instead of silently regressing to mcpVersion: null again.
+  it('resolves the SDK version via the exported ./server/mcp.js subpath (fallback path)', async () => {
+    const { createRequire } = await import('node:module');
+    const { readFileSync } = await import('node:fs');
+    const req = createRequire(import.meta.url);
+    const entry = req.resolve('@modelcontextprotocol/sdk/server/mcp.js');
+    const marker = '@modelcontextprotocol/sdk';
+    const root = entry.slice(0, entry.indexOf(marker) + marker.length);
+    const parsed = JSON.parse(readFileSync(`${root}/package.json`, 'utf8')) as {
+      version?: unknown;
+    };
+    expect(typeof parsed.version).toBe('string');
+    expect(parsed.version).toMatch(/^\d+\.\d+\.\d+/);
+  });
 });

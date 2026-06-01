@@ -1835,10 +1835,13 @@ export class InMemoryDiagnosticsCollector implements DiagnosticsCollector {
  * when the define is absent (unbundled test runs) and the runtime fallback
  * below also fails — diagnostics must never throw.
  *
- * The old implementation resolved `@modelcontextprotocol/sdk/package.json` at
- * runtime, but that subpath is NOT in the SDK's `exports` map, so the resolve
- * threw `ERR_PACKAGE_PATH_NOT_EXPORTED` and this always returned `null` in a
- * real bundle (issue #361). The build-time define sidesteps the exports gate.
+ * Earlier attempts resolved `@modelcontextprotocol/sdk/package.json` (not in
+ * the SDK `exports` map → `ERR_PACKAGE_PATH_NOT_EXPORTED`) or the bare
+ * `@modelcontextprotocol/sdk` main entry (also absent → `MODULE_NOT_FOUND`),
+ * so both this fallback AND the build-time define silently produced `null` —
+ * leaving `mcpVersion: null` in a real bundle (issue #361, observed live). The
+ * fix resolves a subpath that IS exported (`./server/mcp.js`) and walks back to
+ * the package root, in BOTH the build define and this fallback.
  *
  * Kept `async` for call-site compatibility (`Promise.all` at the caller); the
  * body is synchronous apart from the best-effort fallback.
@@ -1848,13 +1851,14 @@ export async function readMcpSdkVersion(): Promise<string | null> {
   if (typeof __MCP_SDK_VERSION__ === 'string' && __MCP_SDK_VERSION__.length > 0) {
     return __MCP_SDK_VERSION__;
   }
-  // Fallback for unbundled runs (the define never ran): resolve the installed
-  // SDK entry and read its sibling package.json by path — bypassing the
-  // `exports` gate that blocks the `/package.json` subpath specifier.
+  // Fallback for unbundled runs (the define never ran): resolve an EXPORTED
+  // subpath (`./server/mcp.js`) and read the sibling package.json by path —
+  // bypassing the `exports` gate that blocks both the `/package.json` subpath
+  // and the bare main entry.
   try {
     const { createRequire } = await import('node:module');
     const req = createRequire(import.meta.url);
-    const entry = req.resolve('@modelcontextprotocol/sdk');
+    const entry = req.resolve('@modelcontextprotocol/sdk/server/mcp.js');
     const marker = '@modelcontextprotocol/sdk';
     const root = entry.slice(0, entry.indexOf(marker) + marker.length);
     const { readFileSync } = await import('node:fs');

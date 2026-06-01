@@ -2,20 +2,22 @@ import { createRequire } from 'node:module';
 import { defineConfig, type Options } from 'tsdown';
 import pkg from './package.json' with { type: 'json' };
 
-// `@modelcontextprotocol/sdk` does not expose `./package.json` in its
-// `exports` map, so `require.resolve('@modelcontextprotocol/sdk/package.json')`
-// throws `ERR_PACKAGE_PATH_NOT_EXPORTED` at runtime — which is exactly why the
-// old runtime `readMcpSdkVersion()` always returned `null` in a real bundle
-// (issue #361). Reading the installed version here at BUILD time and baking it
-// into a define sidesteps the exports restriction entirely. Resolved via the
-// main entry's directory so we read the actually-installed version, not the
-// range. Falls back to `null` if resolution ever changes shape.
+// `@modelcontextprotocol/sdk` exposes NEITHER `.` (the bare main entry) NOR
+// `./package.json` in its `exports` map, so both
+// `require.resolve('@modelcontextprotocol/sdk')` and
+// `require.resolve('@modelcontextprotocol/sdk/package.json')` throw at BUILD
+// time (`ERR_PACKAGE_PATH_NOT_EXPORTED` / `MODULE_NOT_FOUND`) — which silently
+// baked `null` into this define and is exactly why the merged #363 attempt
+// still left `mcpVersion: null` in a real bundle (issue #361, observed live).
+// Resolve a subpath that IS in the exports map (`./server/mcp.js`, already
+// imported by the MCP server code), then walk back to the package root via the
+// `@modelcontextprotocol/sdk` marker and read its `package.json` by file path
+// (bypassing the `exports` gate). Falls back to `null` if resolution shape
+// ever changes.
 const mcpSdkVersion = ((): string | null => {
   try {
     const req = createRequire(import.meta.url);
-    // Resolve the installed entry, then read its sibling package.json by path
-    // (bypasses the `exports` gate that blocks the subpath specifier).
-    const entry = req.resolve('@modelcontextprotocol/sdk');
+    const entry = req.resolve('@modelcontextprotocol/sdk/server/mcp.js');
     const marker = '@modelcontextprotocol/sdk';
     const root = entry.slice(0, entry.indexOf(marker) + marker.length);
     const sdkPkg = req(`${root}/package.json`) as { version?: unknown };
