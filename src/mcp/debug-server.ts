@@ -1254,20 +1254,38 @@ class RoutingAitSource extends ChiiAitSource {
   }
 }
 
-/** A booted infra family the dual router can tear down at process exit. */
-interface BootedFamily {
+/**
+ * A booted infra family the dual router can tear down at process exit.
+ *
+ * Direction-neutral (issue #356): either family can be the eager (startup) one
+ * or the lazy (first cross-family switch) one. The relay family additionally
+ * exposes its live tunnel status; the local family leaves it `undefined`
+ * (a local browser has no relay tunnel), so the router/handlers read the relay
+ * tunnel status from whichever family is the relay one.
+ */
+export interface BootedFamily {
   connection: CdpConnection;
   /** Synchronous best-effort teardown (closes the connection + any infra). */
   stop(): void;
+  /**
+   * Live tunnel status — only the relay family provides it (the URL changes per
+   * tunnel reissue). `undefined` on the local family.
+   */
+  getTunnelStatus?: () => TunnelStatus;
 }
 
 /**
- * Lazy-boot callback for the local-browser family (issue #348). Launches a
- * Chromium with `--remote-debugging-port` and returns a `LocalCdpConnection`
- * attached to it, plus a `stop()` that kills both. Called at most once per
- * session by the dual router on the first `start_debug({ mode: 'local-*' })`.
+ * Boots the local-browser family (issues #348, #356). Launches a Chromium with
+ * `--remote-debugging-port` and returns a `LocalCdpConnection` attached to it,
+ * plus a `stop()` that kills both.
+ *
+ * Used two ways:
+ *   - `runDebugServer` (relay-eager): the dual router's lazy callback, booted at
+ *     most once on the first `start_debug({ mode: 'local-*' })`.
+ *   - `runLocalDebugServer` (local-eager, #356): the eager family booted at
+ *     startup.
  */
-async function bootLocalFamily(): Promise<BootedFamily> {
+export async function bootLocalFamily(): Promise<BootedFamily> {
   const cdpPort = 0; // OS-assigned ephemeral port.
   const devUrl = process.env.AIT_DEVTOOLS_URL ?? 'http://localhost:5173';
   const chromium = await launchChromium({ port: cdpPort, devUrl });
@@ -1283,19 +1301,145 @@ async function bootLocalFamily(): Promise<BootedFamily> {
   };
 }
 
+/** Options for {@link bootRelayFamily}. */
+export interface BootRelayFamilyOptions {
+  /** Relay local port. Default 0 (OS-assigned ephemeral). */
+  relayPort?: number;
+  /**
+   * TOTP `verifyAuth` predicate for the relay WS upgrade gate. Built from
+   * `AIT_DEBUG_TOTP_SECRET` at the call site via {@link buildRelayVerifyAuth}.
+   * `undefined` disables the gate.
+   */
+  verifyAuth?: (req: import('node:http').IncomingMessage) => boolean;
+  /**
+   * Called whenever the public tunnel URL is (re)assigned, so the caller can
+   * mirror it into the server lock file (`lockHandle.updateWssUrl`). The wssUrl
+   * carries the relay host — callers MUST NOT log it directly.
+   */
+  onWssUrl?: (wssUrl: string) => void;
+}
+
+/**
+ * Boots the relay family (issues #348, #356): starts the Chii relay on an
+ * OS-assigned port (with optional TOTP gate), opens a cloudflared quick tunnel
+ * to the relay's confirmed port in the background, prints the attach banner,
+ * and arms the tunnel health probe. Returns a {@link BootedFamily} whose
+ * `getTunnelStatus()` reflects the live tunnel (it flips up once the background
+ * tunnel resolves and follows reissues).
+ *
+ * Used two ways (symmetry with {@link bootLocalFamily}):
+ *   - `runDebugServer` (relay-eager): booted at startup.
+ *   - `runLocalDebugServer` (local-eager, #356): the dual router's lazy
+ *     callback, booted at most once on the first `start_debug({ mode: 'relay-*' })`.
+ *
+ * The relay base URL is only known after `startChiiRelay()` resolves, so the
+ * `ChiiCdpConnection` (via {@link createRelayConnection}) is constructed inside
+ * this function, after the relay port is confirmed.
+ *
+ * SECRET-HANDLING: the TOTP secret rides only inside `verifyAuth`; the wssUrl
+ * (relay host) is never logged here directly.
+ */
+export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Promise<BootedFamily> {
+  // Default 0: OS picks a free port. Prevents EADDRINUSE from stale cloudflared
+  // orphans (SIGKILL survivors) that would otherwise block a fixed port and
+  // cause -32000 MCP handshake failures on reconnect.
+  const relayPort = options.relayPort ?? 0;
+  const totpEnabled = options.verifyAuth !== undefined;
+
+  const relay = await startChiiRelay({ port: relayPort, verifyAuth: options.verifyAuth });
+  // relay.port is the actual OS-assigned port (may differ from relayPort when 0).
+  logInfo('server.start', { port: relay.port, totpEnabled });
+
+  let tunnel: QuickTunnel | null = null;
+  let tunnelStatus: TunnelStatus = makeTunnelStatus(false, null);
+  let tunnelProbe: { stop(): void } | null = null;
+  // generateAttachToken is kept for legacy/non-TOTP token use, but we no longer
+  // print it in the banner to avoid accidental secret exposure.
+  const _token = generateAttachToken();
+
+  // Bring the cloudflared tunnel up in the background so the MCP stdio transport
+  // can answer `initialize` immediately. cloudflared has to lazy-download a
+  // ~38 MB binary on first run; awaiting it here pushes the initialize response
+  // past Claude Code's MCP connection timeout. Tools that need the tunnel
+  // (`build_attach_url`) already gate on `getTunnelStatus()` and return a clear
+  // "tunnel not up" message when it isn't ready yet, so dropping the await is
+  // safe — the agent retries once the banner prints.
+  const tunnelReady = startQuickTunnel(relay.port).then(
+    (t) => {
+      tunnel = t;
+      tunnelStatus = makeTunnelStatus(true, t.wssUrl);
+      options.onWssUrl?.(t.wssUrl);
+      // SECRET-HANDLING: wssUrl contains the relay host — do not log it directly.
+      logInfo('tunnel.up', { totpEnabled });
+
+      // Start the health probe now that the tunnel URL is known.
+      // The probe runs every 60 s and attempts up to 3 reissues on drop.
+      tunnelProbe = startTunnelHealthProbe(t, relay.port, {
+        onReissue: (newTunnel) => {
+          tunnel = newTunnel;
+          tunnelStatus = makeTunnelStatus(true, newTunnel.wssUrl, null, 0);
+          options.onWssUrl?.(newTunnel.wssUrl);
+          // Reprint the banner so the user (and agent) see the new URL + QR.
+          void printAttachBanner({ wssUrl: newTunnel.wssUrl, totpEnabled }).then(() => {
+            logInfo('tunnel.up', { totpEnabled, reissued: true });
+          });
+        },
+        onPermanentDrop: (droppedAt) => {
+          tunnelStatus = makeTunnelStatus(false, null, droppedAt, 3);
+          logError('tunnel.down', {
+            msg: `tunnel permanently dropped (${droppedAt}). Restart: npx @ait-co/devtools devtools-mcp`,
+          });
+        },
+      });
+
+      return printAttachBanner({ wssUrl: t.wssUrl, totpEnabled });
+    },
+    (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      logError('tunnel.down', {
+        msg: `Failed to open cloudflared quick tunnel: ${message}. The relay is up locally; attach over the public URL is unavailable until the tunnel starts.`,
+      });
+    },
+  );
+  // Reference the promise to placate the linter — actual completion is observed
+  // via the side-effects on `tunnelStatus` from inside `.then`.
+  void tunnelReady;
+
+  const connection = createRelayConnection(relay.baseUrl);
+
+  return {
+    connection,
+    getTunnelStatus: () => tunnelStatus,
+    stop() {
+      tunnelProbe?.stop();
+      // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
+      tunnel?.stop();
+      connection.close();
+      // relay.close() is async — fine for signal/exit handlers.
+      void relay.close();
+    },
+  };
+}
+
 /**
  * Options the dual router needs to re-arm the attach watcher and auto-open
- * DevTools after a swap (issue #348).
+ * DevTools after a swap (issues #348, #356).
+ *
+ * Direction-neutral (#356): `eager` is whichever family was booted at startup
+ * (relay in `runDebugServer`, local in `runLocalDebugServer`), and `bootLazy`
+ * boots the opposite-kind family on the first cross-family switch. The router
+ * never assumes which kind is eager.
  */
-interface DualRouterDeps {
-  /** Eagerly-booted relay family (the default debug-mode connection). */
-  relay: BootedFamily;
-  /** Lazy boot for the local family — called at most once on first local switch. */
-  bootLocal: () => Promise<BootedFamily>;
+export interface DualRouterDeps {
+  /** Eagerly-booted family (the connection active at startup). */
+  eager: BootedFamily;
+  /**
+   * Lazy boot for the opposite-kind family — called at most once, on the first
+   * `start_debug` to a mode whose kind differs from `eager`'s.
+   */
+  bootLazy: () => Promise<BootedFamily>;
   /** Diagnostics collector (re-armed watcher records attach there). */
   diagnosticsCollector: DiagnosticsCollector;
-  /** Live tunnel status getter (for the relay attach DevTools auto-open). */
-  getTunnelStatus: () => TunnelStatus;
   /** Auto-opens Chrome DevTools on the first relay attach (env 3/4 only). */
   devtoolsOpener: AutoDevtoolsOpener;
   /** Attach-watcher poll interval (ms). Default 1 000. */
@@ -1303,12 +1447,18 @@ interface DualRouterDeps {
 }
 
 /**
- * Production `ConnectionRouter` (issue #348 — DUAL-CONNECTION-COEXIST).
+ * Production `ConnectionRouter` (issues #348, #356 — DUAL-CONNECTION-COEXIST).
  *
- * Holds both families (relay eager, local lazy), an `active` pointer, and the
- * single attach watcher armed on the active connection. `switchMode`:
+ * Holds two families — one booted eagerly at startup, the other lazily on the
+ * first cross-family switch — an `active` pointer, and the single attach watcher
+ * armed on the active connection. The router is **direction-neutral** (#356):
+ * either family kind can be the eager one, so a `--target=local` session can
+ * hot-switch into relay (and vice versa) without restarting the MCP server.
+ *
+ * `switchMode`:
  *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed relay-live;
- *   2. lazily boots the requested family on first use;
+ *   2. routes by the requested mode's family kind: same kind as `eager` → reuse
+ *      eager; different kind → lazily boot (once) and keep warm;
  *   3. flips `active` (the MCP `Server` never re-handshakes — it reads through
  *      `active` per request);
  *   4. sets `liveIntent` (true only for relay-live);
@@ -1317,12 +1467,13 @@ interface DualRouterDeps {
  *   6. emits `tools/list_changed`.
  *
  * Inactive infra is left WARM — teardown happens only at process exit (the
- * unified shutdown in `runDebugServer`), which is what keeps a phone attach
- * alive across a relay→local→relay round trip.
+ * unified shutdown in the run functions), which is what keeps a phone attach
+ * alive across a local→relay→local round trip.
  */
-class DualConnectionRouter implements ConnectionRouter {
+export class DualConnectionRouter implements ConnectionRouter {
   private readonly deps: DualRouterDeps;
-  private localFamily: BootedFamily | null = null;
+  /** The opposite-kind family, booted lazily on the first cross-family switch. */
+  private lazyFamily: BootedFamily | null = null;
   private activeFamily: BootedFamily;
   private server: Server | null = null;
   private attachWatcher: { stop(): void } | null = null;
@@ -1330,22 +1481,35 @@ class DualConnectionRouter implements ConnectionRouter {
 
   constructor(deps: DualRouterDeps) {
     this.deps = deps;
-    // Default active family is the eagerly-booted relay (debug-mode default).
-    this.activeFamily = deps.relay;
+    // The eager family is active until the first cross-family `start_debug`.
+    this.activeFamily = deps.eager;
   }
 
   get active(): CdpConnection {
     return this.activeFamily.connection;
   }
 
-  /** Both booted families (for unified shutdown). */
+  /** Every booted family (for unified shutdown). */
   bootedFamilies(): BootedFamily[] {
-    return this.localFamily ? [this.deps.relay, this.localFamily] : [this.deps.relay];
+    return this.lazyFamily ? [this.deps.eager, this.lazyFamily] : [this.deps.eager];
+  }
+
+  /**
+   * Live tunnel status of the relay family, regardless of whether relay is the
+   * eager or lazy family (#356). Returns "down" until the relay family has been
+   * booted (local-eager sessions before the first relay switch) — which is the
+   * correct signal for `build_attach_url` (no tunnel exists yet).
+   */
+  relayTunnelStatus(): TunnelStatus {
+    for (const family of this.bootedFamilies()) {
+      if (family.getTunnelStatus) return family.getTunnelStatus();
+    }
+    return { up: false, wssUrl: null };
   }
 
   /**
    * Binds the MCP `Server` and arms the initial attach watcher on the active
-   * (relay) connection. Called once after `createDebugServer` + `connect`.
+   * connection. Called once after `createDebugServer` + `connect`.
    */
   start(server: Server): void {
     this.server = server;
@@ -1369,11 +1533,14 @@ class DualConnectionRouter implements ConnectionRouter {
       () => {
         this.deps.diagnosticsCollector.recordAttach();
         // Auto-open Chrome DevTools only for a relay attach (env 3/4). The
-        // opener no-ops for a local (mock) connection.
-        this.deps.devtoolsOpener.open(
-          this.deps.getTunnelStatus().wssUrl,
-          deriveEnvironment(this.activeFamily.connection.kind, getLiveIntent()),
-        );
+        // opener no-ops for a local (mock) connection — guard on the active
+        // kind so a local-eager session never tries to open a relay devtools.
+        if (this.activeFamily.connection.kind === 'relay') {
+          this.deps.devtoolsOpener.open(
+            this.relayTunnelStatus().wssUrl,
+            deriveEnvironment(this.activeFamily.connection.kind, getLiveIntent()),
+          );
+        }
       },
     );
   }
@@ -1392,15 +1559,17 @@ class DualConnectionRouter implements ConnectionRouter {
     this.swapInFlight = true;
     try {
       const wantRelay = isRelayMode(mode);
+      const wantKind: 'relay' | 'local' = wantRelay ? 'relay' : 'local';
       let target: BootedFamily;
-      if (wantRelay) {
-        target = this.deps.relay;
+      if (wantKind === this.deps.eager.connection.kind) {
+        // Same kind as the eager family — reuse it (no boot).
+        target = this.deps.eager;
       } else {
-        // Lazy-boot the local family on first use; keep it warm afterwards.
-        if (this.localFamily === null) {
-          this.localFamily = await this.deps.bootLocal();
+        // Cross-family: lazy-boot the opposite kind on first use, keep it warm.
+        if (this.lazyFamily === null) {
+          this.lazyFamily = await this.deps.bootLazy();
         }
-        target = this.localFamily;
+        target = this.lazyFamily;
       }
 
       // (3) Flip the active pointer. The MCP Server reads through `active` per
@@ -1449,97 +1618,31 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // `force: true` kills the existing process and takes over the lock.
   const lockHandle = acquireLock({ force: options.force ?? false });
 
-  // Default 0: OS picks a free port. Prevents EADDRINUSE from stale cloudflared
-  // orphans (SIGKILL survivors) that would otherwise block a fixed port and
-  // cause -32000 MCP handshake failures on reconnect.
-  const relayPort = options.relayPort ?? 0;
-
   // Build the TOTP verifyAuth predicate from env at startup (runtime read).
   const verifyAuth = buildRelayVerifyAuth();
-  const totpEnabled = verifyAuth !== undefined;
 
-  const relay = await startChiiRelay({ port: relayPort, verifyAuth });
-  // relay.port is the actual OS-assigned port (may differ from relayPort when 0).
-  logInfo('server.start', { port: relay.port, totpEnabled });
+  // Boot the relay family eagerly (relay + cloudflared tunnel + health probe +
+  // attach banner, all encapsulated). The tunnel comes up in the background so
+  // the MCP stdio transport answers `initialize` immediately.
+  const relayFamily = await bootRelayFamily({
+    relayPort: options.relayPort,
+    verifyAuth,
+    // Mirror the assigned tunnel URL into the lock file so a second caller can
+    // see the correct wssUrl in the conflict error message.
+    onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+  });
 
-  let tunnel: QuickTunnel | null = null;
-  let tunnelStatus: TunnelStatus = makeTunnelStatus(false, null);
-  // generateAttachToken is kept for legacy/non-TOTP token use, but we no
-  // longer print it in the banner to avoid accidental secret exposure.
-  const _token = generateAttachToken();
-
-  // Health probe handle — started once the initial tunnel is up.
-  let tunnelProbe: { stop(): void } | null = null;
-
-  // Bring the cloudflared tunnel up in the background so the MCP stdio
-  // transport can answer `initialize` immediately. cloudflared has to lazy-
-  // download a ~38 MB binary on first run; awaiting it here pushes the
-  // initialize response past Claude Code's MCP connection timeout. Tools that
-  // need the tunnel (`build_attach_url`) already gate on `getTunnelStatus()`
-  // and return a clear "tunnel not up" message when it isn't ready yet, so
-  // dropping the await is safe — the agent retries once the banner prints.
-  const tunnelReady = startQuickTunnel(relay.port).then(
-    (t) => {
-      tunnel = t;
-      tunnelStatus = makeTunnelStatus(true, t.wssUrl);
-      // Update the lock file with the assigned tunnel URL so a second caller
-      // can see the correct wssUrl in the conflict error message.
-      lockHandle.updateWssUrl(t.wssUrl);
-      // SECRET-HANDLING: wssUrl contains the relay host — do not log it directly.
-      logInfo('tunnel.up', { totpEnabled });
-
-      // Start the health probe now that the tunnel URL is known.
-      // The probe runs every 60 s and attempts up to 3 reissues on drop.
-      tunnelProbe = startTunnelHealthProbe(t, relay.port, {
-        onReissue: (newTunnel) => {
-          tunnel = newTunnel;
-          tunnelStatus = makeTunnelStatus(true, newTunnel.wssUrl, null, 0);
-          lockHandle.updateWssUrl(newTunnel.wssUrl);
-          // Reprint the banner so the user (and agent) see the new URL + QR.
-          void printAttachBanner({ wssUrl: newTunnel.wssUrl, totpEnabled }).then(() => {
-            logInfo('tunnel.up', { totpEnabled, reissued: true });
-          });
-        },
-        onPermanentDrop: (droppedAt) => {
-          tunnelStatus = makeTunnelStatus(false, null, droppedAt, 3);
-          logError('tunnel.down', {
-            msg: `tunnel permanently dropped (${droppedAt}). Restart: npx @ait-co/devtools devtools-mcp`,
-          });
-        },
-      });
-
-      return printAttachBanner({ wssUrl: t.wssUrl, totpEnabled });
-    },
-    (err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      logError('tunnel.down', {
-        msg: `Failed to open cloudflared quick tunnel: ${message}. The relay is up locally; attach over the public URL is unavailable until the tunnel starts.`,
-      });
-    },
-  );
-  // Reference the promise to placate the linter — actual completion is observed
-  // via the side-effects on `tunnelStatus` from inside `.then`.
-  void tunnelReady;
-
-  const relayConnection = createRelayConnection(relay.baseUrl);
-
-  // Dual-connection router (issue #348): relay family booted eagerly above,
-  // local family lazy-booted on the first `start_debug({ mode: 'local-*' })`.
+  // Dual-connection router (issues #348, #356): relay family booted eagerly
+  // above, local family lazy-booted on the first `start_debug({ mode: 'local-*' })`.
   const devtoolsOpener = new AutoDevtoolsOpener();
   // Diagnostics collector — records server-side errors and attach/detach events
   // so `get_diagnostics` can surface them in a single call.
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
   const router = new DualConnectionRouter({
-    relay: {
-      connection: relayConnection,
-      stop() {
-        relayConnection.close();
-      },
-    },
-    bootLocal: bootLocalFamily,
+    eager: relayFamily,
+    bootLazy: bootLocalFamily,
     diagnosticsCollector,
-    getTunnelStatus: () => tunnelStatus,
     devtoolsOpener,
   });
 
@@ -1566,10 +1669,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const server = createDebugServer({
     // `connection` is still required by the deps shape; the router overrides
     // which connection the handlers actually read (relay is the initial active).
-    connection: relayConnection,
+    connection: router.active,
     router,
     aitSource,
-    getTunnelStatus: () => tunnelStatus,
+    // Tunnel status follows the relay family regardless of eager/lazy (#356).
+    getTunnelStatus: () => router.relayTunnelStatus(),
     get qrHttpServer() {
       return qrServer;
     },
@@ -1583,11 +1687,13 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const transport = new StdioServerTransport();
 
   // ---------------------------------------------------------------------------
-  // Unified dual-family shutdown (issue #348): tears down BOTH families
-  // (relay + tunnel + every booted connection, plus a lazily-booted local
-  // Chromium) at process exit. Inactive infra is left warm during the session
-  // and only collected here — that is what preserves a warm attach across
-  // `start_debug` swaps.
+  // Unified dual-family shutdown (issues #348, #356): tears down BOTH families
+  // (relay + tunnel + health probe + every booted connection, plus a lazily-
+  // booted local Chromium) at process exit. Each family's `stop()` owns its own
+  // infra teardown — the relay family stops its tunnel + probe, the local family
+  // kills its Chromium. Inactive infra is left warm during the session and only
+  // collected here — that is what preserves a warm attach across `start_debug`
+  // swaps.
   //
   // SIGKILL cannot be intercepted — cloudflared may remain orphaned (PPID 1).
   // Port 0 makes such orphans harmless: the next startup gets a fresh port.
@@ -1604,13 +1710,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
     parentWatcher?.stop();
     router.stopWatcher();
-    tunnelProbe?.stop();
-    // Tear down every booted family (relay always; local if it was ever booted).
+    // Tear down every booted family (eager always; the lazy one if ever booted).
+    // family.stop() is synchronous for the infra (tunnel/Chromium kill) — safe
+    // from exit handlers; the relay's relay.close() inside is async fire-and-forget.
     for (const family of router.bootedFamilies()) family.stop();
-    // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
-    tunnel?.stop();
-    // relay.close(), server.close(), qrServer.close() are async — fine for signal handlers.
-    void relay.close();
+    // server.close(), qrServer.close() are async — fine for signal handlers.
     void server.close();
     void qrServer?.close();
     // Remove the lock file so the next startup can proceed immediately.
@@ -1624,15 +1728,13 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   process.once('SIGHUP', shutdown);
 
   // Synchronous-only cleanup on process.exit (async calls are silently ignored
-  // by Node at this stage — only tunnel.stop()/family.stop() which are sync).
+  // by Node at this stage — only family.stop() infra kills which are sync).
   process.on('exit', () => {
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
       router.stopWatcher();
-      tunnelProbe?.stop();
       for (const family of router.bootedFamilies()) family.stop();
-      tunnel?.stop();
       // Synchronous lock release — rmSync is safe from exit handlers.
       lockHandle.release();
     }
@@ -1659,7 +1761,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   await server.connect(transport);
 
   // Bind the server to the router and arm the initial attach watcher on the
-  // active (relay) connection. The router re-arms the watcher on every swap.
+  // eager (relay) connection. The router re-arms the watcher on every swap.
   router.start(server);
 
   // Self-terminate when the parent process (Claude Code or another AI host) has
@@ -1714,19 +1816,28 @@ export interface RunLocalDebugServerOptions {
  * Boots the local-browser debug stack and serves it over stdio:
  *   1. launch a local Chromium with `--remote-debugging-port=<port>`,
  *   2. attach a `LocalCdpConnection` to the first non-blank page target,
- *   3. expose the debug tools backed by that connection + a `ChiiAitSource`.
+ *   3. expose the debug tools through the SAME direction-neutral
+ *      `DualConnectionRouter` that `runDebugServer` uses (issue #356) — the
+ *      local family is eager, the relay family is lazy-booted on the first
+ *      `start_debug({ mode: 'relay-*' })`.
  *
- * `build_attach_url` (relay-specific, generates a deep-link + QR for the phone)
- * is not applicable in local mode because there is no relay or tunnel. The tool
- * is still listed (it is part of `DEBUG_TOOL_DEFINITIONS`) but will return a
- * clear "not applicable" message via the tunnel-down path (wssUrl is null).
+ * Symmetry with `runDebugServer` (#356): starting with `--target=local` no
+ * longer pins a single-connection router. A `--target=local` session can
+ * hot-switch into relay (env 1 → env 3) without restarting the MCP server,
+ * closing the asymmetry where only the default (relay-target) entry point had
+ * bidirectional hot-switch. The intended fidelity-ladder flow — "validate in
+ * env 1 (local), then env 3 (intoss-private) in ONE session, no restart" — now
+ * works from either entry point.
+ *
+ * `build_attach_url` (relay-specific) stays effectively hidden / non-applicable
+ * until the relay family is booted: before the first relay switch the env
+ * derives to `mock` and `relayTunnelStatus()` reports "down", so the tool fails
+ * with a clear "tunnel not up" message. After a relay switch the relay tunnel
+ * is live and the tool works.
  *
  * The AIT.* tools (`AIT.getSdkCallHistory`, `AIT.getMockState`,
- * `AIT.getOperationalEnvironment`) ride the same CDP channel via
- * `ChiiAitSource` → `LocalCdpConnection.sendCommand`. They will succeed once
- * the sdk-example dev-bridge (`window.__sdkCall` install) lands in sdk-example;
- * until then they return the sdk-example "bridge absent" message — which is
- * expected and noted in the PR as an explicit out-of-scope follow-up.
+ * `AIT.getOperationalEnvironment`) ride the *active* connection's CDP channel
+ * via `RoutingAitSource`, so they follow `start_debug` swaps.
  */
 export async function runLocalDebugServer(options: RunLocalDebugServerOptions = {}): Promise<void> {
   // Enforce a single debug session per machine (same lock as relay mode).
@@ -1742,40 +1853,96 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   // 800 ms is enough on most machines; the connection retries if it fails.
   await new Promise<void>((r) => setTimeout(r, 800));
 
-  const connection = new LocalCdpConnection({ devtoolsHttpUrl: chromium.devtoolsUrl });
-  // AIT.* methods ride the same CDP channel via LocalCdpConnection.sendCommand.
-  const aitSource = new ChiiAitSource(connection);
+  const localConnection = new LocalCdpConnection({ devtoolsHttpUrl: chromium.devtoolsUrl });
 
-  // Local mode has no relay tunnel — tunnelStatus is always "down" which causes
-  // build_attach_url to return a clear "tunnel not up" error, communicating to
-  // the agent that this tool is relay-only.
-  const tunnelStatus: TunnelStatus = { up: false, wssUrl: null };
+  // Eager local family (#356) — the active connection at startup. Its stop()
+  // closes the CDP connection and kills the launched Chromium.
+  const localFamily: BootedFamily = {
+    connection: localConnection,
+    stop() {
+      localConnection.close();
+      chromium.stop();
+    },
+  };
+
+  // Build the TOTP verifyAuth predicate from env at startup (runtime read) so a
+  // lazily-booted relay family carries the same gate as `runDebugServer`.
+  const verifyAuth = buildRelayVerifyAuth();
+
+  // Dual-connection router (issues #348, #356): local family eager above, relay
+  // family lazy-booted on the first `start_debug({ mode: 'relay-*' })`.
+  const devtoolsOpener = new AutoDevtoolsOpener();
+  const diagnosticsCollector = new InMemoryDiagnosticsCollector();
+
+  const router = new DualConnectionRouter({
+    eager: localFamily,
+    bootLazy: () =>
+      bootRelayFamily({
+        verifyAuth,
+        onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+      }),
+    diagnosticsCollector,
+    devtoolsOpener,
+  });
+
+  // AIT.* methods ride the *active* connection's command channel (local CDP or,
+  // after a relay switch, relay Chii), so the AIT source follows swaps.
+  const aitSource = new RoutingAitSource(() => {
+    const active = router.active as CdpConnection & {
+      sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>;
+    };
+    return active;
+  });
+
+  // Local QR HTTP server — awaited so the first build_attach_url call (after a
+  // relay switch) doesn't race its startup. Failure falls back to text QR.
+  let qrServer: QrHttpServer | undefined;
+  try {
+    qrServer = await startQrHttpServer();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
+  }
 
   const server = createDebugServer({
-    connection,
+    connection: router.active,
+    router,
     aitSource,
-    getTunnelStatus: () => tunnelStatus,
-    // Local-target debug mode: no relay tunnel exists by construction. The env
-    // derives to `mock` from `connection.kind === 'local'` (issue #348), so
-    // `build_attach_url` (Tier B, relay-only) stays hidden — calling it would
-    // fail with `tunnel-down` anyway. No router injected → single-connection
-    // router; `start_debug` to a relay mode reports "restart required".
+    // Tunnel status follows the relay family once it is lazy-booted (#356);
+    // until then it reports "down" (no relay tunnel exists), which keeps
+    // build_attach_url correctly gated.
+    getTunnelStatus: () => router.relayTunnelStatus(),
+    get qrHttpServer() {
+      return qrServer;
+    },
+    diagnosticsCollector,
+    // SECRET-HANDLING: totpSecret is read from env once at startup and passed
+    // through to buildAttachUrl where it is used only to generate the at= code.
+    // It is never logged or surfaced in any output.
+    ...(process.env.AIT_DEBUG_TOTP_SECRET ? { totpSecret: process.env.AIT_DEBUG_TOTP_SECRET } : {}),
   });
 
   const transport = new StdioServerTransport();
 
+  // ---------------------------------------------------------------------------
+  // Unified dual-family shutdown (issue #356, mirrors runDebugServer): tears
+  // down BOTH families at process exit. Each family's stop() owns its infra —
+  // the local family kills its Chromium, a lazily-booted relay family stops its
+  // tunnel + probe + relay. Inactive infra is left warm during the session.
+  // ---------------------------------------------------------------------------
+
   let closed = false;
-  let attachWatcher: { stop(): void } | null = null;
   let parentWatcher: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
-    attachWatcher?.stop();
-    connection.close();
-    chromium.stop();
+    router.stopWatcher();
+    // Tear down every booted family (local always; relay if ever booted).
+    for (const family of router.bootedFamilies()) family.stop();
     void server.close();
+    void qrServer?.close();
     // Remove the lock file so the next startup can proceed immediately.
     lockHandle.release();
   };
@@ -1788,8 +1955,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
-      attachWatcher?.stop();
-      chromium.stop();
+      router.stopWatcher();
+      for (const family of router.bootedFamilies()) family.stop();
       lockHandle.release();
     }
   });
@@ -1816,9 +1983,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   await server.connect(transport);
 
-  // Start the attach watcher after the transport is connected so
-  // sendToolListChanged has a live session to notify.
-  attachWatcher = startAttachWatcher(connection, server);
+  // Bind the server to the router and arm the initial attach watcher on the
+  // eager (local) connection. The router re-arms the watcher on every swap.
+  router.start(server);
 
   // Self-terminate when the parent process has died without sending SIGTERM/SIGHUP.
   if (process.env.AIT_DEBUG_NO_PARENT_WATCH !== '1') {
