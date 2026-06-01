@@ -72,7 +72,7 @@ import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
 import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
-import { acquireLock, readServerLock } from './server-lock.js';
+import { acquireLock, isPidAlive, readServerLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
@@ -905,6 +905,74 @@ export function startAttachWatcher(
   };
 }
 
+/**
+ * Starts a periodic watcher that detects when the parent process (e.g. Claude
+ * Code) has died without sending SIGTERM/SIGHUP, and calls `onOrphaned` so the
+ * daemon can self-terminate rather than running as a zombie.
+ *
+ * Mirrors the `startAttachWatcher` pattern: `setInterval`-based, returns
+ * `{ stop(): void }`, injectable deps for testability.
+ *
+ * @param onOrphaned - Called once when the parent is gone.
+ * @param opts.intervalMs   - Poll interval in milliseconds (default 5 000).
+ * @param opts.initialPpid  - Parent PID to watch (default `process.ppid`).
+ * @param opts.isAlive      - Predicate to test if a PID is running (default `isPidAlive`).
+ * @param opts.getPpid      - Supplier of current ppid (default `() => process.ppid`).
+ *                            Detects ppid changes as well as death.
+ * @param opts.log          - Logger (default `process.stderr.write`).
+ *
+ * @returns `stop` — call during shutdown to clear the interval.
+ */
+export function startParentWatcher(
+  onOrphaned: () => void,
+  opts?: {
+    intervalMs?: number;
+    initialPpid?: number;
+    isAlive?: (pid: number) => boolean;
+    getPpid?: () => number;
+    log?: (msg: string) => void;
+  },
+): { stop(): void } {
+  const {
+    intervalMs = 5_000,
+    initialPpid = process.ppid,
+    isAlive = isPidAlive,
+    getPpid = () => process.ppid,
+    log = (msg: string) => process.stderr.write(msg),
+  } = opts ?? {};
+
+  // PID 1 is init/launchd — running under a process manager or as a detached
+  // daemon. There is no meaningful parent to watch; skip the watcher entirely.
+  if (initialPpid <= 1) {
+    log('[ait-debug] parent-pid watcher: no parent to watch (ppid<=1), skipping\n');
+    return { stop() {} };
+  }
+
+  let fired = false;
+
+  const handle = setInterval(() => {
+    if (fired) return;
+
+    const currentPpid = getPpid();
+    const orphaned = currentPpid !== initialPpid || !isAlive(initialPpid);
+
+    if (orphaned) {
+      fired = true;
+      clearInterval(handle);
+      log(
+        `[ait-debug] parent-pid watcher: parent PID ${initialPpid} is gone (currentPpid=${currentPpid}) — shutting down\n`,
+      );
+      onOrphaned();
+    }
+  }, intervalMs);
+
+  return {
+    stop() {
+      clearInterval(handle);
+    },
+  };
+}
+
 export interface RunDebugServerOptions {
   /**
    * Local Chii relay port. Default 0 (OS-assigned ephemeral port).
@@ -1097,12 +1165,14 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   let closed = false;
   let attachWatcher: { stop(): void } | null = null;
+  let parentWatcher: { stop(): void } | null = null;
 
   const shutdown = () => {
     // Idempotent: multiple simultaneous signals/exit/uncaught calls run only once.
     if (closed) return;
     closed = true;
 
+    parentWatcher?.stop();
     attachWatcher?.stop();
     tunnelProbe?.stop();
     connection.close();
@@ -1127,6 +1197,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   process.on('exit', () => {
     if (!closed) {
       closed = true;
+      parentWatcher?.stop();
       attachWatcher?.stop();
       tunnelProbe?.stop();
       tunnel?.stop();
@@ -1170,6 +1241,33 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       getEnvironment({ connection, defaultEnv: 'relay-dev' }),
     );
   });
+
+  // Self-terminate when the parent process (Claude Code or another AI host) has
+  // died without sending SIGTERM/SIGHUP. Without this watcher the daemon runs
+  // as a zombie, holding a stale cloudflared tunnel that silently blocks new
+  // attach attempts.
+  //
+  // AIT_DEBUG_NO_PARENT_WATCH=1 disables the watcher — useful for:
+  //   - shells / process managers that legitimately re-parent the daemon
+  //   - manual standalone invocations where ppid churn is expected
+  if (process.env.AIT_DEBUG_NO_PARENT_WATCH !== '1') {
+    parentWatcher = startParentWatcher(
+      () => {
+        shutdown();
+        process.exit(0);
+      },
+      { intervalMs: 5_000 },
+    );
+    // Also exit when stdin closes — the MCP host closed the pipe.
+    process.stdin.once('end', () => {
+      shutdown();
+      process.exit(0);
+    });
+    process.stdin.once('close', () => {
+      shutdown();
+      process.exit(0);
+    });
+  }
 }
 
 export interface RunLocalDebugServerOptions {
@@ -1249,10 +1347,12 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   let closed = false;
   let attachWatcher: { stop(): void } | null = null;
+  let parentWatcher: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
+    parentWatcher?.stop();
     attachWatcher?.stop();
     connection.close();
     chromium.stop();
@@ -1268,6 +1368,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   process.on('exit', () => {
     if (!closed) {
       closed = true;
+      parentWatcher?.stop();
       attachWatcher?.stop();
       chromium.stop();
       lockHandle.release();
@@ -1299,4 +1400,23 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   // Start the attach watcher after the transport is connected so
   // sendToolListChanged has a live session to notify.
   attachWatcher = startAttachWatcher(connection, server);
+
+  // Self-terminate when the parent process has died without sending SIGTERM/SIGHUP.
+  if (process.env.AIT_DEBUG_NO_PARENT_WATCH !== '1') {
+    parentWatcher = startParentWatcher(
+      () => {
+        shutdown();
+        process.exit(0);
+      },
+      { intervalMs: 5_000 },
+    );
+    process.stdin.once('end', () => {
+      shutdown();
+      process.exit(0);
+    });
+    process.stdin.once('close', () => {
+      shutdown();
+      process.exit(0);
+    });
+  }
 }
