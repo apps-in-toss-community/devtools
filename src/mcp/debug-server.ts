@@ -53,10 +53,11 @@ import { startChiiRelay } from './chii-relay.js';
 import { AutoDevtoolsOpener } from './devtools-opener.js';
 import { wrapEnvelope } from './envelope.js';
 import {
-  getEnvironment,
-  getEnvironmentReason,
+  deriveEnvironment,
+  getLiveIntent,
   isLiveRelayEnv,
   type McpEnvironment,
+  setLiveIntent,
 } from './environment.js';
 import {
   classifyToolError,
@@ -138,9 +139,80 @@ export function extractDeploymentId(schemeUrl: string): string | null {
   }
 }
 
+/**
+ * The result of a `start_debug` mode switch (issue #348). Reported back to the
+ * agent so it knows the active mode, whether the LIVE guard is armed, and the
+ * suggested next step — all without a Claude Code restart or MCP re-handshake.
+ */
+export interface ModeSwitchReport {
+  /** The mode now active after the switch. */
+  mode: StartDebugMode;
+  /** Derived `McpEnvironment` for the now-active connection. */
+  environment: McpEnvironment;
+  /** Kind of the now-active connection. */
+  kind: 'relay' | 'local';
+  /** `true` when the relay-live LIVE side-effect guard is now armed. */
+  liveGuardActive: boolean;
+  /** Human-readable next-step hint for the agent. */
+  nextStep: string;
+}
+
+/**
+ * The four `start_debug` modes (issue #348). They collapse onto the two
+ * orthogonal axes:
+ *   - `local-browser-dev` / `local-browser-cdp` → local connection (`mock` env).
+ *   - `relay-dev`                                → relay connection, liveIntent off.
+ *   - `relay-live`                               → relay connection, liveIntent on
+ *                                                  (requires `confirm: true`).
+ *
+ * `local-browser-dev` and `local-browser-cdp` are aliases at the connection
+ * level (both attach a `LocalCdpConnection`); the distinct names preserve the
+ * agent-facing dev-vs-cdp intent for future divergence without changing the
+ * routing today.
+ */
+export type StartDebugMode = 'local-browser-dev' | 'local-browser-cdp' | 'relay-dev' | 'relay-live';
+
+/** Returns `true` when the mode routes to a relay connection. */
+export function isRelayMode(mode: StartDebugMode): boolean {
+  return mode === 'relay-dev' || mode === 'relay-live';
+}
+
+/**
+ * Owns the two coexisting CDP connections (local + relay) and the `active`
+ * pointer that `start_debug` flips (issue #348 — DUAL-CONNECTION-COEXIST).
+ *
+ * The MCP `Server` + transport are created once; the request handlers read the
+ * connection through `active`, so swapping the pointer underneath is invisible
+ * to the MCP host (no re-handshake, no restart). Inactive infra is left warm —
+ * teardown happens only at process exit (see the unified shutdown in the run
+ * functions), which is what preserves a warm attach across mode switches.
+ */
+export interface ConnectionRouter {
+  /** The connection the request handlers must read this instant. */
+  readonly active: CdpConnection;
+  /**
+   * Switches the active connection to the family for `mode`, lazily booting
+   * that family's infra if needed, re-arming the attach watcher, and emitting
+   * `tools/list_changed`. Sets `liveIntent` (true only for `relay-live`).
+   *
+   * Rejects (without swapping) when a swap is already in flight, or when
+   * `relay-live` is requested without `confirm: true`.
+   */
+  switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport>;
+}
+
 /** Live infra the connection reads tunnel status from. */
 export interface DebugServerDeps {
   connection: CdpConnection;
+  /**
+   * Dual-connection router (issue #348). When provided, the request handlers
+   * read the live connection through `router.active` and `start_debug` calls
+   * `router.switchMode()`. When omitted (the dominant test path), a trivial
+   * router pinned to `deps.connection` is synthesized and `start_debug` reports
+   * that dynamic switching is unavailable — back-compat with every existing
+   * single-connection test.
+   */
+  router?: ConnectionRouter;
   /** AIT.* domain source — forwarded over the same Chii channel in production. */
   aitSource: AitSource;
   /** Returns current tunnel status (URL changes per spawn). */
@@ -157,29 +229,18 @@ export interface DebugServerDeps {
    */
   qrHttpServer?: QrHttpServer;
   /**
-   * Resolves the current MCP environment (`mock` | `relay`) per RFC #277.
+   * Resolves the current MCP environment (`mock` | `relay-dev` | `relay-live`).
    * Used by `tools/list` to filter Tier A/B tools and by Tier C tools (e.g.
    * `measure_safe_area`) to label the `source` provenance field.
    *
-   * Optional — defaults to a function that asks `getEnvironment(input)` with
-   * the live connection. Tests inject a fake to pin the env without touching
-   * `setEnvironmentOverride` (which is process-global).
+   * Optional — defaults (issue #348) to deriving the env from the *active*
+   * connection's `kind` + the module-level `liveIntent` bit
+   * (`deriveEnvironment(router.active.kind, getLiveIntent())`). No URL sniffing
+   * or precedence chain. Tests inject a fake to pin a precise env.
    */
   getEnvironment?: () => McpEnvironment;
   /** Resolves the reason for the current env decision (for logs). */
   getEnvironmentReason?: () => string;
-  /**
-   * Caller-stated default environment when no `MCP_ENV` is set and no URL
-   * pattern matches. The CLI passes `'relay'` for the relay-target debug mode
-   * (so bootstrap `tools/list` advertises Tier B `build_attach_url` on the
-   * very first call — resolving the M2-5 dead-lock, issue #309) and `'mock'`
-   * for the local-target debug mode (no relay tunnel exists). Tests omit this
-   * to preserve the historical `'mock'` default.
-   *
-   * Ignored when `getEnvironment`/`getEnvironmentReason` are explicitly
-   * provided — fake env resolvers fully control the env decision.
-   */
-  defaultEnv?: McpEnvironment;
   /**
    * Diagnostics collector — records server-side errors, attach/detach events,
    * and surfaces them via `get_diagnostics`. When omitted a no-op collector is
@@ -272,6 +333,7 @@ function waitForAttachWithEvents(
 export function createDebugServer(deps: DebugServerDeps): Server {
   const {
     connection,
+    router: routerDep,
     aitSource,
     getTunnelStatus,
     waitForAttachTimeoutMs = 90_000,
@@ -279,17 +341,26 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     getEnvironment: getEnvDep,
     getEnvironmentReason: getEnvReasonDep,
     diagnosticsCollector: collectorDep,
-    defaultEnv,
     totpSecret,
   } = deps;
 
-  // Env SSoT — production wires the real `getEnvironment` with the connection
-  // plus the caller-stated `defaultEnv` (mode intent); tests inject fakes.
-  // Lazy so each request reflects the live connection.
+  // Dual-connection router (issue #348). Production passes a real router that
+  // holds both the local + relay connections and flips `active` on
+  // `start_debug`. Tests (and any single-connection caller) omit it — we
+  // synthesize a trivial router pinned to `deps.connection` whose `switchMode`
+  // reports that dynamic switching is unavailable. Either way the handlers read
+  // the live connection through `router.active`, so per-call snapshots are
+  // uniform.
+  const router: ConnectionRouter = routerDep ?? makeSingleConnectionRouter(connection);
+
+  // Env SSoT (issue #348) — derived, not detected: `mock` vs `relay-*` is free
+  // from the ACTIVE connection's `kind`; `relay-dev` vs `relay-live` is the
+  // module-level `liveIntent` bit. No URL sniffing, no precedence chain. Tests
+  // inject `getEnvironment`/`getEnvironmentReason` to pin a precise env.
   const resolveEnvironment: () => McpEnvironment =
-    getEnvDep ?? (() => getEnvironment({ connection, defaultEnv }));
+    getEnvDep ?? (() => deriveEnvironment(router.active.kind, getLiveIntent()));
   const resolveEnvironmentReason: () => string =
-    getEnvReasonDep ?? (() => getEnvironmentReason({ connection, defaultEnv }));
+    getEnvReasonDep ?? (() => `derived:kind=${router.active.kind},liveIntent=${getLiveIntent()}`);
 
   // Diagnostics collector — production uses an `InMemoryDiagnosticsCollector`;
   // tests may inject a no-op or fake. A no-op is created lazily when none
@@ -304,8 +375,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, () => {
+    // Per-request snapshot of the active connection (issue #348). `kind` is
+    // authoritative even before any target attaches, so bootstrap visibility
+    // (e.g. Tier B `build_attach_url`) is correct from the first `tools/list`.
+    const conn = router.active;
     const env = resolveEnvironment();
-    const attached = connection.listTargets().length > 0;
+    const attached = conn.listTargets().length > 0;
     // Tier A/B filter first (env), then bootstrap tier (attach state).
     const envFiltered = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, env);
     const tools = attached
@@ -323,6 +398,35 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         content: [{ type: 'text', text: `Unknown tool: ${name}` }],
         isError: true,
       };
+    }
+
+    // PER-CALL SNAPSHOT (issue #348). Capture the active connection exactly
+    // once at handler entry and use ONLY `conn` for the rest of this call.
+    // `start_debug` may flip `router.active` mid-flight (and other concurrent
+    // requests too); re-reading `router.active` after an `await` would race the
+    // swap. This is the hard-constraint that keeps a switch from corrupting an
+    // in-flight tool call.
+    const conn = router.active;
+
+    // start_debug — single entry to switch families (local ↔ relay) without a
+    // Claude Code restart or MCP re-handshake. Always callable (Tier C /
+    // bootstrap), so it is handled before the env-mismatch guard below.
+    if (name === 'start_debug') {
+      const rawMode = request.params.arguments?.mode;
+      const mode = normalizeStartDebugMode(rawMode);
+      if (mode === null) {
+        return mcpError(
+          'start_debug: mode가 올바르지 않습니다. ' +
+            "'local-browser-dev' | 'local-browser-cdp' | 'relay-dev' | 'relay-live' 중 하나를 전달하세요.",
+        );
+      }
+      const confirm = request.params.arguments?.confirm === true;
+      try {
+        const report = await router.switchMode(mode, confirm);
+        return jsonResult(report);
+      } catch (err) {
+        return errorResult(err, name);
+      }
     }
 
     // Tier A/B env-mismatch guard (RFC #277). Tier C tools pass through.
@@ -350,7 +454,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     // source's sendCommand rejects with a clear message if no page is attached.
     if (isAitToolName(name)) {
       try {
-        await connection.enableDomains();
+        await conn.enableDomains();
         switch (name) {
           case 'AIT.getSdkCallHistory':
             return jsonResult(await getSdkCallHistory(aitSource));
@@ -375,14 +479,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         const recentErrorsLimit = typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 10;
         const result = await getDiagnostics({
           tunnel: getTunnelStatus(),
-          connection,
+          connection: conn,
           env: resolveEnvironment(),
           envReason: resolveEnvironmentReason(),
           collector,
           readLock: readServerLock,
           recentErrorsLimit,
         });
-        const attached = connection.listTargets().length > 0;
+        const attached = conn.listTargets().length > 0;
         return envelopeResult(result, name, resolveEnvironment(), attached);
       } catch (err) {
         return errorResult(err, name);
@@ -475,12 +579,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           let attachedPagesHl: ReturnType<CdpConnection['listTargets']> = [];
           try {
             attachedPagesHl = await waitForAttachWithEvents(
-              connection,
+              conn,
               isMatchingPage,
               waitForAttachTimeoutMs,
             );
           } catch {
-            attachedPagesHl = connection.listTargets();
+            attachedPagesHl = conn.listTargets();
             return {
               content: [
                 {
@@ -496,7 +600,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             };
           }
 
-          const pagesResultHl = listPages(connection, getTunnelStatus());
+          const pagesResultHl = listPages(conn, getTunnelStatus());
           return {
             content: [
               {
@@ -537,12 +641,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
             try {
               attachedPages = await waitForAttachWithEvents(
-                connection,
+                conn,
                 isMatchingPage,
                 waitForAttachTimeoutMs,
               );
             } catch {
-              attachedPages = connection.listTargets();
+              attachedPages = conn.listTargets();
               return {
                 content: [
                   {
@@ -558,7 +662,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               };
             }
 
-            const pagesResult = listPages(connection, getTunnelStatus());
+            const pagesResult = listPages(conn, getTunnelStatus());
             return {
               content: [
                 {
@@ -598,12 +702,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
           try {
             attachedPagesFb = await waitForAttachWithEvents(
-              connection,
+              conn,
               isMatchingPage,
               waitForAttachTimeoutMs,
             );
           } catch {
-            attachedPagesFb = connection.listTargets();
+            attachedPagesFb = conn.listTargets();
             return {
               content: [
                 {
@@ -615,7 +719,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             };
           }
 
-          const pagesResultFb = listPages(connection, getTunnelStatus());
+          const pagesResultFb = listPages(conn, getTunnelStatus());
           return {
             content: [
               {
@@ -645,12 +749,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
         try {
           attachedPages = await waitForAttachWithEvents(
-            connection,
+            conn,
             isMatchingPage,
             waitForAttachTimeoutMs,
           );
         } catch {
-          attachedPages = connection.listTargets();
+          attachedPages = conn.listTargets();
           return {
             content: [
               {
@@ -662,7 +766,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
-        const pagesResult = listPages(connection, getTunnelStatus());
+        const pagesResult = listPages(conn, getTunnelStatus());
         return {
           content: [
             {
@@ -679,19 +783,19 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     try {
       // Ensure CDP domains are enabled before reading. No-op once attached;
       // throws a clear message while no page is attached yet.
-      await connection.enableDomains();
+      await conn.enableDomains();
     } catch (err) {
       if (name === 'list_pages') {
         // list_pages is still useful pre-attach: report tunnel + empty pages.
         // Refresh from relay first so evicted-then-reattached targets are not
         // served as stale empty (#281 — stale cache diagnosis).
         try {
-          await connection.refreshTargets?.();
+          await conn.refreshTargets?.();
         } catch {
           // Ignore refresh errors — still return cached state.
         }
-        const pagesData = listPages(connection, getTunnelStatus());
-        const attached = connection.listTargets().length > 0;
+        const pagesData = listPages(conn, getTunnelStatus());
+        const attached = conn.listTargets().length > 0;
         return envelopeResult(pagesData, name, resolveEnvironment(), attached);
       }
       // 4상태 분류: page 미attach vs crash vs relay disconnect
@@ -701,31 +805,31 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     try {
       switch (name) {
         case 'list_console_messages':
-          return jsonResult(listConsoleMessages(connection));
+          return jsonResult(listConsoleMessages(conn));
         case 'list_exceptions': {
           const rawLimit = request.params.arguments?.limit;
           const limit = typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 50;
-          return jsonResult({ exceptions: listExceptions(connection, limit) });
+          return jsonResult({ exceptions: listExceptions(conn, limit) });
         }
         case 'list_network_requests':
-          return jsonResult(listNetworkRequests(connection));
+          return jsonResult(listNetworkRequests(conn));
         case 'list_pages': {
           // Refresh from relay so evict→reattach transitions are not served stale.
           try {
-            await connection.refreshTargets?.();
+            await conn.refreshTargets?.();
           } catch {
             // Ignore refresh errors — still return cached state.
           }
-          const listPagesData = listPages(connection, getTunnelStatus());
-          const listPagesAttached = connection.listTargets().length > 0;
+          const listPagesData = listPages(conn, getTunnelStatus());
+          const listPagesAttached = conn.listTargets().length > 0;
           return envelopeResult(listPagesData, name, resolveEnvironment(), listPagesAttached);
         }
         case 'get_dom_document':
-          return jsonResult(await getDomDocument(connection));
+          return jsonResult(await getDomDocument(conn));
         case 'take_snapshot':
-          return jsonResult(await takeSnapshot(connection));
+          return jsonResult(await takeSnapshot(conn));
         case 'take_screenshot': {
-          const shot = await takeScreenshot(connection);
+          const shot = await takeScreenshot(conn);
           return {
             content: [{ type: 'image' as const, data: shot.data, mimeType: shot.mimeType }],
           };
@@ -734,8 +838,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           // Pass env to attach `source: 'mock' | 'relay'` to the result (Tier C
           // parity per RFC #277 — the same Runtime.evaluate probe runs in both
           // envs; only the provenance label differs).
-          const safeAreaData = await measureSafeArea(connection, resolveEnvironment());
-          const safeAreaAttached = connection.listTargets().length > 0;
+          const safeAreaData = await measureSafeArea(conn, resolveEnvironment());
+          const safeAreaAttached = conn.listTargets().length > 0;
           return envelopeResult(safeAreaData, name, resolveEnvironment(), safeAreaAttached);
         }
         case 'evaluate': {
@@ -745,12 +849,17 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               'evaluate: expression 인자가 비어 있습니다. 평가할 JavaScript 표현식을 전달하세요.',
             );
           }
-          // LIVE guard: relay-live 환경에서 confirm: true 없이 side-effect 호출 차단.
+          // LIVE guard (issue #348): fires iff the active connection is relay
+          // AND liveIntent is armed (= resolved env is `relay-live`) AND no
+          // `confirm: true`. `isLiveRelayEnv(env)` is exactly the design's
+          // `conn.kind === 'relay' && liveIntent` one-liner — so a stale
+          // liveIntent is inert against a local target (DISARM is automatic on
+          // swap to local, no bit reset needed).
           if (isLiveRelayEnv(env) && request.params.arguments?.confirm !== true) {
             return liveGuardError('evaluate');
           }
           // SECRET-HANDLING: do not log expression or result value.
-          return jsonResult(await evaluate(connection, expression));
+          return jsonResult(await evaluate(conn, expression));
         }
         case 'call_sdk': {
           const sdkName = request.params.arguments?.name;
@@ -761,12 +870,13 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           }
           const rawArgs = request.params.arguments?.args;
           const sdkArgs: unknown[] = Array.isArray(rawArgs) ? rawArgs : [];
-          // LIVE guard: relay-live 환경에서 confirm: true 없이 side-effect 호출 차단.
+          // LIVE guard (issue #348): see `evaluate` above — relay + liveIntent
+          // (resolved env relay-live) without `confirm: true` is rejected.
           if (isLiveRelayEnv(env) && request.params.arguments?.confirm !== true) {
             return liveGuardError('call_sdk');
           }
           // SECRET-HANDLING: do not log name, args, or result value.
-          const sdkResult = await callSdk(connection, sdkName, sdkArgs);
+          const sdkResult = await callSdk(conn, sdkName, sdkArgs);
           // 상태 4: SDK 부재 — ok:false + 'sdk-absent:' 패턴은 isError로 승격
           if (
             !sdkResult.ok &&
@@ -775,7 +885,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           ) {
             return sdkAbsentError('call_sdk');
           }
-          const callSdkAttached = connection.listTargets().length > 0;
+          const callSdkAttached = conn.listTargets().length > 0;
           return envelopeResult(sdkResult, name, resolveEnvironment(), callSdkAttached);
         }
         default:
@@ -787,6 +897,69 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   });
 
   return server;
+}
+
+/**
+ * Normalizes a raw `start_debug` `mode` argument to a `StartDebugMode`, or
+ * `null` when the value is not one of the four accepted modes.
+ */
+export function normalizeStartDebugMode(raw: unknown): StartDebugMode | null {
+  if (raw === 'local-browser-dev') return 'local-browser-dev';
+  if (raw === 'local-browser-cdp') return 'local-browser-cdp';
+  if (raw === 'relay-dev') return 'relay-dev';
+  if (raw === 'relay-live') return 'relay-live';
+  return null;
+}
+
+/**
+ * Builds a trivial `ConnectionRouter` pinned to a single connection (issue
+ * #348). Used by `createDebugServer` when no real dual router is injected —
+ * every existing single-connection test and the `local`-only / `relay`-only
+ * boot path. `switchMode` here cannot lazily boot another family, so it only
+ * honors a request that matches the connection's own kind (and arms/disarms
+ * `liveIntent` accordingly for relay-live); any cross-family request is
+ * rejected with a clear "dynamic switch unavailable in this session" error.
+ */
+export function makeSingleConnectionRouter(connection: CdpConnection): ConnectionRouter {
+  return {
+    get active() {
+      return connection;
+    },
+    switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
+      const wantRelay = isRelayMode(mode);
+      const haveRelay = connection.kind === 'relay';
+      if (wantRelay !== haveRelay) {
+        return Promise.reject(
+          new Error(
+            `start_debug: 이 세션은 단일 ${connection.kind} 연결만 보유합니다 — ` +
+              `'${mode}'로 동적 전환할 수 없습니다 (dual-connection 데몬에서만 지원). ` +
+              'MCP 서버를 원하는 모드로 재시작하세요.',
+          ),
+        );
+      }
+      // relay-live entry gate: confirm:true required (mirrors the per-tool gate).
+      if (mode === 'relay-live' && !confirm) {
+        return Promise.reject(
+          new Error(
+            'start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
+              '실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.',
+          ),
+        );
+      }
+      setLiveIntent(mode === 'relay-live');
+      const environment = deriveEnvironment(connection.kind, getLiveIntent());
+      return Promise.resolve({
+        mode,
+        environment,
+        kind: connection.kind,
+        liveGuardActive: connection.kind === 'relay' && getLiveIntent(),
+        nextStep:
+          connection.kind === 'relay'
+            ? 'build_attach_url로 attach QR을 생성하세요.'
+            : 'list_pages로 로컬 페이지 attach를 확인하세요.',
+      });
+    },
+  };
 }
 
 function jsonResult(value: unknown) {
@@ -1039,6 +1212,208 @@ function createRelayConnection(relayBaseUrl: string): ChiiCdpConnection {
 }
 
 /**
+ * AIT source that always forwards over the *currently active* connection
+ * (issue #348). The single-connection `ChiiAitSource` binds one sender at
+ * construction; in the dual-connection daemon the AIT.* domain must follow the
+ * active connection across `start_debug` swaps, so this indirection reads
+ * `getActive()` on every call.
+ *
+ * Both `ChiiCdpConnection` and `LocalCdpConnection` expose `sendCommand`, so
+ * the active connection is a valid `AitCommandSender`.
+ */
+class RoutingAitSource extends ChiiAitSource {
+  constructor(
+    getActive: () => {
+      sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>;
+    },
+  ) {
+    super({
+      sendCommand: (method, params) => getActive().sendCommand(method, params),
+    });
+  }
+}
+
+/** A booted infra family the dual router can tear down at process exit. */
+interface BootedFamily {
+  connection: CdpConnection;
+  /** Synchronous best-effort teardown (closes the connection + any infra). */
+  stop(): void;
+}
+
+/**
+ * Lazy-boot callback for the local-browser family (issue #348). Launches a
+ * Chromium with `--remote-debugging-port` and returns a `LocalCdpConnection`
+ * attached to it, plus a `stop()` that kills both. Called at most once per
+ * session by the dual router on the first `start_debug({ mode: 'local-*' })`.
+ */
+async function bootLocalFamily(): Promise<BootedFamily> {
+  const cdpPort = 0; // OS-assigned ephemeral port.
+  const devUrl = process.env.AIT_DEVTOOLS_URL ?? 'http://localhost:5173';
+  const chromium = await launchChromium({ port: cdpPort, devUrl });
+  // Give Chromium a moment to open its CDP endpoint before first attach.
+  await new Promise<void>((r) => setTimeout(r, 800));
+  const connection = new LocalCdpConnection({ devtoolsHttpUrl: chromium.devtoolsUrl });
+  return {
+    connection,
+    stop() {
+      connection.close();
+      chromium.stop();
+    },
+  };
+}
+
+/**
+ * Options the dual router needs to re-arm the attach watcher and auto-open
+ * DevTools after a swap (issue #348).
+ */
+interface DualRouterDeps {
+  /** Eagerly-booted relay family (the default debug-mode connection). */
+  relay: BootedFamily;
+  /** Lazy boot for the local family — called at most once on first local switch. */
+  bootLocal: () => Promise<BootedFamily>;
+  /** Diagnostics collector (re-armed watcher records attach there). */
+  diagnosticsCollector: DiagnosticsCollector;
+  /** Live tunnel status getter (for the relay attach DevTools auto-open). */
+  getTunnelStatus: () => TunnelStatus;
+  /** Auto-opens Chrome DevTools on the first relay attach (env 3/4 only). */
+  devtoolsOpener: AutoDevtoolsOpener;
+  /** Attach-watcher poll interval (ms). Default 1 000. */
+  attachWatcherIntervalMs?: number;
+}
+
+/**
+ * Production `ConnectionRouter` (issue #348 — DUAL-CONNECTION-COEXIST).
+ *
+ * Holds both families (relay eager, local lazy), an `active` pointer, and the
+ * single attach watcher armed on the active connection. `switchMode`:
+ *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed relay-live;
+ *   2. lazily boots the requested family on first use;
+ *   3. flips `active` (the MCP `Server` never re-handshakes — it reads through
+ *      `active` per request);
+ *   4. sets `liveIntent` (true only for relay-live);
+ *   5. stops the old attach watcher and re-arms one on the new connection
+ *      (the watcher self-clears, so re-arm is mandatory);
+ *   6. emits `tools/list_changed`.
+ *
+ * Inactive infra is left WARM — teardown happens only at process exit (the
+ * unified shutdown in `runDebugServer`), which is what keeps a phone attach
+ * alive across a relay→local→relay round trip.
+ */
+class DualConnectionRouter implements ConnectionRouter {
+  private readonly deps: DualRouterDeps;
+  private localFamily: BootedFamily | null = null;
+  private activeFamily: BootedFamily;
+  private server: Server | null = null;
+  private attachWatcher: { stop(): void } | null = null;
+  private swapInFlight = false;
+
+  constructor(deps: DualRouterDeps) {
+    this.deps = deps;
+    // Default active family is the eagerly-booted relay (debug-mode default).
+    this.activeFamily = deps.relay;
+  }
+
+  get active(): CdpConnection {
+    return this.activeFamily.connection;
+  }
+
+  /** Both booted families (for unified shutdown). */
+  bootedFamilies(): BootedFamily[] {
+    return this.localFamily ? [this.deps.relay, this.localFamily] : [this.deps.relay];
+  }
+
+  /**
+   * Binds the MCP `Server` and arms the initial attach watcher on the active
+   * (relay) connection. Called once after `createDebugServer` + `connect`.
+   */
+  start(server: Server): void {
+    this.server = server;
+    this.armWatcher();
+  }
+
+  /** Stops the current attach watcher (for shutdown). */
+  stopWatcher(): void {
+    this.attachWatcher?.stop();
+    this.attachWatcher = null;
+  }
+
+  /** Arms a fresh attach watcher on the current active connection. */
+  private armWatcher(): void {
+    const server = this.server;
+    if (!server) return;
+    this.attachWatcher = startAttachWatcher(
+      this.activeFamily.connection,
+      server,
+      this.deps.attachWatcherIntervalMs ?? 1_000,
+      () => {
+        this.deps.diagnosticsCollector.recordAttach();
+        // Auto-open Chrome DevTools only for a relay attach (env 3/4). The
+        // opener no-ops for a local (mock) connection.
+        this.deps.devtoolsOpener.open(
+          this.deps.getTunnelStatus().wssUrl,
+          deriveEnvironment(this.activeFamily.connection.kind, getLiveIntent()),
+        );
+      },
+    );
+  }
+
+  async switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
+    if (this.swapInFlight) {
+      throw new Error('start_debug: 이전 전환이 아직 진행 중입니다 — 잠시 후 다시 호출하세요.');
+    }
+    if (mode === 'relay-live' && !confirm) {
+      throw new Error(
+        'start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
+          '실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.',
+      );
+    }
+
+    this.swapInFlight = true;
+    try {
+      const wantRelay = isRelayMode(mode);
+      let target: BootedFamily;
+      if (wantRelay) {
+        target = this.deps.relay;
+      } else {
+        // Lazy-boot the local family on first use; keep it warm afterwards.
+        if (this.localFamily === null) {
+          this.localFamily = await this.deps.bootLocal();
+        }
+        target = this.localFamily;
+      }
+
+      // (3) Flip the active pointer. The MCP Server reads through `active` per
+      // request, so no re-handshake / restart is needed.
+      this.activeFamily = target;
+
+      // (4) Arm/disarm liveIntent. true only for relay-live; any other mode
+      // (including a local mode) disarms it.
+      setLiveIntent(mode === 'relay-live');
+
+      // (5) Re-arm the attach watcher on the new connection (self-clearing).
+      this.stopWatcher();
+      this.armWatcher();
+
+      // (6) Tell the MCP host the tool surface may have changed (env flip).
+      void this.server?.sendToolListChanged();
+
+      const environment = deriveEnvironment(target.connection.kind, getLiveIntent());
+      return {
+        mode,
+        environment,
+        kind: target.connection.kind,
+        liveGuardActive: target.connection.kind === 'relay' && getLiveIntent(),
+        nextStep: wantRelay
+          ? 'build_attach_url로 attach QR을 생성하세요 (relay 세션).'
+          : 'list_pages로 로컬 Chromium 페이지 attach를 확인하세요.',
+      };
+    } finally {
+      this.swapInFlight = false;
+    }
+  }
+}
+
+/**
  * Boots the live debug stack and serves it over stdio:
  *   1. start the Chii relay on an OS-assigned port (with TOTP auth if
  *      AIT_DEBUG_TOTP_SECRET is set),
@@ -1125,9 +1500,36 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // via the side-effects on `tunnelStatus` from inside `.then`.
   void tunnelReady;
 
-  const connection = createRelayConnection(relay.baseUrl);
-  // AIT.* methods ride the same Chii channel as CDP commands.
-  const aitSource = new ChiiAitSource(connection);
+  const relayConnection = createRelayConnection(relay.baseUrl);
+
+  // Dual-connection router (issue #348): relay family booted eagerly above,
+  // local family lazy-booted on the first `start_debug({ mode: 'local-*' })`.
+  const devtoolsOpener = new AutoDevtoolsOpener();
+  // Diagnostics collector — records server-side errors and attach/detach events
+  // so `get_diagnostics` can surface them in a single call.
+  const diagnosticsCollector = new InMemoryDiagnosticsCollector();
+
+  const router = new DualConnectionRouter({
+    relay: {
+      connection: relayConnection,
+      stop() {
+        relayConnection.close();
+      },
+    },
+    bootLocal: bootLocalFamily,
+    diagnosticsCollector,
+    getTunnelStatus: () => tunnelStatus,
+    devtoolsOpener,
+  });
+
+  // AIT.* methods ride the *active* connection's command channel (relay Chii or
+  // local CDP), so the AIT source follows `start_debug` swaps.
+  const aitSource = new RoutingAitSource(() => {
+    const active = router.active as CdpConnection & {
+      sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>;
+    };
+    return active;
+  });
 
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
   // 도달하는 race를 없애기 위해 cloudflared(fire-and-forget)와 달리 동기 await 사용.
@@ -1140,26 +1542,17 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
   }
 
-  const devtoolsOpener = new AutoDevtoolsOpener();
-
-  // Diagnostics collector — records server-side errors and attach/detach events
-  // so `get_diagnostics` can surface them in a single call.
-  const diagnosticsCollector = new InMemoryDiagnosticsCollector();
-
   const server = createDebugServer({
-    connection,
+    // `connection` is still required by the deps shape; the router overrides
+    // which connection the handlers actually read (relay is the initial active).
+    connection: relayConnection,
+    router,
     aitSource,
     getTunnelStatus: () => tunnelStatus,
     get qrHttpServer() {
       return qrServer;
     },
     diagnosticsCollector,
-    // Relay-target debug mode: the user just launched a relay debug session,
-    // so the default env intent is `relay-dev`. Without this, `getEnvironment()`
-    // would return `mock` until a target attaches — hiding Tier B
-    // `build_attach_url` from the very first `tools/list` and leaving the
-    // agent with no way to enter env 3/4 (issue #309).
-    defaultEnv: 'relay-dev',
     // SECRET-HANDLING: totpSecret is read from env once at startup and passed
     // through to buildAttachUrl where it is used only to generate the at= code.
     // It is never logged or surfaced in any output.
@@ -1169,7 +1562,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const transport = new StdioServerTransport();
 
   // ---------------------------------------------------------------------------
-  // Shutdown: best-effort cleanup of relay + cloudflared child process.
+  // Unified dual-family shutdown (issue #348): tears down BOTH families
+  // (relay + tunnel + every booted connection, plus a lazily-booted local
+  // Chromium) at process exit. Inactive infra is left warm during the session
+  // and only collected here — that is what preserves a warm attach across
+  // `start_debug` swaps.
   //
   // SIGKILL cannot be intercepted — cloudflared may remain orphaned (PPID 1).
   // Port 0 makes such orphans harmless: the next startup gets a fresh port.
@@ -1177,7 +1574,6 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // ---------------------------------------------------------------------------
 
   let closed = false;
-  let attachWatcher: { stop(): void } | null = null;
   let parentWatcher: { stop(): void } | null = null;
 
   const shutdown = () => {
@@ -1186,9 +1582,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     closed = true;
 
     parentWatcher?.stop();
-    attachWatcher?.stop();
+    router.stopWatcher();
     tunnelProbe?.stop();
-    connection.close();
+    // Tear down every booted family (relay always; local if it was ever booted).
+    for (const family of router.bootedFamilies()) family.stop();
     // tunnel.stop() is synchronous (child process kill) — safe from exit handler.
     tunnel?.stop();
     // relay.close(), server.close(), qrServer.close() are async — fine for signal handlers.
@@ -1206,13 +1603,14 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   process.once('SIGHUP', shutdown);
 
   // Synchronous-only cleanup on process.exit (async calls are silently ignored
-  // by Node at this stage — only tunnel.stop() which is a sync child kill).
+  // by Node at this stage — only tunnel.stop()/family.stop() which are sync).
   process.on('exit', () => {
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
-      attachWatcher?.stop();
+      router.stopWatcher();
       tunnelProbe?.stop();
+      for (const family of router.bootedFamilies()) family.stop();
       tunnel?.stop();
       // Synchronous lock release — rmSync is safe from exit handlers.
       lockHandle.release();
@@ -1239,21 +1637,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   await server.connect(transport);
 
-  // Start the attach watcher after the transport is connected so
-  // sendToolListChanged has a live session to notify.
-  // The onFirstAttach callback auto-opens Chrome DevTools when a page attaches
-  // over the relay (issue #282). It is a no-op in mock env and when
-  // AIT_AUTO_DEVTOOLS=0. The tunnel wssUrl may still be null here when
-  // cloudflared is still starting; devtoolsOpener.open() guards against that.
-  attachWatcher = startAttachWatcher(connection, server, 1_000, () => {
-    diagnosticsCollector.recordAttach();
-    // Same defaultEnv intent as the server wiring above — keeps the env
-    // resolution coherent across the surface (env 3/4 attach → relay).
-    devtoolsOpener.open(
-      tunnelStatus.wssUrl,
-      getEnvironment({ connection, defaultEnv: 'relay-dev' }),
-    );
-  });
+  // Bind the server to the router and arm the initial attach watcher on the
+  // active (relay) connection. The router re-arms the watcher on every swap.
+  router.start(server);
 
   // Self-terminate when the parent process (Claude Code or another AI host) has
   // died without sending SIGTERM/SIGHUP. Without this watcher the daemon runs
@@ -1348,12 +1734,11 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     connection,
     aitSource,
     getTunnelStatus: () => tunnelStatus,
-    // Local-target debug mode: no relay tunnel exists by construction. The
-    // env intent is `mock` (local Chromium attaches to the dev panel), so
+    // Local-target debug mode: no relay tunnel exists by construction. The env
+    // derives to `mock` from `connection.kind === 'local'` (issue #348), so
     // `build_attach_url` (Tier B, relay-only) stays hidden — calling it would
-    // fail with `tunnel-down` anyway. Explicit for parity with the relay
-    // branch above.
-    defaultEnv: 'mock',
+    // fail with `tunnel-down` anyway. No router injected → single-connection
+    // router; `start_debug` to a relay mode reports "restart required".
   });
 
   const transport = new StdioServerTransport();
