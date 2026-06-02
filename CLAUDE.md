@@ -109,6 +109,8 @@ src/
 
 devtools는 `@apps-in-toss/web-framework` **3.0.0-beta** 프리릴리즈를 추적. devDep은 `3.0.0-beta.9d42c0b` exact pin. peer range는 `>=2.6.0 <2.7.0` (published `latest` 태그 2.x 소비자 보호용 유지 — devtools beta dist-tag는 별도 publish). (후속 PR에서 CI matrix `compat-check`로 버전 typecheck 자동화 예정.)
 
+**GA Flip 상태:** beta 채택 wave는 머지 완료, GA flip(exact pin→`^3.0.0`, `latest` peer를 3.0 라인으로, dist-tag flip)은 **미착수** — GA ETA 미정으로 대기. 트래킹 #370. GA용으로 비워뒀던 `0.1.54` 슬롯은 무관한 maintenance Version PR이 선점(현 `latest=0.1.54`, peer `>=2.6.0 <2.7.0` 불변) → flip은 그 시점 `latest` 다음 patch를 쓴다.
+
 - peer는 `peerDependenciesMeta.optional: true`. devDep은 고정.
   - **이유**: 이 패키지는 두 사용자 그룹을 함께 다룬다 — (a) mock SDK 사용자(번들러 alias로 unplugin), (b) MCP-only 사용자(`.mcp.json`의 `npx -y @ait-co/devtools devtools-mcp` 진입). (b)는 mock SDK를 절대 import하지 않으므로 peer를 required로 두면 SDK + 그 RN/Babel/Metro 트랜지티브 거대 트리(~분 단위 install)가 강제 설치되어 MCP server spawn이 timeout. (a)는 본인 프로젝트에서 SDK를 직접 import하므로 누락은 빌드 단계에서 명시적으로 깨진다 (vite/webpack resolve fail) — npm missing peer warning에 의존할 필요가 없다. optional로 두어도 (a)의 신뢰성은 손상되지 않는다.
 - `src/__typecheck.ts`가 컴파일 타임에 시그니처 불일치 감지.
