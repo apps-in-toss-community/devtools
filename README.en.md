@@ -6,7 +6,7 @@
 
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
-A mock library for the `@apps-in-toss/web-framework` SDK. Imports of `@apps-in-toss/webview-bridge` are also mocked. (2.x packages `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` are supported for back-compat.)
+A mock library for the `@apps-in-toss/web-framework` SDK. Imports of `@apps-in-toss/webview-bridge` are intercepted by the unplugin too (only the high-level SDK functions are exposed — bridge primitives are not). (2.x packages `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` are supported for back-compat.)
 
 Lets you develop and test Apps in Toss mini-apps in a **regular browser** — without the Toss app. All SDK features are simulated so you can move fast.
 
@@ -154,7 +154,7 @@ config.plugins.push(aitDevtools.webpack());
 
 Turbopack does not support a plugin system, so use `resolveAlias` instead.
 
-- Aliasing `@apps-in-toss/web-framework` alone is enough. Every SDK call goes through this package, so replacing it with the mock also shadows its internal `@apps-in-toss/webview-bridge` dependency.
+- Aliasing `@apps-in-toss/web-framework` alone is enough. Every SDK call goes through this package, so replacing it with the mock drops the whole web-framework module from the graph, and its internal `@apps-in-toss/webview-bridge` imports disappear with it.
 - Turbopack is generally only used with `next dev`, so no extra production guard is needed.
 
 ```js

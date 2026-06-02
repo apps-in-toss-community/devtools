@@ -6,7 +6,7 @@
 
 ![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
 
-`@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/webview-bridge` import도 함께 mock됩니다. (2.x의 `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 back-compat으로 지원.)
+`@apps-in-toss/web-framework` SDK의 mock 라이브러리입니다. `@apps-in-toss/webview-bridge` import도 unplugin이 함께 인터셉트합니다(high-level SDK 함수만 노출 — bridge primitive는 미노출). (2.x의 `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 back-compat으로 지원.)
 
 앱인토스(Apps in Toss) 미니앱을 **일반 브라우저**에서 개발하고 테스트할 수 있게 해줍니다. 토스 앱 없이도 SDK의 모든 기능을 시뮬레이션하여 빠른 개발 사이클을 지원합니다.
 
@@ -154,7 +154,7 @@ config.plugins.push(aitDevtools.webpack());
 
 Turbopack은 플러그인 시스템을 지원하지 않으므로 `resolveAlias`를 사용합니다.
 
-- `@apps-in-toss/web-framework` 하나만 alias하면 됩니다. SDK 호출은 모두 이 패키지를 거치므로, mock으로 치환하면 내부적으로 의존하는 `@apps-in-toss/webview-bridge`까지 함께 가려집니다.
+- `@apps-in-toss/web-framework` 하나만 alias하면 됩니다. SDK 호출은 모두 이 패키지를 거치므로, mock으로 치환하면 web-framework 모듈 자체가 모듈 그래프에서 빠지고, 그 안의 `@apps-in-toss/webview-bridge` import도 함께 사라집니다.
 - Turbopack은 일반적으로 `next dev`에서만 사용되므로 별도의 production 가드가 필요하지 않습니다.
 
 ```js
