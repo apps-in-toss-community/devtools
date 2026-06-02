@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fetchContacts } from '../mock/device/index.js';
+import { FetchContactsPermissionError, PermissionError } from '../mock/permissions.js';
 import { aitState } from '../mock/state.js';
 
 describe('Contacts mock', () => {
@@ -15,9 +16,12 @@ describe('Contacts mock', () => {
       expect(result.result[1]).toEqual({ name: '김토스', phoneNumber: '010-9876-5432' });
     });
 
-    it('contacts 권한이 denied이면 에러를 throw한다', async () => {
+    it('contacts 권한이 denied이면 FetchContactsPermissionError를 throw한다', async () => {
       aitState.patch('permissions', { contacts: 'denied' });
-      await expect(fetchContacts({ size: 10, offset: 0 })).rejects.toThrow('denied');
+      await expect(fetchContacts({ size: 10, offset: 0 })).rejects.toThrow(
+        FetchContactsPermissionError,
+      );
+      await expect(fetchContacts({ size: 10, offset: 0 })).rejects.toThrow(PermissionError);
     });
 
     it('getPermission()이 부착되어 있다', async () => {
