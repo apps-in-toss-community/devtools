@@ -154,7 +154,7 @@ config.plugins.push(aitDevtools.webpack());
 
 Turbopack은 플러그인 시스템을 지원하지 않으므로 `resolveAlias`를 사용합니다.
 
-- `@apps-in-toss/webview-bridge`도 함께 alias해야 합니다. (2.x를 사용 중이라면 `@apps-in-toss/web-bridge`, `@apps-in-toss/web-analytics`도 추가.)
+- `@apps-in-toss/web-framework` 하나만 alias하면 됩니다. SDK 호출은 모두 이 패키지를 거치므로, mock으로 치환하면 내부적으로 의존하는 `@apps-in-toss/webview-bridge`까지 함께 가려집니다.
 - Turbopack은 일반적으로 `next dev`에서만 사용되므로 별도의 production 가드가 필요하지 않습니다.
 
 ```js
@@ -163,7 +163,6 @@ module.exports = {
   turbo: {
     resolveAlias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 };
@@ -178,7 +177,6 @@ module.exports = {
     turbo: {
       resolveAlias: {
         '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-        '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
       },
     },
   },
@@ -221,7 +219,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 });
@@ -233,7 +230,6 @@ module.exports = {
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': require.resolve('@ait-co/devtools/mock'),
-      '@apps-in-toss/webview-bridge': require.resolve('@ait-co/devtools/mock'),
     },
   },
 };

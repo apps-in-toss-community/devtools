@@ -154,7 +154,7 @@ config.plugins.push(aitDevtools.webpack());
 
 Turbopack does not support a plugin system, so use `resolveAlias` instead.
 
-- You also need to alias `@apps-in-toss/webview-bridge`. (If you're on 2.x, alias `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` instead.)
+- Aliasing `@apps-in-toss/web-framework` alone is enough. Every SDK call goes through this package, so replacing it with the mock also shadows its internal `@apps-in-toss/webview-bridge` dependency.
 - Turbopack is generally only used with `next dev`, so no extra production guard is needed.
 
 ```js
@@ -163,7 +163,6 @@ module.exports = {
   turbo: {
     resolveAlias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 };
@@ -178,7 +177,6 @@ module.exports = {
     turbo: {
       resolveAlias: {
         '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-        '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
       },
     },
   },
@@ -221,7 +219,6 @@ export default defineConfig({
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': '@ait-co/devtools/mock',
-      '@apps-in-toss/webview-bridge': '@ait-co/devtools/mock',
     },
   },
 });
@@ -233,7 +230,6 @@ module.exports = {
   resolve: {
     alias: {
       '@apps-in-toss/web-framework': require.resolve('@ait-co/devtools/mock'),
-      '@apps-in-toss/webview-bridge': require.resolve('@ait-co/devtools/mock'),
     },
   },
 };
