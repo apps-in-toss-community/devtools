@@ -7,7 +7,7 @@ import { aitState } from './state.js';
 import type { PermissionName, PermissionStatus } from './types.js';
 
 // --- PermissionError 계층 (web-framework 3.0+ 신규) ---
-// instanceof 호환성을 위한 stub 클래스. checkPermission() 동작은 별도 이슈에서 처리.
+// checkPermission()이 권한 거부 시 per-API *PermissionError 서브클래스를 throw한다 (#372).
 
 /**
  * web-framework 3.0+ 권한 에러 기반 클래스.
@@ -68,6 +68,21 @@ export class SetClipboardTextPermissionError extends PermissionError {
  */
 export const StartUpdateLocationPermissionError = GetCurrentLocationPermissionError;
 
+// --- API 이름 → PermissionError 매핑 (web-framework 3.0 표면 기준) ---
+// 실 SDK가 각 API 거부 시 throw하는 클래스와 1:1 대응. SDK에 없는 API(fetchAlbumItems)는
+// 동일한 'photos' 권한을 공유하는 FetchAlbumPhotosPermissionError를 사용한다.
+
+const permissionErrorMap: Record<string, new () => PermissionError> = {
+  openCamera: OpenCameraPermissionError,
+  fetchAlbumPhotos: FetchAlbumPhotosPermissionError,
+  // fetchAlbumItems는 SDK에 별도 PermissionError 없음 — photos 권한을 공유하므로 동일 클래스.
+  fetchAlbumItems: FetchAlbumPhotosPermissionError,
+  fetchContacts: FetchContactsPermissionError,
+  getCurrentLocation: GetCurrentLocationPermissionError,
+  getClipboardText: GetClipboardTextPermissionError,
+  setClipboardText: SetClipboardTextPermissionError,
+};
+
 export async function getPermission(name: PermissionName): Promise<PermissionStatus> {
   return aitState.state.permissions[name];
 }
@@ -105,12 +120,18 @@ export function withPermission<T extends (...args: never[]) => unknown>(
   return enhanced;
 }
 
-/** 권한 체크 후 denied면 에러 throw */
+/**
+ * 권한 체크 후 denied면 per-API *PermissionError 서브클래스를 throw한다.
+ * 실 3.0 SDK 동작과 일치 — `instanceof PermissionError` 분기가 mock에서도 동작한다 (#372).
+ */
 export function checkPermission(name: PermissionName, fnName: string): void {
   const status = aitState.state.permissions[name];
   if (status === 'denied') {
-    throw new Error(
-      `[@ait-co/devtools] ${fnName}: Permission "${name}" is denied. Change it in the DevTools panel.`,
-    );
+    const ErrorClass = permissionErrorMap[fnName];
+    if (ErrorClass) {
+      throw new ErrorClass();
+    }
+    // 매핑에 없는 fnName은 기반 클래스로 fallback (SDK 표면 밖의 경로 보호)
+    throw new PermissionError({ methodName: fnName });
   }
 }

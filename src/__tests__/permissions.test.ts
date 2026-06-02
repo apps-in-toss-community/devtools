@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   checkPermission,
+  FetchAlbumPhotosPermissionError,
+  FetchContactsPermissionError,
+  GetClipboardTextPermissionError,
+  GetCurrentLocationPermissionError,
   getPermission,
+  OpenCameraPermissionError,
   openPermissionDialog,
+  PermissionError,
   requestPermission,
+  SetClipboardTextPermissionError,
   withPermission,
 } from '../mock/permissions.js';
 import { aitState } from '../mock/state.js';
@@ -29,7 +36,7 @@ describe('Permissions mock', () => {
 
   it('checkPermission: denied일 때 에러를 throw한다', () => {
     aitState.patch('permissions', { camera: 'denied' });
-    expect(() => checkPermission('camera', 'openCamera')).toThrow('denied');
+    expect(() => checkPermission('camera', 'openCamera')).toThrow(PermissionError);
   });
 
   it('checkPermission: allowed일 때 에러 없이 통과한다', () => {
@@ -56,5 +63,68 @@ describe('Permissions mock', () => {
     aitState.patch('permissions', { microphone: 'notDetermined' });
     expect(await requestPermission({ name: 'microphone', access: 'record' })).toBe('allowed');
     expect(aitState.state.permissions.microphone).toBe('allowed');
+  });
+
+  // --- per-API *PermissionError throw 검증 (#372) ---
+
+  describe('checkPermission: per-API *PermissionError 서브클래스를 throw한다', () => {
+    it('openCamera → OpenCameraPermissionError', () => {
+      aitState.patch('permissions', { camera: 'denied' });
+      expect(() => checkPermission('camera', 'openCamera')).toThrow(OpenCameraPermissionError);
+      expect(() => checkPermission('camera', 'openCamera')).toThrow(PermissionError);
+    });
+
+    it('fetchAlbumPhotos → FetchAlbumPhotosPermissionError', () => {
+      aitState.patch('permissions', { photos: 'denied' });
+      expect(() => checkPermission('photos', 'fetchAlbumPhotos')).toThrow(
+        FetchAlbumPhotosPermissionError,
+      );
+      expect(() => checkPermission('photos', 'fetchAlbumPhotos')).toThrow(PermissionError);
+    });
+
+    it('fetchAlbumItems → FetchAlbumPhotosPermissionError (photos 권한 공유)', () => {
+      aitState.patch('permissions', { photos: 'denied' });
+      expect(() => checkPermission('photos', 'fetchAlbumItems')).toThrow(
+        FetchAlbumPhotosPermissionError,
+      );
+      expect(() => checkPermission('photos', 'fetchAlbumItems')).toThrow(PermissionError);
+    });
+
+    it('fetchContacts → FetchContactsPermissionError', () => {
+      aitState.patch('permissions', { contacts: 'denied' });
+      expect(() => checkPermission('contacts', 'fetchContacts')).toThrow(
+        FetchContactsPermissionError,
+      );
+      expect(() => checkPermission('contacts', 'fetchContacts')).toThrow(PermissionError);
+    });
+
+    it('getCurrentLocation → GetCurrentLocationPermissionError', () => {
+      aitState.patch('permissions', { geolocation: 'denied' });
+      expect(() => checkPermission('geolocation', 'getCurrentLocation')).toThrow(
+        GetCurrentLocationPermissionError,
+      );
+      expect(() => checkPermission('geolocation', 'getCurrentLocation')).toThrow(PermissionError);
+    });
+
+    it('getClipboardText → GetClipboardTextPermissionError', () => {
+      aitState.patch('permissions', { clipboard: 'denied' });
+      expect(() => checkPermission('clipboard', 'getClipboardText')).toThrow(
+        GetClipboardTextPermissionError,
+      );
+      expect(() => checkPermission('clipboard', 'getClipboardText')).toThrow(PermissionError);
+    });
+
+    it('setClipboardText → SetClipboardTextPermissionError', () => {
+      aitState.patch('permissions', { clipboard: 'denied' });
+      expect(() => checkPermission('clipboard', 'setClipboardText')).toThrow(
+        SetClipboardTextPermissionError,
+      );
+      expect(() => checkPermission('clipboard', 'setClipboardText')).toThrow(PermissionError);
+    });
+
+    it('매핑에 없는 fnName은 기반 PermissionError로 fallback', () => {
+      aitState.patch('permissions', { microphone: 'denied' });
+      expect(() => checkPermission('microphone', 'unknownApi')).toThrow(PermissionError);
+    });
   });
 });

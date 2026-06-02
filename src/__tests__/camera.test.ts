@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { fetchAlbumPhotos, getDefaultPlaceholderImages, openCamera } from '../mock/device/index.js';
+import {
+  FetchAlbumPhotosPermissionError,
+  OpenCameraPermissionError,
+  PermissionError,
+} from '../mock/permissions.js';
 import { aitState } from '../mock/state.js';
 
 describe('Camera & Album Photos mock', () => {
@@ -35,9 +40,10 @@ describe('Camera & Album Photos mock', () => {
       expect(result.dataUri).toBe(placeholders[0]);
     });
 
-    it('camera 권한이 denied이면 에러를 throw한다', async () => {
+    it('camera 권한이 denied이면 OpenCameraPermissionError를 throw한다', async () => {
       aitState.patch('permissions', { camera: 'denied' });
-      await expect(openCamera()).rejects.toThrow('denied');
+      await expect(openCamera()).rejects.toThrow(OpenCameraPermissionError);
+      await expect(openCamera()).rejects.toThrow(PermissionError);
     });
 
     it('getPermission()이 부착되어 있다', async () => {
@@ -95,9 +101,10 @@ describe('Camera & Album Photos mock', () => {
       expect(result).toHaveLength(placeholders.length);
     });
 
-    it('photos 권한이 denied이면 에러를 throw한다', async () => {
+    it('photos 권한이 denied이면 FetchAlbumPhotosPermissionError를 throw한다', async () => {
       aitState.patch('permissions', { photos: 'denied' });
-      await expect(fetchAlbumPhotos()).rejects.toThrow('denied');
+      await expect(fetchAlbumPhotos()).rejects.toThrow(FetchAlbumPhotosPermissionError);
+      await expect(fetchAlbumPhotos()).rejects.toThrow(PermissionError);
     });
 
     it('getPermission()이 부착되어 있다', async () => {

@@ -13,6 +13,11 @@ import {
   setClipboardText,
   startUpdateLocation,
 } from '../mock/device/index.js';
+import {
+  FetchAlbumPhotosPermissionError,
+  GetCurrentLocationPermissionError,
+  PermissionError,
+} from '../mock/permissions.js';
 import { aitState } from '../mock/state.js';
 
 describe('Device mock', () => {
@@ -37,9 +42,14 @@ describe('Device mock', () => {
       expect(loc.coords.longitude).toBe(129.0);
     });
 
-    it('geolocation 권한이 denied이면 에러를 throw한다', async () => {
+    it('geolocation 권한이 denied이면 GetCurrentLocationPermissionError를 throw한다', async () => {
       aitState.patch('permissions', { geolocation: 'denied' });
-      await expect(getCurrentLocation({ accuracy: Accuracy.High })).rejects.toThrow('denied');
+      await expect(getCurrentLocation({ accuracy: Accuracy.High })).rejects.toThrow(
+        GetCurrentLocationPermissionError,
+      );
+      await expect(getCurrentLocation({ accuracy: Accuracy.High })).rejects.toThrow(
+        PermissionError,
+      );
     });
   });
 
@@ -225,9 +235,10 @@ describe('Device mock', () => {
       });
     });
 
-    it('photos 권한이 denied이면 에러를 throw한다', async () => {
+    it('photos 권한이 denied이면 FetchAlbumPhotosPermissionError를 throw한다', async () => {
       aitState.patch('permissions', { photos: 'denied' });
-      await expect(fetchAlbumItems()).rejects.toThrow();
+      await expect(fetchAlbumItems()).rejects.toThrow(FetchAlbumPhotosPermissionError);
+      await expect(fetchAlbumItems()).rejects.toThrow(PermissionError);
     });
 
     it('prompt 모드에서 타임아웃 시 reject한다', async () => {
