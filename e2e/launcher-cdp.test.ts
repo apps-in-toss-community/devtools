@@ -12,8 +12,24 @@
  *   4. ChiiCdpConnection.refreshTargets() on the node side returns an empty list
  *      when no phone has attached — the relay is up and responsive.
  *
- * DOCUMENTED MANUAL RESIDUE (why full Chii target injection cannot be verified
- * headless in this test):
+ * CORRECTION — LOCAL-PC VERIFIABILITY OF THE FULL RELAY LOOP:
+ *   The node-side test in src/mcp/__tests__/env2-local-loop.test.ts (added in
+ *   issue #378 PR-2) proves that the FULL attach → list_pages → measure_safe_area
+ *   chain runs on the local PC without a phone. That test spins a fake Chii relay
+ *   (node ws server), registers a stub target, drives ChiiCdpConnection through
+ *   enableDomains() → listTargets() → measureSafeArea(), and asserts the returned
+ *   SafeAreaMeasurement has the correct shape and source: 'relay-mobile'.
+ *
+ *   What a phone adds is ONLY real-device WebKit engine fidelity — the actual
+ *   env(safe-area-inset-*) pixel values a real iPhone/Android WebKit produces.
+ *   This is env-2's stated fidelity ceiling (CLAUDE.md §"실기기 미리보기 — 환경 2",
+ *   umbrella CLAUDE.md §1.1 fidelity ladder). It is NOT a gap in the relay/CDP
+ *   verification loop. The loop itself is fully local-verifiable.
+ *
+ * DOCUMENTED RESIDUE IN THIS E2E TEST (browser-side target.js injection):
+ *   The items below explain why this Playwright test cannot verify browser-side
+ *   target.js injection into the iframe. They are code-policy artifacts of the
+ *   production gate wiring — NONE of them binds the node-side relay verification.
  *
  *   A. Layer B1 gate (src/in-app/gate.ts): the in-app attach guard only allows
  *      *.trycloudflare.com and *.private-apps.tossmini.com hostnames. The Playwright
@@ -22,12 +38,17 @@
  *      maybeAttach(), the gate rejects the call before injecting target.js.
  *      → In a real env-2 session the fixture is served from a trycloudflare.com tunnel
  *        and this gate is satisfied automatically.
+ *      → Node-side: irrelevant — the node CDP client drives the relay directly,
+ *        bypassing the in-app gate entirely (see env2-local-loop.test.ts).
  *
  *   B. ws:// vs wss://: the relay listens on ws://127.0.0.1:<port>. Layer C2 of the
  *      gate requires wss: (secure websocket). The relay URL used in this test uses
  *      ws:// since there is no cloudflared tunnel in CI.
  *      → In a real env-2 session the relay is exposed via a second cloudflared tunnel
  *        (tunnel:{cdp:true} in unplugin) so the wssUrl is wss://*.trycloudflare.com.
+ *      → Node-side: the real transport works over plain ws://127.0.0.1 — ChiiCdpConnection
+ *        derives ws:// from the relayBaseUrl directly. The wss requirement is a
+ *        STRING-SHAPE policy of the in-app gate only (see env2-local-loop.test.ts).
  *
  *   C. Cross-origin iframe CDP injection: even if the gate were satisfied, Playwright
  *      running in Chromium cannot inject a Chii target.js script into a cross-origin
@@ -36,8 +57,9 @@
  *      → In a real env-2 session the launcher and the framed app share the same
  *        trycloudflare.com subdomain via a single tunnel URL, so same-origin policy
  *        is satisfied within the launcher iframe.
+ *      → Node-side: not applicable — no browser involved.
  *
- * MANUAL VERIFICATION PROCEDURE (env-2 MCP-attach full loop, phone required):
+ * MANUAL VERIFICATION PROCEDURE (env-2 full loop with real WebKit engine numbers):
  *   1. Start the fixture with `AIT_TUNNEL_CDP=1 pnpm exec vite --config
  *      e2e/fixture/vite.config.ts`. The unplugin prints two URLs:
  *        • App tunnel:   https://<A>.trycloudflare.com (set as AIT_TUNNEL_BASE_URL)
@@ -54,7 +76,8 @@
  *   5. The launcher opens, frames https://<A>.trycloudflare.com with
  *      ?debug=1&relay=<B-wss> appended. Layer B1 (*.trycloudflare.com host) and
  *      Layer C1/C2 (debug=1, wss relay) are satisfied. Chii target.js is injected.
- *   6. Call list_pages() — expect one page entry. Call take_screenshot() to confirm.
+ *   6. Call list_pages() — expect one page entry. Call measure_safe_area() to get
+ *      real WebKit engine safe-area numbers from the device.
  */
 
 import { expect, test } from '@playwright/test';
