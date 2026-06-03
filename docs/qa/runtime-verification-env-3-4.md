@@ -10,8 +10,8 @@
 
 - **상시 기동된 데몬 하나**가 local(env 1) + relay(env 3/4) 두 connection을 동시 보유한다.
 - 환경 전환은 **`start_debug({mode})`** 한 번 — MCP 서버 재시작 없이 active connection을 runtime에 swap한다.
-- 유효 mode: `local-browser-dev` | `local-browser-cdp` | `relay-dev` | `relay-live`
-- `relay-live`(env 4)는 **`confirm: true` 필수** — LIVE 진입 1차 게이트.
+- 유효 mode: `local` | `staging` | `live` (deprecated 별칭 `local-browser-dev`/`local-browser-cdp`/`relay-dev`/`relay-live`도 수용)
+- `live`(env 4)는 **`confirm: true` 필수** — LIVE 진입 1차 게이트.
 - local 계열로 전환하면 LIVE guard(`liveIntent`)가 자동 disarm된다.
 
 > **`MCP_ENV` back-compat 각주**: `MCP_ENV=relay-dev`, `MCP_ENV=relay-live` 등은 부팅 시 `liveIntent` 시드 용도로만 남은 deprecated 별칭이다. 새 세션에서 `MCP_ENV` 내보내기로 환경을 고정하는 방식은 이 모델로 교체됐다.
@@ -20,7 +20,7 @@
 
 ## 환경 1 — 로컬 Chromium dev (자율 검증 가능)
 
-실기기 없이 자율 검증 가능한 환경이다. `start_debug(local-browser-dev)` → relay swap → 다시 local 전환으로 무재구동 스위칭을 확인한다.
+실기기 없이 자율 검증 가능한 환경이다. `start_debug(local)` → relay swap → 다시 local 전환으로 무재구동 스위칭을 확인한다.
 
 ### 준비물
 
@@ -37,13 +37,13 @@ npx @ait-co/devtools devtools-mcp --target=local
 Claude Code에서:
 
 ```
-start_debug({mode: 'local-browser-dev'})
+start_debug({mode: 'local'})
 ```
 
 ### acceptance 체크리스트
 
-- [ ] **`start_debug({mode: 'local-browser-dev'})` 응답**
-  - `mode: "local-browser-dev"`
+- [ ] **`start_debug({mode: 'local'})` 응답**
+  - `mode: "local"`
   - `kind: "local"`
   - `liveGuardActive: false`
   - `nextStep`에 "list_pages로 로컬 Chromium 페이지 attach를 확인하세요" 포함
@@ -52,11 +52,11 @@ start_debug({mode: 'local-browser-dev'})
   - 로컬 Chromium 탭이 `pages[0]`에 노출됨
   - `tunnel.up: false` — local-target에서 tunnel이 없는 것이 **정상** (restart 권장 아님)
 
-- [ ] **`start_debug({mode: 'relay-dev'})`로 swap (같은 MCP 세션)**
+- [ ] **`start_debug({mode: 'staging'})`로 swap (같은 MCP 세션)** — `staging`은 입력 mode; 출력 env.kind는 `"relay-dev"` 유지
   - 응답: `kind: "relay"`, `liveGuardActive: false`
   - 재핸드셰이크·재시작 없음 — 같은 MCP stdio 세션 유지
 
-- [ ] **`get_diagnostics` — relay-dev 상태 확인**
+- [ ] **`get_diagnostics` — staging(relay-dev) 상태 확인**
   ```json
   {
     "environment": {
@@ -66,10 +66,10 @@ start_debug({mode: 'local-browser-dev'})
     }
   }
   ```
-  - `kind: "relay-dev"`, `liveGuardActive: false`
+  - `kind: "relay-dev"` (출력 env.kind 불변), `liveGuardActive: false`
   - `tunnel.up: false` 도 가능 — relay lazy-boot됐지만 `build_attach_url` 호출 전에는 tunnel 미부팅 상태 정상
 
-- [ ] **다시 local로 전환: `start_debug({mode: 'local-browser-dev'})`**
+- [ ] **다시 local로 전환: `start_debug({mode: 'local'})`**
   - `kind: "local"`, `liveGuardActive: false`
   - LIVE guard disarm 확인 (liveIntent false 유지)
 
@@ -94,7 +94,7 @@ ait deploy --scheme-only
 # 출력: intoss-private://aitc-sdk-example?_deploymentId=<uuid>
 ```
 
-### 2. MCP 기동 + relay-dev 진입
+### 2. MCP 기동 + staging 진입 (env 3)
 
 ```bash
 # TOTP secret 설정 (선택 — relay URL 유출 방어)
@@ -105,14 +105,14 @@ npx @ait-co/devtools devtools-mcp
 MCP 서버가 올라오면 Claude Code에서:
 
 ```
-start_debug({mode: 'relay-dev'})
+start_debug({mode: 'staging'})
 ```
 
-응답 예:
+응답 예 (`mode`는 입력 canonical 값, `environment`는 출력 env.kind 불변):
 
 ```json
 {
-  "mode": "relay-dev",
+  "mode": "staging",
   "kind": "relay",
   "liveGuardActive": false,
   "nextStep": "build_attach_url로 attach QR을 생성하세요 (relay 세션)."
@@ -132,8 +132,8 @@ QR 스캔 → 토스 앱이 dogfood bundle cold-load (PREPARE 상태에서도 OK
 ### 4. acceptance 도구 시퀀스
 
 ```
-list_pages       → pages[0].url에 deploymentId 포함, tunnel.up: true
-measure_safe_area → source: "relay-dev", sdkInsetsSource: "window.__sdk"
+list_pages        → pages[0].url에 deploymentId 포함, tunnel.up: true
+measure_safe_area → source: "relay-dev" (출력 env.kind 불변), sdkInsetsSource: "window.__sdk"
 call_sdk("getOperationalEnvironment", []) → {ok: true, value: "toss" 또는 "sandbox"}
 ```
 
@@ -151,26 +151,26 @@ call_sdk("getOperationalEnvironment", []) → {ok: true, value: "toss" 또는 "s
 - 환경 3 세션이 이미 붙어 있거나, 별도 세션에서 시작
 - LIVE 앱 OPENED 확인: `aitcc app status 31146` → `OPENED`
 
-### 1. LIVE 진입 — `start_debug({mode: 'relay-live', confirm: true})`
+### 1. LIVE 진입 — `start_debug({mode: 'live', confirm: true})`
 
 기존 MCP 세션에서 (재시작 없음):
 
 ```
-start_debug({mode: 'relay-live', confirm: true})
+start_debug({mode: 'live', confirm: true})
 ```
 
 `confirm: true`는 **LIVE 진입 1차 게이트** — 없으면 에러로 거부된다:
 
 ```
-start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 —
+start_debug: live(실서비스 LIVE)는 confirm: true가 필요합니다 —
 실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.
 ```
 
-응답 예:
+응답 예 (`mode`는 입력 canonical 값, `environment`는 출력 env.kind 불변):
 
 ```json
 {
-  "mode": "relay-live",
+  "mode": "live",
   "kind": "relay",
   "liveGuardActive": true,
   "nextStep": "build_attach_url로 attach QR을 생성하세요 (relay 세션)."
@@ -186,7 +186,7 @@ LIVE relay는 검수 통과한 출시 번들이 attach (dogfood 빌드 아님).
 
 ```
 list_pages
-measure_safe_area                                         → source: "relay-live"
+measure_safe_area                                         → source: "relay-live" (출력 env.kind 불변)
 list_console_messages
 take_screenshot
 call_sdk("getOperationalEnvironment", [], confirm: true)  → {ok: true, value: ...}
@@ -194,12 +194,12 @@ call_sdk("getOperationalEnvironment", [], confirm: true)  → {ok: true, value: 
 
 ### 4. side-effect guard 검증 (#358 보안 fix 반영)
 
-`relay-live` 상태에서 `call_sdk`와 `evaluate`는 2중 게이트로 보호된다:
+`live` 모드 상태에서 `call_sdk`와 `evaluate`는 2중 게이트로 보호된다:
 
-1. **`start_debug({mode: 'relay-live', confirm: true})`** — 진입 1차 게이트
+1. **`start_debug({mode: 'live', confirm: true})`** — 진입 1차 게이트
 2. **각 도구 호출 시 `confirm: true`** — 2차 게이트
 
-guard 평가 방식(`#358`): `conn.kind === 'relay' && getLiveIntent()` — call-entry에서 스냅샷된 `conn.kind`와 **fresh** `getLiveIntent()`를 함께 확인. await 중 동시 `start_debug(relay-live)`가 `liveIntent`를 true로 올려도 guard가 그 레이스를 잡는다(false→true 레이스 차단).
+guard 평가 방식(`#358`): `conn.kind === 'relay' && getLiveIntent()` — call-entry에서 스냅샷된 `conn.kind`와 **fresh** `getLiveIntent()`를 함께 확인. await 중 동시 `start_debug(live)`가 `liveIntent`를 true로 올려도 guard가 그 레이스를 잡는다(false→true 레이스 차단).
 
 **거부 검증**:
 
@@ -243,21 +243,21 @@ evaluate("window.location.href", confirm: true)           → 통과
 재구동 없이 한 MCP 세션에서 모든 환경을 순환할 수 있다:
 
 ```
-# Step 1: 로컬로 시작
-start_debug({mode: 'local-browser-dev'})
+# Step 1: 로컬로 시작 (입력 mode: 'local')
+start_debug({mode: 'local'})
 → kind: "local", liveGuardActive: false
 
-# Step 2: relay-dev로 swap
-start_debug({mode: 'relay-dev'})
+# Step 2: staging(env 3)으로 swap (입력 mode: 'staging', 출력 env.kind: "relay-dev")
+start_debug({mode: 'staging'})
 → kind: "relay", liveGuardActive: false
 (→ build_attach_url로 dogfood QR 생성, 폰에서 스캔)
 
-# Step 3: LIVE로 진입
-start_debug({mode: 'relay-live', confirm: true})
+# Step 3: LIVE(env 4)로 진입 (입력 mode: 'live', 출력 env.kind: "relay-live")
+start_debug({mode: 'live', confirm: true})
 → kind: "relay", liveGuardActive: true
 
 # Step 4: 다시 local로 돌아가기
-start_debug({mode: 'local-browser-dev'})
+start_debug({mode: 'local'})
 → kind: "local", liveGuardActive: false  ← LIVE guard 자동 disarm
 ```
 
