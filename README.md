@@ -975,14 +975,58 @@ AI 코딩 에이전트(Claude Code, Cursor 등)가 [MCP(Model Context Protocol)]
 
 로컬 브라우저(환경 1)와 폰 토스 앱 WebView(환경 2·3)는 둘 다 CDP를 말하므로 모든 tool이 두 환경에서 동일하게 동작합니다 — 갈라지는 건 attach 전략(`--target=relay` vs `--target=local`)뿐입니다.
 
-| 모드 + 타깃 | 호출 | 환경 변수 (deprecated 별칭) | 대상 | tool |
+| 모드 + 타깃 | 호출 | 환경 변수 | 대상 | tool |
 |---|---|---|---|---|
-| `--mode=debug --target=relay` (기본값) | `devtools-mcp` → `start_debug({mode: 'staging'})` | `MCP_ENV=relay-dev` (deprecated 부팅 별칭, 환경 3) | 폰 안 dogfood 번들 (CDP/Chii relay + cloudflared 터널, 환경 3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
-| `--mode=debug --target=relay` LIVE | `devtools-mcp` → `start_debug({mode: 'live', confirm: true})` | `MCP_ENV=relay-live` (deprecated 부팅 별칭, **환경 4 LIVE guard**) | LIVE 배포 앱 (환경 4) — `call_sdk`/`evaluate`에 `confirm: true` 필요 | 동일 |
-| `--mode=debug --target=local` | `devtools-mcp --target=local` | `MCP_ENV=mock` (자동) | MCP가 직접 기동한 로컬 Chromium (CDP direct-attach, relay 불필요, 환경 1) | 동일 |
+| `--target=mobile` (env 2) | `devtools-mcp` → `start_debug({mode:'mobile'})` | `AIT_RELAY_BASE_URL`, `AIT_TUNNEL_BASE_URL` | 실기기 Safari/WebKit PWA (외부 Chii relay + cloudflared 터널, 환경 2) | console/network/page + DOM/snapshot/screenshot |
+| `--mode=debug --target=relay` (기본값, env 3) | `devtools-mcp` → `start_debug({mode: 'staging'})` | `MCP_ENV=relay-dev` (deprecated 부팅 별칭) | 폰 안 dogfood 번들 (CDP/Chii relay + cloudflared 터널, 환경 3) | 동일 + `AIT.*` |
+| `--mode=debug --target=relay` LIVE (env 4) | `devtools-mcp` → `start_debug({mode: 'live', confirm: true})` | `MCP_ENV=relay-live` (deprecated 부팅 별칭, **환경 4 LIVE guard**) | LIVE 배포 앱 (환경 4) — `call_sdk`/`evaluate`에 `confirm: true` 필요 | 동일 |
+| `--mode=debug --target=local` (env 1) | `devtools-mcp --target=local` | `MCP_ENV=mock` (자동) | MCP가 직접 기동한 로컬 Chromium (CDP direct-attach, relay 불필요, 환경 1) | 동일 |
 | `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (자동) | 실행 중인 Vite dev server의 mock state (AIT.* 전용, CDP 없음) | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-`--target=local`은 `AIT_DEVTOOLS_URL`(기본 `http://localhost:5173`)을 열고 로컬 Chromium에 CDP direct-attach합니다 — relay나 터널이 필요하지 않습니다. `--mode=dev`는 Vite dev server의 mock-state HTTP endpoint를 읽으며 CDP tool은 제공하지 않습니다. 세션 내 환경 전환은 `start_debug(mode)` 한 번으로 처리됩니다: `staging`(env 3 dogfood), `live`(env 4 LIVE guard 활성화, `confirm: true` 필수), `local`(env 1). `MCP_ENV=relay-dev`/`MCP_ENV=relay-live`는 부팅 시 liveIntent 시드용 deprecated 별칭 — 새 세션에서는 `start_debug`로 전환하세요.
+`--target=local`은 `AIT_DEVTOOLS_URL`(기본 `http://localhost:5173`)을 열고 로컬 Chromium에 CDP direct-attach합니다 — relay나 터널이 필요하지 않습니다. `--mode=dev`는 Vite dev server의 mock-state HTTP endpoint를 읽으며 CDP tool은 제공하지 않습니다. 세션 내 환경 전환은 `start_debug(mode)` 한 번으로 처리됩니다: `mobile`(env 2 PWA), `staging`(env 3 dogfood), `live`(env 4 LIVE guard 활성화, `confirm: true` 필수), `local`(env 1). `MCP_ENV=relay-dev`/`MCP_ENV=relay-live`는 부팅 시 liveIntent 시드용 deprecated 별칭 — 새 세션에서는 `start_debug`로 전환하세요.
+
+#### 환경 2 (실기기 PWA CDP) — `--target=mobile`
+
+토스 검수 없이 실기기 WebKit 엔진에서 CDP 디버깅이 가능한 모드입니다. [`tunnel:{cdp:true}`](#tunnel-옵션)를 켠 Vite dev server가 앱 HTTP 터널과 Chii relay 터널을 두 개 띄우고, MCP는 그 relay에 붙어 `build_attach_url` → 런처 QR을 제공합니다.
+
+**진입 절차:**
+
+1. Vite dev server를 CDP 터널 모드로 기동:
+   ```bash
+   AIT_TUNNEL_CDP=1 pnpm exec vite --config e2e/fixture/vite.config.ts
+   ```
+   터미널 배너에 두 URL이 출력됩니다:
+   - **앱 HTTP 터널** `https://<A>.trycloudflare.com` → `AIT_TUNNEL_BASE_URL`로 설정
+   - **relay wss 터널** `wss://<B>.trycloudflare.com` → `AIT_RELAY_BASE_URL`의 `https://` 형으로 설정
+
+2. MCP server를 mobile 모드로 기동 (별도 터미널):
+   ```json
+   {
+     "mcpServers": {
+       "ait-debug": {
+         "command": "npx",
+         "args": ["-y", "@ait-co/devtools", "devtools-mcp"],
+         "env": {
+           "AIT_RELAY_BASE_URL": "https://<B>.trycloudflare.com",
+           "AIT_TUNNEL_BASE_URL": "https://<A>.trycloudflare.com"
+         }
+       }
+     }
+   }
+   ```
+
+3. Claude Code 세션에서 진입:
+   ```
+   start_debug({mode: 'mobile'})
+   build_attach_url()
+   ```
+   QR을 폰 카메라로 스캔하면 런처 PWA가 앱을 프레임에 열고 Chii target.js를 주입합니다.
+
+4. `list_pages()` → 페이지 1개 확인. `take_screenshot()` 등 CDP tool을 사용합니다.
+
+**env 2의 fidelity 경계**: SDK mock을 씁니다 (실 SDK 호출 불가) — `call_sdk`는 환경 2에서 mock을 칩니다. 실 SDK fidelity가 필요하면 환경 3으로 올라가세요. CDP는 실 WebKit 엔진 위에서 동작하므로 DOM·console·screenshot은 실기기 화면을 그대로 반영합니다.
+
+**로컬 PC 검증**: `e2e/launcher-cdp.test.ts`가 node-side relay 기동(`startChiiRelay({port:0})`)과 launcher 파라미터 포워딩(Playwright)을 자동 검증합니다. browser-side Chii target.js 주입은 localhost 호스트 게이트(Layer B1)와 ws:// vs wss:// 제약으로 CI에서 검증 불가 — 위 수동 절차(실기기 trycloudflare.com 호스트)에서 완성됩니다.
 
 ### Debug 모드 (CDP via Chii)
 

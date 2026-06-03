@@ -50,6 +50,7 @@ import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
+import { buildLauncherAttachUrl } from './deeplink.js';
 import { AutoDevtoolsOpener } from './devtools-opener.js';
 import { wrapEnvelope } from './envelope.js';
 import {
@@ -103,7 +104,7 @@ import {
   takeScreenshot,
   takeSnapshot,
 } from './tools.js';
-import { verifyTotp } from './totp.js';
+import { generateTotp, verifyTotp } from './totp.js';
 import {
   generateAttachToken,
   makeTunnelStatus,
@@ -537,19 +538,292 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       }
     }
 
-    // build_attach_url is pure synthesis (scheme URL + relay URL → deep link).
+    // build_attach_url is pure synthesis (relay URL → deep link).
     // It works before any page attaches, so it must not require enableDomains.
+    //
+    // ENV BRANCH: env 2 (relay-mobile) builds a launcher PWA QR using
+    // AIT_TUNNEL_BASE_URL; env 3/4 (relay-dev/live) use the existing
+    // intoss-private scheme URL path. Both branches converge below at the
+    // shared QR rendering path (attachUrl + relayUrl + totp + authorityWarning).
     if (name === 'build_attach_url') {
+      const waitForAttach = request.params.arguments?.wait_for_attach === true;
+      // open_in_browser defaults to true when not explicitly set.
+      const openInBrowser = request.params.arguments?.open_in_browser !== false;
+
+      // ── relay-mobile branch (env 2 — launcher PWA QR) ─────────────────────
+      if (env === 'relay-mobile') {
+        // SECRET-HANDLING: AIT_TUNNEL_BASE_URL carries the app tunnel host —
+        // NEVER echo the value in error messages or logs.
+        const tunnelHttpUrl = process.env.AIT_TUNNEL_BASE_URL?.trim() ?? '';
+        if (tunnelHttpUrl === '') {
+          return mcpError(
+            'build_attach_url(mobile): AIT_TUNNEL_BASE_URL이 설정되지 않았습니다. ' +
+              'unplugin tunnel:{cdp:true} 배너에 출력되는 앱 HTTP 터널 URL을 ' +
+              'AIT_TUNNEL_BASE_URL 환경변수로 전달하세요.',
+          );
+        }
+        const tunnelStatus = getTunnelStatus();
+        if (!tunnelStatus.up || tunnelStatus.wssUrl === null) {
+          return mcpError(
+            'build_attach_url(mobile): relay wssUrl이 아직 설정되지 않았습니다. ' +
+              'unplugin tunnel:{cdp:true}가 relay를 완전히 기동할 때까지 잠시 후 다시 시도하세요.',
+          );
+        }
+
+        // SECRET-HANDLING: totpSecret is used only to compute a code that is
+        // spliced as at= in the attachUrl — never logged or returned separately.
+        let totpCode: string | undefined;
+        let totpMeta: { enabled: true; ttlSeconds: number; expiresAt: string } | undefined;
+        if (totpSecret !== undefined && totpSecret !== '') {
+          const now = Date.now();
+          totpCode = generateTotp(totpSecret, now);
+          const STEP_SECONDS = 30;
+          const currentStep = Math.floor(now / 1000 / STEP_SECONDS);
+          totpMeta = {
+            enabled: true,
+            ttlSeconds: STEP_SECONDS,
+            expiresAt: new Date((currentStep + 1) * STEP_SECONDS * 1000).toISOString(),
+          };
+        }
+
+        // SECRET-HANDLING: attachUrl encodes tunnelHttpUrl and wssUrl inside
+        // the QR payload only — not logged or returned as standalone fields.
+        const attachUrl = buildLauncherAttachUrl(tunnelHttpUrl, tunnelStatus.wssUrl, totpCode);
+        const relayUrl = tunnelStatus.wssUrl;
+        const authorityWarning: string | undefined = undefined; // no scheme authority for launcher
+        const totp = totpMeta;
+
+        // In mobile mode, deploymentId filtering is not applicable —
+        // the launcher attach is not tied to a specific bundle deployment.
+        // match on presence only (any page that attaches is the target).
+        const isMatchingPage = (pages: ReturnType<CdpConnection['listTargets']>): boolean =>
+          pages.length > 0;
+        const buildTimeoutError = (
+          baseText: string,
+          timeoutSec: number,
+          observed: ReturnType<CdpConnection['listTargets']>,
+        ): string => {
+          const observedUrls = observed
+            .slice(0, 3)
+            .map((p) => p.url.slice(0, 80))
+            .join(', ');
+          const observedNote =
+            observed.length > 0 ? ` — previously attached pages: [${observedUrls}]` : '';
+          return (
+            `${baseText}\n\nNo page attached within ${timeoutSec}s${observedNote} — ` +
+            'launcher QR을 폰 카메라로 스캔한 뒤 call list_pages를 다시 호출하세요.'
+          );
+        };
+
+        // Fall through to the shared QR rendering path below.
+        // (extracted into a local async IIFE so both branches can return from it)
+        return await (async () => {
+          const header =
+            'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
+          const warningPrefix = authorityWarning
+            ? `⚠️  scheme_url 경고: ${authorityWarning}\n\n`
+            : '';
+          const guiAvailable = canOpenBrowser();
+
+          if (openInBrowser && !guiAvailable) {
+            const headlessNote =
+              '[open_in_browser] GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
+              'open_in_browser=false로 자동 폴백합니다. ' +
+              '텍스트 QR을 폰 카메라로 스캔하거나, 로컬 GUI 환경에서 실행하세요.\n\n';
+            const qrHeadless = await renderQr(attachUrl);
+            const headlessText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qrHeadless}`;
+            if (!waitForAttach) {
+              return { content: [{ type: 'text' as const, text: headlessText }] };
+            }
+            let attachedPagesHl: ReturnType<CdpConnection['listTargets']> = [];
+            try {
+              attachedPagesHl = await waitForAttachWithEvents(
+                conn,
+                isMatchingPage,
+                waitForAttachTimeoutMs,
+              );
+            } catch {
+              attachedPagesHl = conn.listTargets();
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: buildTimeoutError(
+                      headlessText,
+                      waitForAttachTimeoutMs / 1000,
+                      attachedPagesHl,
+                    ),
+                  },
+                ],
+                isError: true,
+              };
+            }
+            const pagesResultHl = listPages(conn, getTunnelStatus());
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `${headlessText}\n\n${JSON.stringify(pagesResultHl, null, 2)}`,
+                },
+              ],
+            };
+          }
+
+          if (openInBrowser && guiAvailable && qrHttpServer) {
+            const httpUrl = qrHttpServer.buildAttachPageUrl(attachUrl);
+            const pngUrl = `http://127.0.0.1:${qrHttpServer.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
+            const browserResult = await openQrInBrowser(httpUrl, pngUrl);
+            if (browserResult.opened) {
+              const retriedNote = browserResult.retried ? ' (1회 retry 후 성공)' : '';
+              const openResult = {
+                attempted: true,
+                succeeded: true,
+                ...(browserResult.retried ? { retried: true } : {}),
+              };
+              const shortText =
+                `${warningPrefix}${header}\n` +
+                `${JSON.stringify({ relayUrl, openResult, ...(totp ? { totp } : {}) }, null, 2)}\n\n` +
+                `브라우저에서 QR을 열었습니다${retriedNote}. 폰 카메라로 스캔하세요.\n` +
+                `URL: ${browserResult.httpUrl}`;
+              if (!waitForAttach) {
+                return { content: [{ type: 'text' as const, text: shortText }] };
+              }
+              let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
+              try {
+                attachedPages = await waitForAttachWithEvents(
+                  conn,
+                  isMatchingPage,
+                  waitForAttachTimeoutMs,
+                );
+              } catch {
+                attachedPages = conn.listTargets();
+                return {
+                  content: [
+                    {
+                      type: 'text' as const,
+                      text: buildTimeoutError(
+                        shortText,
+                        waitForAttachTimeoutMs / 1000,
+                        attachedPages,
+                      ),
+                    },
+                  ],
+                  isError: true,
+                };
+              }
+              const pagesResult = listPages(conn, getTunnelStatus());
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `${shortText}\n\n${JSON.stringify(pagesResult, null, 2)}`,
+                  },
+                ],
+              };
+            }
+            const openResult = {
+              attempted: true,
+              succeeded: false,
+              failureReason: browserResult.error ?? '브라우저 실행 후보 모두 실패',
+              pngUrl: browserResult.pngUrl,
+              ...(browserResult.stderrSummary
+                ? { stderrSummary: browserResult.stderrSummary }
+                : {}),
+            };
+            const stderrNote = browserResult.stderrSummary
+              ? `\nstderr: ${browserResult.stderrSummary}`
+              : '';
+            const fallbackNote =
+              `[open_in_browser] 브라우저 자동 열기에 실패했습니다. ` +
+              `다음 URL을 직접 브라우저에서 여세요:\n${browserResult.httpUrl}\n` +
+              `또는 PNG로 받기: ${browserResult.pngUrl}` +
+              stderrNote +
+              '\n\n';
+            const qr = await renderQr(attachUrl);
+            const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, openResult, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qr}`;
+            if (!waitForAttach) {
+              return { content: [{ type: 'text' as const, text: baseText }] };
+            }
+            let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
+            try {
+              attachedPagesFb = await waitForAttachWithEvents(
+                conn,
+                isMatchingPage,
+                waitForAttachTimeoutMs,
+              );
+            } catch {
+              attachedPagesFb = conn.listTargets();
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: buildTimeoutError(
+                      baseText,
+                      waitForAttachTimeoutMs / 1000,
+                      attachedPagesFb,
+                    ),
+                  },
+                ],
+                isError: true,
+              };
+            }
+            const pagesResultFb = listPages(conn, getTunnelStatus());
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `${baseText}\n\n${JSON.stringify(pagesResultFb, null, 2)}`,
+                },
+              ],
+            };
+          }
+
+          const qr = await renderQr(attachUrl);
+          const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qr}`;
+          if (!waitForAttach) {
+            return { content: [{ type: 'text' as const, text: baseText }] };
+          }
+          let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
+          try {
+            attachedPages = await waitForAttachWithEvents(
+              conn,
+              isMatchingPage,
+              waitForAttachTimeoutMs,
+            );
+          } catch {
+            attachedPages = conn.listTargets();
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: buildTimeoutError(baseText, waitForAttachTimeoutMs / 1000, attachedPages),
+                },
+              ],
+              isError: true,
+            };
+          }
+          const pagesResult = listPages(conn, getTunnelStatus());
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `${baseText}\n\n${JSON.stringify(pagesResult, null, 2)}`,
+              },
+            ],
+          };
+        })();
+      }
+      // ── end relay-mobile branch ────────────────────────────────────────────
+
+      // ── relay-dev / relay-live branch (env 3/4 — intoss-private QR) ───────
       const schemeUrl = request.params.arguments?.scheme_url;
       if (typeof schemeUrl !== 'string' || schemeUrl === '') {
         return mcpError(
           'build_attach_url: scheme_url이 비어 있습니다. ' +
-            '`ait deploy --scheme-only`가 출력하는 intoss-private:// URL을 인자로 전달하세요.',
+            '`ait deploy --scheme-only`가 출력하는 intoss-private:// URL을 인자로 전달하세요. ' +
+            '환경 2(mobile)라면 scheme_url 대신 AIT_TUNNEL_BASE_URL을 설정하세요.',
         );
       }
-      const waitForAttach = request.params.arguments?.wait_for_attach === true;
-      // open_in_browser defaults to true when not explicitly set.
-      const openInBrowser = request.params.arguments?.open_in_browser !== false;
 
       // Parse _deploymentId from scheme_url to filter stale attached pages.
       // null → "no filter; match on presence only" (original behaviour preserved).

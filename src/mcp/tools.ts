@@ -129,20 +129,24 @@ export const DEBUG_TOOL_DEFINITIONS = [
     name: 'build_attach_url',
     description:
       "The tool result already shows the QR to the user directly (Claude Code renders MCP tool output to the user's screen; they press Ctrl+O to expand if it's collapsed). Do NOT re-print or re-render the QR in your reply — that just wastes output tokens. Simply tell the user to scan the QR shown in this tool's output with their phone camera. " +
-      'Turns an `ait deploy --scheme-only` URL (intoss-private://…?_deploymentId=<uuid>) into a ' +
-      'self-attaching deep link by splicing in debug=1 and the live relay URL for this session. ' +
-      'Returns the deep link JSON and a unicode QR of that deep link. Scan the QR with the phone ' +
-      'camera to open the mini-app and attach it to this debug session (QR is the single entry ' +
-      'path — no USB cable or platform CLI needed). Requires the tunnel to be up — call ' +
-      'list_pages first. If the tunnel is not up, restart the MCP server: ' +
-      '`npx @ait-co/devtools devtools-mcp`. ' +
-      'Set wait_for_attach=true to block until the phone scans and a page attaches ' +
-      '(polls listTargets up to 30 s by default), then returns the attached page info too. ' +
+      'Builds a self-attaching deep link for the active relay environment and returns a QR code. ' +
+      'Scan the QR with the phone camera to open the mini-app and attach it to this debug session ' +
+      '(QR is the single entry path — no USB cable or platform CLI needed). ' +
+      'Call list_pages first to confirm the relay/tunnel is up. If the tunnel is not up, restart: ' +
+      '`npx @ait-co/devtools devtools-mcp`.\n\n' +
+      'Environment-specific behaviour:\n' +
+      '  • env 3 / staging (start_debug mode="staging"): requires scheme_url — the ' +
+      'intoss-private://…?_deploymentId=<uuid> URL from `ait deploy --scheme-only`. Splices ' +
+      'debug=1 + relay URL into the scheme URL to produce a self-attach deep link.\n' +
+      '  • env 2 / mobile (start_debug mode="mobile"): scheme_url is NOT used. Instead, reads ' +
+      'AIT_TUNNEL_BASE_URL (the https://*.trycloudflare.com app tunnel from `tunnel:{cdp:true}`) ' +
+      'and builds a launcher PWA deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). ' +
+      'Scan the QR with the phone to open the launcher, which frames the tunnel URL and attaches CDP.\n\n' +
+      'Set wait_for_attach=true to block until a page attaches (polls up to 30 s). ' +
       'On timeout, call build_attach_url again to resume polling. ' +
       'When open_in_browser=true (default), saves the QR as a PNG and opens it in the OS default ' +
       'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers). ' +
-      'Requires MCP_ENV=relay-dev or relay-live (set automatically in debug-mode default).\n\n' +
-      'TOTP auth: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the returned attachUrl ' +
+      '\n\nTOTP auth: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the returned attachUrl ' +
       'automatically includes the current one-time code (at=<code>) — the URL is single-use for ' +
       'that 30-second step. The response includes a `totp` field with `expiresAt` (ISO timestamp). ' +
       'If the phone scan happens after expiresAt, the relay will reject the code — just call ' +
@@ -155,6 +159,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'string',
           description:
             'The intoss-private:// scheme URL from `ait deploy --scheme-only` (must carry _deploymentId). ' +
+            'Required for env 3/staging mode. Not used in env 2/mobile mode (use AIT_TUNNEL_BASE_URL instead). ' +
             'The authority (host) must be the app name (e.g. intoss-private://aitc-sdk-example?_deploymentId=…). ' +
             'Generic values like "web" or an empty host indicate a malformed URL.',
         },
@@ -173,7 +178,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'remote container environments should set this to false to use the text QR fallback.',
         },
       },
-      required: ['scheme_url'],
+      // scheme_url is required only for env 3/staging; env 2/mobile uses AIT_TUNNEL_BASE_URL.
+      // The handler enforces the requirement at runtime based on the active environment.
+      required: [],
     },
     // Tier B per RFC #277 — the URL synthesis requires a live cloudflared
     // tunnel + relay, which only exists in the `relay` environment.

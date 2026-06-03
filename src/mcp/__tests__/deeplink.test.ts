@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildDeepLinkAttachUrl, validateSchemeAuthority } from '../deeplink.js';
+import {
+  buildDeepLinkAttachUrl,
+  buildLauncherAttachUrl,
+  validateSchemeAuthority,
+} from '../deeplink.js';
 
 const RELAY = 'wss://abc-def.trycloudflare.com';
 const RELAY_WITH_PATH = 'wss://abc-def.trycloudflare.com/relay';
@@ -115,6 +119,84 @@ describe('buildDeepLinkAttachUrl', () => {
     // Calling without a code removes the old `at=`.
     const out = buildDeepLinkAttachUrl(scheme, RELAY);
     expect(out).not.toContain('at=');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildLauncherAttachUrl — env-2 launcher PWA deep-link (#378)
+// ---------------------------------------------------------------------------
+
+const LAUNCHER_BASE = 'https://devtools.aitc.dev/launcher/';
+const TUNNEL = 'https://abc-def.trycloudflare.com';
+const WSS = 'wss://relay-xyz.trycloudflare.com';
+
+describe('buildLauncherAttachUrl', () => {
+  it('builds a launcher URL with url=, debug=1, and relay= params', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS);
+    const parsed = new URL(out);
+    expect(parsed.origin + parsed.pathname).toBe(LAUNCHER_BASE);
+    expect(parsed.searchParams.get('url')).toBe(TUNNEL);
+    expect(parsed.searchParams.get('debug')).toBe('1');
+    expect(parsed.searchParams.get('relay')).toBe(WSS);
+    expect(parsed.searchParams.has('at')).toBe(false);
+  });
+
+  it('percent-encodes tunnelUrl and wssUrl so special chars do not break the query', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS);
+    // encodeURIComponent encodes : and / — verify the raw string contains %3A and %2F
+    expect(out).toContain('relay=wss%3A%2F%2F');
+    expect(out).not.toContain('relay=wss://');
+    expect(out).toContain('url=https%3A%2F%2F');
+    expect(out).not.toContain('url=https://');
+  });
+
+  it('appends &at=<totpCode> when totpCode is provided', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, '654321');
+    const parsed = new URL(out);
+    expect(parsed.searchParams.get('at')).toBe('654321');
+    // Other params still present
+    expect(parsed.searchParams.get('debug')).toBe('1');
+    expect(parsed.searchParams.get('relay')).toBe(WSS);
+  });
+
+  it('does NOT append &at= when totpCode is undefined', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined);
+    expect(new URL(out).searchParams.has('at')).toBe(false);
+  });
+
+  it('does NOT append &at= when totpCode is an empty string', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, '');
+    expect(new URL(out).searchParams.has('at')).toBe(false);
+  });
+
+  it('encodes a totpCode that contains special chars (defensive)', () => {
+    // TOTP codes are normally 6-digit numbers, but test encoding is correct.
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, '1+2=3');
+    expect(out).toContain('at=1%2B2%3D3');
+  });
+
+  it('starts with the launcher base URL', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS);
+    expect(out.startsWith(LAUNCHER_BASE)).toBe(true);
+  });
+
+  it('puts url= first in the query string', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS);
+    // The query part must start with ?url=
+    expect(out).toContain(`${LAUNCHER_BASE}?url=`);
+  });
+
+  it('is parseable as a valid URL', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, '123456');
+    expect(() => new URL(out)).not.toThrow();
+  });
+
+  it('two calls with different tunnel URLs produce different results', () => {
+    const out1 = buildLauncherAttachUrl(TUNNEL, WSS);
+    const out2 = buildLauncherAttachUrl('https://other.trycloudflare.com', WSS);
+    expect(out1).not.toBe(out2);
+    expect(new URL(out1).searchParams.get('url')).toBe(TUNNEL);
+    expect(new URL(out2).searchParams.get('url')).toBe('https://other.trycloudflare.com');
   });
 });
 

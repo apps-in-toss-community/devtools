@@ -945,14 +945,58 @@ AI coding agents (Claude Code, Cursor, etc.) can observe a running mini-app dire
 
 A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so every tool works identically in both environments — the only difference is the attach strategy (`--target=relay` vs `--target=local`).
 
-| Mode + target | Invocation | Env var (deprecated alias) | Target | Tools |
+| Mode + target | Invocation | Env vars | Target | Tools |
 |---|---|---|---|---|
-| `--mode=debug --target=relay` (default) | `devtools-mcp` → `start_debug({mode: 'staging'})` | `MCP_ENV=relay-dev` (deprecated boot alias, env 3) | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | console/network/page + DOM/snapshot/screenshot + `AIT.*` |
-| `--mode=debug --target=relay` LIVE | `devtools-mcp` → `start_debug({mode: 'live', confirm: true})` | `MCP_ENV=relay-live` (deprecated boot alias, env 4 LIVE guard) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
-| `--mode=debug --target=local` | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
+| `--target=mobile` (env 2) | `devtools-mcp` → `start_debug({mode:'mobile'})` | `AIT_RELAY_BASE_URL`, `AIT_TUNNEL_BASE_URL` | Real-device Safari/WebKit PWA (external Chii relay + cloudflared tunnel, env 2) | console/network/page + DOM/snapshot/screenshot |
+| `--mode=debug --target=relay` (default, env 3) | `devtools-mcp` → `start_debug({mode: 'staging'})` | `MCP_ENV=relay-dev` (deprecated boot alias) | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | same + `AIT.*` |
+| `--mode=debug --target=relay` LIVE (env 4) | `devtools-mcp` → `start_debug({mode: 'live', confirm: true})` | `MCP_ENV=relay-live` (deprecated boot alias, env 4 LIVE guard) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
+| `--mode=debug --target=local` (env 1) | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
 | `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (auto) | Mock state from a running Vite dev server (AIT.* only, no CDP) | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. Switch environments in-session with `start_debug(mode)`: `staging` (env 3 dogfood), `live` (env 4, arms LIVE guard — `confirm: true` required), `local` (env 1). `MCP_ENV=relay-dev`/`MCP_ENV=relay-live` are deprecated boot-time aliases for liveIntent seeding — prefer `start_debug` for in-session switching.
+`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. Switch environments in-session with `start_debug(mode)`: `mobile` (env 2 PWA), `staging` (env 3 dogfood), `live` (env 4, arms LIVE guard — `confirm: true` required), `local` (env 1). `MCP_ENV=relay-dev`/`MCP_ENV=relay-live` are deprecated boot-time aliases for liveIntent seeding — prefer `start_debug` for in-session switching.
+
+#### Environment 2 (real-device PWA CDP) — `--target=mobile`
+
+Debug on a real phone using Safari/WebKit without Toss review. The Vite dev server with [`tunnel:{cdp:true}`](#tunnel-option) brings up both an app HTTP tunnel and a Chii relay tunnel. The MCP server attaches to that relay and provides `build_attach_url` → launcher QR.
+
+**Setup procedure:**
+
+1. Start the Vite dev server in CDP tunnel mode:
+   ```bash
+   AIT_TUNNEL_CDP=1 pnpm exec vite --config e2e/fixture/vite.config.ts
+   ```
+   The terminal banner prints two URLs:
+   - **App HTTP tunnel** `https://<A>.trycloudflare.com` → set as `AIT_TUNNEL_BASE_URL`
+   - **Relay wss tunnel** `wss://<B>.trycloudflare.com` → set `AIT_RELAY_BASE_URL` to its `https://` form
+
+2. Start the MCP server in mobile mode (separate terminal):
+   ```json
+   {
+     "mcpServers": {
+       "ait-debug": {
+         "command": "npx",
+         "args": ["-y", "@ait-co/devtools", "devtools-mcp"],
+         "env": {
+           "AIT_RELAY_BASE_URL": "https://<B>.trycloudflare.com",
+           "AIT_TUNNEL_BASE_URL": "https://<A>.trycloudflare.com"
+         }
+       }
+     }
+   }
+   ```
+
+3. In a Claude Code session:
+   ```
+   start_debug({mode: 'mobile'})
+   build_attach_url()
+   ```
+   Scan the QR with your phone camera. The launcher PWA opens the app in a frame and injects Chii target.js.
+
+4. `list_pages()` → expect one page. Use `take_screenshot()` and other CDP tools.
+
+**Env 2 fidelity boundary**: uses the mock SDK (`call_sdk` hits the mock). For real SDK fidelity, move to env 3. CDP runs on the real WebKit engine, so DOM, console, and screenshot reflect the real device screen.
+
+**Local-PC verification**: `e2e/launcher-cdp.test.ts` automates node-side relay startup (`startChiiRelay({port:0})`) and launcher param forwarding (Playwright). Browser-side Chii target.js injection is not automated in CI due to the localhost host gate (Layer B1) and ws:// vs wss:// constraints — completed by the manual procedure above on a real device with a trycloudflare.com hostname.
 
 ### Debug mode (CDP via Chii)
 

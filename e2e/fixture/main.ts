@@ -9,6 +9,26 @@
 // Do NOT let a linter's organizeImports reorder it below the SDK block.
 import '@ait-co/devtools/panel';
 
+// ENV-2 CDP gate (issue #378 — gap #1):
+// When the page is loaded with ?debug=1&relay=<wss> (the launcher deep-link
+// forwarded from env-2 QR), dynamically import the in-app attach module so
+// the Chii target.js injection runs without statically bundling the in-app
+// code into every fixture build.
+//
+// NOTE: the in-app gate (Layer B1 in src/in-app/gate.ts) BLOCKS localhost — it
+// only allows *.trycloudflare.com and *.private-apps.tossmini.com hostnames.
+// In a real env-2 session the fixture is served from a trycloudflare.com tunnel
+// and the gate passes. In local development / Playwright e2e, localhost is
+// blocked — see e2e/launcher-cdp.test.ts for the documented manual residue.
+if (typeof window !== 'undefined') {
+  const _p = new URLSearchParams(window.location.search);
+  if (_p.get('debug') === '1' && _p.get('relay')) {
+    import('@ait-co/devtools/in-app').then(({ maybeAttach }) => {
+      maybeAttach();
+    });
+  }
+}
+
 import {
   Accuracy,
   // analytics

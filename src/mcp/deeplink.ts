@@ -1,4 +1,53 @@
 /**
+ * URL of the AITC Sandbox launcher PWA.
+ *
+ * Declared here (not imported from `src/unplugin/tunnel.ts`) to respect the
+ * mcp → unplugin layering boundary. unplugin/tunnel.ts declares its own copy
+ * for the same reason — keep the two in sync when the URL changes.
+ */
+const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
+
+/**
+ * Builds a launcher PWA deep-link for env-2 MCP-attach (issue #378).
+ *
+ * The launcher at {@link LAUNCHER_URL} renders tunnelUrl in a full-viewport
+ * iframe. `&debug=1&relay=<wssUrl>` is forwarded onto the iframe src so the
+ * framed page's in-app debug gate (Layer C) is satisfied and a Chii target.js
+ * is injected. `&at=<totpCode>` is added only when a code is provided (same
+ * conditional as {@link buildDeepLinkAttachUrl}).
+ *
+ * Unlike `buildDeepLinkAttachUrl` (which splices onto a non-special scheme URL
+ * via raw string manipulation), this function uses WHATWG `encodeURIComponent`
+ * because the target is a standard `https:` URL.
+ *
+ * SECRET-HANDLING: `totpCode` (when provided) is placed into the `at=` param
+ * only — never logged or returned separately. Callers must NOT log the result
+ * of this function to stdout/stderr.
+ *
+ * @param tunnelUrl - The `https://*.trycloudflare.com` app tunnel URL
+ *   (`AIT_TUNNEL_BASE_URL`). This is the URL the launcher frames.
+ * @param wssUrl - The `wss://` relay URL the framed page will attach to.
+ * @param totpCode - Optional current TOTP code (6 digits). When provided, it
+ *   is appended as `at=<totpCode>`. Must be computed at call time — it rotates
+ *   every 30 s. Omit when TOTP is disabled.
+ * @returns The launcher deep-link URL with `?url=<enc>&debug=1&relay=<enc>
+ *   [&at=<code>]` params.
+ */
+export function buildLauncherAttachUrl(
+  tunnelUrl: string,
+  wssUrl: string,
+  totpCode?: string,
+): string {
+  let url =
+    `${LAUNCHER_URL}?url=${encodeURIComponent(tunnelUrl)}` +
+    `&debug=1&relay=${encodeURIComponent(wssUrl)}`;
+  if (totpCode !== undefined && totpCode !== '') {
+    url += `&at=${encodeURIComponent(totpCode)}`;
+  }
+  return url;
+}
+
+/**
  * Build a self-attaching dogfood deep link.
  *
  * `ait deploy --scheme-only` prints an `intoss-private://…?_deploymentId=<uuid>`
