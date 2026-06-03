@@ -372,26 +372,34 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'attach survives the switch. After switching it emits notifications/tools/list_changed — ' +
       'call tools/list again to see the updated tool surface for the new environment.\n\n' +
       'modes:\n' +
-      '  local-browser-dev / local-browser-cdp — local Chromium CDP attach (env 1, mock). ' +
-      'Both route to the local connection; the names preserve dev-vs-cdp intent.\n' +
-      '  relay-dev  — real-device dogfood relay (env 3). Side-effect tools run unguarded.\n' +
-      '  relay-live — real-device live/production relay (env 4, read-only debugging). Arms the ' +
-      'LIVE guard: call_sdk/evaluate then require confirm: true. Entering relay-live ALSO requires ' +
-      'confirm: true on this call to acknowledge LIVE intent.\n\n' +
-      'Switching back to a local mode automatically disarms the LIVE guard.',
+      '  local — env 1: desktop Chromium with the MOCK SDK and a local CDP attach. Side-effect ' +
+      'tools (call_sdk/evaluate) run unguarded against the mock; nothing touches a real device or ' +
+      'real users. No prerequisites — the default, always-available environment for state/contract ' +
+      'and visual-layout work.\n' +
+      '  staging — env 3: a real-device Toss WebView dogfood build with the REAL SDK over the ' +
+      'intoss-private relay. The first environment where call_sdk exercises the genuine native ' +
+      'bridge. Side-effect tools run unguarded (dogfood, not released to real users). ' +
+      'Prerequisite: a deployed dogfood candidate bundle + the device cold-loaded via the ' +
+      'intoss-private deep-link/QR relay injection.\n' +
+      '  live — env 4: the REVIEW-PASSED, released production runtime with the REAL SDK over the ' +
+      'intoss relay — real end users are on the other side. Read-only debugging is the intent: ' +
+      'the LIVE guard is armed, so call_sdk/evaluate require confirm:true per call, and ENTERING ' +
+      'live ALSO requires confirm:true on this call. Use it only to observe a shipped regression; ' +
+      'verify fixes in staging first.\n\n' +
+      'Switching back to local automatically disarms the LIVE guard.',
     inputSchema: {
       type: 'object',
       properties: {
         mode: {
           type: 'string',
-          enum: ['local-browser-dev', 'local-browser-cdp', 'relay-dev', 'relay-live'],
+          enum: ['local', 'staging', 'live'],
           description:
-            'Target environment to switch to. relay-live additionally requires confirm: true.',
+            'Target environment to switch to. mode=live additionally requires confirm: true (and arms the read-only LIVE guard).',
         },
         confirm: {
           type: 'boolean',
           description:
-            'Required when mode=relay-live — set true to acknowledge entering LIVE (env 4) ' +
+            'Required when mode=live — set true to acknowledge entering LIVE (env 4) ' +
             'debugging that can affect real users. Ignored for the other modes.',
         },
       },

@@ -157,23 +157,34 @@ export interface ModeSwitchReport {
 }
 
 /**
- * The four `start_debug` modes (issue #348). They collapse onto the two
- * orthogonal axes:
- *   - `local-browser-dev` / `local-browser-cdp` → local connection (`mock` env).
- *   - `relay-dev`                                → relay connection, liveIntent off.
- *   - `relay-live`                               → relay connection, liveIntent on
- *                                                  (requires `confirm: true`).
+ * The three canonical `start_debug` modes (issue #382 — renamed from the old
+ * four-value set to user-facing environment names):
  *
- * `local-browser-dev` and `local-browser-cdp` are aliases at the connection
- * level (both attach a `LocalCdpConnection`); the distinct names preserve the
- * agent-facing dev-vs-cdp intent for future divergence without changing the
- * routing today.
+ *   - `local`   → env 1: desktop Chromium with the MOCK SDK + local CDP attach.
+ *                 Side-effect tools (call_sdk/evaluate) run unguarded against
+ *                 the mock; nothing touches a real device or real users.
+ *                 No prerequisites — the default, always-available environment.
+ *
+ *   - `staging` → env 3: real-device Toss WebView dogfood build with the REAL
+ *                 SDK over the intoss-private relay. liveIntent off.
+ *                 Prerequisite: deployed dogfood bundle + device cold-loaded via
+ *                 intoss-private deep-link/QR relay injection.
+ *
+ *   - `live`    → env 4: REVIEW-PASSED production runtime with the REAL SDK
+ *                 over the intoss relay. liveIntent on (requires `confirm: true`).
+ *                 Read-only debugging: call_sdk/evaluate require confirm per call.
+ *
+ * Deprecated aliases (back-compat — pinned .mcp.json / docs / QA runbooks):
+ *   `local-browser-dev` / `local-browser-cdp` → `local`
+ *   `relay-dev`  → `staging`
+ *   `relay-live` → `live`
+ * Normalization is handled by `normalizeStartDebugMode`.
  */
-export type StartDebugMode = 'local-browser-dev' | 'local-browser-cdp' | 'relay-dev' | 'relay-live';
+export type StartDebugMode = 'local' | 'staging' | 'live';
 
 /** Returns `true` when the mode routes to a relay connection. */
 export function isRelayMode(mode: StartDebugMode): boolean {
-  return mode === 'relay-dev' || mode === 'relay-live';
+  return mode === 'staging' || mode === 'live';
 }
 
 /**
@@ -192,10 +203,10 @@ export interface ConnectionRouter {
   /**
    * Switches the active connection to the family for `mode`, lazily booting
    * that family's infra if needed, re-arming the attach watcher, and emitting
-   * `tools/list_changed`. Sets `liveIntent` (true only for `relay-live`).
+   * `tools/list_changed`. Sets `liveIntent` (true only for `live`).
    *
    * Rejects (without swapping) when a swap is already in flight, or when
-   * `relay-live` is requested without `confirm: true`.
+   * `live` is requested without `confirm: true`.
    */
   switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport>;
 }
@@ -416,7 +427,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       if (mode === null) {
         return mcpError(
           'start_debug: mode가 올바르지 않습니다. ' +
-            "'local-browser-dev' | 'local-browser-cdp' | 'relay-dev' | 'relay-live' 중 하나를 전달하세요.",
+            "'local' | 'staging' | 'live' 중 하나를 전달하세요 " +
+            "(deprecated 별칭 'local-browser-dev'/'local-browser-cdp'/'relay-dev'/'relay-live'도 수용).",
         );
       }
       const confirm = request.params.arguments?.confirm === true;
@@ -922,13 +934,25 @@ export function createDebugServer(deps: DebugServerDeps): Server {
 
 /**
  * Normalizes a raw `start_debug` `mode` argument to a `StartDebugMode`, or
- * `null` when the value is not one of the four accepted modes.
+ * `null` when the value is not one of the accepted modes.
+ *
+ * Accepts the 3 canonical modes + 4 deprecated aliases (back-compat for
+ * pinned .mcp.json / docs / QA runbooks that still emit old strings):
+ *   'local'           → 'local'   (canonical)
+ *   'staging'         → 'staging' (canonical)
+ *   'live'            → 'live'    (canonical)
+ *   'local-browser-dev'  → 'local'   (deprecated alias)
+ *   'local-browser-cdp'  → 'local'   (deprecated alias)
+ *   'relay-dev'          → 'staging' (deprecated alias)
+ *   'relay-live'         → 'live'    (deprecated alias)
  */
 export function normalizeStartDebugMode(raw: unknown): StartDebugMode | null {
-  if (raw === 'local-browser-dev') return 'local-browser-dev';
-  if (raw === 'local-browser-cdp') return 'local-browser-cdp';
-  if (raw === 'relay-dev') return 'relay-dev';
-  if (raw === 'relay-live') return 'relay-live';
+  // New canonical values.
+  if (raw === 'local' || raw === 'staging' || raw === 'live') return raw;
+  // Deprecated aliases (back-compat — pinned .mcp.json / docs / QA runbooks).
+  if (raw === 'local-browser-dev' || raw === 'local-browser-cdp') return 'local';
+  if (raw === 'relay-dev') return 'staging';
+  if (raw === 'relay-live') return 'live';
   return null;
 }
 
@@ -958,16 +982,16 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
           ),
         );
       }
-      // relay-live entry gate: confirm:true required (mirrors the per-tool gate).
-      if (mode === 'relay-live' && !confirm) {
+      // live entry gate: confirm:true required (mirrors the per-tool gate).
+      if (mode === 'live' && !confirm) {
         return Promise.reject(
           new Error(
-            'start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
+            'start_debug: live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
               '실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.',
           ),
         );
       }
-      setLiveIntent(mode === 'relay-live');
+      setLiveIntent(mode === 'live');
       const environment = deriveEnvironment(connection.kind, getLiveIntent());
       return Promise.resolve({
         mode,
@@ -1456,12 +1480,12 @@ export interface DualRouterDeps {
  * hot-switch into relay (and vice versa) without restarting the MCP server.
  *
  * `switchMode`:
- *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed relay-live;
+ *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed `live`;
  *   2. routes by the requested mode's family kind: same kind as `eager` → reuse
  *      eager; different kind → lazily boot (once) and keep warm;
  *   3. flips `active` (the MCP `Server` never re-handshakes — it reads through
  *      `active` per request);
- *   4. sets `liveIntent` (true only for relay-live);
+ *   4. sets `liveIntent` (true only for `live`);
  *   5. stops the old attach watcher and re-arms one on the new connection
  *      (the watcher self-clears, so re-arm is mandatory);
  *   6. emits `tools/list_changed`.
@@ -1549,9 +1573,9 @@ export class DualConnectionRouter implements ConnectionRouter {
     if (this.swapInFlight) {
       throw new Error('start_debug: 이전 전환이 아직 진행 중입니다 — 잠시 후 다시 호출하세요.');
     }
-    if (mode === 'relay-live' && !confirm) {
+    if (mode === 'live' && !confirm) {
       throw new Error(
-        'start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
+        'start_debug: live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
           '실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.',
       );
     }
@@ -1576,9 +1600,9 @@ export class DualConnectionRouter implements ConnectionRouter {
       // request, so no re-handshake / restart is needed.
       this.activeFamily = target;
 
-      // (4) Arm/disarm liveIntent. true only for relay-live; any other mode
+      // (4) Arm/disarm liveIntent. true only for live; any other mode
       // (including a local mode) disarms it.
-      setLiveIntent(mode === 'relay-live');
+      setLiveIntent(mode === 'live');
 
       // (5) Re-arm the attach watcher on the new connection (self-clearing).
       this.stopWatcher();

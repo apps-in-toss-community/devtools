@@ -112,10 +112,11 @@ describe('DualConnectionRouter — relay-eager (runDebugServer entry, #354 behav
     expect(getLazyBootCount()).toBe(0);
   });
 
-  it('same-family switch (relay-dev) stays on eager, no lazy boot', async () => {
+  it('same-family switch (staging) stays on eager, no lazy boot', async () => {
     const { router, eager, getLazyBootCount } = makeRouter('relay');
-    const report = await router.switchMode('relay-dev', false);
+    const report = await router.switchMode('staging', false);
     expect(report.kind).toBe('relay');
+    // Output env layer unchanged ('relay-dev' from deriveEnvironment).
     expect(report.environment).toBe('relay-dev');
     expect(router.active).toBe(eager.connection);
     expect(getLazyBootCount()).toBe(0);
@@ -123,7 +124,7 @@ describe('DualConnectionRouter — relay-eager (runDebugServer entry, #354 behav
 
   it('cross-family switch (relay → local) lazy-boots local once', async () => {
     const { router, lazy, getLazyBootCount } = makeRouter('relay');
-    const report = await router.switchMode('local-browser-cdp', false);
+    const report = await router.switchMode('local', false);
     expect(report.kind).toBe('local');
     expect(report.environment).toBe('mock');
     expect(router.active).toBe(lazy.connection);
@@ -139,20 +140,21 @@ describe('DualConnectionRouter — local-eager (runLocalDebugServer entry, #356 
     expect(getLazyBootCount()).toBe(0);
   });
 
-  it('same-family switch (local-browser-dev) stays on eager, no lazy boot', async () => {
+  it('same-family switch (local) stays on eager, no lazy boot', async () => {
     const { router, eager, getLazyBootCount } = makeRouter('local');
-    const report = await router.switchMode('local-browser-dev', false);
+    const report = await router.switchMode('local', false);
     expect(report.kind).toBe('local');
     expect(report.environment).toBe('mock');
     expect(router.active).toBe(eager.connection);
     expect(getLazyBootCount()).toBe(0);
   });
 
-  it('CROSS-FAMILY HOT-SWITCH local → relay-dev lazy-boots relay once (#356)', async () => {
+  it('CROSS-FAMILY HOT-SWITCH local → staging lazy-boots relay once (#356)', async () => {
     const { router, lazy, getLazyBootCount } = makeRouter('local');
     expect(router.active.kind).toBe('local');
-    const report = await router.switchMode('relay-dev', false);
+    const report = await router.switchMode('staging', false);
     expect(report.kind).toBe('relay');
+    // Output env layer unchanged ('relay-dev' from deriveEnvironment).
     expect(report.environment).toBe('relay-dev');
     // The active pointer flipped to the lazily-booted relay — no restart needed.
     expect(router.active).toBe(lazy.connection);
@@ -165,14 +167,14 @@ describe('DualConnectionRouter — local-eager (runLocalDebugServer entry, #356 
 describe('DualConnectionRouter — lazy boot is once-only, family kept warm', () => {
   it('local-eager: relay is booted on first relay switch, reused on the second', async () => {
     const { router, eager, lazy, getLazyBootCount } = makeRouter('local');
-    await router.switchMode('relay-dev', false);
+    await router.switchMode('staging', false);
     expect(getLazyBootCount()).toBe(1);
     // Bounce back to local (same-kind as eager — reuses eager, no boot).
-    await router.switchMode('local-browser-cdp', false);
+    await router.switchMode('local', false);
     expect(router.active).toBe(eager.connection);
     expect(getLazyBootCount()).toBe(1);
     // Return to relay — the warm relay family is reused, NOT re-booted.
-    await router.switchMode('relay-dev', false);
+    await router.switchMode('staging', false);
     expect(router.active).toBe(lazy.connection);
     expect(getLazyBootCount()).toBe(1);
   });
@@ -180,19 +182,20 @@ describe('DualConnectionRouter — lazy boot is once-only, family kept warm', ()
 
 // ---- relay-live confirm gate from a local-eager start (#356) ---------------
 
-describe('DualConnectionRouter — relay-live confirm gate (direction-neutral)', () => {
-  it('local-eager → relay-live without confirm is rejected and does not boot relay', async () => {
+describe('DualConnectionRouter — live confirm gate (direction-neutral)', () => {
+  it('local-eager → live without confirm is rejected and does not boot relay', async () => {
     const { router, getLazyBootCount } = makeRouter('local');
-    await expect(router.switchMode('relay-live', false)).rejects.toThrow(/confirm: true/);
+    await expect(router.switchMode('live', false)).rejects.toThrow(/confirm: true/);
     // Still on local; the lazy relay was never booted.
     expect(router.active.kind).toBe('local');
     expect(getLazyBootCount()).toBe(0);
     expect(getLiveIntent()).toBe(false);
   });
 
-  it('local-eager → relay-live with confirm:true arms the LIVE guard', async () => {
+  it('local-eager → live with confirm:true arms the LIVE guard', async () => {
     const { router, lazy } = makeRouter('local');
-    const report = await router.switchMode('relay-live', true);
+    const report = await router.switchMode('live', true);
+    // Output env layer unchanged ('relay-live' from deriveEnvironment).
     expect(report.environment).toBe('relay-live');
     expect(report.kind).toBe('relay');
     expect(report.liveGuardActive).toBe(true);
@@ -200,11 +203,11 @@ describe('DualConnectionRouter — relay-live confirm gate (direction-neutral)',
     expect(getLiveIntent()).toBe(true);
   });
 
-  it('relay-live → local-cdp disarms liveIntent (inert against local)', async () => {
+  it('live → local disarms liveIntent (inert against local)', async () => {
     const { router } = makeRouter('local');
-    await router.switchMode('relay-live', true);
+    await router.switchMode('live', true);
     expect(getLiveIntent()).toBe(true);
-    const report = await router.switchMode('local-browser-cdp', false);
+    const report = await router.switchMode('local', false);
     expect(report.liveGuardActive).toBe(false);
     expect(getLiveIntent()).toBe(false);
   });
@@ -224,7 +227,7 @@ describe('DualConnectionRouter — relayTunnelStatus()', () => {
     const { router } = makeRouter('local', { lazyTunnel: upTunnel });
     // No relay family yet → tunnel is down (build_attach_url stays gated).
     expect(router.relayTunnelStatus()).toEqual({ up: false, wssUrl: null });
-    await router.switchMode('relay-dev', false);
+    await router.switchMode('staging', false);
     // After the relay switch the relay family's tunnel status is exposed.
     expect(router.relayTunnelStatus()).toEqual(upTunnel);
   });
@@ -236,7 +239,7 @@ describe('DualConnectionRouter — bootedFamilies() drives unified shutdown', ()
   it('local-eager: only the eager family before a cross switch, both after', async () => {
     const { router, eager, lazy } = makeRouter('local');
     expect(router.bootedFamilies()).toEqual([eager]);
-    await router.switchMode('relay-dev', false);
+    await router.switchMode('staging', false);
     expect(router.bootedFamilies()).toEqual([eager, lazy]);
     // Tearing down every booted family stops both (one Chromium + one relay).
     for (const family of router.bootedFamilies()) family.stop();
@@ -266,9 +269,9 @@ describe('DualConnectionRouter — swapInFlight re-entrancy guard', () => {
       devtoolsOpener: new AutoDevtoolsOpener(),
     });
 
-    const first = router.switchMode('relay-dev', false);
+    const first = router.switchMode('staging', false);
     // Second call arrives while the first is awaiting the lazy boot.
-    await expect(router.switchMode('relay-dev', false)).rejects.toThrow(/이전 전환이 아직 진행 중/);
+    await expect(router.switchMode('staging', false)).rejects.toThrow(/이전 전환이 아직 진행 중/);
     release();
     await first;
     expect(bootLazy).toHaveBeenCalledTimes(1);
@@ -277,10 +280,5 @@ describe('DualConnectionRouter — swapInFlight re-entrancy guard', () => {
 });
 
 // Pin the mode-type so an accidental literal typo fails to compile.
-const _exhaustive: StartDebugMode[] = [
-  'local-browser-dev',
-  'local-browser-cdp',
-  'relay-dev',
-  'relay-live',
-];
+const _exhaustive: StartDebugMode[] = ['local', 'staging', 'live'];
 void _exhaustive;
