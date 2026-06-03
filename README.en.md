@@ -47,6 +47,8 @@ pnpm dev:phone          # same as AIT_TUNNEL=1 pnpm dev
 # QR appears in the terminal → scan with your phone camera → opens in the launcher PWA
 ```
 
+With `tunnel: { cdp: true }`, a single QR scan opens both the screen preview and on-device CDP — inspect the real WebKit DOM, console, and exceptions from your MCP host (`call_sdk` still hits the mock on environment 2; the real SDK lives on environments 3·4).
+
 One-time prerequisite: add `https://devtools.aitc.dev/launcher/` to your phone's home screen. Details: [`docs/scenarios/env-2.md`](./docs/scenarios/env-2.md)
 
 ---
@@ -248,7 +250,7 @@ module.exports = {
 | `forceEnable` | `boolean` | `false` | Enable devtools even in production |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | Enable mock alias |
 | `mcp` | `boolean` | `false` | Add an MCP state endpoint to the Vite dev server (Vite only — see [MCP Server](#mcp-server)) |
-| `tunnel` | `boolean \| { port?: number; qr?: boolean }` | `false` | Expose the Vite dev server via a Cloudflare quick tunnel for real-device preview (see [below](#run-on-a-real-phone)). **Vite dev mode only** |
+| `tunnel` | `boolean \| { port?: number; qr?: boolean; cdp?: boolean }` | `false` | Expose the Vite dev server via a Cloudflare quick tunnel for real-device preview (see [below](#run-on-a-real-phone)). `cdp: true` also wires on-device CDP debugging for environment 2 (PWA). **Vite dev mode only** |
 
 ```ts
 aitDevtools.vite({ panel: false }); // mock only, no panel
@@ -256,6 +258,7 @@ aitDevtools.vite({ forceEnable: true }); // enable in production (mock OFF by de
 aitDevtools.vite({ forceEnable: true, mock: true }); // enable mock in production too
 aitDevtools.vite({ mcp: true }); // enable MCP endpoint for AI agents
 aitDevtools.vite({ tunnel: true }); // expose dev server at *.trycloudflare.com
+aitDevtools.vite({ tunnel: { cdp: true } }); // real-device preview + on-device CDP debugging
 ```
 
 ## Production builds
@@ -323,6 +326,8 @@ export default defineConfig({
 ```
 
 > `process.env.AIT_TUNNEL` is evaluated when `vite.config.ts` is loaded (i.e. when the vite process starts). The env variable must therefore be set **before** vite launches (the `dev:phone` script in step (c) handles this automatically).
+
+> To also enable on-device CDP debugging, pass the object form: `tunnel: process.env.AIT_TUNNEL ? { cdp: true } : false`. A Chii relay then starts alongside the HTTP tunnel, so a single QR scan opens both the screen preview and a CDP attach. Connect your AI host MCP to that relay to inspect the real WebKit DOM, console, exceptions, and `measure_safe_area` (`call_sdk` still hits the mock on environment 2).
 
 (b) **Allow the pnpm 10+ build script** — pnpm blocks dependency postinstall scripts by default for security. `cloudflared` downloads its binary (~38 MB) in postinstall, so you need to explicitly allow it:
 

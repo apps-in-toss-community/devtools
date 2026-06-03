@@ -47,6 +47,8 @@ pnpm dev:phone          # AIT_TUNNEL=1 pnpm dev 와 동일
 # 터미널에 QR 출력 → 폰 카메라로 스캔 → launcher PWA에서 자동 열림
 ```
 
+`tunnel: { cdp: true }`를 켜면 같은 QR 한 번으로 화면 미리보기 + on-device CDP가 함께 열려 실기기 WebKit의 DOM·콘솔·예외를 MCP로 관측합니다 (`call_sdk`는 환경 2에서 mock — 실 SDK는 환경 3·4).
+
 사전: 폰에 `https://devtools.aitc.dev/launcher/` 를 홈 화면에 한 번 추가. 상세: [`docs/scenarios/env-2.md`](./docs/scenarios/env-2.md)
 
 ---
@@ -248,7 +250,7 @@ module.exports = {
 | `forceEnable` | `boolean` | `false` | production에서도 devtools 활성화 |
 | `mock` | `boolean` | `true` (dev) / `false` (prod+forceEnable) | mock alias 활성화 여부 |
 | `mcp` | `boolean` | `false` | Vite dev server에 MCP state endpoint 추가 (Vite 전용, [MCP 섹션](#mcp-server) 참조) |
-| `tunnel` | `boolean \| { port?: number; qr?: boolean }` | `false` | Vite dev 서버를 Cloudflare quick tunnel로 노출 (실기기 미리보기, [아래](#run-on-a-real-phone-실기기-미리보기) 참고). **Vite dev 모드 전용** |
+| `tunnel` | `boolean \| { port?: number; qr?: boolean; cdp?: boolean }` | `false` | Vite dev 서버를 Cloudflare quick tunnel로 노출 (실기기 미리보기, [아래](#run-on-a-real-phone-실기기-미리보기) 참고). `cdp: true`면 환경 2 PWA에 on-device CDP 디버깅도 배선. **Vite dev 모드 전용** |
 
 ```ts
 aitDevtools.vite({ panel: false }); // Panel 없이 mock만 사용
@@ -256,6 +258,7 @@ aitDevtools.vite({ forceEnable: true }); // production에서도 활성화 (mock 
 aitDevtools.vite({ forceEnable: true, mock: true }); // production에서 mock도 활성화
 aitDevtools.vite({ mcp: true }); // AI 에이전트용 MCP endpoint 활성화
 aitDevtools.vite({ tunnel: true }); // dev 서버를 *.trycloudflare.com으로 노출
+aitDevtools.vite({ tunnel: { cdp: true } }); // 실기기 미리보기 + on-device CDP 디버깅
 ```
 
 ## Production 빌드
@@ -323,6 +326,8 @@ export default defineConfig({
 ```
 
 > `process.env.AIT_TUNNEL`은 `vite.config.ts`를 로드하는 시점(= vite 프로세스 기동 시)에 평가됩니다. 따라서 env 변수는 **vite를 띄우기 전에** 설정되어 있어야 합니다 (아래 (c)의 `dev:phone` 스크립트가 이를 자동으로 해결합니다).
+
+> on-device CDP 디버깅까지 켜려면 `tunnel: process.env.AIT_TUNNEL ? { cdp: true } : false`처럼 객체 형태로 줍니다. 그러면 HTTP 터널과 별도로 Chii relay가 떠서, QR 한 번으로 화면 미리보기와 CDP attach가 동시에 열립니다. AI host MCP를 그 relay에 붙이면 실기기 WebKit의 DOM·콘솔·예외·`measure_safe_area`를 관측합니다 (`call_sdk`는 환경 2에서 mock).
 
 (b) **`package.json`에 pnpm 10+ 빌드 스크립트 허용** — pnpm은 보안상 dependency의 postinstall을 기본 차단합니다. `cloudflared`는 postinstall에서 바이너리(~38 MB)를 받으므로 명시 허용 필요:
 

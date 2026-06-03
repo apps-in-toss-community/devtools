@@ -1476,8 +1476,8 @@ function findRecentException(
  * Calls a dogfood SDK method via `window.__sdkCall` on the attached page.
  * NOT read-only — SDK calls may have side effects.
  *
- * On env 2/3 (real device relay) this hits the real SDK; on env 1 (local
- * mock) it hits the mock SDK.
+ * On env 3/4 (toss WebView relay) this hits the real SDK. On env 1 (local
+ * mock) and env 2 (PWA relay — real WebKit, mock SDK) it hits the mock SDK.
  *
  * 인자 시그니처 검증: 등록된 메서드는 bridge 호출 전에 인자를 검증하고, mismatch면
  * `{ok:false, error}` MCP 오류 결과를 반환한다(bridge에 도달하지 않음).
