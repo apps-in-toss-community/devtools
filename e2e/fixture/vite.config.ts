@@ -45,9 +45,10 @@ export default defineConfig({
       panel: false,
       mock: false,
       forceEnable: true,
-      // Manual QA toggle only — `AIT_TUNNEL=1 pnpm exec vite --config
-      // e2e/fixture/vite.config.ts`. No effect on CI / normal builds.
-      tunnel: !!process.env.AIT_TUNNEL,
+      // Manual QA toggles only — no effect on CI / normal builds.
+      // AIT_TUNNEL=1       → plain HTTP tunnel only (env-2 screen preview)
+      // AIT_TUNNEL_CDP=1   → HTTP tunnel + Chii relay + relay tunnel (env-2 CDP)
+      tunnel: process.env.AIT_TUNNEL_CDP ? { cdp: true } : !!process.env.AIT_TUNNEL,
     }),
   ],
   preview: {
