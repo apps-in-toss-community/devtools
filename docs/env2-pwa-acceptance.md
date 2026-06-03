@@ -97,10 +97,11 @@ Safari 원격 검사를 사용할 수 없는 경우, launcher setup 화면의 pa
 
 환경 2는 순수 PWA다. 아래 항목은 구조적으로 재현 불가능하며, 해당 환경이 별도로 담당한다.
 
-- **토스 WebView 런타임 + SDK 네이티브 브리지**: 토스 앱 WebView가 없으므로 `@apps-in-toss/web-framework` SDK 호출은 여전히 mock(devtools)이 응답한다. 실 SDK 거동은 환경 3·4(intoss-private / live relay)에서만 확인 가능.
-- **`*.private-apps.tossmini.com` host-gated 코드**: 환경 2는 `devtools.aitc.dev` origin에서 뜨므로 토스 host를 흉내낼 수 없다.
+- **토스 WebView 런타임 + SDK 네이티브 브리지**: 토스 앱 WebView가 없으므로 `@apps-in-toss/web-framework` SDK 호출은 여전히 mock(devtools)이 응답한다. CDP를 붙여도(`tunnel.cdp`) `call_sdk`는 mock을 친다. 실 SDK 거동은 환경 3·4(intoss-private / live relay)에서만 확인 가능.
+- **`*.private-apps.tossmini.com` host-gated 코드**: 환경 2는 `devtools.aitc.dev`(터널은 `*.trycloudflare.com`) origin에서 뜨므로 토스 host를 흉내낼 수 없다.
 - **검수 통과 번들 거동**: 앱인토스 검수 후 OPENED 상태의 출시 런타임 거동은 환경 4만 관측 가능.
-- **CDP relay attach**: 환경 2는 MCP relay 대상이 아니다(환경 3·4가 relay). 관측은 데스크톱 Safari 원격 검사 또는 화면 관찰로 한다.
+
+CDP relay는 환경 2에서도 동작한다(`tunnel: { cdp: true }` opt-in) — 같은 QR 한 번으로 화면 미리보기 + on-device CDP가 열려 실기기 WebKit의 DOM·콘솔·예외·`measure_safe_area`를 `source: "relay-*"`로 관측한다. CDP가 못 메우는 것은 위의 mock SDK 천장뿐이다.
 
 ---
 

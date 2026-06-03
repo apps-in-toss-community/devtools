@@ -32,6 +32,13 @@ export interface PrintTunnelBannerOptions {
   qr?: boolean;
   /** Sink for the banner text (default: `console.log`). Injected for testing. */
   log?: (msg: string) => void;
+  /**
+   * The `wss://` relay URL of the env-2 CDP tunnel, if `tunnel.cdp` is on. When
+   * present the QR deep-link additionally carries `&debug=1&relay=<wss>` so the
+   * framed PWA passes the in-app debug gate and attaches a Chii target — the
+   * same single scan opens screen preview *and* CDP debugging.
+   */
+  relayWssUrl?: string;
 }
 
 const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
@@ -43,9 +50,16 @@ const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
  * Plain-text raw URL is no longer enough — the launcher gates its setup UI to
  * the installed PWA, so a raw tunnel URL opened in a normal browser tab would
  * land on a "please install" screen.
+ *
+ * When `relayWssUrl` is given (env-2 CDP wiring), the deep-link also carries
+ * `&debug=1&relay=<wss>`; the launcher folds those onto the framed tunnel URL so
+ * the in-app debug gate's Layer C (`debug=1` opt-in + `relay=<wss>`) is met and
+ * a Chii target.js is injected into the live view.
  */
-export function buildLauncherDeepLink(tunnelUrl: string): string {
-  return `${LAUNCHER_URL}?url=${encodeURIComponent(tunnelUrl)}`;
+export function buildLauncherDeepLink(tunnelUrl: string, relayWssUrl?: string): string {
+  const base = `${LAUNCHER_URL}?url=${encodeURIComponent(tunnelUrl)}`;
+  if (!relayWssUrl) return base;
+  return `${base}&debug=1&relay=${encodeURIComponent(relayWssUrl)}`;
 }
 
 /**
@@ -59,7 +73,7 @@ export async function printTunnelBanner(
   opts: PrintTunnelBannerOptions = {},
 ): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const deepLink = buildLauncherDeepLink(url);
+  const deepLink = buildLauncherDeepLink(url, opts.relayWssUrl);
   const lines: string[] = [
     '',
     '  ┌─ @ait-co/devtools · live tunnel ────────────────────────────',
@@ -68,6 +82,12 @@ export async function printTunnelBanner(
     `  │  Install the launcher PWA once:  ${LAUNCHER_URL}`,
     '  │  Then scan the QR below — it opens the launcher directly',
     '  │  into this tunnel URL (no manual paste needed).',
+    ...(opts.relayWssUrl
+      ? [
+          '  │  The same scan also attaches CDP — connect your AI host',
+          '  │  to the relay and debug the live view on-device.',
+        ]
+      : []),
     '  │  Quick tunnels are unauthenticated, change every run, and are',
     '  │  not for production use.',
     '  └──────────────────────────────────────────────────────────────',

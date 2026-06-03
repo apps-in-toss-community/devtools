@@ -82,6 +82,17 @@ export interface AitDevtoolsOptions {
         port?: number;
         /** 터미널 ASCII QR 출력 (default: true). */
         qr?: boolean;
+        /**
+         * 환경 2(실기기 PWA)에 CDP 디버깅 배선 (default: false).
+         *
+         * `true`면 dev 서버 HTTP 터널과 **별도로** Chii relay를 띄우고 그 relay에
+         * 두 번째 quick tunnel을 붙여, launcher QR deep-link에 `&debug=1&relay=<wss>`를
+         * 실어 보낸다. 폰의 PWA iframe이 in-app debug gate를 통과해 target.js를 주입받고,
+         * AI host MCP가 그 relay에 client로 붙으면 실기기 WebKit 위에서 CDP 디버깅이 열린다.
+         * mock SDK는 그대로라 `call_sdk`는 환경 2에서 mock을 친다 (fidelity 사다리의
+         * 설계 의도 — SDK fidelity가 필요하면 환경 3로 올라간다).
+         */
+        cdp?: boolean;
       };
 }
 
@@ -218,6 +229,10 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
         // Tunnel: start a Cloudflare quick tunnel once the dev server is listening.
         if (shouldTunnel) {
           let tunnel: { stop: () => void } | null = null;
+          // env-2 CDP wiring (tunnel.cdp): a second tunnel + Chii relay, torn
+          // down alongside the HTTP tunnel. Fire-and-forget close on teardown.
+          let relayTunnel: { stop: () => void } | null = null;
+          let relay: { close: () => Promise<void> } | null = null;
           const httpServer = server.httpServer;
 
           httpServer?.once('listening', () => {
@@ -237,7 +252,29 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
               .then(async ({ startQuickTunnel, printTunnelBanner }) => {
                 const t = await startQuickTunnel(port);
                 tunnel = t;
-                await printTunnelBanner(t.url, { qr: tunnelConfig.qr });
+
+                // env-2 CDP: boot a Chii relay (OS-assigned local port) and a
+                // second quick tunnel to it. The relay's https tunnel URL becomes
+                // the `wss://` relay the launcher QR carries (&debug=1&relay=).
+                let relayWssUrl: string | undefined;
+                if (tunnelConfig.cdp) {
+                  try {
+                    const { startChiiRelay } = await import('../mcp/chii-relay.js');
+                    const r = await startChiiRelay({ port: 0 });
+                    relay = r;
+                    const rt = await startQuickTunnel(r.port);
+                    relayTunnel = rt;
+                    relayWssUrl = rt.url.replace(/^https:/, 'wss:');
+                  } catch (err: unknown) {
+                    console.warn(
+                      `[@ait-co/devtools] tunnel: CDP relay failed to start — screen preview will work without on-device debugging: ${
+                        err instanceof Error ? err.message : String(err)
+                      }`,
+                    );
+                  }
+                }
+
+                await printTunnelBanner(t.url, { qr: tunnelConfig.qr, relayWssUrl });
               })
               .catch((err: unknown) => {
                 console.warn(
@@ -248,7 +285,11 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
               });
           });
 
-          const cleanup = () => tunnel?.stop();
+          const cleanup = () => {
+            tunnel?.stop();
+            relayTunnel?.stop();
+            void relay?.close();
+          };
           httpServer?.once('close', cleanup);
           process.once('SIGINT', cleanup);
           process.once('SIGTERM', cleanup);
