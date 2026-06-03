@@ -155,8 +155,9 @@ afterEach(() => setLiveIntent(false));
 // ---- pure helpers ----------------------------------------------------------
 
 describe('normalizeStartDebugMode', () => {
-  it('accepts the three canonical modes (identity)', () => {
+  it('accepts the four canonical modes (identity)', () => {
     expect(normalizeStartDebugMode('local')).toBe('local');
+    expect(normalizeStartDebugMode('mobile')).toBe('mobile');
     expect(normalizeStartDebugMode('staging')).toBe('staging');
     expect(normalizeStartDebugMode('live')).toBe('live');
   });
@@ -165,6 +166,8 @@ describe('normalizeStartDebugMode', () => {
     expect(normalizeStartDebugMode('local-browser-cdp')).toBe('local');
     expect(normalizeStartDebugMode('relay-dev')).toBe('staging');
     expect(normalizeStartDebugMode('relay-live')).toBe('live');
+    // The output env name `relay-mobile` is accepted as an alias for `mobile` (#378).
+    expect(normalizeStartDebugMode('relay-mobile')).toBe('mobile');
   });
   it('rejects unknown values', () => {
     expect(normalizeStartDebugMode('mock')).toBeNull();
@@ -175,7 +178,8 @@ describe('normalizeStartDebugMode', () => {
 });
 
 describe('isRelayMode', () => {
-  it('staging / live are relay; local is not', () => {
+  it('mobile / staging / live are relay; local is not', () => {
+    expect(isRelayMode('mobile')).toBe(true);
     expect(isRelayMode('staging')).toBe(true);
     expect(isRelayMode('live')).toBe(true);
     expect(isRelayMode('local')).toBe(false);
@@ -391,6 +395,16 @@ describe('makeSingleConnectionRouter — single-connection back-compat', () => {
     const conn = new FakeConn('relay');
     const router = makeSingleConnectionRouter(conn);
     await expect(router.switchMode('local', false)).rejects.toThrow(/동적 전환할 수 없습니다/);
+  });
+
+  it('mobile switch is rejected — cannot synthesize the env-2 external relay (#378)', async () => {
+    // Even from a relay connection, `mobile` needs a DISTINCT external-PWA relay
+    // family this single-connection router cannot boot.
+    const conn = new FakeConn('relay', [{ id: 'r1', title: 'app', url: 'intoss-private://app' }]);
+    const router = makeSingleConnectionRouter(conn);
+    await expect(router.switchMode('mobile', false)).rejects.toThrow(/동적 전환할 수 없습니다/);
+    // The discriminator is absent on a single-connection router.
+    expect(router.activeRelayOrigin).toBeUndefined();
   });
 
   it('local connection accepts local mode but rejects relay modes', async () => {

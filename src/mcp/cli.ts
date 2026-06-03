@@ -6,11 +6,15 @@
  *
  *   --mode=debug (default)
  *     --target=relay (default) — CDP/Chii relay + cloudflared quick tunnel.
- *       Attach a running mini-app (real Toss WebView, env 2/3) and read its
+ *       Attach a running mini-app (real Toss WebView, env 3/4) and read its
  *       console + network over CDP without a human watching a phone.
  *     --target=local — CDP direct-attach to a local Chromium launched by the
  *       MCP server (env 1). No relay or tunnel; the browser is launched
  *       pointing at AIT_DEVTOOLS_URL (default http://localhost:5173).
+ *     --target=mobile — CDP attach to an EXTERNAL Chii relay the unplugin
+ *       already brought up for the env-2 real-device PWA (`tunnel: { cdp: true }`),
+ *       exposed via AIT_RELAY_BASE_URL. The MCP starts no relay or tunnel; it
+ *       only opens a CDP client against that external relay (issue #378).
  *
  *   --mode=dev — dev mode — reads the live browser mock state from a running
  *     Vite dev server (the devtools#130 `devtools_get_mock_state` surface).
@@ -28,7 +32,7 @@
 import { realpathSync } from 'node:fs';
 import { argv } from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { runDebugServer, runLocalDebugServer } from './debug-server.js';
+import { runDebugServer, runLocalDebugServer, runMobileDebugServer } from './debug-server.js';
 import { setLiveIntent } from './environment.js';
 import { runDevServer } from './server.js';
 
@@ -47,7 +51,7 @@ export function seedLiveIntentFromEnv(env: NodeJS.ProcessEnv = process.env): voi
 }
 
 type Mode = 'debug' | 'dev';
-type Target = 'relay' | 'local';
+type Target = 'relay' | 'local' | 'mobile';
 
 /**
  * Returns `true` when `--force` or `--takeover` is present in argv.
@@ -82,8 +86,9 @@ export function parseMode(argv: readonly string[]): Mode {
  * Parses `--target=<value>` / `--target <value>` from argv; default `relay`.
  *
  * Only meaningful when `--mode=debug`:
- *   - `relay`  — phone/WebView attach over Chii relay + cloudflared tunnel (env 2/3).
+ *   - `relay`  — phone/WebView attach over Chii relay + cloudflared tunnel (env 3/4).
  *   - `local`  — local Chromium CDP attach (env 1, no relay needed).
+ *   - `mobile` — CDP attach to an EXTERNAL relay (env 2 PWA, AIT_RELAY_BASE_URL).
  */
 export function parseTarget(argv: readonly string[]): Target {
   for (let i = 0; i < argv.length; i++) {
@@ -95,7 +100,7 @@ export function parseTarget(argv: readonly string[]): Target {
     if (arg === '--target') {
       const next = argv[i + 1];
       if (next === undefined) {
-        throw new Error("--target requires a value: 'relay' (default) or 'local'.");
+        throw new Error("--target requires a value: 'relay' (default), 'local', or 'mobile'.");
       }
       return normalizeTarget(next);
     }
@@ -112,7 +117,8 @@ function normalizeMode(value: string): Mode {
 function normalizeTarget(value: string): Target {
   if (value === 'relay') return 'relay';
   if (value === 'local') return 'local';
-  throw new Error(`Unknown --target '${value}'. Expected 'relay' (default) or 'local'.`);
+  if (value === 'mobile') return 'mobile';
+  throw new Error(`Unknown --target '${value}'. Expected 'relay' (default), 'local', or 'mobile'.`);
 }
 
 async function main(): Promise<void> {
@@ -127,6 +133,8 @@ async function main(): Promise<void> {
     const force = parseForce(args);
     if (target === 'local') {
       await runLocalDebugServer({ force });
+    } else if (target === 'mobile') {
+      await runMobileDebugServer({ force });
     } else {
       await runDebugServer({ force });
     }

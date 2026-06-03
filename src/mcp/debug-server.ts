@@ -56,6 +56,7 @@ import {
   deriveEnvironment,
   getLiveIntent,
   type McpEnvironment,
+  type RelayOrigin,
   setLiveIntent,
 } from './environment.js';
 import {
@@ -157,13 +158,20 @@ export interface ModeSwitchReport {
 }
 
 /**
- * The three canonical `start_debug` modes (issue #382 — renamed from the old
- * four-value set to user-facing environment names):
+ * The four canonical `start_debug` modes (issues #382, #378 — user-facing
+ * environment names):
  *
  *   - `local`   → env 1: desktop Chromium with the MOCK SDK + local CDP attach.
  *                 Side-effect tools (call_sdk/evaluate) run unguarded against
  *                 the mock; nothing touches a real device or real users.
  *                 No prerequisites — the default, always-available environment.
+ *
+ *   - `mobile`  → env 2: real-device PWA (real WebKit engine + mock SDK) over an
+ *                 EXTERNAL CDP relay that the unplugin (`tunnel: { cdp: true }`)
+ *                 already brought up. liveIntent off — dev-intent, never LIVE.
+ *                 Output env `relay-mobile`. Prerequisite: `AIT_RELAY_BASE_URL`
+ *                 set to the unplugin's relay base URL. The MCP only attaches a
+ *                 CDP client; it does NOT start (or stop) that relay.
  *
  *   - `staging` → env 3: real-device Toss WebView dogfood build with the REAL
  *                 SDK over the intoss-private relay. liveIntent off.
@@ -176,15 +184,21 @@ export interface ModeSwitchReport {
  *
  * Deprecated aliases (back-compat — pinned .mcp.json / docs / QA runbooks):
  *   `local-browser-dev` / `local-browser-cdp` → `local`
- *   `relay-dev`  → `staging`
- *   `relay-live` → `live`
+ *   `relay-mobile` → `mobile`
+ *   `relay-dev`    → `staging`
+ *   `relay-live`   → `live`
  * Normalization is handled by `normalizeStartDebugMode`.
  */
-export type StartDebugMode = 'local' | 'staging' | 'live';
+export type StartDebugMode = 'local' | 'mobile' | 'staging' | 'live';
 
-/** Returns `true` when the mode routes to a relay connection. */
+/**
+ * Returns `true` when the mode routes to a relay connection (`mobile`,
+ * `staging`, or `live`). `mobile` is an external-PWA relay; `staging`/`live`
+ * are intoss-private relays — but all three surface the Tier B / relay-only
+ * tool set.
+ */
 export function isRelayMode(mode: StartDebugMode): boolean {
-  return mode === 'staging' || mode === 'live';
+  return mode === 'mobile' || mode === 'staging' || mode === 'live';
 }
 
 /**
@@ -200,6 +214,16 @@ export function isRelayMode(mode: StartDebugMode): boolean {
 export interface ConnectionRouter {
   /** The connection the request handlers must read this instant. */
   readonly active: CdpConnection;
+  /**
+   * Relay origin of the currently-active family (issue #378) — the
+   * discriminator that distinguishes the env-2 external-PWA relay
+   * (`'external-pwa'` → `relay-mobile`) from the intoss-private relay
+   * (`'intoss-webview'` → `relay-dev`). `undefined` for a local (mock) active
+   * connection, or for a single-connection router that has no family concept.
+   * Threaded into `deriveEnvironment` so the output env can tell the two
+   * `kind: 'relay'` families apart.
+   */
+  readonly activeRelayOrigin?: RelayOrigin;
   /**
    * Switches the active connection to the family for `mode`, lazily booting
    * that family's infra if needed, re-arming the attach watcher, and emitting
@@ -368,7 +392,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   // module-level `liveIntent` bit. No URL sniffing, no precedence chain. Tests
   // inject `getEnvironment`/`getEnvironmentReason` to pin a precise env.
   const resolveEnvironment: () => McpEnvironment =
-    getEnvDep ?? (() => deriveEnvironment(router.active.kind, getLiveIntent()));
+    getEnvDep ??
+    (() => deriveEnvironment(router.active.kind, getLiveIntent(), router.activeRelayOrigin));
   const resolveEnvironmentReason: () => string =
     getEnvReasonDep ?? (() => `derived:kind=${router.active.kind},liveIntent=${getLiveIntent()}`);
 
@@ -427,8 +452,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       if (mode === null) {
         return mcpError(
           'start_debug: mode가 올바르지 않습니다. ' +
-            "'local' | 'staging' | 'live' 중 하나를 전달하세요 " +
-            "(deprecated 별칭 'local-browser-dev'/'local-browser-cdp'/'relay-dev'/'relay-live'도 수용).",
+            "'local' | 'mobile' | 'staging' | 'live' 중 하나를 전달하세요 " +
+            "(deprecated 별칭 'local-browser-dev'/'local-browser-cdp'/'relay-mobile'/'relay-dev'/'relay-live'도 수용).",
         );
       }
       const confirm = request.params.arguments?.confirm === true;
@@ -936,21 +961,24 @@ export function createDebugServer(deps: DebugServerDeps): Server {
  * Normalizes a raw `start_debug` `mode` argument to a `StartDebugMode`, or
  * `null` when the value is not one of the accepted modes.
  *
- * Accepts the 3 canonical modes + 4 deprecated aliases (back-compat for
+ * Accepts the 4 canonical modes + 5 deprecated aliases (back-compat for
  * pinned .mcp.json / docs / QA runbooks that still emit old strings):
  *   'local'           → 'local'   (canonical)
+ *   'mobile'          → 'mobile'  (canonical)
  *   'staging'         → 'staging' (canonical)
  *   'live'            → 'live'    (canonical)
  *   'local-browser-dev'  → 'local'   (deprecated alias)
  *   'local-browser-cdp'  → 'local'   (deprecated alias)
+ *   'relay-mobile'       → 'mobile'  (deprecated alias)
  *   'relay-dev'          → 'staging' (deprecated alias)
  *   'relay-live'         → 'live'    (deprecated alias)
  */
 export function normalizeStartDebugMode(raw: unknown): StartDebugMode | null {
   // New canonical values.
-  if (raw === 'local' || raw === 'staging' || raw === 'live') return raw;
+  if (raw === 'local' || raw === 'mobile' || raw === 'staging' || raw === 'live') return raw;
   // Deprecated aliases (back-compat — pinned .mcp.json / docs / QA runbooks).
   if (raw === 'local-browser-dev' || raw === 'local-browser-cdp') return 'local';
+  if (raw === 'relay-mobile') return 'mobile';
   if (raw === 'relay-dev') return 'staging';
   if (raw === 'relay-live') return 'live';
   return null;
@@ -970,7 +998,24 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
     get active() {
       return connection;
     },
+    // A single-connection router has no family concept, so it carries no relay
+    // origin discriminator (issue #378). Env derives as `relay-dev` for a relay
+    // connection here — `mobile` (external-PWA origin) is rejected below since
+    // this router cannot boot the external relay family.
+    activeRelayOrigin: undefined,
     switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
+      // `mobile` (env 2) needs a distinct external-PWA relay family this
+      // single-connection router cannot synthesize. Reject the same way a
+      // cross-family switch is rejected (issue #378).
+      if (mode === 'mobile') {
+        return Promise.reject(
+          new Error(
+            'start_debug: 이 세션은 단일 연결만 보유합니다 — ' +
+              "'mobile'(환경 2 PWA, 외부 relay)로 동적 전환할 수 없습니다 (dual-connection 데몬에서만 지원). " +
+              'MCP 서버를 mobile 모드로 재시작하세요.',
+          ),
+        );
+      }
       const wantRelay = isRelayMode(mode);
       const haveRelay = connection.kind === 'relay';
       if (wantRelay !== haveRelay) {
@@ -1296,6 +1341,15 @@ export interface BootedFamily {
    * tunnel reissue). `undefined` on the local family.
    */
   getTunnelStatus?: () => TunnelStatus;
+  /**
+   * Relay origin discriminator (issue #378) — set by the boot fn, NOT sniffed
+   * from the URL. `'intoss-webview'` for the intoss-private relay
+   * (`bootRelayFamily`), `'external-pwa'` for the env-2 external relay
+   * (`bootExternalRelayFamily`). `undefined` for the local family (kind is
+   * `'local'`, so the origin is irrelevant). Threaded into `deriveEnvironment`
+   * so `relay-mobile` can be told apart from `relay-dev`.
+   */
+  relayOrigin?: RelayOrigin;
 }
 
 /**
@@ -1433,6 +1487,8 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
 
   return {
     connection,
+    // Intoss-private dogfood/live relay (env 3/4) → relay-dev / relay-live.
+    relayOrigin: 'intoss-webview',
     getTunnelStatus: () => tunnelStatus,
     stop() {
       tunnelProbe?.stop();
@@ -1446,22 +1502,118 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
 }
 
 /**
+ * Boots the EXTERNAL relay family for env 2 (real-device PWA, issue #378).
+ *
+ * Unlike {@link bootRelayFamily}, this does NOT start a relay or a tunnel —
+ * the unplugin (`tunnel: { cdp: true }`) already brought up a Chii relay for
+ * the env-2 PWA and exposed its public base URL via `AIT_RELAY_BASE_URL`. Here
+ * the MCP only opens a CDP client (`createRelayConnection`) against that
+ * external relay. The relay's lifecycle is owned by the unplugin, so `stop()`
+ * closes ONLY the CDP client — it must never tear down the relay or a tunnel
+ * we did not start.
+ *
+ * `getTunnelStatus()` reports `up: true` with a `wssUrl` derived from
+ * `relayBaseUrl` (http→ws, https→wss) so the `build_attach_url` gate
+ * (`up: true && wssUrl !== null`) is satisfied even though we never opened a
+ * cloudflared tunnel ourselves.
+ *
+ * SECRET-HANDLING: `relayBaseUrl` carries the relay host (same sensitivity as a
+ * wss URL) — it is NEVER logged here. The caller validates presence and passes
+ * the value straight to the CDP client.
+ */
+export async function bootExternalRelayFamily(relayBaseUrl: string): Promise<BootedFamily> {
+  const connection = createRelayConnection(relayBaseUrl);
+  // Derive the public wss URL from the relay base so build_attach_url's
+  // `up && wssUrl !== null` gate passes. SECRET-HANDLING: not logged.
+  const externalWss = relayBaseUrl.replace(/^http/, 'ws');
+  const tunnelStatus = makeTunnelStatus(true, externalWss);
+  return {
+    connection,
+    // External env-2 PWA relay → relay-mobile (distinct from relay-dev).
+    relayOrigin: 'external-pwa',
+    getTunnelStatus: () => tunnelStatus,
+    stop() {
+      // The unplugin owns the relay + its tunnel — close ONLY our CDP client.
+      connection.close();
+    },
+  };
+}
+
+/**
+ * Identifies a booted family slot in the dual router (issue #378).
+ *
+ * Before #378 the router warm-kept a single "opposite-kind" lazy family, which
+ * could not hold both an intoss relay (`staging`/`live`) AND an external relay
+ * (`mobile`) at once — they are both `kind: 'relay'` and would collide in the
+ * single slot. The three keys separate the three distinct families:
+ *
+ *   - `'local'`          — local Chromium + mock SDK (env 1).
+ *   - `'relay-intoss'`   — intoss-private relay (env 3/4, `bootRelayFamily`).
+ *   - `'relay-external'` — env-2 external PWA relay (`bootExternalRelayFamily`).
+ */
+export type FamilyKey = 'local' | 'relay-intoss' | 'relay-external';
+
+/**
+ * Maps a `StartDebugMode` to the {@link FamilyKey} that serves it (issue #378).
+ *   local → 'local'; mobile → 'relay-external'; staging/live → 'relay-intoss'.
+ */
+export function familyKeyForMode(mode: StartDebugMode): FamilyKey {
+  switch (mode) {
+    case 'local':
+      return 'local';
+    case 'mobile':
+      return 'relay-external';
+    case 'staging':
+    case 'live':
+      return 'relay-intoss';
+  }
+}
+
+/** The error thrown / surfaced when entering `mobile` without AIT_RELAY_BASE_URL. */
+export const MOBILE_RELAY_BASE_URL_MISSING_MESSAGE =
+  'start_debug(mobile): AIT_RELAY_BASE_URL이 설정되지 않았습니다 — unplugin이 tunnel:{cdp:true}로 띄운 relay base URL을 AIT_RELAY_BASE_URL 환경변수로 전달하세요. 환경 2(실기기 PWA) 진입은 외부 relay base가 필요합니다.';
+
+/**
+ * Reads `AIT_RELAY_BASE_URL` from the environment for the env-2 (`mobile`) boot
+ * site (issue #378). Returns the trimmed value, or throws the precise
+ * {@link MOBILE_RELAY_BASE_URL_MISSING_MESSAGE} when unset/empty.
+ *
+ * SECRET-HANDLING: `AIT_RELAY_BASE_URL` carries the relay host (same class as a
+ * wss URL). On the missing path the thrown message describes the env var name
+ * and how to obtain it — it NEVER echoes any partial/garbled URL value. The
+ * present value is returned to the caller (the CDP client) but never logged.
+ */
+export function readMobileRelayBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.AIT_RELAY_BASE_URL;
+  const value = typeof raw === 'string' ? raw.trim() : '';
+  if (value === '') {
+    throw new Error(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE);
+  }
+  return value;
+}
+
+/**
  * Options the dual router needs to re-arm the attach watcher and auto-open
- * DevTools after a swap (issues #348, #356).
+ * DevTools after a swap (issues #348, #356, #378).
  *
  * Direction-neutral (#356): `eager` is whichever family was booted at startup
- * (relay in `runDebugServer`, local in `runLocalDebugServer`), and `bootLazy`
- * boots the opposite-kind family on the first cross-family switch. The router
- * never assumes which kind is eager.
+ * (relay-intoss in `runDebugServer`, local in `runLocalDebugServer`,
+ * relay-external in `runMobileDebugServer`). `bootLazyFor(key)` boots the
+ * non-eager family identified by `key` on its first use (issue #378 — keyed so
+ * an intoss relay and an external relay can be warm-kept simultaneously). The
+ * router never assumes which kind is eager.
  */
 export interface DualRouterDeps {
   /** Eagerly-booted family (the connection active at startup). */
   eager: BootedFamily;
+  /** Family key of the eager family (so the router knows which slot it fills). */
+  eagerKey: FamilyKey;
   /**
-   * Lazy boot for the opposite-kind family — called at most once, on the first
-   * `start_debug` to a mode whose kind differs from `eager`'s.
+   * Lazy boot for a non-eager family identified by `key` — called at most once
+   * per key, on the first `start_debug` whose family key differs from the
+   * already-booted families. Only ever asked for keys other than `eagerKey`.
    */
-  bootLazy: () => Promise<BootedFamily>;
+  bootLazyFor: (key: FamilyKey) => Promise<BootedFamily>;
   /** Diagnostics collector (re-armed watcher records attach there). */
   diagnosticsCollector: DiagnosticsCollector;
   /** Auto-opens Chrome DevTools on the first relay attach (env 3/4 only). */
@@ -1471,21 +1623,28 @@ export interface DualRouterDeps {
 }
 
 /**
- * Production `ConnectionRouter` (issues #348, #356 — DUAL-CONNECTION-COEXIST).
+ * Production `ConnectionRouter` (issues #348, #356, #378 — DUAL-CONNECTION-COEXIST).
  *
- * Holds two families — one booted eagerly at startup, the other lazily on the
- * first cross-family switch — an `active` pointer, and the single attach watcher
- * armed on the active connection. The router is **direction-neutral** (#356):
- * either family kind can be the eager one, so a `--target=local` session can
- * hot-switch into relay (and vice versa) without restarting the MCP server.
+ * Holds one eagerly-booted family plus a keyed set of lazily-booted families
+ * ({@link FamilyKey} → `BootedFamily`, issue #378), an `active` pointer, and the
+ * single attach watcher armed on the active connection. The router is
+ * **direction-neutral** (#356): any family can be the eager one, so a
+ * `--target=local` session can hot-switch into relay (and vice versa) without
+ * restarting the MCP server.
+ *
+ * Why a KEYED map and not a single lazy slot (#378): `mobile` (env-2 external
+ * relay) and `staging`/`live` (intoss relay) are BOTH `kind: 'relay'`. A single
+ * "opposite-kind" slot could not warm-keep both at once — they would collide.
+ * The three `FamilyKey`s (`local` / `relay-intoss` / `relay-external`) give each
+ * its own warm slot.
  *
  * `switchMode`:
  *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed `live`;
- *   2. routes by the requested mode's family kind: same kind as `eager` → reuse
- *      eager; different kind → lazily boot (once) and keep warm;
+ *   2. resolves the requested mode's `FamilyKey`: equals `eagerKey` → reuse
+ *      eager; else `lazyFamilies.get(key) ?? (boot via bootLazyFor(key), store)`;
  *   3. flips `active` (the MCP `Server` never re-handshakes — it reads through
  *      `active` per request);
- *   4. sets `liveIntent` (true only for `live`);
+ *   4. sets `liveIntent` (true only for `live`; `mobile` is dev-intent → false);
  *   5. stops the old attach watcher and re-arms one on the new connection
  *      (the watcher self-clears, so re-arm is mandatory);
  *   6. emits `tools/list_changed`.
@@ -1496,8 +1655,8 @@ export interface DualRouterDeps {
  */
 export class DualConnectionRouter implements ConnectionRouter {
   private readonly deps: DualRouterDeps;
-  /** The opposite-kind family, booted lazily on the first cross-family switch. */
-  private lazyFamily: BootedFamily | null = null;
+  /** Non-eager families, booted lazily and warm-kept per {@link FamilyKey} (#378). */
+  private readonly lazyFamilies = new Map<FamilyKey, BootedFamily>();
   private activeFamily: BootedFamily;
   private server: Server | null = null;
   private attachWatcher: { stop(): void } | null = null;
@@ -1513,18 +1672,26 @@ export class DualConnectionRouter implements ConnectionRouter {
     return this.activeFamily.connection;
   }
 
+  /** Relay origin of the currently-active family (issue #378). */
+  get activeRelayOrigin(): RelayOrigin | undefined {
+    return this.activeFamily.relayOrigin;
+  }
+
   /** Every booted family (for unified shutdown). */
   bootedFamilies(): BootedFamily[] {
-    return this.lazyFamily ? [this.deps.eager, this.lazyFamily] : [this.deps.eager];
+    return [this.deps.eager, ...this.lazyFamilies.values()];
   }
 
   /**
-   * Live tunnel status of the relay family, regardless of whether relay is the
-   * eager or lazy family (#356). Returns "down" until the relay family has been
-   * booted (local-eager sessions before the first relay switch) — which is the
-   * correct signal for `build_attach_url` (no tunnel exists yet).
+   * Live tunnel status of the active relay family (issues #356, #378). Reads
+   * the ACTIVE family's tunnel when it has one (so `mobile` surfaces the
+   * external relay wss and `staging`/`live` the intoss relay wss); otherwise
+   * falls back to the first booted family that has a tunnel. Returns "down"
+   * until any relay family is booted (local-eager sessions before the first
+   * relay switch) — the correct signal for `build_attach_url` (no tunnel yet).
    */
   relayTunnelStatus(): TunnelStatus {
+    if (this.activeFamily.getTunnelStatus) return this.activeFamily.getTunnelStatus();
     for (const family of this.bootedFamilies()) {
       if (family.getTunnelStatus) return family.getTunnelStatus();
     }
@@ -1556,17 +1723,35 @@ export class DualConnectionRouter implements ConnectionRouter {
       this.deps.attachWatcherIntervalMs ?? 1_000,
       () => {
         this.deps.diagnosticsCollector.recordAttach();
-        // Auto-open Chrome DevTools only for a relay attach (env 3/4). The
+        // Auto-open Chrome DevTools only for a relay attach (env 2/3/4). The
         // opener no-ops for a local (mock) connection — guard on the active
         // kind so a local-eager session never tries to open a relay devtools.
         if (this.activeFamily.connection.kind === 'relay') {
           this.deps.devtoolsOpener.open(
             this.relayTunnelStatus().wssUrl,
-            deriveEnvironment(this.activeFamily.connection.kind, getLiveIntent()),
+            deriveEnvironment(
+              this.activeFamily.connection.kind,
+              getLiveIntent(),
+              this.activeFamily.relayOrigin,
+            ),
           );
         }
       },
     );
+  }
+
+  /**
+   * Resolves the `BootedFamily` for `key`: the eager family when `key` matches
+   * `eagerKey`, otherwise the warm lazy family (booting + storing it once on
+   * first use). Only ever asks `bootLazyFor` for non-eager keys.
+   */
+  private async familyFor(key: FamilyKey): Promise<BootedFamily> {
+    if (key === this.deps.eagerKey) return this.deps.eager;
+    const warm = this.lazyFamilies.get(key);
+    if (warm) return warm;
+    const booted = await this.deps.bootLazyFor(key);
+    this.lazyFamilies.set(key, booted);
+    return booted;
   }
 
   async switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
@@ -1582,26 +1767,17 @@ export class DualConnectionRouter implements ConnectionRouter {
 
     this.swapInFlight = true;
     try {
-      const wantRelay = isRelayMode(mode);
-      const wantKind: 'relay' | 'local' = wantRelay ? 'relay' : 'local';
-      let target: BootedFamily;
-      if (wantKind === this.deps.eager.connection.kind) {
-        // Same kind as the eager family — reuse it (no boot).
-        target = this.deps.eager;
-      } else {
-        // Cross-family: lazy-boot the opposite kind on first use, keep it warm.
-        if (this.lazyFamily === null) {
-          this.lazyFamily = await this.deps.bootLazy();
-        }
-        target = this.lazyFamily;
-      }
+      // (2) Resolve the family by key (#378). `bootLazyFor` may throw (e.g.
+      // mobile without AIT_RELAY_BASE_URL) — let it propagate WITHOUT flipping
+      // active or arming liveIntent, so a failed entry leaves state untouched.
+      const target = await this.familyFor(familyKeyForMode(mode));
 
       // (3) Flip the active pointer. The MCP Server reads through `active` per
       // request, so no re-handshake / restart is needed.
       this.activeFamily = target;
 
       // (4) Arm/disarm liveIntent. true only for live; any other mode
-      // (including a local mode) disarms it.
+      // (including local and mobile) disarms it — mobile is dev-intent.
       setLiveIntent(mode === 'live');
 
       // (5) Re-arm the attach watcher on the new connection (self-clearing).
@@ -1611,7 +1787,12 @@ export class DualConnectionRouter implements ConnectionRouter {
       // (6) Tell the MCP host the tool surface may have changed (env flip).
       void this.server?.sendToolListChanged();
 
-      const environment = deriveEnvironment(target.connection.kind, getLiveIntent());
+      const wantRelay = isRelayMode(mode);
+      const environment = deriveEnvironment(
+        target.connection.kind,
+        getLiveIntent(),
+        target.relayOrigin,
+      );
       return {
         mode,
         environment,
@@ -1656,8 +1837,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
   });
 
-  // Dual-connection router (issues #348, #356): relay family booted eagerly
-  // above, local family lazy-booted on the first `start_debug({ mode: 'local-*' })`.
+  // Dual-connection router (issues #348, #356, #378): intoss relay family booted
+  // eagerly above; the local family and the env-2 external relay family are
+  // lazy-booted on the first `start_debug({ mode: 'local' })` / `'mobile'`.
   const devtoolsOpener = new AutoDevtoolsOpener();
   // Diagnostics collector — records server-side errors and attach/detach events
   // so `get_diagnostics` can surface them in a single call.
@@ -1665,7 +1847,15 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   const router = new DualConnectionRouter({
     eager: relayFamily,
-    bootLazy: bootLocalFamily,
+    eagerKey: 'relay-intoss',
+    // Lazy resolver for the two non-eager family slots (#378). The 'relay-intoss'
+    // key is the eager family, so it is never requested here.
+    // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL only here,
+    // at the mobile boot site, and never logs its value.
+    bootLazyFor: (key) =>
+      key === 'relay-external'
+        ? bootExternalRelayFamily(readMobileRelayBaseUrl())
+        : bootLocalFamily(),
     diagnosticsCollector,
     devtoolsOpener,
   });
@@ -1893,18 +2083,26 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   // lazily-booted relay family carries the same gate as `runDebugServer`.
   const verifyAuth = buildRelayVerifyAuth();
 
-  // Dual-connection router (issues #348, #356): local family eager above, relay
-  // family lazy-booted on the first `start_debug({ mode: 'relay-*' })`.
+  // Dual-connection router (issues #348, #356, #378): local family eager above;
+  // the intoss relay family and the env-2 external relay family are lazy-booted
+  // on the first `start_debug({ mode: 'staging' | 'live' })` / `'mobile'`.
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
   const router = new DualConnectionRouter({
     eager: localFamily,
-    bootLazy: () =>
-      bootRelayFamily({
-        verifyAuth,
-        onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
-      }),
+    eagerKey: 'local',
+    // Lazy resolver for the two relay family slots (#378). 'local' is the eager
+    // family, so it is never requested here.
+    // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL only here,
+    // at the mobile boot site, and never logs its value.
+    bootLazyFor: (key) =>
+      key === 'relay-external'
+        ? bootExternalRelayFamily(readMobileRelayBaseUrl())
+        : bootRelayFamily({
+            verifyAuth,
+            onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+          }),
     diagnosticsCollector,
     devtoolsOpener,
   });
@@ -2009,6 +2207,203 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   // Bind the server to the router and arm the initial attach watcher on the
   // eager (local) connection. The router re-arms the watcher on every swap.
+  router.start(server);
+
+  // Self-terminate when the parent process has died without sending SIGTERM/SIGHUP.
+  if (process.env.AIT_DEBUG_NO_PARENT_WATCH !== '1') {
+    parentWatcher = startParentWatcher(
+      () => {
+        shutdown();
+        process.exit(0);
+      },
+      { intervalMs: 5_000 },
+    );
+    process.stdin.once('end', () => {
+      shutdown();
+      process.exit(0);
+    });
+    process.stdin.once('close', () => {
+      shutdown();
+      process.exit(0);
+    });
+  }
+}
+
+export interface RunMobileDebugServerOptions {
+  /**
+   * When `true`, terminates the process holding the existing server lock and
+   * takes over the session. Corresponds to `--force` / `--takeover` CLI flags.
+   *
+   * Default `false`.
+   */
+  force?: boolean;
+}
+
+/**
+ * Boots the env-2 (real-device PWA) debug stack and serves it over stdio
+ * (issue #378). The external Chii relay is the EAGER family here.
+ *
+ * Unlike `runDebugServer` (which starts its own relay + cloudflared tunnel),
+ * `runMobileDebugServer` attaches to a relay the unplugin ALREADY brought up
+ * (`tunnel: { cdp: true }`) and exposed via `AIT_RELAY_BASE_URL`. The MCP only
+ * opens a CDP client against that external relay — it never starts or tears down
+ * a relay or a tunnel it did not own (see {@link bootExternalRelayFamily}).
+ *
+ * Symmetry with `runDebugServer` / `runLocalDebugServer` (#356, #378): the env-2
+ * external relay is eager; the local family and the intoss relay family are
+ * lazy-booted on the first `start_debug({ mode: 'local' | 'staging' | 'live' })`,
+ * so a `--target=mobile` session can hot-switch without a restart. The active
+ * env derives to `relay-mobile` (external-PWA origin, liveIntent off).
+ *
+ * SECRET-HANDLING: `AIT_RELAY_BASE_URL` is read once here via
+ * {@link readMobileRelayBaseUrl}; when unset it throws
+ * {@link MOBILE_RELAY_BASE_URL_MISSING_MESSAGE} — a message that names the env
+ * var and how to obtain it, never echoing any URL value. The error propagates to
+ * the bin entry's fatal handler (the missing-URL path prints the guidance, not a
+ * value). The present value is passed straight to the CDP client, never logged.
+ */
+export async function runMobileDebugServer(
+  options: RunMobileDebugServerOptions = {},
+): Promise<void> {
+  // Read the external relay base BEFORE acquiring the lock so a missing-URL
+  // invocation fails fast (fatal stderr via the bin entry) without taking the
+  // single-session lock or opening any connection.
+  const relayBaseUrl = readMobileRelayBaseUrl();
+
+  // Enforce a single debug session per machine (same lock as the other modes).
+  // `force: true` kills the existing process and takes over the lock.
+  const lockHandle = acquireLock({ force: options.force ?? false });
+
+  // Eager env-2 external relay family (#378). Its stop() closes ONLY the CDP
+  // client — the unplugin owns the relay + its tunnel.
+  const externalRelayFamily = await bootExternalRelayFamily(relayBaseUrl);
+
+  // Build the TOTP verifyAuth predicate from env at startup (runtime read) so a
+  // lazily-booted intoss relay family carries the same gate as `runDebugServer`.
+  const verifyAuth = buildRelayVerifyAuth();
+
+  // Dual-connection router (issues #348, #356, #378): env-2 external relay family
+  // eager above; the local family and the intoss relay family are lazy-booted on
+  // the first `start_debug({ mode: 'local' | 'staging' | 'live' })`.
+  const devtoolsOpener = new AutoDevtoolsOpener();
+  const diagnosticsCollector = new InMemoryDiagnosticsCollector();
+
+  const router = new DualConnectionRouter({
+    eager: externalRelayFamily,
+    eagerKey: 'relay-external',
+    // Lazy resolver for the local + intoss relay slots (#378). 'relay-external'
+    // is the eager family, so it is never requested here.
+    bootLazyFor: (key) =>
+      key === 'local'
+        ? bootLocalFamily()
+        : bootRelayFamily({
+            verifyAuth,
+            onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+          }),
+    diagnosticsCollector,
+    devtoolsOpener,
+  });
+
+  // AIT.* methods ride the *active* connection's command channel (external relay
+  // Chii, or local CDP / intoss Chii after a switch), so the AIT source follows
+  // `start_debug` swaps.
+  const aitSource = new RoutingAitSource(() => {
+    const active = router.active as CdpConnection & {
+      sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>;
+    };
+    return active;
+  });
+
+  // Local QR HTTP server — awaited so the first build_attach_url call doesn't
+  // race its startup. Failure falls back to text QR.
+  let qrServer: QrHttpServer | undefined;
+  try {
+    qrServer = await startQrHttpServer();
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
+  }
+
+  const server = createDebugServer({
+    connection: router.active,
+    router,
+    aitSource,
+    // Tunnel status follows the active relay family — the env-2 external relay
+    // reports up with its wss URL, so build_attach_url is satisfied without us
+    // opening a cloudflared tunnel.
+    getTunnelStatus: () => router.relayTunnelStatus(),
+    get qrHttpServer() {
+      return qrServer;
+    },
+    diagnosticsCollector,
+    // SECRET-HANDLING: totpSecret is read from env once at startup and passed
+    // through to buildAttachUrl where it is used only to generate the at= code.
+    // It is never logged or surfaced in any output.
+    ...(process.env.AIT_DEBUG_TOTP_SECRET ? { totpSecret: process.env.AIT_DEBUG_TOTP_SECRET } : {}),
+  });
+
+  const transport = new StdioServerTransport();
+
+  // ---------------------------------------------------------------------------
+  // Unified dual-family shutdown (issues #356, #378, mirrors the other run
+  // functions): tears down every booted family at process exit. The eager
+  // external relay family's stop() closes ONLY our CDP client (the unplugin owns
+  // the relay + tunnel); a lazily-booted intoss relay family stops its own
+  // tunnel + probe + relay; a lazily-booted local family kills its Chromium.
+  // ---------------------------------------------------------------------------
+
+  let closed = false;
+  let parentWatcher: { stop(): void } | null = null;
+
+  const shutdown = () => {
+    if (closed) return;
+    closed = true;
+    parentWatcher?.stop();
+    router.stopWatcher();
+    for (const family of router.bootedFamilies()) family.stop();
+    void server.close();
+    void qrServer?.close();
+    lockHandle.release();
+  };
+
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  process.once('SIGHUP', shutdown);
+
+  process.on('exit', () => {
+    if (!closed) {
+      closed = true;
+      parentWatcher?.stop();
+      router.stopWatcher();
+      for (const family of router.bootedFamilies()) family.stop();
+      lockHandle.release();
+    }
+  });
+
+  process.on('uncaughtException', (err) => {
+    logError('tool.error', {
+      msg: `uncaughtException: ${String(err)}`,
+      errorKind: 'uncaught',
+      mode: 'mobile',
+    });
+    shutdown();
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    logError('tool.error', {
+      msg: `unhandledRejection: ${String(reason)}`,
+      errorKind: 'unhandled-rejection',
+      mode: 'mobile',
+    });
+    shutdown();
+    process.exit(1);
+  });
+
+  await server.connect(transport);
+
+  // Bind the server to the router and arm the initial attach watcher on the
+  // eager (external relay) connection. The router re-arms on every swap.
   router.start(server);
 
   // Self-terminate when the parent process has died without sending SIGTERM/SIGHUP.
