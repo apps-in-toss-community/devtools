@@ -14,7 +14,7 @@
  *   error?: { code, message, nextRecommendedAction? },
  *   meta: {
  *     tool: string,
- *     env: 'mock' | 'relay-dev' | 'relay-live',
+ *     env: 'mock' | 'relay-dev' | 'relay-live' | 'relay-mobile',
  *     attached: boolean,
  *     contentType: 'json' | 'image',
  *   }
@@ -31,7 +31,7 @@
 import type { McpEnvironment } from './environment.js';
 
 /** Allowed values for `meta.env`. */
-export type EnvelopeEnv = 'mock' | 'relay-dev' | 'relay-live';
+export type EnvelopeEnv = 'mock' | 'relay-dev' | 'relay-live' | 'relay-mobile';
 
 /** The unified envelope returned by every debug MCP tool (when compat mode is off). */
 export interface ToolEnvelope<T = unknown> {

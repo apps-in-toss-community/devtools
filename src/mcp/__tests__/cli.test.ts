@@ -45,6 +45,14 @@ describe('parseTarget', () => {
     expect(parseTarget(['--target=relay'])).toBe('relay');
   });
 
+  it('parses --target=mobile (env-2 external relay, #378)', () => {
+    expect(parseTarget(['--target=mobile'])).toBe('mobile');
+  });
+
+  it('parses --target mobile (space-separated)', () => {
+    expect(parseTarget(['--target', 'mobile'])).toBe('mobile');
+  });
+
   it('throws on an unknown target', () => {
     expect(() => parseTarget(['--target=bogus'])).toThrow(/Unknown --target/);
   });

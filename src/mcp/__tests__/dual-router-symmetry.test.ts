@@ -6,8 +6,12 @@
  * still pinned a single-connection router, so a cross-family `start_debug`
  * (local → relay) was rejected as "restart required". #356 generalizes the
  * router to be **direction-neutral**: an `eager` family (booted at startup) and
- * a `bootLazy` callback (the opposite kind, booted once on the first
- * cross-family switch). Either kind can be eager.
+ * a lazy resolver (booted once on the first cross-family switch). Either kind
+ * can be eager. #378 generalizes the lazy slot from a single "opposite kind"
+ * into a `bootLazyFor(key: FamilyKey)` resolver keyed by
+ * `local | relay-intoss | relay-external`, so `mobile` (env-2 external relay)
+ * and `staging`/`live` (intoss relay) — both `kind: 'relay'` — get distinct warm
+ * slots.
  *
  * This suite exercises the real `DualConnectionRouter` (not a test double) with
  * fake `BootedFamily` deps, over the matrix:
@@ -28,9 +32,18 @@ import type {
   CdpEventName,
   CdpTarget,
 } from '../cdp-connection.js';
-import { type BootedFamily, DualConnectionRouter, type StartDebugMode } from '../debug-server.js';
+import {
+  type BootedFamily,
+  bootExternalRelayFamily,
+  DualConnectionRouter,
+  type FamilyKey,
+  familyKeyForMode,
+  MOBILE_RELAY_BASE_URL_MISSING_MESSAGE,
+  readMobileRelayBaseUrl,
+  type StartDebugMode,
+} from '../debug-server.js';
 import { AutoDevtoolsOpener } from '../devtools-opener.js';
-import { getLiveIntent, setLiveIntent } from '../environment.js';
+import { getLiveIntent, type RelayOrigin, setLiveIntent } from '../environment.js';
 import { InMemoryDiagnosticsCollector, type TunnelStatus } from '../tools.js';
 
 // ---- Fakes -----------------------------------------------------------------
@@ -61,6 +74,7 @@ class FakeConn implements CdpConnection {
 function makeFamily(
   kind: 'relay' | 'local',
   tunnel?: TunnelStatus,
+  relayOrigin?: RelayOrigin,
 ): BootedFamily & { stopped: number } {
   const family = {
     connection: new FakeConn(kind),
@@ -69,10 +83,23 @@ function makeFamily(
       family.stopped += 1;
     },
     ...(tunnel ? { getTunnelStatus: () => tunnel } : {}),
+    ...(relayOrigin ? { relayOrigin } : {}),
   };
   return family;
 }
 
+/** The `FamilyKey` for the family of a given eager kind (helper symmetry). */
+function eagerKeyFor(eagerKind: 'relay' | 'local'): FamilyKey {
+  return eagerKind === 'relay' ? 'relay-intoss' : 'local';
+}
+
+/**
+ * Builds a router where `eagerKind` is the eager family and the OPPOSITE kind is
+ * a single warm lazy family resolved for whichever non-eager key is requested.
+ * The existing #356 suite only swaps between local and the intoss relay, so the
+ * resolver returns the same `lazy` family for any non-eager key — the dedicated
+ * #378 `relay-external` (mobile) slot is exercised separately below.
+ */
 function makeRouter(
   eagerKind: 'relay' | 'local',
   opts: { eagerTunnel?: TunnelStatus; lazyTunnel?: TunnelStatus } = {},
@@ -81,13 +108,14 @@ function makeRouter(
   const lazyKind: 'relay' | 'local' = eagerKind === 'relay' ? 'local' : 'relay';
   let lazyBootCount = 0;
   const lazy = makeFamily(lazyKind, opts.lazyTunnel);
-  const bootLazy = vi.fn(async () => {
+  const bootLazyFor = vi.fn(async (_key: FamilyKey) => {
     lazyBootCount += 1;
     return lazy;
   });
   const router = new DualConnectionRouter({
     eager,
-    bootLazy,
+    eagerKey: eagerKeyFor(eagerKind),
+    bootLazyFor,
     diagnosticsCollector: new InMemoryDiagnosticsCollector(),
     devtoolsOpener: new AutoDevtoolsOpener(),
   });
@@ -95,7 +123,7 @@ function makeRouter(
     router,
     eager,
     lazy,
-    bootLazy,
+    bootLazyFor,
     getLazyBootCount: () => lazyBootCount,
   };
 }
@@ -258,13 +286,14 @@ describe('DualConnectionRouter — swapInFlight re-entrancy guard', () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    const bootLazy = vi.fn(async () => {
+    const bootLazyFor = vi.fn(async (_key: FamilyKey) => {
       await gate;
       return lazy;
     });
     const router = new DualConnectionRouter({
       eager,
-      bootLazy,
+      eagerKey: 'local',
+      bootLazyFor,
       diagnosticsCollector: new InMemoryDiagnosticsCollector(),
       devtoolsOpener: new AutoDevtoolsOpener(),
     });
@@ -274,11 +303,152 @@ describe('DualConnectionRouter — swapInFlight re-entrancy guard', () => {
     await expect(router.switchMode('staging', false)).rejects.toThrow(/이전 전환이 아직 진행 중/);
     release();
     await first;
-    expect(bootLazy).toHaveBeenCalledTimes(1);
+    expect(bootLazyFor).toHaveBeenCalledTimes(1);
     expect(router.active).toBe(lazy.connection);
   });
 });
 
+// ---- #378: env-2 external relay (mobile) is a distinct keyed family ---------
+
+describe('DualConnectionRouter — mobile (relay-external) keyed family (#378)', () => {
+  const intossTunnel: TunnelStatus = { up: true, wssUrl: 'wss://intoss.trycloudflare.com' };
+  const externalTunnel: TunnelStatus = { up: true, wssUrl: 'wss://pwa.trycloudflare.com' };
+
+  /**
+   * Builds a local-eager router with TWO distinct relay slots — an intoss relay
+   * (`relay-intoss`, served to staging/live) and an external PWA relay
+   * (`relay-external`, served to mobile) — so a collision between them would be
+   * observable (the wrong family / origin would surface).
+   */
+  function makeKeyedRouter() {
+    const eager = makeFamily('local');
+    const intoss = makeFamily('relay', intossTunnel, 'intoss-webview');
+    const external = makeFamily('relay', externalTunnel, 'external-pwa');
+    const bootCounts: Record<FamilyKey, number> = {
+      local: 0,
+      'relay-intoss': 0,
+      'relay-external': 0,
+    };
+    const bootLazyFor = vi.fn(async (key: FamilyKey) => {
+      bootCounts[key] += 1;
+      if (key === 'relay-external') return external;
+      if (key === 'relay-intoss') return intoss;
+      return eager;
+    });
+    const router = new DualConnectionRouter({
+      eager,
+      eagerKey: 'local',
+      bootLazyFor,
+      diagnosticsCollector: new InMemoryDiagnosticsCollector(),
+      devtoolsOpener: new AutoDevtoolsOpener(),
+    });
+    return { router, eager, intoss, external, bootLazyFor, bootCounts };
+  }
+
+  it('mobile lazy-boots the external relay family and derives relay-mobile', async () => {
+    const { router, external, bootCounts } = makeKeyedRouter();
+    const report = await router.switchMode('mobile', false);
+    expect(report.kind).toBe('relay');
+    // External-PWA origin → relay-mobile (NOT relay-dev, NOT live).
+    expect(report.environment).toBe('relay-mobile');
+    expect(report.liveGuardActive).toBe(false);
+    expect(router.active).toBe(external.connection);
+    expect(router.activeRelayOrigin).toBe('external-pwa');
+    expect(bootCounts['relay-external']).toBe(1);
+    expect(getLiveIntent()).toBe(false);
+  });
+
+  it('mobile and staging occupy SEPARATE warm slots — no collision (#378)', async () => {
+    const { router, intoss, external, bootCounts } = makeKeyedRouter();
+    // staging boots the intoss relay…
+    await router.switchMode('staging', false);
+    expect(router.active).toBe(intoss.connection);
+    expect(router.activeRelayOrigin).toBe('intoss-webview');
+    // …mobile boots the SEPARATE external relay (does not reuse the intoss slot).
+    const mobileReport = await router.switchMode('mobile', false);
+    expect(router.active).toBe(external.connection);
+    expect(mobileReport.environment).toBe('relay-mobile');
+    // …back to staging reuses the warm intoss relay (no re-boot).
+    const stagingReport = await router.switchMode('staging', false);
+    expect(router.active).toBe(intoss.connection);
+    expect(stagingReport.environment).toBe('relay-dev');
+    // Each relay family booted exactly once — the two slots never collided.
+    expect(bootCounts['relay-intoss']).toBe(1);
+    expect(bootCounts['relay-external']).toBe(1);
+  });
+
+  it('relayTunnelStatus() follows the ACTIVE relay family across mobile/staging', async () => {
+    const { router } = makeKeyedRouter();
+    await router.switchMode('mobile', false);
+    expect(router.relayTunnelStatus()).toEqual(externalTunnel);
+    await router.switchMode('staging', false);
+    expect(router.relayTunnelStatus()).toEqual(intossTunnel);
+  });
+
+  it('bootedFamilies() lists eager + both relay slots after both switches', async () => {
+    const { router, eager, intoss, external } = makeKeyedRouter();
+    await router.switchMode('staging', false);
+    await router.switchMode('mobile', false);
+    const families = router.bootedFamilies();
+    expect(families).toContain(eager);
+    expect(families).toContain(intoss);
+    expect(families).toContain(external);
+    expect(families).toHaveLength(3);
+  });
+});
+
+// ---- #378: family-key mapping + external relay boot + env-var read ----------
+
+describe('familyKeyForMode (#378)', () => {
+  it('maps each mode to its serving family slot', () => {
+    expect(familyKeyForMode('local')).toBe('local');
+    expect(familyKeyForMode('mobile')).toBe('relay-external');
+    expect(familyKeyForMode('staging')).toBe('relay-intoss');
+    expect(familyKeyForMode('live')).toBe('relay-intoss');
+  });
+});
+
+describe('readMobileRelayBaseUrl (#378) — SECRET-HANDLING', () => {
+  it('returns the trimmed AIT_RELAY_BASE_URL when present', () => {
+    expect(readMobileRelayBaseUrl({ AIT_RELAY_BASE_URL: '  https://relay.example  ' })).toBe(
+      'https://relay.example',
+    );
+  });
+
+  it('throws the precise missing-URL message when unset or empty', () => {
+    expect(() => readMobileRelayBaseUrl({})).toThrow(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE);
+    expect(() => readMobileRelayBaseUrl({ AIT_RELAY_BASE_URL: '   ' })).toThrow(
+      MOBILE_RELAY_BASE_URL_MISSING_MESSAGE,
+    );
+  });
+
+  it('the missing-URL message names the env var but echoes NO URL value', () => {
+    // The error guides the user by env-var NAME, never by leaking a (partial)
+    // relay host value — same sensitivity class as a wss URL.
+    expect(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE).toContain('AIT_RELAY_BASE_URL');
+    expect(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE).not.toMatch(/wss?:\/\//);
+    expect(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE).not.toMatch(/https?:\/\//);
+  });
+});
+
+describe('bootExternalRelayFamily (#378)', () => {
+  it('opens a relay CDP client tagged external-pwa, derives wss, and owns only the client', async () => {
+    const family = await bootExternalRelayFamily('https://relay.example');
+    expect(family.connection.kind).toBe('relay');
+    expect(family.relayOrigin).toBe('external-pwa');
+    // wss derived http→ws so build_attach_url's `up && wssUrl` gate is satisfied
+    // even though we never opened a cloudflared tunnel ourselves.
+    expect(family.getTunnelStatus?.()).toEqual({
+      up: true,
+      wssUrl: 'wss://relay.example',
+      droppedAt: null,
+      reissueAttempts: 0,
+    });
+    // stop() must not throw — it closes ONLY our CDP client (unplugin owns relay).
+    expect(() => family.stop()).not.toThrow();
+  });
+});
+
 // Pin the mode-type so an accidental literal typo fails to compile.
-const _exhaustive: StartDebugMode[] = ['local', 'staging', 'live'];
+const _exhaustive: StartDebugMode[] = ['local', 'mobile', 'staging', 'live'];
 void _exhaustive;

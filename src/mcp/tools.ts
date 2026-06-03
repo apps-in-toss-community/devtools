@@ -417,7 +417,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'devtoolsVersion (@ait-co/devtools package version), tunnel (up/wssUrl/pid/startedAt), ' +
       'pages (list_pages result + lastSeenAt stats), lastAttachAt, lastDetachAt, ' +
       'recentErrors (last N server-side errors, PII/secret redacted), ' +
-      'environment (kind: mock|relay-dev|relay-live, env: mock|relay backward-compat, reason, ' +
+      'environment (kind: mock|relay-dev|relay-live|relay-mobile, env: mock|relay backward-compat, reason, ' +
       'liveGuardActive: true when relay-live LIVE guard is active), ' +
       'serverLockHolder (pid + startedAt from the lock file, or null), ' +
       'nextRecommendedAction ({tool, reason} or null — the single next tool to call; ' +
@@ -466,8 +466,8 @@ export function getToolAvailability(name: string): ToolAvailability | undefined 
  * Unknown tools return `false` — callers should reject them as unknown rather
  * than as env-mismatched.
  *
- * Relay variants (`relay-dev`, `relay-live`) both satisfy the `'relay'`
- * availability tier — `isRelayEnv()` is used for the check.
+ * Relay variants (`relay-dev`, `relay-live`, `relay-mobile`) all satisfy the
+ * `'relay'` availability tier — `isRelayEnv()` is used for the check.
  */
 export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
   const availability = getToolAvailability(name);
@@ -482,7 +482,8 @@ export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
  * matches the given env. Pure — preserves order; both Tier C ("both") and the
  * matching single-env tier pass through.
  *
- * Relay variants (`relay-dev`, `relay-live`) both satisfy the `'relay'` tier.
+ * Relay variants (`relay-dev`, `relay-live`, `relay-mobile`) all satisfy the
+ * `'relay'` tier.
  */
 export function filterToolsByEnvironment<T extends { name: string; availableIn: ToolAvailability }>(
   tools: ReadonlyArray<T>,
@@ -1147,9 +1148,10 @@ export type SdkInsetsSource = 'window.__sdk' | 'window.__ait' | null;
 export interface SafeAreaMeasurement {
   /**
    * MCP environment this measurement was taken in:
-   *   - `'mock'`       — dev browser panel
-   *   - `'relay-dev'`  — real-device WebView, dogfood build
-   *   - `'relay-live'` — real-device WebView, live/production build
+   *   - `'mock'`         — dev browser panel
+   *   - `'relay-dev'`    — real-device WebView, dogfood build
+   *   - `'relay-live'`   — real-device WebView, live/production build
+   *   - `'relay-mobile'` — real-device PWA (env 2) over an external relay
    *
    * Set by the caller (`measureSafeArea`) from the env detection SSoT
    * (`getEnvironment`).
@@ -1690,8 +1692,8 @@ export interface DiagnosticsResult {
   /**
    * Resolved environment and the reason string.
    *
-   * `kind` — the precise three-value environment (`mock` | `relay-dev` |
-   *   `relay-live`). Use this for new code.
+   * `kind` — the precise four-value environment (`mock` | `relay-dev` |
+   *   `relay-live` | `relay-mobile`). Use this for new code.
    * `env`  — backward-compat two-value alias (`mock` | `relay`). Kept so
    *   existing callers that only distinguish mock vs relay continue to work.
    */
@@ -1980,8 +1982,8 @@ export interface GetDiagnosticsInput {
    */
   connection?: CdpConnection;
   /**
-   * Resolved MCP environment (`mock` | `relay-dev` | `relay-live`). Caller
-   * obtains via `resolveEnvironment()`.
+   * Resolved MCP environment (`mock` | `relay-dev` | `relay-live` |
+   * `relay-mobile`). Caller obtains via `resolveEnvironment()`.
    */
   env: McpEnvironment;
   /** Human-readable reason for the env decision. */
