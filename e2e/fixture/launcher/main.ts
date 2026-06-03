@@ -93,6 +93,57 @@ function stopScanner(): void {
   scannerBox.style.display = 'none';
 }
 
+// Forward the env-2 CDP debug params onto the framed dev URL. The unplugin QR /
+// deep-link carries `…/launcher/?url=<tunnel>&debug=1&relay=<wss>`: `url` is the
+// page to frame, while `debug`/`relay` are the in-app debug gate (Layer C) opt-in
+// that must ride *on the iframe's own URL* — the gate reads
+// `window.location.search` of the framed page, not the launcher shell. So we lift
+// any `debug`/`relay`/`at` present on the launcher's search onto the tunnel URL.
+// A standalone scanned URL (no extra params) passes through unchanged.
+const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
+
+function decorateIframeSrc(tunnelUrl: string, launcherSearch: string): string {
+  const source = new URLSearchParams(launcherSearch);
+  let target: URL;
+  try {
+    target = new URL(tunnelUrl);
+  } catch {
+    return tunnelUrl;
+  }
+  for (const key of CDP_FORWARD_PARAMS) {
+    const value = source.get(key);
+    // Don't overwrite a param the tunnel URL already carries (a fully-formed
+    // deep link wins over launcher-shell forwarding).
+    if (value !== null && !target.searchParams.has(key)) {
+      target.searchParams.set(key, value);
+    }
+  }
+  return target.toString();
+}
+
+// Resolve a scanned/pasted string into a framed iframe URL. The QR may encode
+// either the launcher deep-link itself (`…/launcher/?url=<tunnel>&debug=1&…`,
+// what the unplugin prints) or a bare tunnel URL. For the former we lift the
+// debug params off the deep link onto the embedded tunnel; for the latter we
+// pass it through normalizeUrl. Returns null if no valid https(/local-http) URL
+// is found.
+function resolveScannedUrl(raw: string): string | null {
+  const direct = normalizeUrl(raw);
+  if (!direct) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(direct);
+  } catch {
+    return direct;
+  }
+  const embedded = parsed.searchParams.get('url');
+  if (embedded) {
+    const tunnel = normalizeUrl(embedded);
+    return tunnel ? decorateIframeSrc(tunnel, parsed.search) : null;
+  }
+  return direct;
+}
+
 function showLive(url: string): void {
   stopScanner();
   localStorage.setItem(STORAGE_KEY, url);
@@ -122,7 +173,7 @@ async function startScanner(): Promise<void> {
   scanner = new QrScanner(
     video,
     (result) => {
-      const url = normalizeUrl(result.data);
+      const url = resolveScannedUrl(result.data);
       if (url) showLive(url);
     },
     { highlightScanRegion: true, highlightCodeOutline: true },
@@ -136,7 +187,7 @@ async function startScanner(): Promise<void> {
 }
 
 openBtn.addEventListener('click', () => {
-  const url = normalizeUrl(urlInput.value);
+  const url = resolveScannedUrl(urlInput.value);
   if (!url) {
     msg.textContent =
       location.protocol === 'https:'
@@ -166,15 +217,18 @@ if ('serviceWorker' in navigator) {
 }
 
 // Deep-link entry: QR codes that the unplugin prints embed
-// `…/launcher/?url=<tunnel>` so the PWA can open the tunnel without a manual
-// scan/paste step. The query is consumed (history.replaceState) so a refresh
+// `…/launcher/?url=<tunnel>[&debug=1&relay=<wss>]` so the PWA can open the tunnel
+// without a manual scan/paste step. The `debug`/`relay` params (env-2 CDP gate)
+// are folded onto the framed tunnel URL via decorateIframeSrc before the launcher
+// search is stripped. The query is consumed (history.replaceState) so a refresh
 // inside the live view falls back to localStorage / setup, not a re-deep-link.
 function consumeDeepLinkUrl(): string | null {
-  const param = new URLSearchParams(location.search).get('url');
+  const launcherSearch = location.search;
+  const param = new URLSearchParams(launcherSearch).get('url');
   if (!param) return null;
   const url = normalizeUrl(param);
   history.replaceState(null, '', location.pathname);
-  return url;
+  return url ? decorateIframeSrc(url, launcherSearch) : null;
 }
 
 const deepLinked = consumeDeepLinkUrl();

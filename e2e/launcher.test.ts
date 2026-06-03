@@ -54,6 +54,27 @@ test.describe('launcher PWA', () => {
     await expect(page.getByTestId('launcher-rescan-btn')).toBeVisible();
   });
 
+  test('forwards &debug=1&relay= onto the framed URL (env-2 CDP deep-link)', async ({ page }) => {
+    const tunnel = 'https://example.com/';
+    const relay = 'wss://relay-abc.trycloudflare.com';
+    await page.goto(
+      `/launcher/?url=${encodeURIComponent(tunnel)}&debug=1&relay=${encodeURIComponent(relay)}`,
+    );
+
+    const frame = page.getByTestId('launcher-frame');
+    await expect(frame).toBeVisible();
+    // The launcher lifts debug/relay off its own search onto the iframe src so
+    // the framed page's in-app debug gate (Layer C) is satisfied.
+    const src = await frame.getAttribute('src');
+    const parsed = new URL(src ?? '');
+    expect(parsed.origin + parsed.pathname).toBe(tunnel);
+    expect(parsed.searchParams.get('debug')).toBe('1');
+    expect(parsed.searchParams.get('relay')).toBe(relay);
+
+    // Launcher's own search is still consumed.
+    await expect(page).toHaveURL(/\/launcher\/$/);
+  });
+
   test('ignores ?url= when the value is not a valid http(s) URL', async ({ page }) => {
     await page.goto('/launcher/?url=javascript:alert(1)');
     // Falls back to the setup screen — never sources the iframe with the
