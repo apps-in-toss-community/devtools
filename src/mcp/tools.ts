@@ -291,8 +291,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Calls a dogfood SDK method via the window.__sdkCall bridge ' +
       '(exported by @apps-in-toss/web-framework only in __DEBUG_BUILD__ bundles). ' +
       'NOT read-only — SDK calls have side effects (navigation, payments, permissions, etc.). ' +
-      'On env 3/4 (real device relay) this hits the real SDK; on env 1 (local mock) it hits ' +
-      'the mock SDK. (env 2 PWA does not inject the SDK — call_sdk is not available there.) ' +
+      'On env 3/4 (real device relay) this hits the real SDK; on env 1 (local mock) and ' +
+      'env 2 (PWA relay — real WebKit, mock SDK) it hits the mock SDK. ' +
       'Requires the relay to be attached — call list_pages first. ' +
       'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
       'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
