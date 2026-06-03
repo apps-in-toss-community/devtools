@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { evaluateDebugGate, isPrivateAppsHost } from '../in-app/gate.js';
+import { evaluateDebugGate, isPrivateAppsHost, isTrycloudflareHost } from '../in-app/gate.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,6 +33,18 @@ const VALID_HOST = 'aitc-sdk-example.private-apps.tossmini.com';
 const VALID_PARAMS = params(
   '_deploymentId=019e3b40-abcd-1234-efgh-000000000001&debug=1&relay=wss%3A%2F%2Fabc.trycloudflare.com%2F',
 );
+
+/**
+ * A valid env 2 (PWA) tunnel host — a `*.trycloudflare.com` quick-tunnel. Layer
+ * B1 passes via the tunnel branch; B2 (`_deploymentId`) is skipped for it.
+ */
+const VALID_TC_HOST = 'abc-def-ghi.trycloudflare.com';
+
+/**
+ * A valid env 2 tunnel gate-passing set of query params — note: NO
+ * `_deploymentId` (the tunnel has no deployed bundle).
+ */
+const VALID_TC_PARAMS = params('debug=1&relay=wss%3A%2F%2Fabc-def-ghi.trycloudflare.com%2F');
 
 /**
  * Evaluate the gate with the valid dogfood host by default, so a test that
@@ -110,6 +122,92 @@ describe('isPrivateAppsHost', () => {
 
   it('rejects an empty string', () => {
     expect(isPrivateAppsHost('')).toBe(false);
+  });
+});
+
+describe('isTrycloudflareHost', () => {
+  it('accepts a *.trycloudflare.com subdomain (env 2 tunnel)', () => {
+    expect(isTrycloudflareHost('abc-def-ghi.trycloudflare.com')).toBe(true);
+  });
+
+  it('rejects a suffix-spoofing host', () => {
+    expect(isTrycloudflareHost('evil.trycloudflare.com.example.com')).toBe(false);
+  });
+
+  it('rejects a bare trycloudflare.com with no tunnel subdomain', () => {
+    expect(isTrycloudflareHost('trycloudflare.com')).toBe(false);
+  });
+
+  it('rejects an empty string', () => {
+    expect(isTrycloudflareHost('')).toBe(false);
+  });
+
+  it('rejects a private-apps host (not a tunnel)', () => {
+    expect(isTrycloudflareHost('aitc-sdk-example.private-apps.tossmini.com')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Layer B1/B2 — env 2 (PWA) trycloudflare host bypass
+//
+// A *.trycloudflare.com host bypasses B1 (it has no production runtime — mock
+// SDK, the developer's own dev server) and skips B2 (no deployed bundle, so no
+// _deploymentId). C1/C2/C3 still apply identically to the Toss path, so a
+// leaked tunnel URL is still blocked by TOTP.
+// ---------------------------------------------------------------------------
+
+describe('Layer B1/B2 — trycloudflare (env 2 PWA) host bypass', () => {
+  it('passes B1 for a *.trycloudflare.com host even with no _deploymentId', () => {
+    const result = gate(VALID_TC_PARAMS, VALID_TC_HOST);
+    expect(result.attach).toBe(true);
+  });
+
+  it('skips B2 — not blocked on entry when _deploymentId is absent', () => {
+    const result = gate(params('debug=1&relay=wss://r.example.com/'), VALID_TC_HOST);
+    // Must NOT be blocked with reason 'entry' — B2 does not apply to tunnels.
+    if (!result.attach) expect(result.reason).not.toBe('entry');
+    expect(result.attach).toBe(true);
+  });
+
+  it('returns deploymentId: "" on a tunnel attach', () => {
+    const result = gate(VALID_TC_PARAMS, VALID_TC_HOST);
+    expect(result.attach).toBe(true);
+    if (result.attach) expect(result.deploymentId).toBe('');
+  });
+
+  it('still requires debug=1 (C1) on a tunnel host', () => {
+    const result = gate(params('relay=wss://r.example.com/'), VALID_TC_HOST);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('opt-in');
+  });
+
+  it('still requires a valid wss relay (C2) on a tunnel host', () => {
+    const result = gate(params('debug=1&relay=https://r.example.com/'), VALID_TC_HOST);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('invalid-relay');
+  });
+
+  it('still applies TOTP (C3) on a tunnel host when a verifier is injected', () => {
+    const pass = evaluateDebugGate({
+      hostname: VALID_TC_HOST,
+      searchParams: params('debug=1&relay=wss://r.example.com/&at=123456'),
+      verifyTotpCode: (code) => code === '123456',
+    });
+    expect(pass.attach).toBe(true);
+
+    const fail = evaluateDebugGate({
+      hostname: VALID_TC_HOST,
+      searchParams: params('debug=1&relay=wss://r.example.com/&at=000000'),
+      verifyTotpCode: (code) => code === '123456',
+    });
+    expect(fail.attach).toBe(false);
+    if (!fail.attach) expect(fail.reason).toBe('auth');
+  });
+
+  it('blocks a suffix-spoofed trycloudflare host as host (not bypassed)', () => {
+    const result = gate(VALID_TC_PARAMS, 'evil.trycloudflare.com.example.com');
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('host');
   });
 });
 
@@ -424,5 +522,17 @@ describe('Full decision matrix', () => {
   it('row: private-apps host / _deploymentId present / debug=1 / valid wss relay → ATTACH', () => {
     const result = gate(params('_deploymentId=uuid&debug=1&relay=wss://r.example.com/'));
     expect(result.attach).toBe(true);
+  });
+
+  it('row: trycloudflare host / _deploymentId (skipped) / debug=1 / valid wss relay → ATTACH', () => {
+    const result = gate(params('debug=1&relay=wss://r.example.com/'), VALID_TC_HOST);
+    expect(result.attach).toBe(true);
+    if (result.attach) expect(result.deploymentId).toBe('');
+  });
+
+  it('row: trycloudflare host / debug absent → BLOCKED (opt-in), not entry', () => {
+    const result = gate(params('relay=wss://r.example.com/'), VALID_TC_HOST);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('opt-in');
   });
 });

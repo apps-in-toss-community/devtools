@@ -17,14 +17,20 @@
  * `false` and could never pass. Layer A is the consumer guard; B and C are
  * here.
  *
- * Layer B has two parts. Both must pass:
+ * Layer B has two parts:
  *   B1 — host allowlist: `hostname` must be a `*.private-apps.tossmini.com`
- *        subdomain. The Toss app serves dogfood / private mini-apps from a
- *        separate `private-apps` host; a production (`intoss://`) entry is
+ *        subdomain (Toss dogfood entry) OR a `*.trycloudflare.com` host (env 2
+ *        PWA dev tunnel). The Toss app serves dogfood / private mini-apps from
+ *        a separate `private-apps` host; a production (`intoss://`) entry is
  *        served from `*.apps.tossmini.com` WITHOUT the `private-apps` segment.
  *        This is the security gate against a dogfood build that somehow lands
  *        on a production entry — see the comment on {@link isPrivateAppsHost}.
- *   B2 — entry query: `_deploymentId` must be present and non-empty.
+ *        The env 2 tunnel host is allowed because it has no production runtime
+ *        (mock SDK, the developer's own dev server) — see {@link
+ *        isTrycloudflareHost}.
+ *   B2 — entry query: `_deploymentId` must be present and non-empty. Applies to
+ *        the Toss path only; the env 2 tunnel has no deployed bundle, so B2 is
+ *        skipped for `*.trycloudflare.com` hosts.
  *
  * Layer C — opt-in + relay + optional TOTP auth:
  *   C1 — opt-in:       `debug=1` must be present.
@@ -48,16 +54,23 @@
  *
  * Decision matrix (gate only runs in a debug build — Layer A already passed):
  *
- *   host ok | _deploymentId | debug=1 | relay ok | TOTP ok* | result
- *   no      | (any)         | (any)   | (any)    | (any)    | BLOCKED (host)
- *   yes     | absent        | (any)   | (any)    | (any)    | BLOCKED (entry)
- *   yes     | present       | absent  | (any)    | (any)    | BLOCKED (opt-in)
- *   yes     | present       | present | invalid  | (any)    | BLOCKED (invalid-relay)
- *   yes     | present       | present | valid    | fail*    | BLOCKED (auth)
- *   yes     | present       | present | valid    | pass/n/a | ATTACH
+ *   host        | _deploymentId | debug=1 | relay ok | TOTP ok* | result
+ *   neither     | (any)         | (any)   | (any)    | (any)    | BLOCKED (host)
+ *   private-apps| absent        | (any)   | (any)    | (any)    | BLOCKED (entry)
+ *   private-apps| present       | absent  | (any)    | (any)    | BLOCKED (opt-in)
+ *   private-apps| present       | present | invalid  | (any)    | BLOCKED (invalid-relay)
+ *   private-apps| present       | present | valid    | fail*    | BLOCKED (auth)
+ *   private-apps| present       | present | valid    | pass/n/a | ATTACH
+ *   trycloudflare| (skipped)    | absent  | (any)    | (any)    | BLOCKED (opt-in)
+ *   trycloudflare| (skipped)    | present | invalid  | (any)    | BLOCKED (invalid-relay)
+ *   trycloudflare| (skipped)    | present | valid    | fail*    | BLOCKED (auth)
+ *   trycloudflare| (skipped)    | present | valid    | pass/n/a | ATTACH
  *
  *   * "TOTP ok" column only applies when `verifyTotpCode` is provided.
  *     When no verifier is injected, TOTP check is skipped entirely.
+ *   For trycloudflare (env 2 tunnel) hosts B1 is bypassed and B2 is skipped;
+ *   C1/C2/C3 still apply identically. The ATTACH result carries
+ *   `deploymentId: ''` for tunnel hosts.
  */
 
 /** Shape returned when the gate allows attachment. */
@@ -159,6 +172,12 @@ export interface GateInput {
 const PRIVATE_APPS_HOST_SUFFIX = '.private-apps.tossmini.com';
 
 /**
+ * The host suffix Cloudflare quick-tunnels serve from — the env 2 (PWA) entry.
+ * See {@link isTrycloudflareHost} for why this host kind bypasses Layer B1.
+ */
+const TRYCLOUDFLARE_HOST_SUFFIX = '.trycloudflare.com';
+
+/**
  * Returns whether `hostname` is a `*.private-apps.tossmini.com` subdomain —
  * the host the Toss app reserves for dogfood / private mini-app entries.
  *
@@ -171,6 +190,29 @@ const PRIVATE_APPS_HOST_SUFFIX = '.private-apps.tossmini.com';
  */
 export function isPrivateAppsHost(hostname: string): boolean {
   return hostname.endsWith(PRIVATE_APPS_HOST_SUFFIX);
+}
+
+/**
+ * The host suffix Cloudflare quick-tunnels use — the env 2 (PWA) entry.
+ *
+ * Env 2 serves the local Vite dev server through a `*.trycloudflare.com` quick
+ * tunnel (`src/unplugin/tunnel.ts`). It has no Toss app, no `intoss-private://`
+ * scheme, and — critically — no production runtime: the SDK is the devtools
+ * mock, and the page is the developer's own dev build. The Layer B1 safety net
+ * (which stops a dogfood build that lands on a Toss *production* host from
+ * attaching) has nothing to protect against here, because env 2 has no
+ * production host. So a trycloudflare host is allowed past B1 — but ONLY past
+ * B1: the remaining layers (C1 opt-in, C2 relay, C3 TOTP) still apply, so a
+ * leaked tunnel URL is still blocked by TOTP exactly as on the Toss path.
+ *
+ * The match is the same exact-suffix `endsWith` check as
+ * {@link isPrivateAppsHost} — never a substring `.includes()`, which would
+ * accept an attacker-controlled `evil.trycloudflare.com.example.com`. The
+ * leading `.` forces a real subdomain label, so a bare `trycloudflare.com`
+ * (no tunnel subdomain) does not match.
+ */
+export function isTrycloudflareHost(hostname: string): boolean {
+  return hostname.endsWith(TRYCLOUDFLARE_HOST_SUFFIX);
 }
 
 /**
@@ -196,23 +238,36 @@ export function isPrivateAppsHost(hostname: string): boolean {
  */
 export function evaluateDebugGate(input: GateInput): GateResult {
   // Layer B1 — host allowlist (the security gate).
-  // The page must be served from a `*.private-apps.tossmini.com` host. A
-  // production `intoss://` entry is served from `*.apps.tossmini.com` and is
-  // rejected here. This is what stops a dogfood build that somehow reaches a
-  // production entry from attaching: Layer A keeps debug code out of release
-  // bundles, and this layer keeps a dogfood bundle that lands on a production
-  // host from attaching even though its code is present.
-  if (!isPrivateAppsHost(input.hostname)) {
+  // Two host kinds are allowed past B1:
+  //   - Toss dogfood: `*.private-apps.tossmini.com`. A production `intoss://`
+  //     entry is served from `*.apps.tossmini.com` and is rejected here. This
+  //     is what stops a dogfood build that somehow reaches a production entry
+  //     from attaching: Layer A keeps debug code out of release bundles, and
+  //     this layer keeps a dogfood bundle that lands on a production host from
+  //     attaching even though its code is present.
+  //   - Env 2 PWA tunnel: `*.trycloudflare.com`. This is the developer's own
+  //     local dev server (mock SDK, no production runtime), so the
+  //     production-entry hazard B1 guards against cannot occur. It bypasses B1
+  //     but NOT the remaining layers — C1/C2/C3 (incl. TOTP) still apply, so a
+  //     leaked tunnel URL is blocked exactly as on the Toss path. See
+  //     {@link isTrycloudflareHost}.
+  const isTunnel = isTrycloudflareHost(input.hostname);
+  if (!isPrivateAppsHost(input.hostname) && !isTunnel) {
     return { attach: false, reason: 'host' };
   }
 
-  // Layer B2 — runtime entry query gate.
+  // Layer B2 — runtime entry query gate (Toss path only).
   // `_deploymentId` must be present and non-empty. The `intoss-private://`
   // scheme used for dogfood entries includes this param; general user entry
-  // paths do not.
-  const deploymentId = input.searchParams.get('_deploymentId') ?? '';
-  if (deploymentId === '') {
-    return { attach: false, reason: 'entry' };
+  // paths do not. The env 2 tunnel has no deployed bundle and therefore no
+  // `_deploymentId` — B2 is skipped for it, and `deploymentId` is reported as
+  // the empty string on a tunnel attach (no consumer reads it; see attach.ts).
+  let deploymentId = '';
+  if (!isTunnel) {
+    deploymentId = input.searchParams.get('_deploymentId') ?? '';
+    if (deploymentId === '') {
+      return { attach: false, reason: 'entry' };
+    }
   }
 
   // Layer C — explicit opt-in gate.
