@@ -34,8 +34,8 @@ importers:
         version: 8.20.0
     devDependencies:
       '@apps-in-toss/web-framework':
-        specifier: 3.0.0-beta.9d42c0b
-        version: 3.0.0-beta.9d42c0b(@babel/preset-env@7.28.5(@babel/core@7.29.0))(@types/node@25.6.0)(typanion@3.14.0)(typescript@6.0.3)
+        specifier: 3.0.0-beta.3051978
+        version: 3.0.0-beta.3051978(@babel/preset-env@7.28.5(@babel/core@7.29.0))(@types/node@25.6.0)(typanion@3.14.0)(typescript@6.0.3)
       '@biomejs/biome':
         specifier: 2.4.15
         version: 2.4.15
@@ -100,8 +100,8 @@ packages:
     resolution: {integrity: sha512-1no0CXOhPEeSCrGduT37KMmCqA6irhowXa0S7AaPHb4RQSHGioR3wvvD7HHBCaUriMYs0EvtqRJfOgYd0ycKlQ==}
     engines: {node: '>=24'}
 
-  '@apps-in-toss/web-framework@3.0.0-beta.9d42c0b':
-    resolution: {integrity: sha512-lsh57fAXgcs5aa7237rCVbD56Z/VYCosLfLrxmvxqwlIKY/8JFpXluU6iy/Ur/Myrdcp6rmL9nRkDsjwjTK31g==}
+  '@apps-in-toss/web-framework@3.0.0-beta.3051978':
+    resolution: {integrity: sha512-gczIHBK1LF1TlWK7S53zb3EDa7Vlob2wnacq5alSN70o5bFlWTDvDbHRtTaKza6rSKeXEl7vUhN0CFZ2fIcqeQ==}
     hasBin: true
 
   '@apps-in-toss/webview-bridge@3.0.0-beta.9d42c0b':
@@ -3586,7 +3586,7 @@ snapshots:
       '@apps-in-toss/ait-format-proto': 1.0.0
       fflate: 0.8.2
 
-  '@apps-in-toss/web-framework@3.0.0-beta.9d42c0b(@babel/preset-env@7.28.5(@babel/core@7.29.0))(@types/node@25.6.0)(typanion@3.14.0)(typescript@6.0.3)':
+  '@apps-in-toss/web-framework@3.0.0-beta.3051978(@babel/preset-env@7.28.5(@babel/core@7.29.0))(@types/node@25.6.0)(typanion@3.14.0)(typescript@6.0.3)':
     dependencies:
       '@apps-in-toss/ait-format': 1.0.0
       '@apps-in-toss/webview-bridge': 3.0.0-beta.9d42c0b
