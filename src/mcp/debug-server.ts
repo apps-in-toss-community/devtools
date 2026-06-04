@@ -104,7 +104,7 @@ import {
   takeScreenshot,
   takeSnapshot,
 } from './tools.js';
-import { generateTotp, verifyTotp } from './totp.js';
+import { assertRelayAuthConfigured, buildRelayVerifyAuth, generateTotp } from './totp.js';
 import {
   generateAttachToken,
   makeTunnelStatus,
@@ -1528,38 +1528,11 @@ export interface RunDebugServerOptions {
   force?: boolean;
 }
 
-/**
- * Reads `AIT_DEBUG_TOTP_SECRET` from `process.env` at runtime and builds a
- * `verifyAuth` predicate for the Chii relay's WebSocket upgrade gate.
- *
- * The predicate checks the `at` query parameter against the current and
- * adjacent TOTP time steps (±1 skew) using `verifyTotp`.
- *
- * Returns `undefined` when the env var is not set — callers treat that as
- * "auth disabled" (no predicate registered on the relay).
- *
- * SECRET-HANDLING: The secret value read from env is captured in a closure and
- * is NEVER written to any log, error message, or process output.
- */
-export function buildRelayVerifyAuth():
-  | ((req: import('node:http').IncomingMessage) => boolean)
-  | undefined {
-  const secret = process.env.AIT_DEBUG_TOTP_SECRET;
-  if (!secret) return undefined;
-
-  return (req) => {
-    // Parse the `at` query param from the upgrade request URL.
-    // req.url is the raw request path + query, e.g. `/client/id?target=…&at=123456`
-    const rawUrl = req.url ?? '';
-    const qIndex = rawUrl.indexOf('?');
-    const queryStr = qIndex === -1 ? '' : rawUrl.slice(qIndex + 1);
-    const params = new URLSearchParams(queryStr);
-    const code = params.get('at') ?? '';
-
-    // Do NOT log `code`, `secret`, or any derived value here.
-    return verifyTotp(secret, code);
-  };
-}
+// `buildRelayVerifyAuth` now lives in `./totp.js` (lightweight, node:crypto
+// only) so the unplugin's env-2 relay can wire the same TOTP upgrade gate
+// without pulling the heavy MCP server module graph. Re-exported here so
+// existing importers (and tests) keep resolving it from `debug-server.js`.
+export { buildRelayVerifyAuth };
 
 /**
  * Factory that constructs a `ChiiCdpConnection` for the given relay base URL.
@@ -1692,6 +1665,13 @@ export interface BootRelayFamilyOptions {
  * (relay host) is never logged here directly.
  */
 export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Promise<BootedFamily> {
+  // Relay-auth baseline (issue #250): this boots a public-internet-exposed relay
+  // (cloudflared quick tunnel), so a configured TOTP secret is MANDATORY — Layer
+  // C is the only fail-fast layer that stops a leaked tunnel URL from attaching.
+  // Fail fast before opening the relay/tunnel. Local-only sessions never call
+  // this fn and so stay exempt. SECRET-HANDLING: the guard never logs the value.
+  assertRelayAuthConfigured();
+
   // Default 0: OS picks a free port. Prevents EADDRINUSE from stale cloudflared
   // orphans (SIGKILL survivors) that would otherwise block a fixed port and
   // cause -32000 MCP handshake failures on reconnect.
@@ -1796,6 +1776,14 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
  * the value straight to the CDP client.
  */
 export async function bootExternalRelayFamily(relayBaseUrl: string): Promise<BootedFamily> {
+  // Relay-auth baseline (issue #250): the env-2 PWA relay is reachable over a
+  // public `*.trycloudflare.com` tunnel (started by the unplugin). The Layer C
+  // TOTP gate is what blocks a leaked tunnel URL, so a configured secret is
+  // MANDATORY here too. The unplugin's relay reads the SAME `AIT_DEBUG_TOTP_SECRET`,
+  // so this also fails fast when the operator forgot to set it. Fail before
+  // opening the CDP client. SECRET-HANDLING: the guard never logs the value.
+  assertRelayAuthConfigured();
+
   const connection = createRelayConnection(relayBaseUrl);
   // Derive the public wss URL from the relay base so build_attach_url's
   // `up && wssUrl !== null` gate passes. SECRET-HANDLING: not logged.
