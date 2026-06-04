@@ -107,12 +107,29 @@ export function pageCrashError(toolName?: string): McpErrorResult {
 }
 
 /**
- * 상태 4: SDK 부재 — window.__sdkCall이 주입되지 않았다 (dogfood 빌드가 아님).
+ * 상태 4: SDK 부재 — window.__sdkCall이 주입되지 않았다.
  *
- * call_sdk 호출 시 브리지가 없을 때.
+ * call_sdk 호출 시 브리지가 없을 때. 같은 "브리지 부재"라도 다음 행동은
+ * connection 종류에 따라 정반대다 (issue #360):
+ *   - relay(`--target` 없는 intoss / env-2): dogfood 빌드가 아니다 → dogfood
+ *     채널로 재배포 후 QR 재스캔.
+ *   - local(`--target=local`, env 1 로컬 브라우저): 재배포가 아니라 dev 서버를
+ *     `pnpm dev`로 띄웠는지 + unplugin alias가 `@apps-in-toss/web-framework`를
+ *     devtools mock으로 resolve하는지 확인. dev 빌드면 `import.meta.env.DEV`
+ *     경로로 `window.__sdkCall`이 자동 설치된다.
+ *
+ * `isLocal`이 생략되면 relay 안내(이전 동작)를 유지한다.
  */
-export function sdkAbsentError(toolName?: string): McpErrorResult {
+export function sdkAbsentError(toolName?: string, isLocal = false): McpErrorResult {
   const prefix = toolName ? `${toolName}: ` : '';
+  if (isLocal) {
+    return mcpError(
+      `${prefix}window.__sdkCall이 주입되지 않았습니다 (로컬 dev 브리지 부재). ` +
+        'sdk-example을 `pnpm dev`로 띄웠는지, 그리고 unplugin alias가 ' +
+        '`@apps-in-toss/web-framework`를 devtools mock으로 resolve하는지 확인하세요. ' +
+        'dev 빌드(`import.meta.env.DEV`)면 `window.__sdkCall`이 자동 설치됩니다.',
+    );
+  }
   return mcpError(
     `${prefix}window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다). ` +
       'dogfood 채널(intoss-private)로 재배포 후 QR을 다시 스캔하세요: ' +
@@ -171,7 +188,7 @@ export function relayDisconnectError(toolName?: string): McpErrorResult {
  * - 연결 끊김 패턴 (`relay에 연결되어 있지 않습니다`, `relay WebSocket`) → relayDisconnectError
  * - 그 외 (일반 에러) → 원본 메시지를 포함한 mcpError
  */
-export function classifyToolError(err: unknown, toolName: string): McpErrorResult {
+export function classifyToolError(err: unknown, toolName: string, isLocal = false): McpErrorResult {
   const message = err instanceof Error ? err.message : String(err);
 
   // 상태 1: tunnel 미가동 (buildAttachUrl이 던지는 패턴)
@@ -179,14 +196,16 @@ export function classifyToolError(err: unknown, toolName: string): McpErrorResul
     return tunnelDownError();
   }
 
-  // 상태 4: SDK 부재
+  // 상태 4: SDK 부재. page-side probe가 던지는 메시지는 relay 가정으로 쓰여
+  // 있으나, 안내는 connection 종류로 재구성한다 (issue #360) — local 세션이면
+  // dogfood 재배포가 아니라 dev 서버/unplugin alias 확인이 맞다.
   if (
     message.startsWith('sdk-absent:') ||
     message.includes('__sdkCall이 주입되지 않았습니다') ||
     message.includes('window.__sdkCall is not available') ||
     (message.includes('__sdkCall') && message.includes('not available'))
   ) {
-    return sdkAbsentError(toolName);
+    return sdkAbsentError(toolName, isLocal);
   }
 
   // 상태 3: page crash / target destroyed / replaced-by-new-attach

@@ -297,8 +297,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Returns {ok: true, value} on success or {ok: false, error} on failure. ' +
       'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
       'the result also includes `recentException` for crash triage. ' +
-      'Returns a clear error if window.__sdkCall is not available (non-dogfood bundle) — ' +
-      'redeploy via dogfood channel: `ait build && aitcc app deploy`.\n\n' +
+      'Returns a clear error if window.__sdkCall is not available — on relay (env 3/4) ' +
+      'that means a non-dogfood bundle (redeploy via `ait build && aitcc app deploy`); ' +
+      'on local (--target=local, env 1) it means the dev bridge is not installed ' +
+      '(start the dev server with `pnpm dev`).\n\n' +
       'SECURITY: method name, args, and result value are not redacted — never include secrets.\n\n' +
       'LIVE guard: when running against a live/production relay (relay-live env, ' +
       'MCP_ENV=relay-live), this tool requires `confirm: true` to acknowledge that ' +
