@@ -1215,7 +1215,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             typeof sdkResult.error === 'string' &&
             sdkResult.error.startsWith('sdk-absent:')
           ) {
-            return sdkAbsentError('call_sdk');
+            // issue #360: local(`--target=local`) 세션은 dogfood 재배포가 아니라
+            // dev 서버/unplugin alias 확인이 맞는 안내다 — connection.kind로 분기.
+            return sdkAbsentError('call_sdk', conn.kind === 'local');
           }
           const callSdkAttached = conn.listTargets().length > 0;
           return envelopeResult(sdkResult, name, env, callSdkAttached);
@@ -1224,7 +1226,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           return unknownTool(name);
       }
     } catch (err) {
-      return errorResult(err, name);
+      // issue #360: sdk-absent 분류가 local 세션이면 dev-bridge 안내로 분기하도록
+      // connection 종류를 넘긴다. 다른 에러 분류에는 영향 없음(isLocal 미사용).
+      return errorResult(err, name, conn.kind === 'local');
     }
   });
 
@@ -1387,8 +1391,8 @@ function classifyEnableDomainError(err: unknown, toolName: string) {
  * CDP/AIT 명령 실행 중 catch된 에러를 4상태로 분류해 tool 결과로 반환한다.
  * debug-server 내부 try/catch 블록에서 공통으로 사용한다.
  */
-function errorResult(err: unknown, name: string) {
-  return classifyToolError(err, name);
+function errorResult(err: unknown, name: string, isLocal = false) {
+  return classifyToolError(err, name, isLocal);
 }
 
 /**
