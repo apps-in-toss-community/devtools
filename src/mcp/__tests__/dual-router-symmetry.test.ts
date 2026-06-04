@@ -23,7 +23,7 @@
  *
  * No real Chromium / relay / tunnel — fakes only.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   CdpCommandMap,
   CdpCommandName,
@@ -432,6 +432,17 @@ describe('readMobileRelayBaseUrl (#378) — SECRET-HANDLING', () => {
 });
 
 describe('bootExternalRelayFamily (#378)', () => {
+  // Relay-auth baseline (#250): bootExternalRelayFamily now asserts a configured
+  // TOTP secret before opening the CDP client, so a valid hex secret must be set.
+  // 64 hex chars = 32 bytes. No secret value is logged.
+  const VALID_HEX_SECRET = 'deadbeef'.repeat(8);
+  beforeEach(() => {
+    process.env.AIT_DEBUG_TOTP_SECRET = VALID_HEX_SECRET;
+  });
+  afterEach(() => {
+    delete process.env.AIT_DEBUG_TOTP_SECRET;
+  });
+
   it('opens a relay CDP client tagged external-pwa, derives wss, and owns only the client', async () => {
     const family = await bootExternalRelayFamily('https://relay.example');
     expect(family.connection.kind).toBe('relay');
@@ -449,6 +460,39 @@ describe('bootExternalRelayFamily (#378)', () => {
   });
 });
 
+// Relay-auth baseline wiring (issue #250): the guard lives in the relay-boot
+// site, so booting an external (public-tunnel) relay WITHOUT a configured secret
+// must fail fast before any CDP client opens. This proves the guard is wired
+// into the boot path (not just the standalone unit in relay-auth-required.test.ts).
+describe('bootExternalRelayFamily — relay-auth baseline (#250)', () => {
+  beforeEach(() => {
+    delete process.env.AIT_DEBUG_TOTP_SECRET;
+  });
+  afterEach(() => {
+    delete process.env.AIT_DEBUG_TOTP_SECRET;
+  });
+
+  it('rejects boot when AIT_DEBUG_TOTP_SECRET is unset (public relay must be authed)', async () => {
+    await expect(bootExternalRelayFamily('https://relay.example')).rejects.toThrow(
+      /AIT_DEBUG_TOTP_SECRET/,
+    );
+  });
+
+  it('rejects boot when AIT_DEBUG_TOTP_SECRET is a weak (non-hex) value', async () => {
+    process.env.AIT_DEBUG_TOTP_SECRET = 'Z'.repeat(40);
+    await expect(bootExternalRelayFamily('https://relay.example')).rejects.toThrow(
+      /AIT_DEBUG_TOTP_SECRET/,
+    );
+  });
+});
+
+// Local-only exemption (issue #250): `bootLocalFamily` launches a Chromium and
+// NEVER opens a relay, so it must not call the relay-auth guard. We do NOT boot a
+// real Chromium here (heavy/flaky); the exemption is structural — `bootLocalFamily`
+// has no `assertRelayAuthConfigured` call in its body, and a local-only session
+// only ever resolves the 'local' family key. The relay-boot wiring tests above
+// (which DO throw without a secret) confirm the guard is exclusive to relay boots.
+//
 // Pin the mode-type so an accidental literal typo fails to compile.
 const _exhaustive: StartDebugMode[] = ['local', 'mobile', 'staging', 'live'];
 void _exhaustive;

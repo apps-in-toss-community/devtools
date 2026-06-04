@@ -259,15 +259,28 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                 let relayWssUrl: string | undefined;
                 if (tunnelConfig.cdp) {
                   try {
+                    // Relay-auth baseline (issue #250): the env-2 CDP relay is
+                    // reachable over a public `*.trycloudflare.com` tunnel, so a
+                    // configured TOTP secret is MANDATORY and the relay enforces
+                    // it on every WS upgrade. assertRelayAuthConfigured throws
+                    // when AIT_DEBUG_TOTP_SECRET is unset/weak — the catch below
+                    // then skips the relay entirely (no UNAUTHENTICATED relay is
+                    // ever exposed; screen preview still works).
+                    // SECRET-HANDLING: the guard/predicate never log the value.
+                    const { assertRelayAuthConfigured, buildRelayVerifyAuth } = await import(
+                      '../mcp/totp.js'
+                    );
+                    assertRelayAuthConfigured();
+                    const verifyAuth = buildRelayVerifyAuth();
                     const { startChiiRelay } = await import('../mcp/chii-relay.js');
-                    const r = await startChiiRelay({ port: 0 });
+                    const r = await startChiiRelay({ port: 0, verifyAuth });
                     relay = r;
                     const rt = await startQuickTunnel(r.port);
                     relayTunnel = rt;
                     relayWssUrl = rt.url.replace(/^https:/, 'wss:');
                   } catch (err: unknown) {
                     console.warn(
-                      `[@ait-co/devtools] tunnel: CDP relay failed to start — screen preview will work without on-device debugging: ${
+                      `[@ait-co/devtools] tunnel: CDP relay not started — screen preview works without on-device debugging: ${
                         err instanceof Error ? err.message : String(err)
                       }`,
                     );

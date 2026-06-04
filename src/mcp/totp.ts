@@ -109,3 +109,123 @@ export function verifyTotp(
 
   return false;
 }
+
+/**
+ * Minimum length (in hex characters) accepted for `AIT_DEBUG_TOTP_SECRET`.
+ *
+ * The secret is hex-encoded (see {@link generateTotp} — `Buffer.from(secret,
+ * 'hex')`). 32 hex chars = 16 bytes = 128 bits, the floor for an HMAC-SHA1 key
+ * we are willing to gate a public relay behind. `generateAttachToken()` emits
+ * 64 hex chars (32 bytes), comfortably above this bar.
+ */
+const MIN_SECRET_HEX_CHARS = 32;
+
+/** Hex string: one or more hex digits, case-insensitive (RFC 4648 base16). */
+const HEX_RE = /^[0-9a-fA-F]+$/;
+
+/**
+ * Human-facing guidance printed when {@link assertRelayAuthConfigured} fails.
+ *
+ * SECRET-HANDLING: this message states only the REQUIREMENT (≥32 hex chars) and
+ * how to mint one. It NEVER echoes the configured value, its length, or any
+ * fragment derived from it — see {@link assertRelayAuthConfigured}.
+ *
+ * Note on encoding: the secret is hex (base16), not base32 — `generateTotp`
+ * decodes it with `Buffer.from(secret, 'hex')`. A base32 string would be
+ * silently mis-decoded and every TOTP code would fail to match, so the minting
+ * command emits hex.
+ */
+export const RELAY_AUTH_SECRET_MISSING_MESSAGE = [
+  '[ait-debug] AIT_DEBUG_TOTP_SECRET이 필수입니다. 32자 이상 16진수(hex) 문자열을 설정하세요.',
+  '발급: openssl rand -hex 32',
+  '자세히: https://docs.aitc.dev/guides/relay-auth-totp',
+].join('\n');
+
+/**
+ * Whether `secret` is a well-formed relay-auth TOTP secret: a hex string of at
+ * least {@link MIN_SECRET_HEX_CHARS} characters with an even length (an odd
+ * length would have its trailing nibble silently dropped by `Buffer.from(...,
+ * 'hex')`, weakening the key without warning).
+ *
+ * Pure predicate so callers can test the validation independently of the
+ * fail-fast side effect in {@link assertRelayAuthConfigured}.
+ *
+ * SECRET-HANDLING: returns only a boolean — the input value is never returned,
+ * logged, or echoed.
+ */
+export function isValidRelayAuthSecret(secret: string | undefined): secret is string {
+  if (secret === undefined || secret === '') return false;
+  if (secret.length < MIN_SECRET_HEX_CHARS) return false;
+  if (secret.length % 2 !== 0) return false;
+  return HEX_RE.test(secret);
+}
+
+/**
+ * Fail-fast guard enforcing that a relay-auth TOTP secret is configured before
+ * a public-internet-exposed relay is booted (issue #250).
+ *
+ * Relay-auth (the §4 Layer C TOTP gate) is the only fail-fast layer that closes
+ * the real gap: a leaked `wss://…trycloudflare.com` URL otherwise lets a third
+ * party attach a debugger to a dogfood/live mini-app. Without a secret the relay
+ * comes up unauthenticated, so this guard is called at every relay-boot site —
+ * `bootRelayFamily` (intoss env 3/4) and `bootExternalRelayFamily` (env-2 PWA),
+ * both eager and lazy. Local-only sessions never boot a relay and so never reach
+ * this guard, matching the issue's exemption for non-relay debugging.
+ *
+ * Throws when the secret is unset, empty, too short, or not a valid hex string.
+ * The thrown message is the bin entry's fatal stderr (see `cli.ts` `main().catch`)
+ * — the same fatal model as the missing-`AIT_RELAY_BASE_URL` path.
+ *
+ * SECRET-HANDLING: the env value is read once, passed ONLY to the boolean
+ * predicate, and never logged. The thrown message names the requirement, never
+ * the value, its length, or any derived fragment.
+ *
+ * @param env - Environment to read from. Defaults to `process.env`; injectable
+ *   for tests so they never mutate the real process environment.
+ */
+export function assertRelayAuthConfigured(env: NodeJS.ProcessEnv = process.env): void {
+  if (!isValidRelayAuthSecret(env.AIT_DEBUG_TOTP_SECRET)) {
+    throw new Error(RELAY_AUTH_SECRET_MISSING_MESSAGE);
+  }
+}
+
+/**
+ * Reads `AIT_DEBUG_TOTP_SECRET` from `process.env` at runtime and builds a
+ * `verifyAuth` predicate for the Chii relay's WebSocket upgrade gate.
+ *
+ * The predicate checks the `at` query parameter against the current and
+ * adjacent TOTP time steps (±1 skew) using {@link verifyTotp}.
+ *
+ * Returns `undefined` when the env var is not set — callers treat that as
+ * "auth disabled" (no predicate registered on the relay). Note that since
+ * issue #250 the secret is MANDATORY at every relay-boot site (enforced by
+ * {@link assertRelayAuthConfigured} BEFORE the relay starts), so in production
+ * this never returns `undefined` for a relay that actually boots; the
+ * `undefined` branch only matters for the no-relay local path and tests.
+ *
+ * Lives here (not in the MCP server) so the unplugin's env-2 relay can wire the
+ * same gate without importing the heavy MCP server module graph. Re-exported
+ * from `debug-server.ts` for back-compat.
+ *
+ * SECRET-HANDLING: The secret value read from env is captured in a closure and
+ * is NEVER written to any log, error message, or process output.
+ */
+export function buildRelayVerifyAuth(
+  env: NodeJS.ProcessEnv = process.env,
+): ((req: import('node:http').IncomingMessage) => boolean) | undefined {
+  const secret = env.AIT_DEBUG_TOTP_SECRET;
+  if (!secret) return undefined;
+
+  return (req) => {
+    // Parse the `at` query param from the upgrade request URL.
+    // req.url is the raw request path + query, e.g. `/client/id?target=…&at=123456`
+    const rawUrl = req.url ?? '';
+    const qIndex = rawUrl.indexOf('?');
+    const queryStr = qIndex === -1 ? '' : rawUrl.slice(qIndex + 1);
+    const params = new URLSearchParams(queryStr);
+    const code = params.get('at') ?? '';
+
+    // Do NOT log `code`, `secret`, or any derived value here.
+    return verifyTotp(secret, code);
+  };
+}
