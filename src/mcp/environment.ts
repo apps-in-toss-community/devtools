@@ -17,7 +17,7 @@
  *   2. `relay-dev` vs `relay-live` — physically underivable (dogfood and
  *      production relays are byte-identical on the wire), so it is a single
  *      operator-supplied bit, `liveIntent`. It is armed only by
- *      `start_debug({ mode: 'live' })` and is inert whenever the active
+ *      `start_debug({ mode: 'relay-live' })` and is inert whenever the active
  *      connection is local.
  *
  *   3. `relay-dev` vs `relay-mobile` — both are `kind: 'relay'`, !liveIntent

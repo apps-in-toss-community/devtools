@@ -225,8 +225,8 @@ Safari 원격 검사를 사용할 수 없는 경우, launcher setup 화면의 pa
 # 1. devtools MCP 실행 (debug 모드)
 npx -y @ait-co/devtools devtools-mcp
 
-# 2. staging(env 3)으로 진입 (MCP 세션에서) — 입력 mode: 'staging'
-# start_debug({mode: 'staging'})
+# 2. relay-staging(env 3)으로 진입 (MCP 세션에서) — 입력 mode: 'relay-staging'
+# start_debug({mode: 'relay-staging'})
 
 # 3. dogfood bundle deploy
 ait build
@@ -319,8 +319,8 @@ ait deploy --scheme-only
 # 1. devtools MCP 실행 (debug 모드)
 npx -y @ait-co/devtools devtools-mcp
 
-# 2. live(env 4)로 진입 — confirm:true 필수 (1차 LIVE gate)
-# start_debug({mode: 'live', confirm: true})
+# 2. relay-live(env 4)로 진입 — confirm:true 필수 (1차 LIVE gate)
+# start_debug({mode: 'relay-live', confirm: true})
 # confirm 없이 호출하면 거부됨
 
 # 3. 검수 통과 + OPENED 상태의 앱 필요 (miniAppId: 31146)
@@ -394,7 +394,7 @@ ait deploy --scheme-only
 | `call_sdk` `value: "sandbox"` 또는 dev 토큰 | dogfood(dev) bundle로 진입 | live bundle `_deploymentId` 확인 |
 | `list_pages` `crashDetectedAt` non-null | 앱 크래시 | crash report 분리 후 환경 3에서 디버깅 |
 | 앱이 OPENED 상태 아님 | 검수 미완료 | `aitcc app status 31146` 확인 |
-| `measure_safe_area` `source: "relay-dev"` | `start_debug(live)` 미호출 | `start_debug({mode: 'live', confirm: true})`로 진입 후 재시도 |
+| `measure_safe_area` `source: "relay-dev"` | `start_debug(relay-live)` 미호출 | `start_debug({mode: 'relay-live', confirm: true})`로 진입 후 재시도 |
 
 ---
 

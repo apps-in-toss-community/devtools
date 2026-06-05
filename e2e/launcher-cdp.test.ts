@@ -68,7 +68,7 @@
  *        AIT_RELAY_BASE_URL=https://<B>.trycloudflare.com \
  *        AIT_TUNNEL_BASE_URL=https://<A>.trycloudflare.com \
  *        npx @ait-co/devtools devtools-mcp
- *      In a new Claude Code session, call start_debug({mode:'mobile'}).
+ *      In a new Claude Code session, call start_debug({mode:'relay-sandbox'}).
  *   3. Call build_attach_url(). The tool returns a launcher QR.
  *      The QR URL is: https://devtools.aitc.dev/launcher/?url=<A>&debug=1&relay=<B-wss>
  *   4. Install the launcher PWA at https://devtools.aitc.dev/launcher/ on the phone

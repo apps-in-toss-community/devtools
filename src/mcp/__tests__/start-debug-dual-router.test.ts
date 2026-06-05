@@ -6,7 +6,7 @@
  *   - Switching mode flips the active connection underneath the SAME MCP
  *     `Server` (no re-handshake): tools read through `router.active` per call.
  *   - The mode-switch report reflects the now-active env + LIVE guard state.
- *   - `live` requires `confirm: true` on the `start_debug` call itself.
+ *   - `relay-live` requires `confirm: true` on the `start_debug` call itself.
  *   - The LIVE guard matrix over (connection.kind × liveIntent):
  *       relay + liveIntent + no confirm   → reject
  *       relay + liveIntent + confirm:true → pass
@@ -107,12 +107,12 @@ class TestRouter implements ConnectionRouter {
   }
 
   switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
-    if (mode === 'live' && !confirm) {
-      return Promise.reject(new Error('start_debug: live는 confirm: true가 필요합니다'));
+    if (mode === 'relay-live' && !confirm) {
+      return Promise.reject(new Error('start_debug: relay-live는 confirm: true가 필요합니다'));
     }
     const target = isRelayMode(mode) ? this.relay : this.local;
     this.current = target;
-    setLiveIntent(mode === 'live');
+    setLiveIntent(mode === 'relay-live');
     this.listChangedCount++;
     const environment = deriveEnvironment(target.kind, getLiveIntent());
     return Promise.resolve({
@@ -156,18 +156,20 @@ afterEach(() => setLiveIntent(false));
 
 describe('normalizeStartDebugMode', () => {
   it('accepts the four canonical modes (identity)', () => {
-    expect(normalizeStartDebugMode('local')).toBe('local');
-    expect(normalizeStartDebugMode('mobile')).toBe('mobile');
-    expect(normalizeStartDebugMode('staging')).toBe('staging');
-    expect(normalizeStartDebugMode('live')).toBe('live');
+    expect(normalizeStartDebugMode('local-browser')).toBe('local-browser');
+    expect(normalizeStartDebugMode('relay-sandbox')).toBe('relay-sandbox');
+    expect(normalizeStartDebugMode('relay-staging')).toBe('relay-staging');
+    expect(normalizeStartDebugMode('relay-live')).toBe('relay-live');
   });
-  it('normalizes deprecated aliases to canonical values (back-compat round-trip)', () => {
-    expect(normalizeStartDebugMode('local-browser-dev')).toBe('local');
-    expect(normalizeStartDebugMode('local-browser-cdp')).toBe('local');
-    expect(normalizeStartDebugMode('relay-dev')).toBe('staging');
-    expect(normalizeStartDebugMode('relay-live')).toBe('live');
-    // The output env name `relay-mobile` is accepted as an alias for `mobile` (#378).
-    expect(normalizeStartDebugMode('relay-mobile')).toBe('mobile');
+  it('rejects the old pre-#398 names — hard rename, no back-compat aliases', () => {
+    // #398 dropped the deprecated aliases entirely (devtools is pre-1.0, 0.1.x).
+    expect(normalizeStartDebugMode('local')).toBeNull();
+    expect(normalizeStartDebugMode('mobile')).toBeNull();
+    expect(normalizeStartDebugMode('staging')).toBeNull();
+    expect(normalizeStartDebugMode('live')).toBeNull();
+    expect(normalizeStartDebugMode('local-browser-dev')).toBeNull();
+    expect(normalizeStartDebugMode('relay-dev')).toBeNull();
+    expect(normalizeStartDebugMode('relay-mobile')).toBeNull();
   });
   it('rejects unknown values', () => {
     expect(normalizeStartDebugMode('mock')).toBeNull();
@@ -178,11 +180,11 @@ describe('normalizeStartDebugMode', () => {
 });
 
 describe('isRelayMode', () => {
-  it('mobile / staging / live are relay; local is not', () => {
-    expect(isRelayMode('mobile')).toBe(true);
-    expect(isRelayMode('staging')).toBe(true);
-    expect(isRelayMode('live')).toBe(true);
-    expect(isRelayMode('local')).toBe(false);
+  it('relay-sandbox / relay-staging / relay-live are relay; local-browser is not', () => {
+    expect(isRelayMode('relay-sandbox')).toBe(true);
+    expect(isRelayMode('relay-staging')).toBe(true);
+    expect(isRelayMode('relay-live')).toBe(true);
+    expect(isRelayMode('local-browser')).toBe(false);
   });
 });
 
@@ -218,10 +220,10 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
     expect(router.active.kind).toBe('relay');
     const result = await client.callTool({
       name: 'start_debug',
-      arguments: { mode: 'local' },
+      arguments: { mode: 'local-browser' },
     });
     const report = parseReport(result);
-    expect(report.mode).toBe('local');
+    expect(report.mode).toBe('local-browser');
     expect(report.environment).toBe('mock');
     expect(report.kind).toBe('local');
     expect(report.liveGuardActive).toBe(false);
@@ -231,11 +233,11 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
     expect(router.listChangedCount).toBe(1);
   });
 
-  it('local → staging switch reports relay-dev (output env), guard off', async () => {
+  it('local-browser → relay-staging switch reports relay-dev (output env), guard off', async () => {
     const router = new TestRouter('local');
     const client = await makeClient(router);
     const report = parseReport(
-      await client.callTool({ name: 'start_debug', arguments: { mode: 'staging' } }),
+      await client.callTool({ name: 'start_debug', arguments: { mode: 'relay-staging' } }),
     );
     // Output env layer is unchanged ('relay-dev' from deriveEnvironment).
     expect(report.environment).toBe('relay-dev');
@@ -243,26 +245,26 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
     expect(report.liveGuardActive).toBe(false);
   });
 
-  it('live requires confirm:true on the start_debug call itself', async () => {
+  it('relay-live requires confirm:true on the start_debug call itself', async () => {
     const router = new TestRouter('relay');
     const client = await makeClient(router);
     const rejected = await client.callTool({
       name: 'start_debug',
-      arguments: { mode: 'live' },
+      arguments: { mode: 'relay-live' },
     });
     expect(rejected.isError).toBe(true);
-    // Still on relay but guard unset — the unconfirmed live switch did not take.
+    // Still on relay but guard unset — the unconfirmed relay-live switch did not take.
     expect(router.active.kind).toBe('relay');
     expect(getLiveIntent()).toBe(false);
   });
 
-  it('live with confirm:true arms the LIVE guard', async () => {
+  it('relay-live with confirm:true arms the LIVE guard', async () => {
     const router = new TestRouter('relay');
     const client = await makeClient(router);
     const report = parseReport(
       await client.callTool({
         name: 'start_debug',
-        arguments: { mode: 'live', confirm: true },
+        arguments: { mode: 'relay-live', confirm: true },
       }),
     );
     // Output env layer is unchanged ('relay-live' from deriveEnvironment).
@@ -283,9 +285,9 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
     const router = new TestRouter('relay');
     const client = await makeClient(router);
     // First call on relay.
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'staging' } });
+    await client.callTool({ name: 'start_debug', arguments: { mode: 'relay-staging' } });
     // Switch to local, then immediately use a read tool — same session, no reconnect.
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'local' } });
+    await client.callTool({ name: 'start_debug', arguments: { mode: 'local-browser' } });
     const list = await client.listTools();
     expect(list.tools.map((t) => t.name)).toContain('list_pages');
     expect(router.active.kind).toBe('local');
@@ -300,7 +302,7 @@ describe('LIVE guard matrix — (active connection.kind × liveIntent)', () => {
     const client = await makeClient(router);
     await client.callTool({
       name: 'start_debug',
-      arguments: { mode: 'live', confirm: true },
+      arguments: { mode: 'relay-live', confirm: true },
     });
     const result = await client.callTool({
       name: 'call_sdk',
@@ -315,7 +317,7 @@ describe('LIVE guard matrix — (active connection.kind × liveIntent)', () => {
     const client = await makeClient(router);
     await client.callTool({
       name: 'start_debug',
-      arguments: { mode: 'live', confirm: true },
+      arguments: { mode: 'relay-live', confirm: true },
     });
     const result = await client.callTool({
       name: 'evaluate',
@@ -330,12 +332,12 @@ describe('LIVE guard matrix — (active connection.kind × liveIntent)', () => {
     // Arm liveIntent on live...
     await client.callTool({
       name: 'start_debug',
-      arguments: { mode: 'live', confirm: true },
+      arguments: { mode: 'relay-live', confirm: true },
     });
     expect(getLiveIntent()).toBe(true);
     // ...then switch to local. The bit stays true but is inert against local.
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'local' } });
-    // (TestRouter disarms on any non-live switch; assert guard is inert either way.)
+    await client.callTool({ name: 'start_debug', arguments: { mode: 'local-browser' } });
+    // (TestRouter disarms on any non-relay-live switch; assert guard is inert either way.)
     const result = await client.callTool({
       name: 'evaluate',
       arguments: { expression: '1 + 1' },
@@ -344,10 +346,10 @@ describe('LIVE guard matrix — (active connection.kind × liveIntent)', () => {
     expect(router.active.kind).toBe('local');
   });
 
-  it('relay + liveIntent=false (staging) → pass unguarded', async () => {
+  it('relay + liveIntent=false (relay-staging) → pass unguarded', async () => {
     const router = new TestRouter('relay');
     const client = await makeClient(router);
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'staging' } });
+    await client.callTool({ name: 'start_debug', arguments: { mode: 'relay-staging' } });
     const result = await client.callTool({
       name: 'call_sdk',
       arguments: { name: 'getOperationalEnvironment' },
@@ -355,15 +357,15 @@ describe('LIVE guard matrix — (active connection.kind × liveIntent)', () => {
     expect(getText(result)).not.toContain('LIVE relay guard');
   });
 
-  it('DISARM: live → local disarms liveIntent', async () => {
+  it('DISARM: relay-live → local-browser disarms liveIntent', async () => {
     const router = new TestRouter('relay');
     const client = await makeClient(router);
     await client.callTool({
       name: 'start_debug',
-      arguments: { mode: 'live', confirm: true },
+      arguments: { mode: 'relay-live', confirm: true },
     });
     expect(getLiveIntent()).toBe(true);
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'local' } });
+    await client.callTool({ name: 'start_debug', arguments: { mode: 'local-browser' } });
     expect(getLiveIntent()).toBe(false);
   });
 });
@@ -374,44 +376,50 @@ describe('makeSingleConnectionRouter — single-connection back-compat', () => {
   it('switching to a same-kind mode succeeds and arms/disarms liveIntent', async () => {
     const conn = new FakeConn('relay', [{ id: 'r1', title: 'app', url: 'intoss-private://app' }]);
     const router = makeSingleConnectionRouter(conn);
-    const dev = await router.switchMode('staging', false);
+    const dev = await router.switchMode('relay-staging', false);
     // Output env layer unchanged ('relay-dev' from deriveEnvironment).
     expect(dev.environment).toBe('relay-dev');
     expect(getLiveIntent()).toBe(false);
-    const live = await router.switchMode('live', true);
+    const live = await router.switchMode('relay-live', true);
     // Output env layer unchanged ('relay-live' from deriveEnvironment).
     expect(live.environment).toBe('relay-live');
     expect(live.liveGuardActive).toBe(true);
     expect(getLiveIntent()).toBe(true);
   });
 
-  it('live without confirm is rejected', async () => {
+  it('relay-live without confirm is rejected', async () => {
     const conn = new FakeConn('relay');
     const router = makeSingleConnectionRouter(conn);
-    await expect(router.switchMode('live', false)).rejects.toThrow(/confirm: true/);
+    await expect(router.switchMode('relay-live', false)).rejects.toThrow(/confirm: true/);
   });
 
   it('cross-family switch is rejected (single connection cannot lazy-boot the other)', async () => {
     const conn = new FakeConn('relay');
     const router = makeSingleConnectionRouter(conn);
-    await expect(router.switchMode('local', false)).rejects.toThrow(/동적 전환할 수 없습니다/);
+    await expect(router.switchMode('local-browser', false)).rejects.toThrow(
+      /동적 전환할 수 없습니다/,
+    );
   });
 
-  it('mobile switch is rejected — cannot synthesize the env-2 external relay (#378)', async () => {
-    // Even from a relay connection, `mobile` needs a DISTINCT external-PWA relay
+  it('relay-sandbox switch is rejected — cannot synthesize the env-2 external relay (#378)', async () => {
+    // Even from a relay connection, `relay-sandbox` needs a DISTINCT external-PWA relay
     // family this single-connection router cannot boot.
     const conn = new FakeConn('relay', [{ id: 'r1', title: 'app', url: 'intoss-private://app' }]);
     const router = makeSingleConnectionRouter(conn);
-    await expect(router.switchMode('mobile', false)).rejects.toThrow(/동적 전환할 수 없습니다/);
+    await expect(router.switchMode('relay-sandbox', false)).rejects.toThrow(
+      /동적 전환할 수 없습니다/,
+    );
     // The discriminator is absent on a single-connection router.
     expect(router.activeRelayOrigin).toBeUndefined();
   });
 
-  it('local connection accepts local mode but rejects relay modes', async () => {
+  it('local connection accepts local-browser mode but rejects relay modes', async () => {
     const conn = new FakeConn('local');
     const router = makeSingleConnectionRouter(conn);
-    const report = await router.switchMode('local', false);
+    const report = await router.switchMode('local-browser', false);
     expect(report.environment).toBe('mock');
-    await expect(router.switchMode('staging', false)).rejects.toThrow(/동적 전환할 수 없습니다/);
+    await expect(router.switchMode('relay-staging', false)).rejects.toThrow(
+      /동적 전환할 수 없습니다/,
+    );
   });
 });

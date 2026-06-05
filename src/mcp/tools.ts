@@ -135,10 +135,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Call list_pages first to confirm the relay/tunnel is up. If the tunnel is not up, restart: ' +
       '`npx @ait-co/devtools devtools-mcp`.\n\n' +
       'Environment-specific behaviour:\n' +
-      '  • env 3 / staging (start_debug mode="staging"): requires scheme_url — the ' +
+      '  • env 3 / relay-staging (start_debug mode="relay-staging"): requires scheme_url — the ' +
       'intoss-private://…?_deploymentId=<uuid> URL from `ait deploy --scheme-only`. Splices ' +
       'debug=1 + relay URL into the scheme URL to produce a self-attach deep link.\n' +
-      '  • env 2 / mobile (start_debug mode="mobile"): scheme_url is NOT used. Instead, reads ' +
+      '  • env 2 / relay-sandbox (start_debug mode="relay-sandbox"): scheme_url is NOT used. Instead, reads ' +
       'AIT_TUNNEL_BASE_URL (the https://*.trycloudflare.com app tunnel from `tunnel:{cdp:true}`) ' +
       'and builds a launcher PWA deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). ' +
       'Scan the QR with the phone to open the launcher, which frames the tunnel URL and attaches CDP.\n\n' +
@@ -159,7 +159,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'string',
           description:
             'The intoss-private:// scheme URL from `ait deploy --scheme-only` (must carry _deploymentId). ' +
-            'Required for env 3/staging mode. Not used in env 2/mobile mode (use AIT_TUNNEL_BASE_URL instead). ' +
+            'Required for env 3/relay-staging mode. Not used in env 2/relay-sandbox mode (use AIT_TUNNEL_BASE_URL instead). ' +
             'The authority (host) must be the app name (e.g. intoss-private://aitc-sdk-example?_deploymentId=…). ' +
             'Generic values like "web" or an empty host indicate a malformed URL.',
         },
@@ -178,7 +178,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'remote container environments should set this to false to use the text QR fallback.',
         },
       },
-      // scheme_url is required only for env 3/staging; env 2/mobile uses AIT_TUNNEL_BASE_URL.
+      // scheme_url is required only for env 3/relay-staging; env 2/relay-sandbox uses AIT_TUNNEL_BASE_URL.
       // The handler enforces the requirement at runtime based on the active environment.
       required: [],
     },
@@ -381,43 +381,43 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'attach survives the switch. After switching it emits notifications/tools/list_changed — ' +
       'call tools/list again to see the updated tool surface for the new environment.\n\n' +
       'modes:\n' +
-      '  local — env 1: desktop Chromium with the MOCK SDK and a local CDP attach. Side-effect ' +
-      'tools (call_sdk/evaluate) run unguarded against the mock; nothing touches a real device or ' +
-      'real users. No prerequisites — the default, always-available environment for state/contract ' +
-      'and visual-layout work.\n' +
-      '  mobile — env 2: a real-device PWA (real WebKit engine, MOCK SDK) over an external Chii ' +
-      'relay that the unplugin already started with tunnel:{cdp:true}. CDP covers real-device ' +
+      '  local-browser — env 1: desktop Chromium with the MOCK SDK and a local CDP attach. ' +
+      'Side-effect tools (call_sdk/evaluate) run unguarded against the mock; nothing touches a ' +
+      'real device or real users. No prerequisites — the default, always-available environment ' +
+      'for state/contract and visual-layout work.\n' +
+      '  relay-sandbox — env 2: a real-device PWA (real WebKit engine, MOCK SDK) over an external ' +
+      'Chii relay that the unplugin already started with tunnel:{cdp:true}. CDP covers real-device ' +
       'WebKit DOM, console, exceptions, and safe-area observation; call_sdk still hits the mock ' +
-      '(SDK fidelity needs staging). liveIntent off — dev-intent, LIVE guard inactive, side-effect ' +
-      'tools run unguarded against the mock. Prerequisites: AIT_RELAY_BASE_URL env var set + ' +
-      'unplugin running with tunnel:{cdp:true} so the relay tunnel is already up.\n' +
-      '  staging — env 3: a real-device Toss WebView dogfood build with the REAL SDK over the ' +
+      '(SDK fidelity needs relay-staging). liveIntent off — dev-intent, LIVE guard inactive, ' +
+      'side-effect tools run unguarded against the mock. Prerequisites: AIT_RELAY_BASE_URL env var ' +
+      'set + unplugin running with tunnel:{cdp:true} so the relay tunnel is already up.\n' +
+      '  relay-staging — env 3: a real-device Toss WebView dogfood build with the REAL SDK over the ' +
       'intoss-private relay. The first environment where call_sdk exercises the genuine native ' +
       'bridge. Side-effect tools run unguarded (dogfood, not released to real users). ' +
       'Prerequisite: a deployed dogfood candidate bundle + the device cold-loaded via the ' +
       'intoss-private deep-link/QR relay injection.\n' +
-      '  live — env 4: the REVIEW-PASSED, released production runtime with the REAL SDK over the ' +
-      'intoss relay — real end users are on the other side. Read-only debugging is the intent: ' +
+      '  relay-live — env 4: the REVIEW-PASSED, released production runtime with the REAL SDK over ' +
+      'the intoss relay — real end users are on the other side. Read-only debugging is the intent: ' +
       'the LIVE guard is armed, so call_sdk/evaluate require confirm:true per call, and ENTERING ' +
-      'live ALSO requires confirm:true on this call. Use it only to observe a shipped regression; ' +
-      'verify fixes in staging first.\n\n' +
-      'Switching back to local automatically disarms the LIVE guard.\n\n' +
-      'For a relay mode (mobile/staging/live), also pass projectRoot — the absolute mini-app ' +
-      'project root — so the daemon can read the relay auth secret from <projectRoot>/.ait_relay ' +
-      '(read-only; the daemon never mints it). Omit it for local.',
+      'relay-live ALSO requires confirm:true on this call. Use it only to observe a shipped ' +
+      'regression; verify fixes in relay-staging first.\n\n' +
+      'Switching back to local-browser automatically disarms the LIVE guard.\n\n' +
+      'For a relay mode (relay-sandbox/relay-staging/relay-live), also pass projectRoot — the ' +
+      'absolute mini-app project root — so the daemon can read the relay auth secret from ' +
+      '<projectRoot>/.ait_relay (read-only; the daemon never mints it). Omit it for local-browser.',
     inputSchema: {
       type: 'object',
       properties: {
         mode: {
           type: 'string',
-          enum: ['local', 'mobile', 'staging', 'live'],
+          enum: ['local-browser', 'relay-sandbox', 'relay-staging', 'relay-live'],
           description:
-            'Target environment to switch to. mode=live additionally requires confirm: true (and arms the read-only LIVE guard).',
+            'Target environment to switch to. mode=relay-live additionally requires confirm: true (and arms the read-only LIVE guard).',
         },
         confirm: {
           type: 'boolean',
           description:
-            'Required when mode=live — set true to acknowledge entering LIVE (env 4) ' +
+            'Required when mode=relay-live — set true to acknowledge entering LIVE (env 4) ' +
             'debugging that can affect real users. Ignored for the other modes.',
         },
         projectRoot: {
@@ -425,8 +425,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
           description:
             'Absolute path to the mini-app project root (the directory containing its package.json and .ait_relay). ' +
             'The daemon reads the relay auth secret from <projectRoot>/.ait_relay (read-only) when switching to a relay ' +
-            "environment (staging/live/mobile). Pass this because the daemon's own cwd is fixed at launch and may not be " +
-            'the project being debugged. Omit for mode=local (no secret needed).',
+            "environment (relay-staging/relay-live/relay-sandbox). Pass this because the daemon's own cwd is fixed at launch and may not be " +
+            'the project being debugged. Omit for mode=local-browser (no secret needed).',
         },
       },
       required: ['mode'],

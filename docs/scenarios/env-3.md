@@ -5,16 +5,15 @@
 
 ## 전제조건
 
-- `devtools-mcp` 실행 후 `start_debug({mode: 'staging'})` 호출 (debug 모드)
+- `devtools-mcp` 실행 후 `start_debug({mode: 'relay-staging'})` 호출 (debug 모드)
   - MCP 기동: `npx @ait-co/devtools devtools-mcp`
-  - 그런 다음 Claude Code에서: `start_debug({mode: 'staging'})`
-  - `MCP_ENV=relay-dev` / `MCP_ENV=relay` 는 deprecated back-compat 별칭 — 새 세션에서는 `start_debug(staging)` 사용
+  - 그런 다음 Claude Code에서: `start_debug({mode: 'relay-staging'})`
 - dogfood bundle deploy: `ait build && ait deploy --scheme-only`
 - deep-link: `intoss-private://aitc-sdk-example?_deploymentId=<uuid>&debug=1&relay=<wss>`
 - 진입 경로: QR 스캔 (단일 정식 경로 — `test-push` 폐기됨)
 
-> 참고 — `devtools-mcp` 기동 직후 `start_debug({mode: 'staging'})`를 호출하면 relay connection이 준비된다.
-> `--target=local`로 기동했어도 `start_debug(staging)`으로 relay로 hot-switch 가능하다(#356 DualConnectionRouter 대칭화 — 재시작 불필요).
+> 참고 — `devtools-mcp` 기동 직후 `start_debug({mode: 'relay-staging'})`를 호출하면 relay connection이 준비된다.
+> `--target=local`로 기동했어도 `start_debug(relay-staging)`으로 relay로 hot-switch 가능하다(#356 DualConnectionRouter 대칭화 — 재시작 불필요).
 
 ## MCP 도구 acceptance 체크리스트
 
@@ -28,7 +27,7 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
    - `lastSeenAt`이 30초 이내
 
 2. **`measure_safe_area`**
-   - `source: "relay-dev"` (출력 env.kind 불변 — 입력 mode `staging`에서도 동일)
+   - `source: "relay-dev"` (출력 env.kind 불변 — 입력 mode `relay-staging`에서도 동일)
    - `sdkInsetsSource: "window.__sdk"`
    - `sdkInsets.top`이 토스 앱 nav bar 높이 (일반적으로 44–54 CSS px)
    - `userAgent`에 Toss WebView / Mobile Safari 포함
