@@ -385,6 +385,12 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'tools (call_sdk/evaluate) run unguarded against the mock; nothing touches a real device or ' +
       'real users. No prerequisites — the default, always-available environment for state/contract ' +
       'and visual-layout work.\n' +
+      '  mobile — env 2: a real-device PWA (real WebKit engine, MOCK SDK) over an external Chii ' +
+      'relay that the unplugin already started with tunnel:{cdp:true}. CDP covers real-device ' +
+      'WebKit DOM, console, exceptions, and safe-area observation; call_sdk still hits the mock ' +
+      '(SDK fidelity needs staging). liveIntent off — dev-intent, LIVE guard inactive, side-effect ' +
+      'tools run unguarded against the mock. Prerequisites: AIT_RELAY_BASE_URL env var set + ' +
+      'unplugin running with tunnel:{cdp:true} so the relay tunnel is already up.\n' +
       '  staging — env 3: a real-device Toss WebView dogfood build with the REAL SDK over the ' +
       'intoss-private relay. The first environment where call_sdk exercises the genuine native ' +
       'bridge. Side-effect tools run unguarded (dogfood, not released to real users). ' +
@@ -401,7 +407,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       properties: {
         mode: {
           type: 'string',
-          enum: ['local', 'staging', 'live'],
+          enum: ['local', 'mobile', 'staging', 'live'],
           description:
             'Target environment to switch to. mode=live additionally requires confirm: true (and arms the read-only LIVE guard).',
         },
