@@ -401,7 +401,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'the LIVE guard is armed, so call_sdk/evaluate require confirm:true per call, and ENTERING ' +
       'live ALSO requires confirm:true on this call. Use it only to observe a shipped regression; ' +
       'verify fixes in staging first.\n\n' +
-      'Switching back to local automatically disarms the LIVE guard.',
+      'Switching back to local automatically disarms the LIVE guard.\n\n' +
+      'For a relay mode (mobile/staging/live), also pass projectRoot — the absolute mini-app ' +
+      'project root — so the daemon can read the relay auth secret from <projectRoot>/.ait_relay ' +
+      '(read-only; the daemon never mints it). Omit it for local.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -416,6 +419,14 @@ export const DEBUG_TOOL_DEFINITIONS = [
           description:
             'Required when mode=live — set true to acknowledge entering LIVE (env 4) ' +
             'debugging that can affect real users. Ignored for the other modes.',
+        },
+        projectRoot: {
+          type: 'string',
+          description:
+            'Absolute path to the mini-app project root (the directory containing its package.json and .ait_relay). ' +
+            'The daemon reads the relay auth secret from <projectRoot>/.ait_relay (read-only) when switching to a relay ' +
+            "environment (staging/live/mobile). Pass this because the daemon's own cwd is fixed at launch and may not be " +
+            'the project being debugged. Omit for mode=local (no secret needed).',
         },
       },
       required: ['mode'],

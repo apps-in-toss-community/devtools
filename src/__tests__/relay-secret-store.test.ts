@@ -1,16 +1,26 @@
 /**
- * Unit tests for the relay TOTP secret first-run auto-mint helper (#394).
+ * Unit tests for the project-local relay TOTP secret store (#394 mint, #396
+ * project-local single file `.ait_relay` + read-only daemon loader).
  *
- * All tests use injected stubs — no real disk I/O, no real RNG.
+ * All tests use injected stubs — no real disk I/O, no real RNG. The daemon cwd
+ * here contains a package.json (the repo root), so every loader test MUST inject
+ * `projectRoot` + a stub `existsSync`/`fs` to avoid short-circuiting on the real
+ * filesystem.
  *
- * SECRET-HANDLING: only deliberately INVALID or test-fixture hex strings
- * appear here. The log-assertion tests confirm that the minted value
- * (whatever the stub emits) is NEVER echoed back in the log message.
+ * SECRET-HANDLING: only deliberately INVALID or test-fixture hex strings appear
+ * here. The log-assertion tests confirm the minted value is NEVER echoed.
  */
 
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { RelaySecretDeps, RelaySecretFs } from '../mcp/relay-secret-store.js';
-import { ensureRelaySecret, relaySecretFilePath } from '../mcp/relay-secret-store.js';
+import type { RelaySecretFs, RelaySecretReadOnlyFs } from '../mcp/relay-secret-store.js';
+import {
+  ensureRelaySecret,
+  loadRelaySecretReadOnly,
+  nearestPackageJsonDir,
+  RELAY_SECRET_FILE_NAME,
+  relaySecretFilePath,
+} from '../mcp/relay-secret-store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -19,35 +29,33 @@ import { ensureRelaySecret, relaySecretFilePath } from '../mcp/relay-secret-stor
 /** 64-hex chars = 32 bytes — passes isValidRelayAuthSecret. */
 const VALID_SECRET = 'deadbeef'.repeat(8);
 
+const PROJECT_ROOT = '/home/testuser/my-mini-app';
+const SECRET_PATH = join(PROJECT_ROOT, RELAY_SECRET_FILE_NAME);
+
 /** Stub randomBytes that returns a deterministic 32-byte buffer. */
 function makeStubRandomBytes(hexOutput = VALID_SECRET): (n: number) => Buffer {
   return (_n: number) => Buffer.from(hexOutput, 'hex');
 }
 
-/** Builds a minimal in-memory fs stub. */
+/**
+ * In-memory write-capable fs stub for ensureRelaySecret. The new store does NOT
+ * use mkdirSync/statSync, so this exposes exactly the four methods the write
+ * path needs plus capture maps.
+ */
 function makeFs(overrides: Partial<RelaySecretFs> = {}): RelaySecretFs & {
   _written: Map<string, { data: string; options: { mode: number; flag: string } }>;
   _chmods: Array<{ path: string; mode: number }>;
-  _mkdirs: Array<{ path: string; options: { recursive: boolean; mode: number } }>;
-  _stats: Map<string, { mode: number }>;
   _files: Map<string, string>;
 } {
   const files = new Map<string, string>();
   const written = new Map<string, { data: string; options: { mode: number; flag: string } }>();
   const chmods: Array<{ path: string; mode: number }> = [];
-  const mkdirs: Array<{ path: string; options: { recursive: boolean; mode: number } }> = [];
-  const stats = new Map<string, { mode: number }>();
 
   const stub: ReturnType<typeof makeFs> = {
     _written: written,
     _chmods: chmods,
-    _mkdirs: mkdirs,
-    _stats: stats,
     _files: files,
 
-    mkdirSync(path, options) {
-      mkdirs.push({ path, options });
-    },
     writeFileSync(path, data, options) {
       if (options.flag === 'wx' && files.has(path)) {
         const err = new Error('EEXIST: file already exists') as NodeJS.ErrnoException;
@@ -64,11 +72,6 @@ function makeFs(overrides: Partial<RelaySecretFs> = {}): RelaySecretFs & {
       }
       return val;
     },
-    statSync(path) {
-      const s = stats.get(path);
-      if (s === undefined) throw new Error(`ENOENT: no such file — ${path}`);
-      return s;
-    },
     chmodSync(path, mode) {
       chmods.push({ path, mode });
     },
@@ -80,66 +83,96 @@ function makeFs(overrides: Partial<RelaySecretFs> = {}): RelaySecretFs & {
   return stub;
 }
 
-/** Common deps builder: injects stub randomBytes + fs + homedir + log. */
-function makeDeps(
-  env: NodeJS.ProcessEnv,
-  fsStub: RelaySecretFs,
-  logMessages: string[],
-  hexOutput = VALID_SECRET,
-): RelaySecretDeps {
-  return {
-    env,
-    randomBytes: makeStubRandomBytes(hexOutput),
-    fs: fsStub,
-    homedir: () => '/home/testuser',
-    log: (msg: string) => logMessages.push(msg),
-  };
+/** existsSync that returns true only for package.json directly under PROJECT_ROOT. */
+function makeProjectExistsSync(packageJsonDirs: string[] = [PROJECT_ROOT]) {
+  return (path: string): boolean => packageJsonDirs.some((d) => path === join(d, 'package.json'));
 }
 
 // ---------------------------------------------------------------------------
-// 1. Mint path: env empty, file absent → mint + persist + inject + log
+// nearestPackageJsonDir
 // ---------------------------------------------------------------------------
 
-describe('ensureRelaySecret — mint path', () => {
-  it('calls mkdirSync with recursive:true and mode:0o700', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
-    expect(fs._mkdirs.length).toBeGreaterThanOrEqual(1);
-    const dirCall = fs._mkdirs[0];
-    expect(dirCall.options.recursive).toBe(true);
-    expect(dirCall.options.mode).toBe(0o700);
+describe('nearestPackageJsonDir', () => {
+  it('returns the start dir when it has a package.json', () => {
+    const existsSync = makeProjectExistsSync([PROJECT_ROOT]);
+    expect(nearestPackageJsonDir(PROJECT_ROOT, existsSync)).toBe(PROJECT_ROOT);
   });
 
-  it('calls chmodSync(dir, 0o700) to tighten existing directory', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
-    const dirChmod = fs._chmods.find((c) => c.mode === 0o700);
-    expect(dirChmod).toBeDefined();
+  it('walks up to the nearest parent that has a package.json', () => {
+    // package.json only exists at PROJECT_ROOT, start is a subdir.
+    const start = join(PROJECT_ROOT, 'packages', 'app', 'src');
+    const existsSync = makeProjectExistsSync([PROJECT_ROOT]);
+    expect(nearestPackageJsonDir(start, existsSync)).toBe(PROJECT_ROOT);
   });
 
-  it('calls writeFileSync with mode:0o600 and flag:"wx"', async () => {
+  it('prefers the closest package.json in a monorepo subdir', () => {
+    const pkgDir = join(PROJECT_ROOT, 'packages', 'app');
+    const start = join(pkgDir, 'src', 'deep');
+    // Both the package dir and the workspace root have package.json — closest wins.
+    const existsSync = makeProjectExistsSync([pkgDir, PROJECT_ROOT]);
+    expect(nearestPackageJsonDir(start, existsSync)).toBe(pkgDir);
+  });
+
+  it('falls back to the start dir when no package.json is found', () => {
+    const start = '/tmp/no-pkg/here';
+    const existsSync = (): boolean => false;
+    expect(nearestPackageJsonDir(start, existsSync)).toBe(start);
+  });
+});
+
+describe('relaySecretFilePath', () => {
+  it('joins the nearest package.json dir with .ait_relay', () => {
+    const start = join(PROJECT_ROOT, 'packages', 'app', 'src');
+    const existsSync = makeProjectExistsSync([PROJECT_ROOT]);
+    expect(relaySecretFilePath(start, existsSync)).toBe(SECRET_PATH);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ensureRelaySecret — mint path (projectRoot, single file)
+// ---------------------------------------------------------------------------
+
+describe('ensureRelaySecret — mint path (project-local)', () => {
+  function deps(env: NodeJS.ProcessEnv, fs: RelaySecretFs, logs: string[]) {
+    return {
+      projectRoot: PROJECT_ROOT,
+      env,
+      randomBytes: makeStubRandomBytes(),
+      fs,
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+      log: (msg: string) => logs.push(msg),
+    };
+  }
+
+  it('writes a single .ait_relay file at <projectRoot> with mode 0o600 and flag "wx"', async () => {
     const env: NodeJS.ProcessEnv = {};
     const fs = makeFs();
     const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    const write = fs._written.get(secretPath);
+    await ensureRelaySecret(deps(env, fs, logs));
+    const write = fs._written.get(SECRET_PATH);
     expect(write).toBeDefined();
     expect(write?.options.mode).toBe(0o600);
     expect(write?.options.flag).toBe('wx');
   });
 
-  it('calls chmodSync(secretPath, 0o600) after writeFileSync', async () => {
+  it('does NOT create any directory (no mkdirSync in the fs surface)', async () => {
     const env: NodeJS.ProcessEnv = {};
     const fs = makeFs();
     const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    const fileChmod = fs._chmods.find((c) => c.path === secretPath && c.mode === 0o600);
+    // The RelaySecretFs type has no mkdirSync — assert the property is absent so
+    // the daemon-vs-unplugin write surface stays single-file.
+    expect('mkdirSync' in fs).toBe(false);
+    await ensureRelaySecret(deps(env, fs, logs));
+    // Only the secret file was written, nothing else.
+    expect([...fs._written.keys()]).toEqual([SECRET_PATH]);
+  });
+
+  it('chmods the file to 0o600 after writing', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const fs = makeFs();
+    const logs: string[] = [];
+    await ensureRelaySecret(deps(env, fs, logs));
+    const fileChmod = fs._chmods.find((c) => c.path === SECRET_PATH && c.mode === 0o600);
     expect(fileChmod).toBeDefined();
   });
 
@@ -147,240 +180,258 @@ describe('ensureRelaySecret — mint path', () => {
     const env: NodeJS.ProcessEnv = {};
     const fs = makeFs();
     const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
+    await ensureRelaySecret(deps(env, fs, logs));
     expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
   });
 
-  it('calls log exactly once on first mint', async () => {
+  it('logs exactly once on first mint, mentioning .ait_relay but NOT the value or length', async () => {
     const env: NodeJS.ProcessEnv = {};
     const fs = makeFs();
     const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
+    await ensureRelaySecret(deps(env, fs, logs));
     expect(logs.length).toBe(1);
-  });
-
-  it('log message contains the persist path but NOT the secret value or its length', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
     const msg = logs.join('');
-    // Must mention the path pattern.
-    expect(msg).toMatch(/relay-totp-secret/);
-    // SECRET-HANDLING: value must not appear.
+    expect(msg).toContain(RELAY_SECRET_FILE_NAME);
+    // SECRET-HANDLING: value, its length ("64"), and any 64-hex run must be absent.
     expect(msg).not.toContain(VALID_SECRET);
-    // SECRET-HANDLING: length ("64") must not appear.
     expect(msg).not.toMatch(/\b64\b/);
-    // Must not contain any 64-char hex substring.
     expect(msg).not.toMatch(/[0-9a-fA-F]{64}/);
   });
-});
 
-// ---------------------------------------------------------------------------
-// 2. Reload path: file exists with valid secret → inject, no write, no log
-// ---------------------------------------------------------------------------
-
-describe('ensureRelaySecret — reload path', () => {
-  it('injects the stored secret into env', async () => {
+  it('resolves the file at the nearest package.json dir when projectRoot is a subdir', async () => {
     const env: NodeJS.ProcessEnv = {};
     const fs = makeFs();
     const logs: string[] = [];
-    const deps = makeDeps(env, fs, logs);
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    fs._files.set(secretPath, VALID_SECRET);
-    fs._stats.set(secretPath, { mode: 0o100600 }); // 0600 permissions
-
-    await ensureRelaySecret(deps);
-
-    expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
-  });
-
-  it('does NOT call writeFileSync on reload', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    const deps = makeDeps(env, fs, logs);
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    fs._files.set(secretPath, VALID_SECRET);
-    fs._stats.set(secretPath, { mode: 0o100600 });
-
-    await ensureRelaySecret(deps);
-
-    // writeFileSync should not have been called for the secret path.
-    expect(fs._written.has(secretPath)).toBe(false);
-  });
-
-  it('does NOT call log on silent reload', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    const deps = makeDeps(env, fs, logs);
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    fs._files.set(secretPath, VALID_SECRET);
-    fs._stats.set(secretPath, { mode: 0o100600 });
-
-    await ensureRelaySecret(deps);
-
-    expect(logs.length).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 3. Already-set no-op: env has a valid secret → fs never touched
-// ---------------------------------------------------------------------------
-
-describe('ensureRelaySecret — already-set no-op', () => {
-  it('returns immediately without touching fs when env is already valid', async () => {
-    const env: NodeJS.ProcessEnv = { AIT_DEBUG_TOTP_SECRET: VALID_SECRET };
-    const mkdirSyncSpy = vi.fn();
-    const writeFileSyncSpy = vi.fn();
-    const readFileSyncSpy = vi.fn();
-    const existsSyncSpy = vi.fn();
-    const logs: string[] = [];
-
-    const fs: RelaySecretFs = {
-      mkdirSync: mkdirSyncSpy,
-      writeFileSync: writeFileSyncSpy,
-      readFileSync: readFileSyncSpy,
-      statSync: vi.fn(),
-      chmodSync: vi.fn(),
-      existsSync: existsSyncSpy,
-    };
-
+    const subdir = join(PROJECT_ROOT, 'packages', 'app');
     await ensureRelaySecret({
+      projectRoot: subdir,
       env,
       randomBytes: makeStubRandomBytes(),
       fs,
-      homedir: () => '/home/testuser',
+      // package.json only at the workspace root → resolves up to PROJECT_ROOT.
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
       log: (msg) => logs.push(msg),
     });
+    expect(fs._written.has(SECRET_PATH)).toBe(true);
+  });
+});
 
-    expect(mkdirSyncSpy).not.toHaveBeenCalled();
-    expect(writeFileSyncSpy).not.toHaveBeenCalled();
-    expect(readFileSyncSpy).not.toHaveBeenCalled();
-    expect(existsSyncSpy).not.toHaveBeenCalled();
+// ---------------------------------------------------------------------------
+// ensureRelaySecret — reload + no-op paths
+// ---------------------------------------------------------------------------
+
+describe('ensureRelaySecret — reload + no-op', () => {
+  it('reloads the stored value silently (no write, no log)', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const fs = makeFs();
+    fs._files.set(SECRET_PATH, VALID_SECRET);
+    const logs: string[] = [];
+    await ensureRelaySecret({
+      projectRoot: PROJECT_ROOT,
+      env,
+      randomBytes: makeStubRandomBytes(),
+      fs,
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+      log: (msg) => logs.push(msg),
+    });
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
+    expect(fs._written.has(SECRET_PATH)).toBe(false);
     expect(logs.length).toBe(0);
   });
-});
 
-// ---------------------------------------------------------------------------
-// 4. Loose-permissions reload: file exists but mode has group/other bits
-//    → chmodSync(path, 0o600) must be called
-// ---------------------------------------------------------------------------
-
-describe('ensureRelaySecret — loose permissions tightening', () => {
-  it('calls chmodSync(path, 0o600) when file has group-readable bits', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    const deps = makeDeps(env, fs, logs);
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    fs._files.set(secretPath, VALID_SECRET);
-    // 0o100644 → group and other read bits are set.
-    fs._stats.set(secretPath, { mode: 0o100644 });
-
-    await ensureRelaySecret(deps);
-
-    const tighten = fs._chmods.find((c) => c.path === secretPath && c.mode === 0o600);
-    expect(tighten).toBeDefined();
-  });
-
-  it('does NOT call chmodSync(path, 0o600) when permissions are already tight', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    const deps = makeDeps(env, fs, logs);
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    fs._files.set(secretPath, VALID_SECRET);
-    // 0o100600 → no group/other bits.
-    fs._stats.set(secretPath, { mode: 0o100600 });
-
-    await ensureRelaySecret(deps);
-
-    const tighten = fs._chmods.find((c) => c.path === secretPath && c.mode === 0o600);
-    expect(tighten).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 5. SECRET-HANDLING: log message never contains the minted value
-// ---------------------------------------------------------------------------
-
-describe('ensureRelaySecret — SECRET-HANDLING: log never leaks value', () => {
-  it('does not include the minted hex value in the log message', async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const fs = makeFs();
-    const logs: string[] = [];
-    await ensureRelaySecret(makeDeps(env, fs, logs));
-    const combined = logs.join('');
-    // VALID_SECRET is "deadbeef" × 8 = 64 hex chars.
-    expect(combined).not.toContain(VALID_SECRET);
-    // The value injected into env must not appear in the log either.
-    const injected = env.AIT_DEBUG_TOTP_SECRET ?? '';
-    expect(combined).not.toContain(injected);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 6. EEXIST race — falls back to reading the winner's value
-// ---------------------------------------------------------------------------
-
-describe('ensureRelaySecret — EEXIST race recovery', () => {
-  it("injects the winner's value when writeFileSync throws EEXIST", async () => {
-    const env: NodeJS.ProcessEnv = {};
-    const logs: string[] = [];
-
-    // Pre-populate the file with a winner's valid secret BEFORE calling
-    // ensureRelaySecret, and make writeFileSync always throw EEXIST.
-    const winnerSecret = 'cafebabe'.repeat(8);
-    const files = new Map<string, string>();
-    const secretPath = relaySecretFilePath(env, () => '/home/testuser');
-    files.set(secretPath, winnerSecret);
-
+  it('is a no-op when env already holds a valid secret', async () => {
+    const env: NodeJS.ProcessEnv = { AIT_DEBUG_TOTP_SECRET: VALID_SECRET };
+    const writeFileSyncSpy = vi.fn();
+    const existsSyncSpy = vi.fn();
     const fs: RelaySecretFs = {
-      mkdirSync: vi.fn(),
-      writeFileSync(_p, _d, _opts) {
-        // Simulate EEXIST (another process wrote first).
+      writeFileSync: writeFileSyncSpy,
+      readFileSync: vi.fn(),
+      chmodSync: vi.fn(),
+      existsSync: existsSyncSpy,
+    };
+    await ensureRelaySecret({
+      projectRoot: PROJECT_ROOT,
+      env,
+      randomBytes: makeStubRandomBytes(),
+      fs,
+      existsSync: existsSyncSpy,
+      log: vi.fn(),
+    });
+    expect(writeFileSyncSpy).not.toHaveBeenCalled();
+  });
+
+  it("injects the winner's value when writeFileSync throws EEXIST (race)", async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const winnerSecret = 'cafebabe'.repeat(8);
+    const files = new Map<string, string>([[SECRET_PATH, winnerSecret]]);
+    const fs: RelaySecretFs = {
+      writeFileSync() {
         const err = new Error('EEXIST') as NodeJS.ErrnoException;
         err.code = 'EEXIST';
         throw err;
       },
-      readFileSync(path, _enc) {
-        const val = files.get(path);
-        if (val === undefined) throw new Error(`ENOENT: ${path}`);
-        return val;
+      readFileSync(path) {
+        const v = files.get(path);
+        if (v === undefined) throw new Error(`ENOENT ${path}`);
+        return v;
       },
-      statSync: vi.fn().mockReturnValue({ mode: 0o100600 }),
       chmodSync: vi.fn(),
-      existsSync: (path) => files.has(path),
+      // existsSync(secretPath) === false here so the mint path is taken and the
+      // write then races into EEXIST.
+      existsSync: () => false,
     };
-
     await ensureRelaySecret({
+      projectRoot: PROJECT_ROOT,
       env,
       randomBytes: makeStubRandomBytes(),
       fs,
-      homedir: () => '/home/testuser',
-      log: (msg) => logs.push(msg),
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+      log: vi.fn(),
     });
-
     expect(env.AIT_DEBUG_TOTP_SECRET).toBe(winnerSecret);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 7. relaySecretFilePath helper — respects AIT_DEVTOOLS_LOCK_DIR override
+// loadRelaySecretReadOnly — daemon read-only loader (#396)
 // ---------------------------------------------------------------------------
 
-describe('relaySecretFilePath', () => {
-  it('defaults to ~/.ait-devtools/relay-totp-secret', () => {
-    const env: NodeJS.ProcessEnv = {};
-    const path = relaySecretFilePath(env, () => '/home/testuser');
-    expect(path).toBe('/home/testuser/.ait-devtools/relay-totp-secret');
+/** Minimal read-only fs stub: only existsSync + readFileSync. */
+function makeReadOnlyFs(files: Map<string, string>): RelaySecretReadOnlyFs {
+  return {
+    existsSync: (path) => files.has(path),
+    readFileSync(path) {
+      const v = files.get(path);
+      if (v === undefined) throw new Error(`ENOENT ${path}`);
+      return v;
+    },
+  };
+}
+
+describe('loadRelaySecretReadOnly', () => {
+  it('(a) is a no-op when env already holds a valid secret', async () => {
+    const env: NodeJS.ProcessEnv = { AIT_DEBUG_TOTP_SECRET: VALID_SECRET };
+    const existsSyncSpy = vi.fn();
+    await loadRelaySecretReadOnly({
+      projectRoot: PROJECT_ROOT,
+      env,
+      fs: { existsSync: existsSyncSpy, readFileSync: vi.fn() },
+      existsSync: existsSyncSpy,
+    });
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
+    // Must not even probe the filesystem.
+    expect(existsSyncSpy).not.toHaveBeenCalled();
   });
 
-  it('respects AIT_DEVTOOLS_LOCK_DIR override', () => {
-    const env: NodeJS.ProcessEnv = { AIT_DEVTOOLS_LOCK_DIR: '/tmp/ait-test-lock' };
-    const path = relaySecretFilePath(env, () => '/home/testuser');
-    expect(path).toBe('/tmp/ait-test-lock/relay-totp-secret');
+  it('(b) injects env from a valid <projectRoot>/.ait_relay file', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const files = new Map<string, string>([[SECRET_PATH, VALID_SECRET]]);
+    await loadRelaySecretReadOnly({
+      projectRoot: PROJECT_ROOT,
+      env,
+      fs: makeReadOnlyFs(files),
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+    });
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
+  });
+
+  it('(b2) trims surrounding whitespace from the stored value', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const files = new Map<string, string>([[SECRET_PATH, `  ${VALID_SECRET}\n`]]);
+    await loadRelaySecretReadOnly({
+      projectRoot: PROJECT_ROOT,
+      env,
+      fs: makeReadOnlyFs(files),
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+    });
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
+  });
+
+  it('(c) leaves env unset and does not throw when the file is absent', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    await expect(
+      loadRelaySecretReadOnly({
+        projectRoot: PROJECT_ROOT,
+        env,
+        fs: makeReadOnlyFs(new Map()),
+        existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+      }),
+    ).resolves.toBeUndefined();
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBeUndefined();
+  });
+
+  it('(c2) leaves env unset and does not throw when projectRoot is omitted', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const existsSyncSpy = vi.fn();
+    await expect(
+      loadRelaySecretReadOnly({
+        env,
+        fs: { existsSync: existsSyncSpy, readFileSync: vi.fn() },
+        existsSync: existsSyncSpy,
+      }),
+    ).resolves.toBeUndefined();
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBeUndefined();
+    expect(existsSyncSpy).not.toHaveBeenCalled();
+  });
+
+  it('(d) leaves env unset when the stored value is invalid', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const files = new Map<string, string>([[SECRET_PATH, 'not-a-valid-secret']]);
+    await loadRelaySecretReadOnly({
+      projectRoot: PROJECT_ROOT,
+      env,
+      fs: makeReadOnlyFs(files),
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+    });
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBeUndefined();
+  });
+
+  it('(e) READ-ONLY: never calls any write/mkdir/chmod (fs surface has none)', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const files = new Map<string, string>([[SECRET_PATH, VALID_SECRET]]);
+    // A read-only fs stub that THROWS if any mutating method is somehow invoked.
+    const mutatingSpy = vi.fn(() => {
+      throw new Error('read-only loader must not mutate the filesystem');
+    });
+    const fs = {
+      existsSync: (path: string) => files.has(path),
+      readFileSync(path: string) {
+        const v = files.get(path);
+        if (v === undefined) throw new Error(`ENOENT ${path}`);
+        return v;
+      },
+      // These are NOT part of RelaySecretReadOnlyFs — present only to detect a
+      // rogue call. Cast through unknown to attach them without widening the type.
+      writeFileSync: mutatingSpy,
+      mkdirSync: mutatingSpy,
+      chmodSync: mutatingSpy,
+    } as unknown as RelaySecretReadOnlyFs;
+
+    await loadRelaySecretReadOnly({
+      projectRoot: PROJECT_ROOT,
+      env,
+      fs,
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+    });
+    expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
+    expect(mutatingSpy).not.toHaveBeenCalled();
+  });
+
+  it('SECRET-HANDLING: does not leak the value, its length, or the file path to a log sink', async () => {
+    const env: NodeJS.ProcessEnv = {};
+    const files = new Map<string, string>([[SECRET_PATH, VALID_SECRET]]);
+    const logs: string[] = [];
+    await loadRelaySecretReadOnly({
+      projectRoot: PROJECT_ROOT,
+      env,
+      fs: makeReadOnlyFs(files),
+      existsSync: makeProjectExistsSync([PROJECT_ROOT]),
+      log: (msg) => logs.push(msg),
+    });
+    const combined = logs.join('');
+    expect(combined).not.toContain(VALID_SECRET);
+    expect(combined).not.toMatch(/\b64\b/);
+    expect(combined).not.toMatch(/[0-9a-fA-F]{64}/);
+    expect(combined).not.toContain(SECRET_PATH);
   });
 });
