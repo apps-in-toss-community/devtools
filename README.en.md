@@ -73,13 +73,12 @@ Attach a relay to a live OPENED app to observe runtime behavior.
 
 ```bash
 devtools-mcp   # start MCP server
-# In Claude Code: start_debug({mode: 'live', confirm: true})  ← arms LIVE guard
+# In Claude Code: start_debug({mode: 'relay-live', confirm: true})  ← arms LIVE guard
 # call build_attach_url → scan QR → live app loads + relay attaches
 # call_sdk / evaluate: confirm: true required (LIVE guard — real users affected)
-# (deprecated alias: MCP_ENV=relay-live devtools-mcp — kept for boot-time liveIntent seeding only)
 ```
 
-`start_debug({mode: 'live', confirm: true})` arms the LIVE guard in-session. Details: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
+`start_debug({mode: 'relay-live', confirm: true})` arms the LIVE guard in-session. Details: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
 
 ---
 
@@ -947,13 +946,13 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 
 | Mode + target | Invocation | Env vars | Target | Tools |
 |---|---|---|---|---|
-| `--target=mobile` (env 2) | `devtools-mcp` → `start_debug({mode:'mobile'})` | `AIT_RELAY_BASE_URL`, `AIT_TUNNEL_BASE_URL` | Real-device Safari/WebKit PWA (external Chii relay + cloudflared tunnel, env 2) | console/network/page + DOM/snapshot/screenshot |
-| `--mode=debug --target=relay` (default, env 3) | `devtools-mcp` → `start_debug({mode: 'staging'})` | `MCP_ENV=relay-dev` (deprecated boot alias) | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | same + `AIT.*` |
-| `--mode=debug --target=relay` LIVE (env 4) | `devtools-mcp` → `start_debug({mode: 'live', confirm: true})` | `MCP_ENV=relay-live` (deprecated boot alias, env 4 LIVE guard) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
+| `--target=mobile` (env 2) | `devtools-mcp` → `start_debug({mode:'relay-sandbox'})` | `AIT_RELAY_BASE_URL`, `AIT_TUNNEL_BASE_URL` | Real-device Safari/WebKit PWA (external Chii relay + cloudflared tunnel, env 2) | console/network/page + DOM/snapshot/screenshot |
+| `--mode=debug --target=relay` (default, env 3) | `devtools-mcp` → `start_debug({mode: 'relay-staging'})` | — | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | same + `AIT.*` |
+| `--mode=debug --target=relay` LIVE (env 4) | `devtools-mcp` → `start_debug({mode: 'relay-live', confirm: true})` | — (env 4 LIVE guard) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
 | `--mode=debug --target=local` (env 1) | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
 | `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (auto) | Mock state from a running Vite dev server (AIT.* only, no CDP) | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. Switch environments in-session with `start_debug(mode)`: `mobile` (env 2 PWA), `staging` (env 3 dogfood), `live` (env 4, arms LIVE guard — `confirm: true` required), `local` (env 1). `MCP_ENV=relay-dev`/`MCP_ENV=relay-live` are deprecated boot-time aliases for liveIntent seeding — prefer `start_debug` for in-session switching.
+`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. Switch environments in-session with `start_debug(mode)`: `relay-sandbox` (env 2 PWA), `relay-staging` (env 3 dogfood), `relay-live` (env 4, arms LIVE guard — `confirm: true` required), `local-browser` (env 1).
 
 #### Environment 2 (real-device PWA CDP) — `--target=mobile`
 
@@ -987,7 +986,7 @@ Debug on a real phone using Safari/WebKit without Toss review. The Vite dev serv
 
 3. In a Claude Code session:
    ```
-   start_debug({mode: 'mobile'})
+   start_debug({mode: 'relay-sandbox'})
    build_attach_url()
    ```
    Scan the QR with your phone camera. The launcher PWA opens the app in a frame and injects Chii target.js.
@@ -1006,39 +1005,23 @@ Read-only tools only. Tools are registered in two tiers based on attach state �
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
-Environment 3 (dogfood relay) — `start_debug({mode: 'staging'})` is the primary in-session entry:
+Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then enter via `start_debug(mode)`:
 
 ```json
 {
   "mcpServers": {
     "ait-debug": {
       "command": "pnpm",
-      "args": ["exec", "devtools-mcp"],
-      "env": {
-        "MCP_ENV": "relay-dev"
-      }
+      "args": ["exec", "devtools-mcp"]
     }
   }
 }
 ```
 
-Environment 4 (LIVE relay, LIVE guard enabled) — `start_debug({mode: 'live', confirm: true})` is the primary in-session entry:
+- Environment 3 (dogfood relay): `start_debug({mode: 'relay-staging'})`
+- Environment 4 (LIVE relay, LIVE guard enabled): `start_debug({mode: 'relay-live', confirm: true})`
 
-```json
-{
-  "mcpServers": {
-    "ait-debug": {
-      "command": "pnpm",
-      "args": ["exec", "devtools-mcp"],
-      "env": {
-        "MCP_ENV": "relay-live"
-      }
-    }
-  }
-}
-```
-
-`MCP_ENV=relay-dev`/`MCP_ENV=relay-live` are deprecated boot-time aliases that ensure the relay tool surface is visible before the tunnel URL is auto-detected and seed liveIntent on boot. **Prefer `start_debug(mode)` for in-session switching**: `staging` (env 3), `live` (env 4, arms LIVE guard — `confirm: true` required). `MCP_ENV=relay` is a backward-compat alias for `relay-dev`, so **always use `relay-live` (or `start_debug(live)`) explicitly for env 4**.
+**`start_debug(mode)` is the single in-session entry path.** `MCP_ENV=relay-live` remains only as a deprecated alias that seeds `liveIntent` at boot — in a new session, enter via `start_debug({mode: 'relay-live', confirm: true})`.
 
 | Tool | CDP / AIT backing | Description |
 |---|---|---|

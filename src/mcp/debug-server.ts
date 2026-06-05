@@ -160,47 +160,46 @@ export interface ModeSwitchReport {
 }
 
 /**
- * The four canonical `start_debug` modes (issues #382, #378 — user-facing
- * environment names):
+ * The four canonical `start_debug` modes (issues #382, #378, #398 — each names
+ * the four-environment fidelity ladder rung it attaches to):
  *
- *   - `local`   → env 1: desktop Chromium with the MOCK SDK + local CDP attach.
- *                 Side-effect tools (call_sdk/evaluate) run unguarded against
- *                 the mock; nothing touches a real device or real users.
+ *   - `local-browser`  → env 1: desktop Chromium with the MOCK SDK + local CDP
+ *                 attach. Side-effect tools (call_sdk/evaluate) run unguarded
+ *                 against the mock; nothing touches a real device or real users.
  *                 No prerequisites — the default, always-available environment.
  *
- *   - `mobile`  → env 2: real-device PWA (real WebKit engine + mock SDK) over an
- *                 EXTERNAL CDP relay that the unplugin (`tunnel: { cdp: true }`)
- *                 already brought up. liveIntent off — dev-intent, never LIVE.
- *                 Output env `relay-mobile`. Prerequisite: `AIT_RELAY_BASE_URL`
+ *   - `relay-sandbox` → env 2: real-device PWA (real WebKit engine + mock SDK)
+ *                 over an EXTERNAL CDP relay that the unplugin (`tunnel: { cdp:
+ *                 true }`) already brought up. liveIntent off — dev-intent, never
+ *                 LIVE. Output env `relay-mobile`. Prerequisite: `AIT_RELAY_BASE_URL`
  *                 set to the unplugin's relay base URL. The MCP only attaches a
  *                 CDP client; it does NOT start (or stop) that relay.
  *
- *   - `staging` → env 3: real-device Toss WebView dogfood build with the REAL
- *                 SDK over the intoss-private relay. liveIntent off.
+ *   - `relay-staging` → env 3: real-device Toss WebView dogfood build with the
+ *                 REAL SDK over the intoss-private relay. liveIntent off.
  *                 Prerequisite: deployed dogfood bundle + device cold-loaded via
  *                 intoss-private deep-link/QR relay injection.
  *
- *   - `live`    → env 4: REVIEW-PASSED production runtime with the REAL SDK
+ *   - `relay-live`    → env 4: REVIEW-PASSED production runtime with the REAL SDK
  *                 over the intoss relay. liveIntent on (requires `confirm: true`).
  *                 Read-only debugging: call_sdk/evaluate require confirm per call.
  *
- * Deprecated aliases (back-compat — pinned .mcp.json / docs / QA runbooks):
- *   `local-browser-dev` / `local-browser-cdp` → `local`
- *   `relay-mobile` → `mobile`
- *   `relay-dev`    → `staging`
- *   `relay-live`   → `live`
+ * `relay-staging` and `relay-live` share ONE physical relay connection
+ * (`relay-intoss`, see {@link FamilyKey}) — wire-identical, distinguished only by
+ * the `liveIntent` bit — so switching staging↔live never re-boots the tunnel.
+ *
  * Normalization is handled by `normalizeStartDebugMode`.
  */
-export type StartDebugMode = 'local' | 'mobile' | 'staging' | 'live';
+export type StartDebugMode = 'local-browser' | 'relay-sandbox' | 'relay-staging' | 'relay-live';
 
 /**
- * Returns `true` when the mode routes to a relay connection (`mobile`,
- * `staging`, or `live`). `mobile` is an external-PWA relay; `staging`/`live`
- * are intoss-private relays — but all three surface the Tier B / relay-only
- * tool set.
+ * Returns `true` when the mode routes to a relay connection (`relay-sandbox`,
+ * `relay-staging`, or `relay-live`). `relay-sandbox` is an external-PWA relay;
+ * `relay-staging`/`relay-live` are intoss-private relays — but all three surface
+ * the Tier B / relay-only tool set.
  */
 export function isRelayMode(mode: StartDebugMode): boolean {
-  return mode === 'mobile' || mode === 'staging' || mode === 'live';
+  return mode === 'relay-sandbox' || mode === 'relay-staging' || mode === 'relay-live';
 }
 
 /**
@@ -229,7 +228,7 @@ export interface ConnectionRouter {
   /**
    * Switches the active connection to the family for `mode`, lazily booting
    * that family's infra if needed, re-arming the attach watcher, and emitting
-   * `tools/list_changed`. Sets `liveIntent` (true only for `live`).
+   * `tools/list_changed`. Sets `liveIntent` (true only for `relay-live`).
    *
    * `projectRoot` (issue #396) is the per-debug-session mini-app project root
    * supplied by `start_debug`. When switching into a relay family the router
@@ -239,7 +238,7 @@ export interface ConnectionRouter {
    * it. The daemon never mints — it only reads. Ignored for the local family.
    *
    * Rejects (without swapping) when a swap is already in flight, or when
-   * `live` is requested without `confirm: true`.
+   * `relay-live` is requested without `confirm: true`.
    */
   switchMode(
     mode: StartDebugMode,
@@ -505,8 +504,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       if (mode === null) {
         return mcpError(
           'start_debug: mode가 올바르지 않습니다. ' +
-            "'local' | 'mobile' | 'staging' | 'live' 중 하나를 전달하세요 " +
-            "(deprecated 별칭 'local-browser-dev'/'local-browser-cdp'/'relay-mobile'/'relay-dev'/'relay-live'도 수용).",
+            "'local-browser' | 'relay-sandbox' | 'relay-staging' | 'relay-live' 중 하나를 전달하세요.",
         );
       }
       const confirm = request.params.arguments?.confirm === true;
@@ -1304,28 +1302,21 @@ export function createDebugServer(deps: DebugServerDeps): Server {
 
 /**
  * Normalizes a raw `start_debug` `mode` argument to a `StartDebugMode`, or
- * `null` when the value is not one of the accepted modes.
+ * `null` when the value is not one of the four accepted modes:
+ *   'local-browser' | 'relay-sandbox' | 'relay-staging' | 'relay-live'
  *
- * Accepts the 4 canonical modes + 5 deprecated aliases (back-compat for
- * pinned .mcp.json / docs / QA runbooks that still emit old strings):
- *   'local'           → 'local'   (canonical)
- *   'mobile'          → 'mobile'  (canonical)
- *   'staging'         → 'staging' (canonical)
- *   'live'            → 'live'    (canonical)
- *   'local-browser-dev'  → 'local'   (deprecated alias)
- *   'local-browser-cdp'  → 'local'   (deprecated alias)
- *   'relay-mobile'       → 'mobile'  (deprecated alias)
- *   'relay-dev'          → 'staging' (deprecated alias)
- *   'relay-live'         → 'live'    (deprecated alias)
+ * Hard rename (issue #398): the older `local`/`mobile`/`staging`/`live` names
+ * and their aliases are no longer accepted — pre-1.0, no back-compat.
  */
 export function normalizeStartDebugMode(raw: unknown): StartDebugMode | null {
-  // New canonical values.
-  if (raw === 'local' || raw === 'mobile' || raw === 'staging' || raw === 'live') return raw;
-  // Deprecated aliases (back-compat — pinned .mcp.json / docs / QA runbooks).
-  if (raw === 'local-browser-dev' || raw === 'local-browser-cdp') return 'local';
-  if (raw === 'relay-mobile') return 'mobile';
-  if (raw === 'relay-dev') return 'staging';
-  if (raw === 'relay-live') return 'live';
+  if (
+    raw === 'local-browser' ||
+    raw === 'relay-sandbox' ||
+    raw === 'relay-staging' ||
+    raw === 'relay-live'
+  ) {
+    return raw;
+  }
   return null;
 }
 
@@ -1345,8 +1336,8 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
     },
     // A single-connection router has no family concept, so it carries no relay
     // origin discriminator (issue #378). Env derives as `relay-dev` for a relay
-    // connection here — `mobile` (external-PWA origin) is rejected below since
-    // this router cannot boot the external relay family.
+    // connection here — `relay-sandbox` (external-PWA origin) is rejected below
+    // since this router cannot boot the external relay family.
     activeRelayOrigin: undefined,
     // `_projectRoot` (issue #396) is accepted for interface conformance but
     // unused here: this router never lazily boots a relay family — its single
@@ -1358,15 +1349,15 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
       confirm: boolean,
       _projectRoot?: string,
     ): Promise<ModeSwitchReport> {
-      // `mobile` (env 2) needs a distinct external-PWA relay family this
+      // `relay-sandbox` (env 2) needs a distinct external-PWA relay family this
       // single-connection router cannot synthesize. Reject the same way a
       // cross-family switch is rejected (issue #378).
-      if (mode === 'mobile') {
+      if (mode === 'relay-sandbox') {
         return Promise.reject(
           new Error(
             'start_debug: 이 세션은 단일 연결만 보유합니다 — ' +
-              "'mobile'(환경 2 PWA, 외부 relay)로 동적 전환할 수 없습니다 (dual-connection 데몬에서만 지원). " +
-              'MCP 서버를 mobile 모드로 재시작하세요.',
+              "'relay-sandbox'(환경 2 PWA, 외부 relay)로 동적 전환할 수 없습니다 (dual-connection 데몬에서만 지원). " +
+              'MCP 서버를 relay-sandbox 모드로 재시작하세요.',
           ),
         );
       }
@@ -1381,16 +1372,16 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
           ),
         );
       }
-      // live entry gate: confirm:true required (mirrors the per-tool gate).
-      if (mode === 'live' && !confirm) {
+      // relay-live entry gate: confirm:true required (mirrors the per-tool gate).
+      if (mode === 'relay-live' && !confirm) {
         return Promise.reject(
           new Error(
-            'start_debug: live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
+            'start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
               '실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.',
           ),
         );
       }
-      setLiveIntent(mode === 'live');
+      setLiveIntent(mode === 'relay-live');
       const environment = deriveEnvironment(connection.kind, getLiveIntent());
       return Promise.resolve({
         mode,
@@ -1686,9 +1677,9 @@ export interface BootedFamily {
  * `--remote-debugging-port` and returns a `LocalCdpConnection` attached to it,
  * plus a `stop()` that kills both.
  *
- * Booted lazily via the dual router's `bootLazyFor('local')` callback, at most
- * once on the first `start_debug({ mode: 'local' })` (all-lazy, #396 — no run
- * function boots a family at startup anymore).
+ * Booted lazily via the dual router's `bootLazyFor('local-browser')` callback,
+ * at most once on the first `start_debug({ mode: 'local-browser' })` (all-lazy,
+ * #396 — no run function boots a family at startup anymore).
  */
 export async function bootLocalFamily(): Promise<BootedFamily> {
   const cdpPort = 0; // OS-assigned ephemeral port.
@@ -1734,8 +1725,8 @@ export interface BootRelayFamilyOptions {
  *
  * Booted lazily via the dual router's `bootLazyFor('relay-intoss')` callback
  * (symmetry with {@link bootLocalFamily}), at most once on the first
- * `start_debug({ mode: 'staging' | 'live' })` (all-lazy, #396 — every relay boot
- * now flows through `switchMode` after the project-local secret load).
+ * `start_debug({ mode: 'relay-staging' | 'relay-live' })` (all-lazy, #396 — every
+ * relay boot now flows through `switchMode` after the project-local secret load).
  *
  * The relay base URL is only known after `startChiiRelay()` resolves, so the
  * `ChiiCdpConnection` (via {@link createRelayConnection}) is constructed inside
@@ -1885,28 +1876,31 @@ export async function bootExternalRelayFamily(relayBaseUrl: string): Promise<Boo
  * Identifies a booted family slot in the dual router (issue #378).
  *
  * Before #378 the router warm-kept a single "opposite-kind" lazy family, which
- * could not hold both an intoss relay (`staging`/`live`) AND an external relay
- * (`mobile`) at once — they are both `kind: 'relay'` and would collide in the
- * single slot. The three keys separate the three distinct families:
+ * could not hold both an intoss relay (`relay-staging`/`relay-live`) AND an
+ * external relay (`relay-sandbox`) at once — they are both `kind: 'relay'` and
+ * would collide in the single slot. The three keys separate the three distinct
+ * families (4 exposed modes → 3 physical slots — `relay-staging`/`relay-live`
+ * share `'relay-intoss'`, see {@link familyKeyForMode}):
  *
- *   - `'local'`          — local Chromium + mock SDK (env 1).
- *   - `'relay-intoss'`   — intoss-private relay (env 3/4, `bootRelayFamily`).
- *   - `'relay-external'` — env-2 external PWA relay (`bootExternalRelayFamily`).
+ *   - `'local-browser'` — local Chromium + mock SDK (env 1).
+ *   - `'relay-intoss'`  — intoss-private relay (env 3/4, `bootRelayFamily`).
+ *   - `'relay-sandbox'` — env-2 external PWA relay (`bootExternalRelayFamily`).
  */
-export type FamilyKey = 'local' | 'relay-intoss' | 'relay-external';
+export type FamilyKey = 'local-browser' | 'relay-intoss' | 'relay-sandbox';
 
 /**
  * Maps a `StartDebugMode` to the {@link FamilyKey} that serves it (issue #378).
- *   local → 'local'; mobile → 'relay-external'; staging/live → 'relay-intoss'.
+ *   local-browser → 'local-browser'; relay-sandbox → 'relay-sandbox';
+ *   relay-staging/relay-live → 'relay-intoss' (the shared physical slot).
  */
 export function familyKeyForMode(mode: StartDebugMode): FamilyKey {
   switch (mode) {
-    case 'local':
-      return 'local';
-    case 'mobile':
-      return 'relay-external';
-    case 'staging':
-    case 'live':
+    case 'local-browser':
+      return 'local-browser';
+    case 'relay-sandbox':
+      return 'relay-sandbox';
+    case 'relay-staging':
+    case 'relay-live':
       return 'relay-intoss';
   }
 }
@@ -1997,11 +1991,13 @@ const NULL_CDP_CONNECTION: CdpConnection = {
  * `--target=local` session can hot-switch into relay (and vice versa) without
  * restarting the MCP server.
  *
- * Why a KEYED map and not a single lazy slot (#378): `mobile` (env-2 external
- * relay) and `staging`/`live` (intoss relay) are BOTH `kind: 'relay'`. A single
- * "opposite-kind" slot could not warm-keep both at once — they would collide.
- * The three `FamilyKey`s (`local` / `relay-intoss` / `relay-external`) give each
- * its own warm slot.
+ * Why a KEYED map and not a single lazy slot (#378): `relay-sandbox` (env-2
+ * external relay) and `relay-staging`/`relay-live` (intoss relay) are BOTH
+ * `kind: 'relay'`. A single "opposite-kind" slot could not warm-keep both at
+ * once — they would collide. The three `FamilyKey`s
+ * (`local-browser` / `relay-intoss` / `relay-sandbox`) give each its own warm
+ * slot — `relay-staging` and `relay-live` deliberately share the one
+ * `relay-intoss` slot (wire-identical, distinguished only by `liveIntent`).
  *
  * Why all-lazy (#396): the relay TOTP secret now lives in a project-local
  * `.ait_relay` file loaded read-only by `switchMode` BEFORE a relay family boots.
@@ -2011,12 +2007,12 @@ const NULL_CDP_CONNECTION: CdpConnection = {
  * `buildRelayVerifyAuth()` run at the boot site.
  *
  * `switchMode`:
- *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed `live`;
+ *   1. rejects re-entrant swaps (`swapInFlight`) and an unconfirmed `relay-live`;
  *   2. resolves the requested mode's `FamilyKey`:
  *      `lazyFamilies.get(key) ?? (boot via bootLazyFor(key), store)`;
  *   3. flips `active` (the MCP `Server` never re-handshakes — it reads through
  *      `active` per request);
- *   4. sets `liveIntent` (true only for `live`; `mobile` is dev-intent → false);
+ *   4. sets `liveIntent` (true only for `relay-live`; `relay-sandbox` is dev-intent → false);
  *   5. stops the old attach watcher and re-arms one on the new connection
  *      (the watcher self-clears, so re-arm is mandatory);
  *   6. emits `tools/list_changed`.
@@ -2055,8 +2051,8 @@ export class DualConnectionRouter implements ConnectionRouter {
 
   /**
    * Live tunnel status of the active relay family (issues #356, #378). Reads
-   * the ACTIVE family's tunnel when it has one (so `mobile` surfaces the
-   * external relay wss and `staging`/`live` the intoss relay wss); otherwise
+   * the ACTIVE family's tunnel when it has one (so `relay-sandbox` surfaces the
+   * external relay wss and `relay-staging`/`relay-live` the intoss relay wss); otherwise
    * falls back to the first booted family that has a tunnel. Returns "down"
    * until any relay family is booted (any session before the first relay
    * start_debug) — the correct signal for `build_attach_url` (no tunnel yet).
@@ -2140,9 +2136,9 @@ export class DualConnectionRouter implements ConnectionRouter {
     if (this.swapInFlight) {
       throw new Error('start_debug: 이전 전환이 아직 진행 중입니다 — 잠시 후 다시 호출하세요.');
     }
-    if (mode === 'live' && !confirm) {
+    if (mode === 'relay-live' && !confirm) {
       throw new Error(
-        'start_debug: live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
+        'start_debug: relay-live(실서비스 LIVE)는 confirm: true가 필요합니다 — ' +
           '실유저에게 영향이 갈 수 있는 LIVE 디버깅 진입을 명시적으로 승인하세요.',
       );
     }
@@ -2170,9 +2166,10 @@ export class DualConnectionRouter implements ConnectionRouter {
       // request, so no re-handshake / restart is needed.
       this.activeFamily = target;
 
-      // (4) Arm/disarm liveIntent. true only for live; any other mode
-      // (including local and mobile) disarms it — mobile is dev-intent.
-      setLiveIntent(mode === 'live');
+      // (4) Arm/disarm liveIntent. true only for relay-live; any other mode
+      // (including local-browser and relay-sandbox) disarms it — relay-sandbox
+      // is dev-intent.
+      setLiveIntent(mode === 'relay-live');
 
       // (5) Re-arm the attach watcher on the new connection (self-clearing).
       this.stopWatcher();
@@ -2235,9 +2232,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // reads the env AFTER switchMode's project-local secret load (#396) has
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
     bootLazyFor: (key) =>
-      key === 'relay-external'
+      key === 'relay-sandbox'
         ? bootExternalRelayFamily(readMobileRelayBaseUrl())
-        : key === 'local'
+        : key === 'local-browser'
           ? bootLocalFamily()
           : bootRelayFamily({
               relayPort: options.relayPort,
@@ -2444,10 +2441,10 @@ export interface RunLocalDebugServerOptions {
  * Serves the debug stack over stdio with the local browser as the default
  * target. Since #396 NOTHING boots at startup — every family (including the
  * local Chromium) is lazy-booted on its first `start_debug`:
- *   1. `start_debug({ mode: 'local' })` launches a local Chromium with
+ *   1. `start_debug({ mode: 'local-browser' })` launches a local Chromium with
  *      `--remote-debugging-port=<port>` and attaches a `LocalCdpConnection`;
  *   2. the intoss/external relay families lazy-boot on the first
- *      `start_debug({ mode: 'staging' | 'live' | 'mobile' })`;
+ *      `start_debug({ mode: 'relay-staging' | 'relay-live' | 'relay-sandbox' })`;
  *   3. all of this runs through the SAME direction-neutral
  *      `DualConnectionRouter` that `runDebugServer` uses (issue #356).
  *
@@ -2479,7 +2476,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   // Local family boot, deferred into the lazy resolver (all-lazy, #396). Launches
   // the Chromium + attaches a LocalCdpConnection only when `start_debug({ mode:
-  // 'local' })` first fires — so a session that goes straight to relay never
+  // 'local-browser' })` first fires — so a session that goes straight to relay never
   // spawns a Chromium it would have to clean up. Honors this entry's
   // cdpPort/devUrl options (vs the env-only `bootLocalFamily`).
   const bootLocalFamilyForEntry = async (): Promise<BootedFamily> => {
@@ -2498,8 +2495,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   };
 
   // Dual-connection router (issues #348, #356, #378, #396): ALL families are
-  // lazy-booted — the local family on the first `start_debug({ mode: 'local' })`,
-  // the intoss relay on `staging`/`live`, the env-2 external relay on `mobile`.
+  // lazy-booted — the local family on the first `start_debug({ mode: 'local-browser' })`,
+  // the intoss relay on `relay-staging`/`relay-live`, the env-2 external relay on `relay-sandbox`.
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
@@ -2511,9 +2508,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // reads the env AFTER switchMode's project-local secret load (#396) has
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
     bootLazyFor: (key) =>
-      key === 'relay-external'
+      key === 'relay-sandbox'
         ? bootExternalRelayFamily(readMobileRelayBaseUrl())
-        : key === 'local'
+        : key === 'local-browser'
           ? bootLocalFamilyForEntry()
           : bootRelayFamily({
               verifyAuth: buildRelayVerifyAuth(),
@@ -2622,7 +2619,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     logError('tool.error', {
       msg: `uncaughtException: ${String(err)}`,
       errorKind: 'uncaught',
-      mode: 'local',
+      mode: 'local-browser',
     });
     shutdown();
     process.exit(1);
@@ -2632,7 +2629,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     logError('tool.error', {
       msg: `unhandledRejection: ${String(reason)}`,
       errorKind: 'unhandled-rejection',
-      mode: 'local',
+      mode: 'local-browser',
     });
     shutdown();
     process.exit(1);
@@ -2679,7 +2676,7 @@ export interface RunMobileDebugServerOptions {
  * Serves the env-2 (real-device PWA) debug stack over stdio with the external
  * Chii relay as the default target (issue #378). Since #396 NOTHING boots at
  * startup — the external relay family is lazy-booted on the first
- * `start_debug({ mode: 'mobile' })`.
+ * `start_debug({ mode: 'relay-sandbox' })`.
  *
  * Unlike `runDebugServer` (which starts its own relay + cloudflared tunnel),
  * `runMobileDebugServer` attaches to a relay the unplugin ALREADY brought up
@@ -2689,8 +2686,9 @@ export interface RunMobileDebugServerOptions {
  *
  * Symmetry with `runDebugServer` / `runLocalDebugServer` (#356, #378, #396): all
  * three families are lazy-booted — the env-2 external relay on the first
- * `start_debug({ mode: 'mobile' })`, the local family on `local`, the intoss
- * relay on `staging`/`live` — so a `--target=mobile` session can hot-switch
+ * `start_debug({ mode: 'relay-sandbox' })`, the local family on `local-browser`,
+ * the intoss relay on `relay-staging`/`relay-live` — so a `--target=mobile`
+ * session can hot-switch
  * without a restart. The active env derives to `relay-mobile` (external-PWA
  * origin, liveIntent off).
  *
@@ -2716,8 +2714,8 @@ export async function runMobileDebugServer(
 
   // Dual-connection router (issues #348, #356, #378, #396): ALL families are
   // lazy-booted — the env-2 external relay on the first `start_debug({ mode:
-  // 'mobile' })`, the local family on `local`, the intoss relay on
-  // `staging`/`live`.
+  // 'relay-sandbox' })`, the local family on `local-browser`, the intoss relay on
+  // `relay-staging`/`relay-live`.
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
@@ -2729,9 +2727,9 @@ export async function runMobileDebugServer(
     // reads the env AFTER switchMode's project-local secret load (#396) has
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
     bootLazyFor: (key) =>
-      key === 'relay-external'
+      key === 'relay-sandbox'
         ? bootExternalRelayFamily(relayBaseUrl)
-        : key === 'local'
+        : key === 'local-browser'
           ? bootLocalFamily()
           : bootRelayFamily({
               verifyAuth: buildRelayVerifyAuth(),
@@ -2840,7 +2838,7 @@ export async function runMobileDebugServer(
     logError('tool.error', {
       msg: `uncaughtException: ${String(err)}`,
       errorKind: 'uncaught',
-      mode: 'mobile',
+      mode: 'relay-sandbox',
     });
     shutdown();
     process.exit(1);
@@ -2850,7 +2848,7 @@ export async function runMobileDebugServer(
     logError('tool.error', {
       msg: `unhandledRejection: ${String(reason)}`,
       errorKind: 'unhandled-rejection',
-      mode: 'mobile',
+      mode: 'relay-sandbox',
     });
     shutdown();
     process.exit(1);
