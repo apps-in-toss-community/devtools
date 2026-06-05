@@ -1035,6 +1035,7 @@ describe('build_attach_url — open_in_browser', () => {
     const fakeQrServer: import('../qr-http-server.js').QrHttpServer = {
       port: 19999,
       buildAttachPageUrl: (url) => `http://127.0.0.1:19999/attach?u=${encodeURIComponent(url)}`,
+      notifyStateChange: () => {},
       close: async () => {},
     };
 
@@ -1073,6 +1074,7 @@ describe('build_attach_url — open_in_browser', () => {
     const fakeQrServer: import('../qr-http-server.js').QrHttpServer = {
       port: 19999,
       buildAttachPageUrl: (url) => `http://127.0.0.1:19999/attach?u=${encodeURIComponent(url)}`,
+      notifyStateChange: () => {},
       close: async () => {},
     };
 
