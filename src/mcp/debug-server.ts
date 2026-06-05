@@ -73,7 +73,7 @@ import {
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
-import { type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
+import { type DashboardState, type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
 import { acquireLock, isPidAlive, readServerLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
@@ -297,6 +297,15 @@ export interface DebugServerDeps {
    * `runDebugServer`. Tests inject a dummy hex string or omit it.
    */
   totpSecret?: string;
+  /**
+   * `build_attach_url` 핸들러가 attachUrl을 확정한 직후 호출되는 콜백.
+   * run 함수에서 `lastAttachUrl` 갱신 + `qrHttpServer.notifyStateChange()` 트리거에 사용.
+   * 테스트에서는 주입하지 않아도 되고, 미주입 시 no-op.
+   *
+   * SECRET-HANDLING: attachUrl에는 TOTP at= 코드가 캡슐화돼 있으므로
+   * 이 콜백 안에서 로그 출력 금지.
+   */
+  onAttachUrlBuilt?: (attachUrl: string) => void;
 }
 
 /**
@@ -377,6 +386,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     getEnvironmentReason: getEnvReasonDep,
     diagnosticsCollector: collectorDep,
     totpSecret,
+    onAttachUrlBuilt,
   } = deps;
 
   // Dual-connection router (issue #348). Production passes a real router that
@@ -589,6 +599,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // SECRET-HANDLING: attachUrl encodes tunnelHttpUrl and wssUrl inside
         // the QR payload only — not logged or returned as standalone fields.
         const attachUrl = buildLauncherAttachUrl(tunnelHttpUrl, tunnelStatus.wssUrl, totpCode);
+        // Notify dashboard of new attachUrl — TOTP at= 코드는 attachUrl 안에만 있고 별도 노출 없음.
+        onAttachUrlBuilt?.(attachUrl);
         const relayUrl = tunnelStatus.wssUrl;
         const authorityWarning: string | undefined = undefined; // no scheme authority for launcher
         const totp = totpMeta;
@@ -869,6 +881,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           getTunnelStatus(),
           totpSecret,
         );
+        // Notify dashboard of new attachUrl — TOTP at= 코드는 attachUrl 안에만 있고 별도 노출 없음.
+        onAttachUrlBuilt?.(attachUrl);
 
         // Prepend a non-fatal authority warning when the scheme URL host looks wrong.
         const warningPrefix = authorityWarning ? `⚠️  scheme_url 경고: ${authorityWarning}\n\n` : '';
@@ -1886,6 +1900,12 @@ export interface DualRouterDeps {
   devtoolsOpener: AutoDevtoolsOpener;
   /** Attach-watcher poll interval (ms). Default 1 000. */
   attachWatcherIntervalMs?: number;
+  /**
+   * Called on every first-attach transition (0→N pages). Used by run functions
+   * to push a dashboard SSE notification when a page attaches or the watcher
+   * re-arms after a mode switch.
+   */
+  onPageAttach?: () => void;
 }
 
 /**
@@ -1989,6 +2009,8 @@ export class DualConnectionRouter implements ConnectionRouter {
       this.deps.attachWatcherIntervalMs ?? 1_000,
       () => {
         this.deps.diagnosticsCollector.recordAttach();
+        // Notify dashboard of page attach — SSE push so the browser tab updates.
+        this.deps.onPageAttach?.();
         // Auto-open Chrome DevTools only for a relay attach (env 2/3/4). The
         // opener no-ops for a local (mock) connection — guard on the active
         // kind so a local-eager session never tries to open a relay devtools.
@@ -2100,7 +2122,13 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     verifyAuth,
     // Mirror the assigned tunnel URL into the lock file so a second caller can
     // see the correct wssUrl in the conflict error message.
-    onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+    // Also notify the dashboard SSE clients of the tunnel URL change.
+    onWssUrl: (wssUrl) => {
+      lockHandle.updateWssUrl(wssUrl);
+      // qrServer may not be started yet at this point (tunnel can come up before
+      // qrServer.start resolves) — notify lazily via the ref when available.
+      qrServer?.notifyStateChange();
+    },
   });
 
   // Dual-connection router (issues #348, #356, #378): intoss relay family booted
@@ -2124,6 +2152,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
         : bootLocalFamily(),
     diagnosticsCollector,
     devtoolsOpener,
+    onPageAttach: () => qrServer?.notifyStateChange(),
   });
 
   // AIT.* methods ride the *active* connection's command channel (relay Chii or
@@ -2135,12 +2164,24 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     return active;
   });
 
+  // dashboard용 lastAttachUrl 상태 — build_attach_url 호출마다 갱신.
+  // SECRET-HANDLING: attachUrl에는 TOTP at= 코드가 캡슐화. 로그 출력 금지.
+  let lastAttachUrl: string | null = null;
+
+  // getDashboardState 클로저 — qr-http-server dashboard에 현재 상태 전달.
+  // SECRET-HANDLING: tunnel wssUrl은 up/down 상태 표시에만 사용; host 값은 HTML에 노출 안 함.
+  const getDashboardState = (): DashboardState => ({
+    tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
+    pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
+    attachUrl: lastAttachUrl,
+  });
+
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
   // 도달하는 race를 없애기 위해 cloudflared(fire-and-forget)와 달리 동기 await 사용.
   // GUI 없는 환경에서는 startQrHttpServer가 실패해도 text QR fallback으로 동작한다.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer();
+    qrServer = await startQrHttpServer(getDashboardState);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -2162,6 +2203,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // through to buildAttachUrl where it is used only to generate the at= code.
     // It is never logged or surfaced in any output.
     ...(process.env.AIT_DEBUG_TOTP_SECRET ? { totpSecret: process.env.AIT_DEBUG_TOTP_SECRET } : {}),
+    // dashboard 갱신 콜백 — attachUrl 확정 후 SSE push.
+    onAttachUrlBuilt: (url) => {
+      lastAttachUrl = url;
+      qrServer?.notifyStateChange();
+    },
   });
 
   const transport = new StdioServerTransport();
@@ -2367,10 +2413,14 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
         ? bootExternalRelayFamily(readMobileRelayBaseUrl())
         : bootRelayFamily({
             verifyAuth,
-            onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+            onWssUrl: (wssUrl) => {
+              lockHandle.updateWssUrl(wssUrl);
+              qrServer?.notifyStateChange();
+            },
           }),
     diagnosticsCollector,
     devtoolsOpener,
+    onPageAttach: () => qrServer?.notifyStateChange(),
   });
 
   // AIT.* methods ride the *active* connection's command channel (local CDP or,
@@ -2382,11 +2432,20 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     return active;
   });
 
+  // dashboard용 lastAttachUrl 상태 — build_attach_url 호출마다 갱신.
+  let lastAttachUrl: string | null = null;
+
+  const getDashboardState = (): DashboardState => ({
+    tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
+    pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
+    attachUrl: lastAttachUrl,
+  });
+
   // Local QR HTTP server — awaited so the first build_attach_url call (after a
   // relay switch) doesn't race its startup. Failure falls back to text QR.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer();
+    qrServer = await startQrHttpServer(getDashboardState);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -2408,6 +2467,10 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // through to buildAttachUrl where it is used only to generate the at= code.
     // It is never logged or surfaced in any output.
     ...(process.env.AIT_DEBUG_TOTP_SECRET ? { totpSecret: process.env.AIT_DEBUG_TOTP_SECRET } : {}),
+    onAttachUrlBuilt: (url) => {
+      lastAttachUrl = url;
+      qrServer?.notifyStateChange();
+    },
   });
 
   const transport = new StdioServerTransport();
@@ -2564,10 +2627,14 @@ export async function runMobileDebugServer(
         ? bootLocalFamily()
         : bootRelayFamily({
             verifyAuth,
-            onWssUrl: (wssUrl) => lockHandle.updateWssUrl(wssUrl),
+            onWssUrl: (wssUrl) => {
+              lockHandle.updateWssUrl(wssUrl);
+              qrServer?.notifyStateChange();
+            },
           }),
     diagnosticsCollector,
     devtoolsOpener,
+    onPageAttach: () => qrServer?.notifyStateChange(),
   });
 
   // AIT.* methods ride the *active* connection's command channel (external relay
@@ -2580,11 +2647,20 @@ export async function runMobileDebugServer(
     return active;
   });
 
+  // dashboard용 lastAttachUrl 상태 — build_attach_url 호출마다 갱신.
+  let lastAttachUrl: string | null = null;
+
+  const getDashboardState = (): DashboardState => ({
+    tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
+    pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
+    attachUrl: lastAttachUrl,
+  });
+
   // Local QR HTTP server — awaited so the first build_attach_url call doesn't
   // race its startup. Failure falls back to text QR.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer();
+    qrServer = await startQrHttpServer(getDashboardState);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -2606,6 +2682,10 @@ export async function runMobileDebugServer(
     // through to buildAttachUrl where it is used only to generate the at= code.
     // It is never logged or surfaced in any output.
     ...(process.env.AIT_DEBUG_TOTP_SECRET ? { totpSecret: process.env.AIT_DEBUG_TOTP_SECRET } : {}),
+    onAttachUrlBuilt: (url) => {
+      lastAttachUrl = url;
+      qrServer?.notifyStateChange();
+    },
   });
 
   const transport = new StdioServerTransport();
