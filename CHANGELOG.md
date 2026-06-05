@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.56
+
+### Patch Changes
+
+- f2066a9: `call_sdk` 도구 description(에이전트 노출 문자열)에서 환경 2 가용성 서술 모순을 정정했다. 기존 `(env 2 PWA does not inject the SDK — call_sdk is not available there.)`는 code ground truth(`callSdkMethod` JSDoc) 및 docs 4곳과 정반대였다 — `call_sdk` descriptor는 `availableIn: 'both'`라 환경 2에서 tier-gating으로 막히지 않고, 환경 2 relay(`kind:'relay'`)를 타고 폰 PWA iframe의 mock SDK에 닿는다. description을 정합화: `on env 1 (local mock) and env 2 (PWA relay — real WebKit, mock SDK) it hits the mock SDK.` 환경 2를 client로 운전하는 MCP-attach 진입은 별개 관심사로 `start_debug({mode:'mobile'})`(#378)이 담당하며, tool 가용성 서술과 혼동하지 않는다.
+- 01b79cf: `call_sdk`의 sdk-absent 에러 안내를 connection 종류에 따라 분기했다 (#360). 같은 "window.\_\_sdkCall 부재"라도 다음 행동은 정반대다 — relay(env 3/4)면 dogfood 빌드가 아니라는 뜻이라 `ait build && aitcc app deploy` 재배포가 맞고, local(`--target=local`, env 1 로컬 브라우저)이면 재배포가 아니라 `pnpm dev` dev 서버와 unplugin alias(`@apps-in-toss/web-framework` → devtools mock) resolve를 확인하는 게 맞다. 이전에는 두 경우 모두 relay/dogfood 안내만 떠서 local 세션 사용자를 잘못된 방향으로 이끌었다. `sdkAbsentError`/`classifyToolError`에 `isLocal` 파라미터를 추가하고(생략 시 기존 relay 안내 유지 — 하위 호환), call_sdk 핸들러와 catch 경로 양쪽이 `conn.kind === 'local'`을 전달하도록 배선했다. `call_sdk` 도구 description도 두 환경의 안내를 함께 명시하도록 갱신했다.
+- 50e6bbf: build_attach_url 환경 2(mobile) launcher QR 분기 — AIT_TUNNEL_BASE_URL + buildLauncherAttachUrl로 런처 딥링크 생성, scheme_url 불필요
+- 50f3fcd: 환경 2(실기기 PWA)에 CDP 디버깅을 배선했다. `tunnel: { cdp: true }` opt-in을 켜면 dev 서버 HTTP 터널과 별도로 Chii relay + 두 번째 quick tunnel이 떠서, launcher QR deep-link에 `&debug=1&relay=<wss>`를 실어 보낸다. 폰의 PWA iframe이 in-app debug gate를 통과해 target.js를 주입받으므로, 같은 한 번의 QR 스캔으로 화면 미리보기와 on-device CDP가 동시에 열린다.
+
+  in-app debug gate는 `*.trycloudflare.com` host에 대해 Layer B1을 host별로 분기 우회한다(나머지 layer + TOTP는 그대로). 토스 host(`*.private-apps.tossmini.com`) 경로는 한 글자도 바뀌지 않아 환경 4 LIVE 안전 불변식을 유지한다. `call_sdk`는 환경 2에서 여전히 mock을 친다 — CDP가 메우는 건 실기기 WebKit의 DOM·콘솔·예외·`measure_safe_area` 관측이다.
+
+- cc07275: relay 인증 TOTP를 필수 baseline으로 강제한다 (#250). 기존에는 `AIT_DEBUG_TOTP_SECRET`이 설정된 경우에만 §4 Layer C TOTP gate가 켜져, 미설정 시 relay가 공개 `wss://…trycloudflare.com` 터널을 인증 없이 노출했다 — URL이 유출되면 제3자가 dogfood/live 미니앱에 디버거를 attach할 수 있는 갭. 이제 public relay가 실제로 부팅되는 모든 지점에서 fail-fast한다.
+
+  - 새 가드 `assertRelayAuthConfigured()`(`src/mcp/totp.ts`)를 `bootRelayFamily`(intoss env 3/4)와 `bootExternalRelayFamily`(env-2 PWA) 진입에 배치 — eager·lazy(DualConnectionRouter) relay boot 양쪽 모두 relay/CDP가 열리기 전에 검증한다. local-only 세션(relay 미부팅)은 가드를 거치지 않아 그대로 면제.
+  - unplugin `tunnel: { cdp: true }`의 env-2 relay도 가드 + `verifyAuth`를 배선 — 이전엔 이 relay가 `verifyAuth` 없이 떠 secret과 무관하게 인증이 비어 있었다. 미설정 시 relay를 띄우지 않고 화면 미리보기로 degrade.
+  - 검증은 hex(base16, `Buffer.from(secret, 'hex')` decode 경로에 정합) 형식 + 32자 이상 + 짝수 길이. 미설정/빈 문자열/약형은 거부.
+  - fail-fast 안내는 요구사항과 발급 명령(`openssl rand -hex 32`)만 출력하고 secret 값·길이·파생값을 절대 노출하지 않는다.
+
+- 5461a3d: start_debug에 `mobile`(환경 2 실기기 PWA) 모드를 1급 모드로 추가하고 `relay-mobile` 출력 env를 도입했다. unplugin이 `tunnel: { cdp: true }`로 외부에 띄운 Chii relay에 MCP가 attach하는 쪽 절반으로, MCP는 relay/tunnel을 새로 띄우지 않고 `AIT_RELAY_BASE_URL`로 전달된 relay base에 CDP 클라이언트만 연다.
+
+  `mobile`과 `staging`은 둘 다 `kind:'relay'`라 출력에서 구분돼야 하므로, URL을 스니핑하지 않고 부팅된 family에 실어 나르는 `relayOrigin`(`'intoss-webview'` vs `'external-pwa'`) 디스크리미네이터를 `deriveEnvironment`에 넣었다. dual-connection 라우터는 단일 lazy slot을 `FamilyKey`(local/relay-intoss/relay-external) 키 Map으로 일반화해 두 relay family가 같은 슬롯에서 충돌하지 않는다. relay-mobile은 liveIntent가 항상 꺼져 있어 LIVE side-effect 가드 대상이 아니다.
+
+- acca107: start_debug 도구 스키마에 mobile mode(환경 2 PWA) 추가 — 런타임은 이미 지원하나 MCP enum/description에서 누락돼 있던 갭 수정
+- 15d30f8: start_debug mode를 local/staging/live 사용자 환경 이름으로 리네이밍 (legacy relay-dev/relay-live/local-browser-\* 별칭 유지), tool description 강화
+- e856989: web-framework dev-pin을 새 3.0.0-beta 빌드(9d42c0b→3051978)로 갱신. peer(2.6.x)·GA flip과 무관한 dev-only beta bump.
+
 ## 0.1.55
 
 ### Patch Changes
