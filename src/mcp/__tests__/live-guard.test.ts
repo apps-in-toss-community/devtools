@@ -148,6 +148,17 @@ describe('call_sdk — LIVE side-effect guard (relay-live)', () => {
     expect(text).not.toContain('LIVE relay guard');
   });
 
+  it('does NOT guard call_sdk in relay-mobile (env 2, dev-intent)', async () => {
+    const client = await makeClient('relay-mobile');
+    const result = await client.callTool({
+      name: 'call_sdk',
+      arguments: { name: 'getOperationalEnvironment', args: [] },
+    });
+    // relay-mobile is dev-intent (liveIntent off) — guard must NOT fire.
+    const text = getText(result);
+    expect(text).not.toContain('LIVE relay guard');
+  });
+
   it('does NOT guard call_sdk in mock env', async () => {
     const client = await makeClient('mock');
     const result = await client.callTool({
@@ -192,6 +203,17 @@ describe('evaluate — LIVE side-effect guard (relay-live)', () => {
       name: 'evaluate',
       arguments: { expression: '1 + 1' },
     });
+    const text = getText(result);
+    expect(text).not.toContain('LIVE relay guard');
+  });
+
+  it('does NOT guard evaluate in relay-mobile (env 2, dev-intent)', async () => {
+    const client = await makeClient('relay-mobile');
+    const result = await client.callTool({
+      name: 'evaluate',
+      arguments: { expression: '1 + 1' },
+    });
+    // relay-mobile is dev-intent (liveIntent off) — guard must NOT fire.
     const text = getText(result);
     expect(text).not.toContain('LIVE relay guard');
   });
