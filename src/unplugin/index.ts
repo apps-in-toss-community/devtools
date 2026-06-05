@@ -262,11 +262,19 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                     // Relay-auth baseline (issue #250): the env-2 CDP relay is
                     // reachable over a public `*.trycloudflare.com` tunnel, so a
                     // configured TOTP secret is MANDATORY and the relay enforces
-                    // it on every WS upgrade. assertRelayAuthConfigured throws
-                    // when AIT_DEBUG_TOTP_SECRET is unset/weak — the catch below
-                    // then skips the relay entirely (no UNAUTHENTICATED relay is
-                    // ever exposed; screen preview still works).
-                    // SECRET-HANDLING: the guard/predicate never log the value.
+                    // it on every WS upgrade.
+                    //
+                    // First-run auto-mint (issue #394): if AIT_DEBUG_TOTP_SECRET
+                    // is not yet set, ensureRelaySecret() mints a 256-bit random
+                    // secret, persists it to ~/.ait-devtools/relay-totp-secret
+                    // (0600), and injects it into process.env so the following
+                    // assertRelayAuthConfigured() call succeeds. On subsequent
+                    // runs the persisted value is loaded silently — no manual
+                    // export needed.
+                    // SECRET-HANDLING: neither ensureRelaySecret nor the
+                    // guard/predicate log the secret value.
+                    const { ensureRelaySecret } = await import('../mcp/relay-secret-store.js');
+                    await ensureRelaySecret();
                     const { assertRelayAuthConfigured, buildRelayVerifyAuth } = await import(
                       '../mcp/totp.js'
                     );
