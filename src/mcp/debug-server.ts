@@ -74,6 +74,7 @@ import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
 import { type DashboardState, type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
+import { loadRelaySecretReadOnly } from './relay-secret-store.js';
 import { acquireLock, isPidAlive, readServerLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
@@ -230,10 +231,21 @@ export interface ConnectionRouter {
    * that family's infra if needed, re-arming the attach watcher, and emitting
    * `tools/list_changed`. Sets `liveIntent` (true only for `live`).
    *
+   * `projectRoot` (issue #396) is the per-debug-session mini-app project root
+   * supplied by `start_debug`. When switching into a relay family the router
+   * loads the relay TOTP secret read-only from `<projectRoot>/.ait_relay` into
+   * `process.env` (via `loadRelaySecretReadOnly`) BEFORE the relay boots, so the
+   * `assertRelayAuthConfigured()` / `buildRelayVerifyAuth()` at the boot site see
+   * it. The daemon never mints — it only reads. Ignored for the local family.
+   *
    * Rejects (without swapping) when a swap is already in flight, or when
    * `live` is requested without `confirm: true`.
    */
-  switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport>;
+  switchMode(
+    mode: StartDebugMode,
+    confirm: boolean,
+    projectRoot?: string,
+  ): Promise<ModeSwitchReport>;
 }
 
 /** Live infra the connection reads tunnel status from. */
@@ -468,8 +480,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         );
       }
       const confirm = request.params.arguments?.confirm === true;
+      // Per-session project root (issue #396): the daemon reads the relay TOTP
+      // secret read-only from <projectRoot>/.ait_relay when switching to a relay
+      // family. Optional — omitted for local, or when the operator exported the
+      // secret. SECRET-HANDLING: projectRoot is a path, never the secret value.
+      const rawProjectRoot = request.params.arguments?.projectRoot;
+      const projectRoot = typeof rawProjectRoot === 'string' ? rawProjectRoot : undefined;
       try {
-        const report = await router.switchMode(mode, confirm);
+        const report = await router.switchMode(mode, confirm, projectRoot);
         return jsonResult(report);
       } catch (err) {
         return errorResult(err, name);
@@ -1295,7 +1313,16 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
     // connection here — `mobile` (external-PWA origin) is rejected below since
     // this router cannot boot the external relay family.
     activeRelayOrigin: undefined,
-    switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
+    // `_projectRoot` (issue #396) is accepted for interface conformance but
+    // unused here: this router never lazily boots a relay family — its single
+    // connection (and thus any relay verifyAuth) was already built at startup,
+    // so a per-session project-local secret cannot retroactively rewire it. The
+    // dual router below performs the read-only load before a lazy relay boot.
+    switchMode(
+      mode: StartDebugMode,
+      confirm: boolean,
+      _projectRoot?: string,
+    ): Promise<ModeSwitchReport> {
       // `mobile` (env 2) needs a distinct external-PWA relay family this
       // single-connection router cannot synthesize. Reject the same way a
       // cross-family switch is rejected (issue #378).
@@ -2042,7 +2069,11 @@ export class DualConnectionRouter implements ConnectionRouter {
     return booted;
   }
 
-  async switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
+  async switchMode(
+    mode: StartDebugMode,
+    confirm: boolean,
+    projectRoot?: string,
+  ): Promise<ModeSwitchReport> {
     if (this.swapInFlight) {
       throw new Error('start_debug: 이전 전환이 아직 진행 중입니다 — 잠시 후 다시 호출하세요.');
     }
@@ -2055,6 +2086,18 @@ export class DualConnectionRouter implements ConnectionRouter {
 
     this.swapInFlight = true;
     try {
+      // (1) Project-local relay secret load (issue #396). When entering a relay
+      // family, read the relay TOTP secret read-only from
+      // <projectRoot>/.ait_relay into process.env BEFORE the relay boots, so the
+      // lazy boot's assertRelayAuthConfigured() + buildRelayVerifyAuth() (both
+      // read env at the boot site) see it. The daemon NEVER mints — a missing or
+      // invalid file leaves env untouched and the boot-site assert remains the
+      // single #250 fail-fast. Local switches need no secret, so skip the load.
+      // SECRET-HANDLING: loadRelaySecretReadOnly never logs the value or path.
+      if (isRelayMode(mode)) {
+        await loadRelaySecretReadOnly({ projectRoot });
+      }
+
       // (2) Resolve the family by key (#378). `bootLazyFor` may throw (e.g.
       // mobile without AIT_RELAY_BASE_URL) — let it propagate WITHOUT flipping
       // active or arming liveIntent, so a failed entry leaves state untouched.
@@ -2391,10 +2434,6 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     },
   };
 
-  // Build the TOTP verifyAuth predicate from env at startup (runtime read) so a
-  // lazily-booted relay family carries the same gate as `runDebugServer`.
-  const verifyAuth = buildRelayVerifyAuth();
-
   // Dual-connection router (issues #348, #356, #378): local family eager above;
   // the intoss relay family and the env-2 external relay family are lazy-booted
   // on the first `start_debug({ mode: 'staging' | 'live' })` / `'mobile'`.
@@ -2408,11 +2447,15 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // family, so it is never requested here.
     // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL only here,
     // at the mobile boot site, and never logs its value.
+    // verifyAuth is built HERE (lazily, at the relay boot site) rather than at
+    // server startup so it reads the env AFTER switchMode's project-local secret
+    // load (#396) has populated AIT_DEBUG_TOTP_SECRET — otherwise a local-eager
+    // daemon would have captured an empty secret at boot.
     bootLazyFor: (key) =>
       key === 'relay-external'
         ? bootExternalRelayFamily(readMobileRelayBaseUrl())
         : bootRelayFamily({
-            verifyAuth,
+            verifyAuth: buildRelayVerifyAuth(),
             onWssUrl: (wssUrl) => {
               lockHandle.updateWssUrl(wssUrl);
               qrServer?.notifyStateChange();
@@ -2607,10 +2650,6 @@ export async function runMobileDebugServer(
   // client — the unplugin owns the relay + its tunnel.
   const externalRelayFamily = await bootExternalRelayFamily(relayBaseUrl);
 
-  // Build the TOTP verifyAuth predicate from env at startup (runtime read) so a
-  // lazily-booted intoss relay family carries the same gate as `runDebugServer`.
-  const verifyAuth = buildRelayVerifyAuth();
-
   // Dual-connection router (issues #348, #356, #378): env-2 external relay family
   // eager above; the local family and the intoss relay family are lazy-booted on
   // the first `start_debug({ mode: 'local' | 'staging' | 'live' })`.
@@ -2622,11 +2661,14 @@ export async function runMobileDebugServer(
     eagerKey: 'relay-external',
     // Lazy resolver for the local + intoss relay slots (#378). 'relay-external'
     // is the eager family, so it is never requested here.
+    // verifyAuth is built HERE (lazily, at the relay boot site) so it reads the
+    // env AFTER switchMode's project-local secret load (#396) has populated
+    // AIT_DEBUG_TOTP_SECRET.
     bootLazyFor: (key) =>
       key === 'local'
         ? bootLocalFamily()
         : bootRelayFamily({
-            verifyAuth,
+            verifyAuth: buildRelayVerifyAuth(),
             onWssUrl: (wssUrl) => {
               lockHandle.updateWssUrl(wssUrl);
               qrServer?.notifyStateChange();

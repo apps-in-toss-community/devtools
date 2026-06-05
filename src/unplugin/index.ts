@@ -264,17 +264,20 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                     // configured TOTP secret is MANDATORY and the relay enforces
                     // it on every WS upgrade.
                     //
-                    // First-run auto-mint (issue #394): if AIT_DEBUG_TOTP_SECRET
-                    // is not yet set, ensureRelaySecret() mints a 256-bit random
-                    // secret, persists it to ~/.ait-devtools/relay-totp-secret
-                    // (0600), and injects it into process.env so the following
+                    // First-run auto-mint (issue #394, project-local #396): if
+                    // AIT_DEBUG_TOTP_SECRET is not yet set, ensureRelaySecret()
+                    // mints a 256-bit random secret, persists it to the project-
+                    // local file <project>/.ait_relay (0600, anchored at the
+                    // nearest package.json directory above server.config.root),
+                    // and injects it into process.env so the following
                     // assertRelayAuthConfigured() call succeeds. On subsequent
                     // runs the persisted value is loaded silently — no manual
-                    // export needed.
+                    // export needed. The MCP daemon reads the SAME file read-only
+                    // via loadRelaySecretReadOnly() when switching to a relay env.
                     // SECRET-HANDLING: neither ensureRelaySecret nor the
                     // guard/predicate log the secret value.
                     const { ensureRelaySecret } = await import('../mcp/relay-secret-store.js');
-                    await ensureRelaySecret();
+                    await ensureRelaySecret({ projectRoot: server.config.root });
                     const { assertRelayAuthConfigured, buildRelayVerifyAuth } = await import(
                       '../mcp/totp.js'
                     );
