@@ -118,9 +118,20 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> **Supported SDK version**: `@apps-in-toss/web-framework 3.0.0-beta.9d42c0b` (beta, peer optional).
->
-> devtools currently tracks the web-framework **3.0.0-beta** pre-release. Since beta versions are not resolved by `^3.0.0`, install using an exact pin: `@apps-in-toss/web-framework@3.0.0-beta.9d42c0b`. The peer range and pin will be updated when stable 3.0.0 GA ships. Calling an API that devtools has not yet mocked will throw a runtime error — please [file an issue](https://github.com/apps-in-toss-community/devtools/issues) for missing APIs.
+### Two channels — stable and beta
+
+devtools runs two npm dist-tags off the same code at once. Pick the channel that matches your web-framework version.
+
+| Channel | Install | web-framework peer |
+|---|---|---|
+| **stable** (`latest`, default) | `pnpm add -D @ait-co/devtools` | `>=2.6.0 <2.7.0` (2.x) |
+| **beta** | `pnpm add -D @ait-co/devtools@beta` | `>=3.0.0-beta <4.0.0` (3.0 line) |
+
+- On web-framework **2.x**, the default install (stable) is all you need.
+- On the web-framework **3.0.0-beta** pre-release, install the `@beta` channel. It is a snapshot auto-published on every main push (`0.0.0-beta-<datetime>-<sha>`), so the versions are hard to pin — install with the `@beta` tag.
+- Both channels keep the web-framework peer `optional`, so MCP-only debugging users are never forced to pull the SDK.
+
+When 3.0 ships GA, the stable `latest` peer moves up to the 3.0 line and the beta channel is retired. Calling an API that devtools has not yet mocked will throw a runtime error — please [file an issue](https://github.com/apps-in-toss-community/devtools/issues) for missing APIs.
 
 ## Reference consumer
 

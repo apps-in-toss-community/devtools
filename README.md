@@ -118,9 +118,20 @@ npm install -D @ait-co/devtools
 pnpm add -D @ait-co/devtools
 ```
 
-> **지원 SDK 버전**: `@apps-in-toss/web-framework 3.0.0-beta.9d42c0b` (beta, peer optional).
->
-> 현재 devtools는 web-framework **3.0.0-beta** 프리릴리즈를 추적합니다. beta 버전은 `^3.0.0`으로 resolve되지 않으므로 설치 시 exact pin(`@apps-in-toss/web-framework@3.0.0-beta.9d42c0b`)을 사용하세요. stable 3.0.0 GA 출시 후 peer range와 pin이 업데이트됩니다. devtools가 아직 mock하지 않은 API를 호출하면 런타임에 에러가 발생합니다 — 누락된 API는 [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
+### 두 채널 — stable과 beta
+
+devtools는 같은 코드에서 두 개의 npm dist-tag를 동시에 운영합니다. 쓰는 web-framework 버전에 맞는 채널을 고르세요.
+
+| 채널 | 설치 | web-framework peer |
+|---|---|---|
+| **stable** (`latest`, 기본) | `pnpm add -D @ait-co/devtools` | `>=2.6.0 <2.7.0` (2.x) |
+| **beta** | `pnpm add -D @ait-co/devtools@beta` | `>=3.0.0-beta <4.0.0` (3.0 라인) |
+
+- web-framework **2.x**를 쓰면 위 기본 설치(stable)면 됩니다.
+- web-framework **3.0.0-beta** 프리릴리즈를 쓰면 `@beta` 채널을 설치하세요. 이 채널은 main push마다 자동 publish되는 스냅샷(`0.0.0-beta-<datetime>-<sha>`)이라 버전을 핀하기 어려우니 `@beta` 태그로 설치하는 걸 권장합니다.
+- 두 채널 모두 web-framework peer는 `optional`이라 MCP 디버깅만 쓰는 경우 SDK를 강제로 끌어오지 않습니다.
+
+3.0이 정식(GA) 출시되면 stable `latest` peer가 3.0 라인으로 올라가고 beta 채널은 정리됩니다. devtools가 아직 mock하지 않은 API를 호출하면 런타임에 에러가 발생합니다 — 누락된 API는 [이슈](https://github.com/apps-in-toss-community/devtools/issues)로 알려주세요.
 
 ## Reference consumer
 

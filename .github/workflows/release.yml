@@ -62,3 +62,162 @@ jobs:
           # for releases created by GITHUB_TOKEN.
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           NPM_CONFIG_PROVENANCE: true
+
+  # ---------------------------------------------------------------------------
+  # Beta channel — additive `beta` dist-tag carrying the web-framework 3.0 peer
+  # ---------------------------------------------------------------------------
+  #
+  # `@ait-co/devtools` runs two PERMANENT channels off the same main commit:
+  #
+  #   - `latest` (the `release` job above) — peer `>=2.6.0 <2.7.0` (web-framework
+  #     2.x), Changesets Version-PR flow, 0.1.x patch stream. UNCHANGED.
+  #   - `beta`   (this job)               — peer `>=3.0.0-beta <4.0.0` (the 3.0
+  #     line), Changesets SNAPSHOT, version `0.0.0-beta-<datetime>-<sha>`.
+  #
+  # Same code; only the published package.json peer range and version string
+  # differ. This is NOT the GA flip (#370) — `latest` stays on 2.x. The beta
+  # channel pre-publishes the 3.0-peer artifact continuously so 3.0 consumers can
+  # opt in via `@ait-co/devtools@beta` before GA.
+  #
+  # WHY snapshot, not `changeset pre enter beta`: pre-mode writes a repo-global
+  # `.changeset/pre.json` that would force the SHARED `changeset version` (the
+  # `release` job) to emit prereleases too — blocking the stable `latest` flow.
+  # Snapshot is stateless (no pre.json, forces commit:false) and is mutually
+  # exclusive with pre-mode, so it can never lock or block stable. Verified
+  # against @changesets/cli@2.31.0 source.
+  #
+  # AUTH: this repo publishes via npm OIDC Trusted Publishing (no NPM_TOKEN — it
+  # was removed in #29). The trusted-publisher grant is bound to this workflow
+  # FILENAME, so the beta job MUST live in release.yml. It uses `id-token: write`
+  # + `NPM_CONFIG_PROVENANCE` and the same `changeset publish` OIDC path as the
+  # stable job. Do NOT add NODE_AUTH_TOKEN/NPM_TOKEN.
+  release-beta:
+    # Serialize strictly after the stable job within the same `release`-grouped
+    # workflow run (workflow-level `concurrency: { group: release }`). This
+    # prevents two beta jobs from racing the registry; do NOT give it a separate
+    # concurrency group (second-resolution datetimes could otherwise collide).
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Plain GITHUB_TOKEN checkout — the beta job creates no release/tag
+          # chain, so it does not need the SYNC_APP token.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # No pending changesets (e.g. a Version-PR-merge push or a docs-only push)
+      # → `changeset version --snapshot` is a no-op that leaves the version at
+      # the stable 0.1.x. Publishing then would either republish the stable
+      # version under `beta` or fail. So skip the whole beta publish cleanly.
+      - name: Gate on pending changesets
+        id: gate
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=false
+          for f in .changeset/*.md; do
+            [ "$(basename "$f")" = "README.md" ] && continue
+            found=true
+            break
+          done
+          if [ "$found" = true ]; then
+            echo "has_changesets=true" >> "$GITHUB_OUTPUT"
+            echo "Pending changesets found — beta snapshot will be published."
+          else
+            echo "has_changesets=false" >> "$GITHUB_OUTPUT"
+            echo "No pending changesets — skipping beta publish for this push."
+          fi
+
+      - if: steps.gate.outputs.has_changesets == 'true'
+        run: pnpm build
+
+      - if: steps.gate.outputs.has_changesets == 'true'
+        run: pnpm typecheck
+
+      - if: steps.gate.outputs.has_changesets == 'true'
+        run: pnpm test
+
+      # Rewrite the published peer range to the 3.0 line — JOB-LOCAL ONLY. This
+      # ephemeral checkout is published exclusively under `--tag beta`, so the
+      # 3.0 peer can never reach the `latest` artifact. peerDependenciesMeta
+      # .optional MUST stay true (protects MCP-only npx users from pulling the
+      # SDK's huge RN/Babel/Metro tree); the node guard hard-asserts it.
+      - name: Rewrite peer to 3.0 line (job-local)
+        if: steps.gate.outputs.has_changesets == 'true'
+        run: |
+          node -e "const f='package.json';const p=require('./'+f);p.peerDependencies['@apps-in-toss/web-framework']='>=3.0.0-beta <4.0.0';if(p.peerDependenciesMeta?.['@apps-in-toss/web-framework']?.optional!==true){console.error('peer optional invariant broken');process.exit(1);}require('fs').writeFileSync(f, JSON.stringify(p,null,2)+'\n');"
+
+      # Snapshot version: base `0.0.0` (config sets no useCalculatedVersion key)
+      # + the `snapshot.prereleaseTemplate` in .changeset/config.json
+      # (`{tag}-{datetime}-{commit}`) → `0.0.0-beta-<datetime>-<sha>`. The SHA
+      # makes the version per-COMMIT unique (datetime alone is second-resolution
+      # and two same-second pushes would collide), so a workflow re-run of the
+      # same commit recomputes the SAME version → the skip-if-exists step below
+      # turns it into an idempotent no-op instead of an E409 failure.
+      - name: Compute snapshot version
+        if: steps.gate.outputs.has_changesets == 'true'
+        run: pnpm exec changeset version --snapshot beta
+
+      # Load-bearing guard. The whole "can never be served as latest" argument
+      # rests on the `0.0.0` base — a `0.0.0-*` prerelease satisfies NO stable
+      # range. Assert the on-disk artifact before publish: version starts with
+      # `0.0.0-beta`, peer is the 3.0 line, optional still true. Aborts (exit 1)
+      # otherwise — e.g. if a future config flip
+      # (___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.useCalculatedVersionForSnapshots)
+      # ever moved the base off 0.0.0.
+      - name: Assert beta artifact shape
+        if: steps.gate.outputs.has_changesets == 'true'
+        run: |
+          node -e "
+            const p = require('./package.json');
+            const v = p.version;
+            const peer = p.peerDependencies['@apps-in-toss/web-framework'];
+            const optional = p.peerDependenciesMeta?.['@apps-in-toss/web-framework']?.optional;
+            const errs = [];
+            if (!/^0\.0\.0-beta-/.test(v)) errs.push('version must start with 0.0.0-beta, got ' + v);
+            if (peer !== '>=3.0.0-beta <4.0.0') errs.push('peer must be 3.0 line, got ' + peer);
+            if (optional !== true) errs.push('peerDependenciesMeta.optional must be true');
+            if (errs.length) { console.error('beta artifact assertion failed:\n  ' + errs.join('\n  ')); process.exit(1); }
+            console.log('beta artifact OK: ' + v + ' peer ' + peer + ' optional ' + optional);
+          "
+
+      # Idempotency: a re-run of the same commit recomputes the same SHA-bound
+      # version. If npm already has it (404 → absent, 0 → present), skip publish
+      # so a re-run is a clean no-op rather than an irreversible-publish E409.
+      - name: Skip if version already published
+        if: steps.gate.outputs.has_changesets == 'true'
+        id: exists
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "@ait-co/devtools@${V}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+            echo "@ait-co/devtools@${V} already on registry — skipping publish (re-run no-op)."
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+            echo "@ait-co/devtools@${V} not yet published — proceeding."
+          fi
+
+      # Publish to the `beta` dist-tag. `--no-git-tag` is MANDATORY: changesets
+      # `gitTag` defaults true and would create a junk `v0.0.0-beta-*` local tag
+      # per run. `--snapshot` is NOT passed to publish (it is a version-only flag
+      # — the publish whitelist is [--tag][--otp][--no-git-tag]; an unknown flag
+      # would fail the publish). The snapshot-ness is already baked into the
+      # on-disk version by the version step. OIDC trusted publishing (no token).
+      - name: Publish beta
+        if: steps.gate.outputs.has_changesets == 'true' && steps.exists.outputs.already_published == 'false'
+        run: pnpm exec changeset publish --tag beta --no-git-tag
+        env:
+          NPM_CONFIG_PROVENANCE: true
