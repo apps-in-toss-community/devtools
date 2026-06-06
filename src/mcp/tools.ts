@@ -386,16 +386,26 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'real device or real users. No prerequisites — the default, always-available environment ' +
       'for state/contract and visual-layout work.\n' +
       '  relay-sandbox — env 2: a real-device PWA (real WebKit engine, MOCK SDK) over an external ' +
-      'Chii relay that the unplugin already started with tunnel:{cdp:true}. CDP covers real-device ' +
-      'WebKit DOM, console, exceptions, and safe-area observation; call_sdk still hits the mock ' +
-      '(SDK fidelity needs relay-staging). liveIntent off — dev-intent, LIVE guard inactive, ' +
-      'side-effect tools run unguarded against the mock. Prerequisites: AIT_RELAY_BASE_URL env var ' +
-      'set + unplugin running with tunnel:{cdp:true} so the relay tunnel is already up.\n' +
+      'Chii relay. CDP covers real-device WebKit DOM, console, exceptions, and safe-area ' +
+      'observation; call_sdk still hits the mock (SDK fidelity needs relay-staging). liveIntent ' +
+      'off — dev-intent, LIVE guard inactive, side-effect tools run unguarded against the mock. ' +
+      'Only the dual-connection daemon can enter relay-sandbox in-place; a single-connection ' +
+      'session rejects it with "동적 전환할 수 없습니다 … relay-sandbox 모드로 재시작하세요" — ' +
+      'follow that hint and restart the MCP server in relay-sandbox mode rather than retrying. ' +
+      'Prerequisites: both AIT_RELAY_BASE_URL (the relay base the unplugin emits when started ' +
+      'with tunnel:{cdp:true}, used for the CDP attach) and AIT_TUNNEL_BASE_URL (the dev-server ' +
+      'tunnel host, required by build_attach_url to render the launcher QR) must be set before ' +
+      'the MCP server starts — the unplugin does not auto-forward either; set them explicitly. ' +
+      'Both carry relay/tunnel hosts (secret-class) — keep them out of logs.\n' +
       '  relay-staging — env 3: a real-device Toss WebView dogfood build with the REAL SDK over the ' +
       'intoss-private relay. The first environment where call_sdk exercises the genuine native ' +
       'bridge. Side-effect tools run unguarded (dogfood, not released to real users). ' +
-      'Prerequisite: a deployed dogfood candidate bundle + the device cold-loaded via the ' +
-      'intoss-private deep-link/QR relay injection.\n' +
+      'Prerequisite: a dogfood candidate bundle built with `RELEASE_CHANNEL=dogfood ait build`, ' +
+      'then uploaded with `ait deploy` (add `--scheme-only` to print the resulting ' +
+      'intoss-private://…?_deploymentId=… deep-link); open that deep-link/QR on the device to ' +
+      'cold-load the bundle with the relay injected. Unlike env 2, env 3 is NOT a dev-server ' +
+      'tunnel — it is a deployed bundle reached via the intoss-private scheme, so `pnpm dev` ' +
+      'plays no part here.\n' +
       '  relay-live — env 4: the REVIEW-PASSED, released production runtime with the REAL SDK over ' +
       'the intoss relay — real end users are on the other side. Read-only debugging is the intent: ' +
       'the LIVE guard is armed, so call_sdk/evaluate require confirm:true per call, and ENTERING ' +
