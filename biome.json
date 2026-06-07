@@ -15,7 +15,8 @@
       "!playwright-report",
       "!test-results",
       "!.changeset",
-      "!.claude"
+      "!.claude",
+      "!src/mcp/dashboard.generated.ts"
     ]
   },
   "formatter": {
@@ -48,5 +49,17 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["scripts/dashboard/**"],
+      "linter": {
+        "rules": {
+          "security": {
+            "noDangerouslySetInnerHtml": "off"
+          }
+        }
+      }
+    }
+  ]
 }

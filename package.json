@@ -46,8 +46,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build:dashboard-html": "tsx --tsconfig scripts/tsconfig.json scripts/build-dashboard-html.ts",
+    "build": "pnpm build:dashboard-html && tsdown",
     "check:mcp-react-free": "bash scripts/check-mcp-react-free.sh",
+    "check:dashboard-html-fresh": "pnpm build:dashboard-html && git diff --exit-code src/mcp/dashboard.generated.ts",
     "dev": "tsdown --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/fixture/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
@@ -60,7 +62,7 @@
     "diff-sdk-exports": "tsx scripts/diff-sdk-exports.ts",
     "build:og": "tsx --tsconfig scripts/tsconfig.json scripts/build-og-image.tsx",
     "qa:fidelity": "tsx --tsconfig scripts/tsconfig.json scripts/fidelity-qa/index.ts",
-    "prepublishOnly": "pnpm build && pnpm typecheck && pnpm test && pnpm build:og"
+    "prepublishOnly": "pnpm build && pnpm check:mcp-react-free && pnpm typecheck && pnpm test && pnpm build:og"
   },
   "peerDependencies": {
     "@apps-in-toss/web-framework": ">=2.6.0 <2.7.0"

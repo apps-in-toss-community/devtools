@@ -5,9 +5,31 @@
  * 로드된 페이지는 외부 fetch/script가 전부 차단되며, file:// 절대 경로를 <img src>에
  * 넣으면 브라우저에 따라 빈 화면이 된다. 127.0.0.1 HTTP는 modern 브라우저가 fully trust.
  *
+ * INSTALL-GRAPH INVARIANT:
+ *   이 모듈은 react/react-dom을 절대 import하지 않는다. dashboard/attach HTML은
+ *   scripts/build-dashboard-html.ts가 빌드 타임에 precompile해 dashboard.generated.ts
+ *   (plain string exports)로 커밋한다. 이 모듈은 그 생성된 string만 import한다.
+ *   check-mcp-react-free.sh 가드가 dist/mcp/cli.js·server.js의 react 유입을 기계적으로 검증.
+ *
+ * HTML 조립 전략 (token-fill vs runtime builder):
+ *   - static chrome (head/style/섹션 레이블) → 빌드타임 precompile, dashboard.generated.ts
+ *   - 동적 부분 → 런타임 string 조립:
+ *       __NOW__             : per-request ISO timestamp
+ *       __TUNNEL_CLASS__    : "status-up" | "status-down"
+ *       __TUNNEL_STATUS__   : 로컬라이즈된 tunnel 상태 레이블
+ *       __ATTACH_SECTION__  : QR img+url-box, 또는 hint 텍스트
+ *       __PAGES_SECTION__   : pages <section> 블록, 또는 빈 문자열 (null → '')
+ *   - inline SSE <script> → 런타임 suffix로 append (localised string 포함)
+ *
+ * i18n:
+ *   GET / 와 GET /attach 라우트에서 req.headers['accept-language']를 읽어
+ *   parseAcceptLanguage()로 locale 결정. resolveLocaleStrings()로 동적 부분의
+ *   localised 문자열을 해결. navigator 없음, React hook 없음 (Node 표면).
+ *
  * SECRET-HANDLING:
  *   - 127.0.0.1 바인딩만 — 외부 노출 0.
  *   - attachUrl은 HTML 본문과 /qr.png query에만 들어간다 (의도된 전달 경로).
+ *   - wssUrl은 dashboard HTML에 절대 들어가지 않는다. tunnel.up boolean만 사용.
  *   - stdout/stderr/로그에 별도 출력하지 않는다.
  *   - tmp 파일 만들지 않음 — 모든 응답을 메모리에서 생성.
  *   - TOTP at= 코드는 attachUrl 캡슐 안에서만 노출 — SSE payload나 page 목록 등
@@ -16,6 +38,8 @@
 
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
+import { parseAcceptLanguage, resolveLocaleStrings } from '../i18n/index.js';
+import { attachChromeByLocale, dashboardChromeByLocale } from './dashboard.generated.js';
 
 /** dashboard에 노출되는 현재 상태 스냅샷. */
 export interface DashboardState {
@@ -45,6 +69,197 @@ export interface QrHttpServer {
    */
   notifyStateChange(): void;
   close(): Promise<void>;
+}
+
+/** HTML 특수문자를 이스케이프한다. */
+function escapeHtml(s: string): string {
+  return s.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/**
+ * Dashboard HTML — precompiled chrome에 per-request 동적 값을 채워 완성한다.
+ *
+ * 토큰 채우기 순서:
+ *   1. chrome string(locale별 precompile)을 가져온다.
+ *   2. 동적 부분을 단순 replaceAll로 채운다 (토큰이 HTML context 밖에 있으므로 안전).
+ *   3. inline SSE <script>를 </body> 직전에 주입한다.
+ *
+ * 동적 파트 분류:
+ *   - "token-fill": 단일 값 교체 (__NOW__, __TUNNEL_CLASS__, __TUNNEL_STATUS__,
+ *     __ATTACH_SECTION__)
+ *   - "runtime builder": 가변 길이 구조 (__PAGES_SECTION__ — 조건부 렌더 + 가변 rows)
+ *   - "suffix": inline SSE <script> (빌드 파이프라인 없는 클라이언트 스크립트, locale
+ *     aware 문자열 포함)
+ *
+ * SECRET-HANDLING:
+ *   - attachUrl은 url-box 안에서만 노출 (TOTP at= 코드 캡슐 그대로).
+ *   - tunnel wssUrl은 "터널 연결됨" 상태 표시에서 UP/DOWN만 노출.
+ *     wssUrl 값 자체는 dashboard HTML에 넣지 않는다.
+ */
+function buildDashboardHtml(
+  state: DashboardState,
+  qrDataUrl: string | null,
+  locale: 'ko' | 'en',
+): string {
+  const s = resolveLocaleStrings(locale);
+  const now = new Date().toISOString();
+
+  const tunnelStatus = state.tunnel.up ? s('dashboard.tunnel.up') : s('dashboard.tunnel.down');
+  const tunnelClass = state.tunnel.up ? 'status-up' : 'status-down';
+
+  // attachSection: QR img + url-box, or hint
+  let attachSection: string;
+  if (qrDataUrl && state.attachUrl) {
+    const safeAttachUrl = escapeHtml(state.attachUrl);
+    attachSection = `<img class="qr" src="${qrDataUrl}" alt="attach QR" /><p class="url-box">${safeAttachUrl}</p>`;
+  } else {
+    attachSection = `<p class="hint">${escapeHtml(s('dashboard.attach.hint'))}</p>`;
+  }
+
+  // pagesSection — "연결된 Pages" 섹션: env 3/4(pages: Array)에서만 렌더한다.
+  // env 2(pages: null)는 라이브 page 목록을 알 수 없어 섹션 자체를 숨긴다(#411).
+  // runtime builder: 조건부 블록 + 가변 row 목록이라 token-fill로는 불충분.
+  const pagesSection =
+    state.pages === null
+      ? ''
+      : `<hr /><section id="pages-section"><h2>${escapeHtml(s('dashboard.pages.section'))}</h2><ul id="pages-list">${
+          state.pages.length > 0
+            ? state.pages
+                .map((p) => {
+                  const safeId = escapeHtml(p.id);
+                  const safeUrl = escapeHtml(p.url.slice(0, 120));
+                  return `<li><span class="page-id">${safeId}</span> <span class="page-url">${safeUrl}</span></li>`;
+                })
+                .join('\n')
+            : `<li class="empty">${escapeHtml(s('dashboard.pages.empty'))}</li>`
+        }</ul></section>`;
+
+  // locale-aware strings for the inline SSE client script
+  const sseStrings = {
+    tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
+    tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
+    pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
+    attachHint: JSON.stringify(s('dashboard.attach.hint')),
+  };
+
+  // Fill token placeholders in the precompiled chrome.
+  // replaceAll is safe because these __TOKEN__ strings cannot appear in
+  // any legitimate user-facing value (they are sentinel strings).
+  const chrome = dashboardChromeByLocale[locale];
+  const filled = chrome
+    .replaceAll('__NOW__', escapeHtml(now))
+    .replaceAll('__TUNNEL_CLASS__', tunnelClass)
+    .replaceAll('__TUNNEL_STATUS__', escapeHtml(tunnelStatus))
+    .replaceAll('__ATTACH_SECTION__', attachSection)
+    .replaceAll('__PAGES_SECTION__', pagesSection);
+
+  // Append the inline SSE <script> suffix directly before </body>.
+  // This keeps the client script out of the precompiled chrome (it references
+  // locale-aware strings resolved per-request) while staying self-contained.
+  const sseScript = buildSseScript(sseStrings);
+  return filled.replace('</body>', `${sseScript}\n</body>`);
+}
+
+interface SseScriptStrings {
+  tunnelUp: string;
+  tunnelDown: string;
+  pagesEmpty: string;
+  attachHint: string;
+}
+
+/**
+ * Inline SSE client <script> — injected into the dashboard HTML at runtime.
+ *
+ * Subscribes to /events and updates the DOM without a build pipeline.
+ * client side: attachUrl은 DOM에 렌더링, wssUrl은 절대 렌더링하지 않는다.
+ * pages === null 이면 섹션을 건드리지 않는다 (#411).
+ *
+ * 문자열 인자는 빌드타임에 ko/en 테이블에서 가져와 JSON.stringify로 이미 escape됨.
+ */
+function buildSseScript(strings: SseScriptStrings): string {
+  return `<script>
+    // SSE — /events 구독해 상태 자동 갱신. 빌드 파이프라인 없는 인라인 스크립트.
+    (function () {
+      var TUNNEL_UP = ${strings.tunnelUp};
+      var TUNNEL_DOWN = ${strings.tunnelDown};
+      var PAGES_EMPTY = ${strings.pagesEmpty};
+      var ATTACH_HINT = ${strings.attachHint};
+      var src = new EventSource('/events');
+      src.onmessage = function (e) {
+        try {
+          var s = JSON.parse(e.data);
+          // 터널 상태 갱신
+          var el = document.getElementById('tunnel-status');
+          if (el) {
+            el.textContent = s.tunnel && s.tunnel.up ? TUNNEL_UP : TUNNEL_DOWN;
+            el.className = 'status ' + (s.tunnel && s.tunnel.up ? 'status-up' : 'status-down');
+          }
+          // page 목록 갱신 — pages === null(env 2)이면 섹션 자체를 숨긴 채 둔다.
+          // 정적 렌더가 #pages-section을 아예 안 그렸으므로 여기서도 손대지 않아
+          // SSE push 때 섹션이 되살아나지 않는다(#411). 배열일 때만 목록을 채운다.
+          if (s.pages !== null && s.pages !== undefined) {
+            var ul = document.getElementById('pages-list');
+            if (ul) {
+              if (s.pages.length === 0) {
+                ul.innerHTML = '<li class="empty">' + PAGES_EMPTY + '</li>';
+              } else {
+                ul.innerHTML = s.pages.map(function (p) {
+                  var sid = String(p.id || '').slice(0, 36).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+                  var su = String(p.url || '').slice(0, 120).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+                  return '<li><span class="page-id">' + sid + '</span> <span class="page-url">' + su + '</span></li>';
+                }).join('');
+              }
+            }
+          }
+          // attachUrl QR 갱신 — attachUrl이 없으면 hint 표시.
+          var sec = document.getElementById('attach-section');
+          if (sec) {
+            if (s.attachUrl) {
+              // QR은 서버에서 새로 렌더한 /qr.png?u= 로 img src 교체.
+              // TOTP at= 코드는 attachUrl 안에 캡슐화 — 별도 노출 없음.
+              // wssUrl은 절대 DOM에 렌더하지 않는다 (SECRET-HANDLING).
+              var encoded = encodeURIComponent(s.attachUrl);
+              var safeUrl = String(s.attachUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+              sec.innerHTML =
+                '<img class="qr" src="/qr.png?u=' + encoded + '" alt="attach QR" />' +
+                '<p class="url-box">' + safeUrl + '</p>';
+            } else {
+              sec.innerHTML = '<p class="hint">' + ATTACH_HINT + '</p>';
+            }
+          }
+          // 갱신 시각
+          var upd = document.getElementById('updated');
+          if (upd) upd.textContent = upd.textContent.replace(/[^ ]+$/, new Date().toISOString());
+        } catch (_) { /* 파싱 오류 무시 */ }
+      };
+      src.onerror = function () {
+        // 재연결은 EventSource가 자동 처리 (spec 기본 동작).
+      };
+    })();
+  </script>`;
+}
+
+/**
+ * Attach 페이지 HTML — precompiled chrome에 per-request 동적 값을 채워 완성한다.
+ *
+ * 동적 파트:
+ *   - __QR_DATA_URL__     : base64 data URL (QR 이미지)
+ *   - __SAFE_LABEL__      : HTML-escaped deploymentId label
+ *   - __SAFE_ATTACH_URL__ : HTML-escaped attach URL (TOTP at= 코드 포함 — 의도된 전달)
+ *
+ * SECRET-HANDLING: TOTP at= 코드는 attachUrl 캡슐 안에서만 노출 — 의도된 transport.
+ */
+function buildAttachHtml(
+  qrDataUrl: string,
+  safeLabel: string,
+  safeAttachUrl: string,
+  locale: 'ko' | 'en',
+): string {
+  const chrome = attachChromeByLocale[locale];
+  return chrome
+    .replaceAll('__QR_DATA_URL__', qrDataUrl)
+    .replaceAll('__SAFE_LABEL__', safeLabel)
+    .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl);
 }
 
 /**
@@ -79,6 +294,9 @@ export async function startQrHttpServer(
     const [path, query = ''] = rawUrl.split('?', 2) as [string, string | undefined];
     const params = new URLSearchParams(query ?? '');
 
+    // per-request locale — Accept-Language header에서 결정.
+    const locale = parseAcceptLanguage(req.headers['accept-language']);
+
     // ── GET / — dashboard 루트 ─────────────────────────────────────────────
     if (path === '/') {
       if (!getDashboardState) {
@@ -98,7 +316,7 @@ export async function startQrHttpServer(
           // QR 생성 실패 시 null 유지 — dashboard는 텍스트 fallback 표시
         }
       }
-      const html = buildDashboardHtml(state, qrDataUrl);
+      const html = buildDashboardHtml(state, qrDataUrl, locale);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -159,9 +377,9 @@ export async function startQrHttpServer(
       // QR을 base64 data URL로 인라인 생성 — 외부 fetch 없이 self-contained HTML.
       QRCode.toDataURL(attachUrl, { type: 'image/png', errorCorrectionLevel: 'M' })
         .then((dataUrl: string) => {
-          const safeLabel = deploymentIdLabel.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-          const safeAttachUrl = attachUrl.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-          const html = buildAttachHtml(dataUrl, safeLabel, safeAttachUrl);
+          const safeLabel = escapeHtml(deploymentIdLabel);
+          const safeAttachUrl = escapeHtml(attachUrl);
+          const html = buildAttachHtml(dataUrl, safeLabel, safeAttachUrl, locale);
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-store',
@@ -241,252 +459,4 @@ export async function startQrHttpServer(
       });
     },
   };
-}
-
-/**
- * Dashboard HTML — 터널/page/attachUrl 상태를 표시하고 SSE로 자동 갱신.
- *
- * SECRET-HANDLING:
- *   - attachUrl은 url-box 안에서만 노출 (TOTP at= 코드 캡슐 그대로).
- *   - tunnel wssUrl은 "터널 연결됨" 상태 표시에서 HOST가 아닌 UP/DOWN만 노출.
- *     wssUrl 값 자체는 dashboard HTML에 넣지 않는다 — 브라우저 탭이 보안 경계 밖에 있음.
- *   - inline <script>로 /events SSE 구독 — 빌드 파이프라인 추가 없음.
- */
-function buildDashboardHtml(state: DashboardState, qrDataUrl: string | null): string {
-  const tunnelStatus = state.tunnel.up ? '연결됨' : '끊어짐';
-  const tunnelClass = state.tunnel.up ? 'status-up' : 'status-down';
-  const now = new Date().toISOString();
-
-  // "연결된 Pages" 섹션 — env 3/4(pages: Array)에서만 렌더한다. env 2(pages: null)는
-  // 라이브 page 목록을 알 수 없어 섹션 자체를 숨긴다(#411). SSE 스크립트도 같은
-  // 조건을 따라야 한쪽만 고쳐서 섹션이 push 때 되살아나는 일이 없다.
-  const pagesSection =
-    state.pages === null
-      ? ''
-      : `
-  <hr />
-
-  <section id="pages-section">
-    <h2>연결된 Pages</h2>
-    <ul id="pages-list">${
-      state.pages.length > 0
-        ? state.pages
-            .map((p) => {
-              const safeId = p.id.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-              const safeUrl = p.url
-                .slice(0, 120)
-                .replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-              return `<li><span class="page-id">${safeId}</span> <span class="page-url">${safeUrl}</span></li>`;
-            })
-            .join('\n')
-        : '<li class="empty">attach된 페이지 없음</li>'
-    }</ul>
-  </section>`;
-
-  // attachUrl QR + fallback
-  let attachSection: string;
-  if (qrDataUrl && state.attachUrl) {
-    const safeAttachUrl = state.attachUrl.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-    attachSection = `
-      <img class="qr" src="${qrDataUrl}" alt="attach QR" />
-      <p class="url-box">${safeAttachUrl}</p>`;
-  } else {
-    attachSection =
-      '<p class="hint">build_attach_url MCP tool을 호출하면 QR이 여기에 표시됩니다.</p>';
-  }
-
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AIT 디버그 Dashboard</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0d1117; color: #c9d1d9;
-      display: flex; flex-direction: column; align-items: center;
-      min-height: 100vh; margin: 0; padding: 2rem 1rem;
-      gap: 1.5rem;
-    }
-    h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
-    .updated { font-size: 0.75rem; opacity: 0.4; font-family: monospace; margin: 0; }
-    section { width: 100%; max-width: 520px; }
-    h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
-    .status { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
-    .status-up { background: #238636; color: #fff; }
-    .status-down { background: #6e7681; color: #fff; }
-    img.qr {
-      width: min(80vw, 300px); height: auto;
-      image-rendering: pixelated;
-      background: #fff; padding: 0.75rem; border-radius: 10px;
-      display: block; margin: 0.5rem auto;
-    }
-    .url-box {
-      font-family: monospace; font-size: 0.7rem;
-      word-break: break-all; opacity: 0.45;
-      background: #161b22; padding: 0.6rem 0.85rem;
-      border-radius: 6px; border: 1px solid #30363d; margin: 0.5rem 0 0;
-    }
-    .hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
-    ul { margin: 0; padding-left: 1.25rem; }
-    li { margin-bottom: 0.35rem; font-size: 0.85rem; line-height: 1.5; }
-    li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
-    .page-id { font-family: monospace; font-size: 0.75rem; opacity: 0.5; margin-right: 0.4rem; }
-    .page-url { word-break: break-all; }
-    hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
-  </style>
-</head>
-<body>
-  <h1>AIT 디버그 Dashboard</h1>
-  <p class="updated" id="updated">마지막 갱신: ${now}</p>
-
-  <section>
-    <h2>터널 상태</h2>
-    <span class="status ${tunnelClass}" id="tunnel-status">${tunnelStatus}</span>
-  </section>
-
-  <hr />
-
-  <section>
-    <h2>Attach QR</h2>
-    <div id="attach-section">${attachSection}</div>
-  </section>
-${pagesSection}
-
-  <script>
-    // SSE — /events 구독해 상태 자동 갱신. 빌드 파이프라인 없는 인라인 스크립트.
-    (function () {
-      var src = new EventSource('/events');
-      src.onmessage = function (e) {
-        try {
-          var s = JSON.parse(e.data);
-          // 터널 상태 갱신
-          var el = document.getElementById('tunnel-status');
-          if (el) {
-            el.textContent = s.tunnel && s.tunnel.up ? '연결됨' : '끊어짐';
-            el.className = 'status ' + (s.tunnel && s.tunnel.up ? 'status-up' : 'status-down');
-          }
-          // page 목록 갱신 — pages === null(env 2)이면 섹션 자체를 숨긴 채 둔다.
-          // 정적 렌더가 #pages-section을 아예 안 그렸으므로 여기서도 손대지 않아
-          // SSE push 때 섹션이 되살아나지 않는다(#411). 배열일 때만 목록을 채운다.
-          if (s.pages !== null && s.pages !== undefined) {
-            var ul = document.getElementById('pages-list');
-            if (ul) {
-              if (s.pages.length === 0) {
-                ul.innerHTML = '<li class="empty">attach된 페이지 없음</li>';
-              } else {
-                ul.innerHTML = s.pages.map(function (p) {
-                  var sid = String(p.id || '').slice(0, 36).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
-                  var su = String(p.url || '').slice(0, 120).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
-                  return '<li><span class="page-id">' + sid + '</span> <span class="page-url">' + su + '</span></li>';
-                }).join('');
-              }
-            }
-          }
-          // attachUrl QR 갱신 — attachUrl이 없으면 hint 표시.
-          var sec = document.getElementById('attach-section');
-          if (sec) {
-            if (s.attachUrl) {
-              // QR은 서버에서 새로 렌더한 /qr.png?u= 로 img src 교체.
-              // TOTP at= 코드는 attachUrl 안에 캡슐화 — 별도 노출 없음.
-              var encoded = encodeURIComponent(s.attachUrl);
-              var safeUrl = String(s.attachUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
-              sec.innerHTML =
-                '<img class="qr" src="/qr.png?u=' + encoded + '" alt="attach QR" />' +
-                '<p class="url-box">' + safeUrl + '</p>';
-            } else {
-              sec.innerHTML = '<p class="hint">build_attach_url MCP tool을 호출하면 QR이 여기에 표시됩니다.</p>';
-            }
-          }
-          // 갱신 시각
-          var upd = document.getElementById('updated');
-          if (upd) upd.textContent = '마지막 갱신: ' + new Date().toISOString();
-        } catch (_) { /* 파싱 오류 무시 */ }
-      };
-      src.onerror = function () {
-        // 재연결은 EventSource가 자동 처리 (spec 기본 동작).
-      };
-    })();
-  </script>
-</body>
-</html>`;
-}
-
-/**
- * QR 스캔 페이지 HTML 본문.
- * dark theme, inline style, 외부 fetch 없음.
- */
-function buildAttachHtml(qrDataUrl: string, safeLabel: string, safeAttachUrl: string): string {
-  return `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AIT 디버그 세션 — QR 스캔</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #0d1117; color: #c9d1d9;
-      display: flex; flex-direction: column; align-items: center;
-      min-height: 100vh; margin: 0; padding: 2rem 1rem;
-      gap: 1.5rem;
-    }
-    h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
-    .label { font-size: 0.8rem; opacity: 0.5; font-family: monospace; margin: 0; }
-    img.qr {
-      width: min(90vw, 360px); height: auto;
-      image-rendering: pixelated;
-      background: #fff; padding: 1rem; border-radius: 12px;
-    }
-    section { width: 100%; max-width: 480px; }
-    h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
-    ol, ul { margin: 0; padding-left: 1.25rem; }
-    li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
-    .url-box {
-      font-family: monospace; font-size: 0.72rem;
-      word-break: break-all; opacity: 0.4;
-      background: #161b22; padding: 0.75rem 1rem;
-      border-radius: 6px; border: 1px solid #30363d;
-    }
-    hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0; }
-  </style>
-</head>
-<body>
-  <h1>AIT 디버그 세션 — QR 스캔</h1>
-  <p class="label">deployment: ${safeLabel}</p>
-  <img class="qr" src="${qrDataUrl}" alt="attach QR" />
-
-  <section>
-    <h2>스캔 절차</h2>
-    <ol>
-      <li>토스 앱을 실행하세요.</li>
-      <li>폰 카메라 앱으로 QR 코드를 스캔하세요.</li>
-      <li>팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.</li>
-      <li>미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.</li>
-    </ol>
-  </section>
-
-  <hr />
-
-  <section>
-    <h2>진단 체크리스트</h2>
-    <ul>
-      <li><strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)</li>
-      <li><strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인</li>
-      <li><strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인</li>
-      <li><strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인</li>
-    </ul>
-  </section>
-
-  <hr />
-
-  <section>
-    <h2>URL (fallback)</h2>
-    <p class="url-box">${safeAttachUrl}</p>
-  </section>
-</body>
-</html>`;
 }
