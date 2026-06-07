@@ -3,6 +3,8 @@
 > 이 가이드는 `start_debug(mode)` 단일 진입 모델(#348/#356/#358)을 기준으로 환경 1(로컬 Chromium), 환경 3(intoss-private dogfood relay), 환경 4(LIVE relay read-only)의 acceptance 체크리스트를 담는다.
 >
 > 환경 3·4는 BLOCK-phone — 실 iPhone이 있어야 완주할 수 있다. 환경 1 섹션은 실기기 없이 자율 검증 가능.
+>
+> **환경 2(AITC Sandbox PWA)는 이 가이드 범위 밖이다** — 진입 메커니즘이 다르다(아래 핵심 모델 참고). 절차·acceptance는 [`docs/env2-pwa-acceptance.md`](../env2-pwa-acceptance.md)가 정본. **폰 세션 순서는 환경 2를 먼저** 돈다 — 토스 앱·검수가 불필요해 마찰이 낮고, CDP relay 경로의 절반을 더 싼 환경에서 먼저 검증한 뒤 환경 3(dogfood relay)으로 넘어간다.
 
 ## 핵심 모델 — `start_debug(mode)` 단일 진입
 
@@ -13,6 +15,7 @@
 - 유효 mode: `local-browser` | `relay-sandbox` | `relay-staging` | `relay-live` (#398 hard rename — 옛 이름 `local`/`mobile`/`staging`/`live` 및 deprecated 별칭은 모두 제거됨)
 - `relay-live`(env 4)는 **`confirm: true` 필수** — LIVE 진입 1차 게이트.
 - local-browser로 전환하면 LIVE guard(`liveIntent`)가 자동 disarm된다.
+- **`relay-sandbox`(env 2)만은 런타임 swap이 거부된다** — 외부-PWA origin(`*.trycloudflare.com`)이라 `relay-staging`/`relay-live`(같은 `intoss-private` 물리 슬롯)와 다른 별도 relay family다. unplugin `tunnel:{cdp:true}`가 띄운 Chii relay의 공개 base URL(`AIT_RELAY_BASE_URL`)을 데몬이 보고 외부 relay family로 부팅해야 하고, attach는 `scheme_url`이 아니라 `AIT_TUNNEL_BASE_URL`을 쓴다. 정확한 진입 명령은 폰 세션에서 1회 관측 후 [`env2-pwa-acceptance.md`](../env2-pwa-acceptance.md)에 박제한다(현재 미검증).
 
 > **`MCP_ENV` back-compat 각주**: `MCP_ENV=relay-live`는 부팅 시 `liveIntent` 시드 용도로만 남은 deprecated 별칭이다. 새 세션에서 `MCP_ENV` 내보내기로 환경을 고정하는 방식은 이 모델로 교체됐다 — 환경 전환은 `start_debug(mode)`를 쓴다.
 
