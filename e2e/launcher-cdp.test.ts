@@ -34,7 +34,7 @@
  *   A. Layer B1 gate (src/in-app/gate.ts): the in-app attach guard only allows
  *      *.trycloudflare.com and *.private-apps.tossmini.com hostnames. The Playwright
  *      fixture runs on http://localhost:4173 — localhost is explicitly BLOCKED. Even
- *      though main.ts now imports @ait-co/devtools/in-app conditionally and calls
+ *      though main.tsx now imports @ait-co/devtools/in-app conditionally and calls
  *      maybeAttach(), the gate rejects the call before injecting target.js.
  *      → In a real env-2 session the fixture is served from a trycloudflare.com tunnel
  *        and this gate is satisfied automatically.
