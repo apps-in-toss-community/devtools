@@ -243,4 +243,19 @@ export const en: Record<StringKey, string> = {
   'attach.faq.totp':
     '<strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server',
   'attach.url.section': 'URL (fallback)',
+
+  // Launcher PWA
+  'launcher.title': 'AITC DevTools Launcher',
+  'launcher.description':
+    'Point your camera at the QR shown in your dev server’s terminal, or paste the https://…trycloudflare.com URL below. The dev app then opens full-screen inside this launcher.',
+  'launcher.installCta': 'Install launcher to your phone',
+  'launcher.openOnce': 'Open this once without installing',
+  'launcher.urlPlaceholder': 'https://example.trycloudflare.com',
+  'launcher.openBtn': 'Open',
+  'launcher.scanBtn': 'Scan QR with camera',
+  'launcher.rescanBtn': 'Rescan',
+  'launcher.noCamera': 'No camera available — paste the URL instead.',
+  'launcher.cameraError': 'Could not access the camera — paste the URL instead.',
+  'launcher.invalidUrlHttps': 'Enter a valid https:// URL (the tunnel URL from your terminal).',
+  'launcher.invalidUrl': 'Enter a valid http(s):// URL.',
 };
