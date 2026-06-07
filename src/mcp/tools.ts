@@ -446,10 +446,12 @@ export const DEBUG_TOOL_DEFINITIONS = [
     availableIn: 'both' as ToolAvailability,
   },
   {
-    name: 'get_diagnostics',
+    name: 'get_debug_status',
     description:
-      'Returns a single-call server status snapshot so the agent can diagnose "why is this not ' +
-      'working?" without calling multiple tools. Fields: mcpVersion (MCP SDK version), ' +
+      'Reports the current debug session state — which environment/mode is active, whether a page ' +
+      'is attached, and a full diagnostic snapshot — in one call. Use this any time to answer ' +
+      '"what mode am I in right now?" or "why is this not working?" without chaining tools. ' +
+      'Fields: mcpVersion (MCP SDK version), ' +
       'devtoolsVersion (@ait-co/devtools package version), tunnel (up/wssUrl/pid/startedAt), ' +
       'pages (list_pages result + lastSeenAt stats), lastAttachAt, lastDetachAt, ' +
       'recentErrors (last N server-side errors, PII/secret redacted), ' +
@@ -460,7 +462,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'in local-target mode tunnel.up=false is normal so "restart" is never recommended). ' +
       'All fields are nullable — missing data is null, not an error. ' +
       'debug-mode only — dev-mode (--mode=dev) does not support relay diagnostics. ' +
-      'Tier C (both mock and relay). Call this first when debugging session state.',
+      'Tier C (both mock and relay).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -544,7 +546,7 @@ export function filterToolsByEnvironment<T extends { name: string; availableIn: 
  */
 export const BOOTSTRAP_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   'build_attach_url',
-  'get_diagnostics',
+  'get_debug_status',
   'list_pages',
   // start_debug must be visible from the very first tools/list (before any
   // attach) so the agent can switch environments to bootstrap an attach.
@@ -1626,7 +1628,7 @@ export function getOperationalEnvironment(source: AitSource): Promise<AitOperati
 }
 
 /* -------------------------------------------------------------------------- */
-/* get_diagnostics — single-call server status snapshot (#286)                */
+/* get_debug_status — single-call server status snapshot (#286)                */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -1697,7 +1699,7 @@ export interface NextRecommendedAction {
 }
 
 /**
- * Full server status snapshot returned by `get_diagnostics`.
+ * Full server status snapshot returned by `get_debug_status`.
  *
  * All fields are nullable — a missing value means "not yet known" (e.g. tunnel
  * not up yet) rather than an error. The schema is intentionally stable across
@@ -1753,7 +1755,7 @@ export interface DiagnosticsResult {
   process: {
     /** PID of this MCP server process. */
     pid: number;
-    /** Parent PID at the time `get_diagnostics` was called. */
+    /** Parent PID at the time `get_debug_status` was called. */
     ppid: number;
     /** Whether the parent process is still alive at snapshot time. */
     parentAlive: boolean;
@@ -1779,7 +1781,7 @@ export interface DiagnosticsResult {
  * Injected into `createDebugServer` so it is testable without a real process.
  */
 export interface DiagnosticsCollector {
-  /** Records a server-side error for later surfacing in `get_diagnostics`. */
+  /** Records a server-side error for later surfacing in `get_debug_status`. */
   recordError(message: string, category?: string): void;
   /** Returns the most recent `limit` errors, oldest-first. */
   getRecentErrors(limit: number): DiagnosticsError[];
@@ -2040,7 +2042,7 @@ export interface GetDiagnosticsInput {
 }
 
 /**
- * Builds the `get_diagnostics` response. Pure — does not throw; missing data
+ * Builds the `get_debug_status` response. Pure — does not throw; missing data
  * fields are `null`. Async because `readMcpSdkVersion` needs `import()`.
  *
  * SECRET-HANDLING:

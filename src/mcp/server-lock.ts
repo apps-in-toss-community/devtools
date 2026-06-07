@@ -213,7 +213,7 @@ function killAndWait(pid: number, graceMs = 2_000): void {
 /**
  * Reads the current lock file without acquiring it. Returns the parsed
  * `LockData` when the file exists and is valid, otherwise `null`. Used by
- * `get_diagnostics` to surface the `serverLockHolder` field without
+ * `get_debug_status` to surface the `serverLockHolder` field without
  * interfering with the running lock owner.
  */
 export function readServerLock(): LockData | null {

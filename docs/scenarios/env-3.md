@@ -67,9 +67,9 @@ troubleshooting: QR 스캔했는데 relay가 인증 실패 → `totp.expiresAt` 
 npx @ait-co/devtools devtools-mcp --force
 ```
 
-## get_diagnostics — environment 필드
+## get_debug_status — environment 필드
 
-`get_diagnostics` 응답의 `environment` 필드:
+`get_debug_status` 응답의 `environment` 필드:
 
 ```json
 {
