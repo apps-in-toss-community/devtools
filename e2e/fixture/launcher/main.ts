@@ -14,6 +14,7 @@ import QrScanner from 'qr-scanner';
 // `beforeinstallprompt`, iOS share-sheet illustration, Firefox/Safari manual
 // fallback), which we previously approximated with a static text card.
 import '@khmyznikov/pwa-install';
+import { resolveLauncherEntry } from './entry.js';
 
 const STORAGE_KEY = 'aitc-launcher:last-url';
 
@@ -31,8 +32,16 @@ const installPrompt = document.getElementById('pwa-install') as HTMLElement & {
 };
 const installCta = document.getElementById('install-cta') as HTMLButtonElement;
 const setupTools = document.getElementById('setup-tools') as HTMLElement;
+// "Open this once without installing" — only surfaced on the setup screen when a
+// deep-link / saved URL arrived but the launcher isn't installed yet (#411). It
+// keeps the install-first gate from being a dead end.
+const openOnceBtn = document.getElementById('open-once') as HTMLButtonElement;
 
 let scanner: QrScanner | null = null;
+
+// Deep-link / saved URL preserved across the install-first gate so "open once"
+// (and a post-install standalone re-entry) can reach the live frame.
+let pendingUrl: string | null = null;
 
 function isStandalone(): boolean {
   return (
@@ -65,8 +74,17 @@ function applyPwaGate(): void {
 
 applyPwaGate();
 installCta.addEventListener('click', () => installPrompt.showDialog(true));
+// "Open this once without installing" — bypass the install-first gate for the
+// preserved deep-link / saved URL (#411). The install CTA remains the primary
+// path; this just avoids a dead end for someone who only wants a quick look.
+openOnceBtn.addEventListener('click', () => {
+  if (pendingUrl) showLive(pendingUrl);
+});
 window.addEventListener('appinstalled', () => {
   applyPwaGate();
+  // Just installed → now standalone. If a deep-link was held back by the gate,
+  // enter the live frame directly so install completion lands on the dev app.
+  if (pendingUrl && isStandalone()) showLive(pendingUrl);
 });
 
 function normalizeUrl(raw: string): string | null {
@@ -146,6 +164,10 @@ function resolveScannedUrl(raw: string): string | null {
 
 function showLive(url: string): void {
   stopScanner();
+  // The URL is now live — clear the held-back deep-link so a later setup screen
+  // (rescan) doesn't re-surface the "open once" button for a stale URL.
+  pendingUrl = null;
+  openOnceBtn.style.display = 'none';
   localStorage.setItem(STORAGE_KEY, url);
   frame.src = url;
   frame.style.display = 'block';
@@ -159,6 +181,10 @@ function showSetup(): void {
   frame.removeAttribute('src');
   rescanBtn.style.display = 'none';
   setup.style.display = 'flex';
+  // Surface the "open this once without installing" escape hatch only when a
+  // deep-link / saved URL was preserved (install-first gate, #411). Otherwise it
+  // stays hidden — a plain setup screen has nothing to open yet.
+  openOnceBtn.style.display = pendingUrl ? '' : 'none';
   const last = localStorage.getItem(STORAGE_KEY);
   if (last) urlInput.value = last;
 }
@@ -231,14 +257,25 @@ function consumeDeepLinkUrl(): string | null {
   return url ? decorateIframeSrc(url, launcherSearch) : null;
 }
 
+// Entry routing (#411): a deep-link / saved URL no longer skips straight to live
+// in an uninstalled browser tab — that permanently hid the install CTA. When the
+// install-first gate is closed (not standalone, not local-dev) we show setup with
+// the URL preserved as `pendingUrl` (+ "open once" button). Installed / local-dev
+// contexts keep the straight-to-live behaviour.
 const deepLinked = consumeDeepLinkUrl();
-if (deepLinked) {
-  showLive(deepLinked);
+const savedRaw = localStorage.getItem(STORAGE_KEY);
+const savedUrl = savedRaw && normalizeUrl(savedRaw) ? savedRaw : null;
+
+const entry = resolveLauncherEntry({
+  deepLinkUrl: deepLinked,
+  lastUrl: savedUrl,
+  isStandalone: isStandalone(),
+  isLocalDev: isLocalDev(),
+});
+
+if (entry.kind === 'live') {
+  showLive(entry.url);
 } else {
-  const last = localStorage.getItem(STORAGE_KEY);
-  if (last && normalizeUrl(last)) {
-    showLive(last);
-  } else {
-    showSetup();
-  }
+  pendingUrl = entry.pendingUrl;
+  showSetup();
 }

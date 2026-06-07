@@ -195,6 +195,85 @@ describe('startQrHttpServer — GET / dashboard HTML', () => {
 });
 
 // ---------------------------------------------------------------------------
+// "연결된 Pages" 섹션 — pages: null 이면 숨김 (#411 결함 1)
+//
+// env 3/4(debug-server)는 pages: Array 라이브 목록을 채워 섹션을 보여주고,
+// env 2(unplugin 터널)는 connected target을 알 수 없어 pages: null 로 섹션 자체를
+// 숨긴다. 정적 렌더와 SSE 스크립트 양쪽이 같은 조건을 따라야 push 때 섹션이
+// 되살아나지 않는다.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — 연결된 Pages 섹션 토글 (#411)', () => {
+  it('pages: null 이면 "연결된 Pages" 섹션을 렌더하지 않는다 (env 2)', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: null,
+      attachUrl: null,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // 정적 렌더의 섹션 헤더·컨테이너·목록이 모두 사라진다 — 거짓 빈 목록 미표시.
+      // (참고: "attach된 페이지 없음" 문자열은 SSE 스크립트 안에도 있어 본문
+      //  존재 여부로는 섹션 표시를 판별할 수 없다 → 정적 마커로 판별한다.)
+      expect(html).not.toContain('연결된 Pages');
+      expect(html).not.toContain('id="pages-section"');
+      expect(html).not.toContain('id="pages-list"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('pages: [] 이면 섹션을 보여주고 빈 안내를 표시한다 (env 3/4 attach 0개 — 회귀 가드)', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      expect(html).toContain('연결된 Pages');
+      expect(html).toContain('id="pages-list"');
+      expect(html).toContain('attach된 페이지 없음');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('pages: [목록] 이면 섹션과 page 항목을 표시한다 (env 3/4 — 회귀 가드)', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [{ id: 'target-7', url: 'https://example.com/live' }],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      expect(html).toContain('연결된 Pages');
+      expect(html).toContain('target-7');
+      expect(html).toContain('example.com/live');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SSE 스크립트가 pages === null 분기를 가져 push 때 섹션을 되살리지 않는다', async () => {
+    // pages: null 정적 렌더의 인라인 스크립트를 검사 — null/undefined 가드가
+    // 들어가야 SSE push로 #pages-list 가 새로 생성되지 않는다.
+    const srvNull = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: null,
+      attachUrl: null,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srvNull.port}/`)).text();
+      // 스크립트가 pages 갱신 전에 null/undefined 를 명시적으로 거른다.
+      expect(html).toContain('s.pages !== null');
+    } finally {
+      await srvNull.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SSE /events — 초기 frame + notifyStateChange push
 // ---------------------------------------------------------------------------
 
@@ -232,7 +311,7 @@ describe('startQrHttpServer — SSE /events', () => {
       )) as DashboardState;
       expect(frame.tunnel.up).toBe(true);
       expect(Array.isArray(frame.pages)).toBe(true);
-      expect(frame.pages[0]?.id).toBe('p1');
+      expect(frame.pages?.[0]?.id).toBe('p1');
     } finally {
       await srv.close();
     }
@@ -298,7 +377,7 @@ describe('startQrHttpServer — SSE /events', () => {
       // 두 번째 frame에 갱신된 상태가 반영돼야 함
       const second = frames[1] as DashboardState;
       expect(second.tunnel.up).toBe(false);
-      expect(second.pages[0]?.id).toBe('p2');
+      expect(second.pages?.[0]?.id).toBe('p2');
     } finally {
       await srv.close();
     }

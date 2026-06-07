@@ -21,8 +21,16 @@ import { createServer } from 'node:http';
 export interface DashboardState {
   /** 현재 터널 상태 — up/down + wssUrl. SECRET: wssUrl은 로그 출력 금지. */
   tunnel: { up: boolean; wssUrl: string | null };
-  /** 현재 연결된 page 목록 (id/url만). */
-  pages: Array<{ id: string; url: string }>;
+  /**
+   * 현재 연결된 page 목록 (id/url만).
+   *
+   * - `Array<…>` — env 3/4(MCP): relay에 attach된 페이지를 라이브 조회한 목록.
+   *   빈 배열 `[]`은 "attach된 페이지 없음"으로 정직하게 표시한다.
+   * - `null` — env 2(unplugin 터널): 플러그인 핸들이 connected target을 노출하지
+   *   않아 라이브 page 목록을 알 수 없다. 거짓 빈 목록을 보여주느니 "연결된 Pages"
+   *   섹션 자체를 숨긴다(#411). 정적 렌더와 SSE 갱신 양쪽에서 섹션이 사라진다.
+   */
+  pages: Array<{ id: string; url: string }> | null;
   /** 마지막으로 생성된 attachUrl (없으면 null). TOTP at= 코드는 이 안에 캡슐화. */
   attachUrl: string | null;
 }
@@ -249,17 +257,31 @@ function buildDashboardHtml(state: DashboardState, qrDataUrl: string | null): st
   const tunnelClass = state.tunnel.up ? 'status-up' : 'status-down';
   const now = new Date().toISOString();
 
-  // page 목록 HTML
-  const pagesHtml =
-    state.pages.length > 0
-      ? state.pages
-          .map((p) => {
-            const safeId = p.id.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-            const safeUrl = p.url.slice(0, 120).replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
-            return `<li><span class="page-id">${safeId}</span> <span class="page-url">${safeUrl}</span></li>`;
-          })
-          .join('\n')
-      : '<li class="empty">attach된 페이지 없음</li>';
+  // "연결된 Pages" 섹션 — env 3/4(pages: Array)에서만 렌더한다. env 2(pages: null)는
+  // 라이브 page 목록을 알 수 없어 섹션 자체를 숨긴다(#411). SSE 스크립트도 같은
+  // 조건을 따라야 한쪽만 고쳐서 섹션이 push 때 되살아나는 일이 없다.
+  const pagesSection =
+    state.pages === null
+      ? ''
+      : `
+  <hr />
+
+  <section id="pages-section">
+    <h2>연결된 Pages</h2>
+    <ul id="pages-list">${
+      state.pages.length > 0
+        ? state.pages
+            .map((p) => {
+              const safeId = p.id.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
+              const safeUrl = p.url
+                .slice(0, 120)
+                .replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
+              return `<li><span class="page-id">${safeId}</span> <span class="page-url">${safeUrl}</span></li>`;
+            })
+            .join('\n')
+        : '<li class="empty">attach된 페이지 없음</li>'
+    }</ul>
+  </section>`;
 
   // attachUrl QR + fallback
   let attachSection: string;
@@ -331,13 +353,7 @@ function buildDashboardHtml(state: DashboardState, qrDataUrl: string | null): st
     <h2>Attach QR</h2>
     <div id="attach-section">${attachSection}</div>
   </section>
-
-  <hr />
-
-  <section>
-    <h2>연결된 Pages</h2>
-    <ul id="pages-list">${pagesHtml}</ul>
-  </section>
+${pagesSection}
 
   <script>
     // SSE — /events 구독해 상태 자동 갱신. 빌드 파이프라인 없는 인라인 스크립트.
@@ -352,17 +368,21 @@ function buildDashboardHtml(state: DashboardState, qrDataUrl: string | null): st
             el.textContent = s.tunnel && s.tunnel.up ? '연결됨' : '끊어짐';
             el.className = 'status ' + (s.tunnel && s.tunnel.up ? 'status-up' : 'status-down');
           }
-          // page 목록 갱신
-          var ul = document.getElementById('pages-list');
-          if (ul) {
-            if (!s.pages || s.pages.length === 0) {
-              ul.innerHTML = '<li class="empty">attach된 페이지 없음</li>';
-            } else {
-              ul.innerHTML = s.pages.map(function (p) {
-                var sid = String(p.id || '').slice(0, 36).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
-                var su = String(p.url || '').slice(0, 120).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
-                return '<li><span class="page-id">' + sid + '</span> <span class="page-url">' + su + '</span></li>';
-              }).join('');
+          // page 목록 갱신 — pages === null(env 2)이면 섹션 자체를 숨긴 채 둔다.
+          // 정적 렌더가 #pages-section을 아예 안 그렸으므로 여기서도 손대지 않아
+          // SSE push 때 섹션이 되살아나지 않는다(#411). 배열일 때만 목록을 채운다.
+          if (s.pages !== null && s.pages !== undefined) {
+            var ul = document.getElementById('pages-list');
+            if (ul) {
+              if (s.pages.length === 0) {
+                ul.innerHTML = '<li class="empty">attach된 페이지 없음</li>';
+              } else {
+                ul.innerHTML = s.pages.map(function (p) {
+                  var sid = String(p.id || '').slice(0, 36).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+                  var su = String(p.url || '').slice(0, 120).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+                  return '<li><span class="page-id">' + sid + '</span> <span class="page-url">' + su + '</span></li>';
+                }).join('');
+              }
             }
           }
           // attachUrl QR 갱신 — attachUrl이 없으면 hint 표시.

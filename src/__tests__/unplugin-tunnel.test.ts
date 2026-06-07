@@ -225,6 +225,32 @@ describe('startTunnelDashboard', () => {
     }
   });
 
+  it('hides the "연결된 Pages" section — env 2 has no live target list (#411)', async () => {
+    // env 2 getDashboardState returns pages: null because the unplugin tunnel
+    // handle can't enumerate connected targets. The dashboard must therefore
+    // omit the section entirely rather than show a perpetually-empty list.
+    const handle = await startTunnelDashboard({
+      tunnelUrl: TUNNEL_URL,
+      relayWssUrl: RELAY_WSS,
+      shouldOpen: () => true,
+      log: () => {},
+    });
+    if (!handle) throw new Error('dashboard did not start');
+    try {
+      const html = await (await fetch(handle.url)).text();
+      // The static "연결된 Pages" section (header + container) is gone. (The
+      // "attach된 페이지 없음" string also lives in the inline SSE script, so we
+      // assert on static-only markers — section header + element ids.)
+      expect(html).not.toContain('연결된 Pages');
+      expect(html).not.toContain('id="pages-section"');
+      expect(html).not.toContain('id="pages-list"');
+      // The rest of the dashboard (Attach QR) still renders.
+      expect(html).toContain('Attach QR');
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('mints a FRESH 6-digit TOTP folded into at= on each getDashboardState call (no stale bake-in)', async () => {
     // Capture the dashboard state by reading the served SSE/HTML attachUrl across
     // two different time windows. Easiest deterministic probe: hit /qr.png twice

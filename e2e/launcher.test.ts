@@ -42,6 +42,8 @@ test.describe('launcher PWA', () => {
     await page.goto(`/launcher/?url=${encodeURIComponent(tunnel)}`);
 
     // Setup screen hidden, iframe visible, src matches the deep-linked URL.
+    // Over http://localhost isLocalDev() is true, so the install-first gate
+    // (#411) is open and the deep-link still enters live directly.
     await expect(page.getByTestId('launcher-setup')).toBeHidden();
     const frame = page.getByTestId('launcher-frame');
     await expect(frame).toBeVisible();
@@ -52,6 +54,30 @@ test.describe('launcher PWA', () => {
 
     // Rescan button surfaced so users can pick a different URL.
     await expect(page.getByTestId('launcher-rescan-btn')).toBeVisible();
+  });
+
+  // The install-first gate (#411) — a deep-link / saved URL in an UNINSTALLED,
+  // non-local-dev browser tab must show setup (install CTA) FIRST with the URL
+  // preserved behind an "open once" button, instead of skipping straight to live
+  // and permanently hiding the install opportunity — is not reachable from this
+  // e2e harness. The gate only closes when isLocalDev() is false, which requires a
+  // non-localhost https host; Chromium makes window.location (and its protocol /
+  // hostname) non-configurable, so an init-script cannot fake that context (verified:
+  // Object.defineProperty throws "Cannot redefine property"). The gate's full
+  // branch matrix — including the closed-gate → setup+pendingUrl outcome and the
+  // "open once" / post-install re-entry that the DOM wiring consumes — is covered by
+  // the pure-logic unit tests in e2e/fixture/launcher/entry.vitest.ts. What e2e CAN
+  // verify is the local-dev escape hatch (gate open → straight to live) and that the
+  // "open once" button stays hidden when there is no preserved URL.
+
+  test('"open once" button stays hidden in the normal local-dev flow (no pending URL)', async ({
+    page,
+  }) => {
+    await page.goto('/launcher/');
+    // Plain setup over http://localhost — gate is open (local-dev) and nothing was
+    // preserved, so the "open once" escape hatch stays hidden.
+    await expect(page.getByTestId('launcher-setup')).toBeVisible();
+    await expect(page.getByTestId('launcher-open-once')).toBeHidden();
   });
 
   test('forwards &debug=1&relay= onto the framed URL (env-2 CDP deep-link)', async ({ page }) => {
