@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.58
+
+### Patch Changes
+
+- 8e54293: get_diagnostics MCP 도구를 get_debug_status로 리네임 — 현재 환경/모드/세션 상태 조회 용도를 이름에서 직접 드러냄 (#405)
+- 56ef271: start_debug description 정직화 — relay-staging(환경 3) prereq에 `RELEASE_CHANNEL=dogfood ait build` → `ait deploy --scheme-only`(intoss-private deep-link 발급) 명령 체인 명시하고 env 2(dev-server 터널)와 인프라 대비. relay-sandbox(환경 2)는 single-connection 데몬에서 reject된다는 사실 + full 경로에 AIT_RELAY_BASE_URL·AIT_TUNNEL_BASE_URL 둘 다 필요함을 명시. 동작 변경 없음, description만. (#402)
+
 ## 0.1.57
 
 ### Patch Changes
