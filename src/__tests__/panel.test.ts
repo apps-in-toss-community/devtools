@@ -1,9 +1,17 @@
+import { act } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, type Mock, vi } from 'vitest';
 import { aitState } from '../mock/state.js';
 import type { TabId } from '../panel/tabs/index.js';
 
 // We mock createTabRenderers to control which tabs throw.
-// This lets us test the real production error boundary code in panel/index.ts.
+// This lets us test the real production error boundary code in panel/Panel.tsx.
+//
+// The panel chrome is now a React tree: the `__ait:panel-switch-tab` listener and
+// the mock-state `subscribe` callback drive React state updates (setCurrentTab /
+// the refresh nonce), which React flushes asynchronously. So every dispatch /
+// state mutation that should re-render a tab body is wrapped in `act()` to flush
+// the resulting render+commit (and let the class error boundary catch a throw)
+// synchronously before we assert on the DOM.
 
 const tabSpies: Record<TabId, Mock<() => HTMLElement>> = {
   env: vi.fn(() => document.createElement('div')),
@@ -34,7 +42,9 @@ describe('Panel error boundary', () => {
   beforeAll(async () => {
     const { mount } = await import('../panel/index.js');
     if (!document.querySelector('.ait-panel-toggle')) {
-      mount();
+      act(() => {
+        mount();
+      });
     }
   });
 
@@ -52,7 +62,9 @@ describe('Panel error boundary', () => {
     tabSpies.env.mockImplementation(() => {
       throw new Error('env tab exploded');
     });
-    window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
+    act(() => {
+      window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
+    });
 
     const panelBody = document.querySelector('.ait-panel-body');
     expect(panelBody).not.toBeNull();
@@ -67,9 +79,11 @@ describe('Panel error boundary', () => {
     );
 
     // Switch to a non-broken tab — it should render fine
-    window.dispatchEvent(
-      new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'permissions' } }),
-    );
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'permissions' } }),
+      );
+    });
     expect(panelBody!.querySelector('.ait-panel-tab-error')).toBeNull();
     expect(panelBody!.children.length).toBeGreaterThan(0);
   });
@@ -78,15 +92,24 @@ describe('Panel error boundary', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     // Switch to storage tab and open panel (storage refreshes on state change).
-    window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'storage' } }));
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'storage' } }),
+      );
+    });
 
     // Now make the storage renderer throw
     tabSpies.storage.mockImplementation(() => {
       throw new Error('storage exploded');
     });
 
-    // aitState.update triggers subscribe → refreshPanel (storage tab) → throws → caught
-    expect(() => aitState.update({ platform: 'android' })).not.toThrow();
+    // aitState.update triggers subscribe → refresh() nonce bump → storage tab
+    // re-renders → throws → caught by the per-tab error boundary (not propagated).
+    expect(() =>
+      act(() => {
+        aitState.update({ platform: 'android' });
+      }),
+    ).not.toThrow();
 
     expect(consoleError).toHaveBeenCalledWith(
       '[@ait-co/devtools] Error rendering tab "storage":',
