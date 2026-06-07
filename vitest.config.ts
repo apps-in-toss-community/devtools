@@ -10,7 +10,15 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     restoreMocks: true,
-    exclude: ['e2e/**', '.tmp/**', 'node_modules/**', '.claude/**'],
+    // Default `*.test.ts` collection (src/**) PLUS the launcher's pure-logic unit
+    // tests under a distinct `*.vitest.ts` extension. The `.vitest.ts` suffix
+    // keeps Playwright (testMatch '**/*.test.ts', testDir './e2e') from picking
+    // these up, so the same launcher source is covered by both runners without
+    // collision (#411).
+    include: ['src/**/*.test.ts', 'e2e/fixture/launcher/**/*.vitest.ts'],
+    // Only the Playwright e2e specs are excluded — the launcher `*.vitest.ts`
+    // files above stay in vitest's scope.
+    exclude: ['e2e/**/*.test.ts', '.tmp/**', 'node_modules/**', '.claude/**'],
     onConsoleLog(log: string) {
       if (log.includes('[@ait-co/devtools]')) return false;
     },

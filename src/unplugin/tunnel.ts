@@ -209,7 +209,11 @@ export async function startTunnelDashboard(
     const secret = process.env.AIT_DEBUG_TOTP_SECRET;
     const totpCode = secret ? generateTotp(secret, Date.now()) : undefined;
     const attachUrl = buildLauncherAttachUrl(opts.tunnelUrl, opts.relayWssUrl, totpCode);
-    return { tunnel: { up: true, wssUrl: opts.relayWssUrl }, pages: [], attachUrl };
+    // pages: null — env 2(unplugin)는 데몬이 아니라 vite 플러그인 안이라
+    // startChiiRelay 핸들이 connected target을 노출하지 않는다. 라이브 page 목록을
+    // 알 수 없으므로 거짓 빈 목록 대신 "연결된 Pages" 섹션 자체를 숨긴다(#411).
+    // env 3/4(debug-server.ts)는 router.active.listTargets()로 실제 목록을 채운다.
+    return { tunnel: { up: true, wssUrl: opts.relayWssUrl }, pages: null, attachUrl };
   };
 
   let server: Awaited<ReturnType<typeof startQrHttpServer>>;
