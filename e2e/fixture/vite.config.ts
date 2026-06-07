@@ -24,7 +24,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Bypass rolldown resolveId limitation: alias directly to built mock file.
-      // (Panel is imported explicitly in main.ts; unplugin panel injection is
+      // (Panel is imported explicitly in main.tsx; unplugin panel injection is
       // disabled below because unplugin transform is unreliable under Vite 8
       // production build with rolldown.)
       //
@@ -37,7 +37,7 @@ export default defineConfig({
   },
   // Both mock and panel are disabled so the unplugin does NO active work here:
   //   mock:  off — handled by resolve.alias above (bypasses rolldown resolveId bug)
-  //   panel: off — handled by explicit import in main.ts (unplugin transform
+  //   panel: off — handled by explicit import in main.tsx (unplugin transform
   //                is unreliable under Vite 8 production build with rolldown)
   // The plugin is kept in the list so forceEnable=true is honoured if rolldown
   // is fixed and these options are re-enabled in the future without other changes.
