@@ -16,3 +16,6 @@ playwright-report/
 # Machine-local MCP config (points at a local devtools-mcp; never committed)
 .mcp.json
 .codegraph/
+# Relay TOTP secret (auto-minted 0600 by the env-2 unplugin; a credential that
+# gates relay attach — never committed; SECRET-HANDLING)
+.ait_relay

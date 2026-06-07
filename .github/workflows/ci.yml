@@ -32,6 +32,10 @@ jobs:
 
       - run: pnpm build
 
+      # Install-graph invariant: react/react-dom are devDeps only; the MCP
+      # daemon bundles must never import them (see scripts/check-mcp-react-free.sh).
+      - run: pnpm check:mcp-react-free
+
       - run: pnpm typecheck
 
       - run: pnpm test
