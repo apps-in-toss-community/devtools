@@ -20,13 +20,13 @@
  * backward-compatible alias of `AIT.getMockState`.
  *
  * Issue #305 (M2-1) — dev/debug tool-surface unification:
- * dev-mode now also exposes `list_pages`, `get_diagnostics`, `measure_safe_area`,
+ * dev-mode now also exposes `list_pages`, `get_debug_status`, `measure_safe_area`,
  * and `call_sdk` so the docs/qa/scenarios.md acceptance sequence
  * `list_pages → measure_safe_area → call_sdk` works in dev mode without
  * "Unknown tool" failures.
  *
  * - `list_pages`       — shim: returns the Vite dev URL as a single-entry array.
- * - `get_diagnostics`  — dumps dev-mode server state (endpoint URL, last fetch
+ * - `get_debug_status`  — dumps dev-mode server state (endpoint URL, last fetch
  *                        error, reachability, mode/environment metadata).
  * - `measure_safe_area`— reads safeAreaInsets from the mock state snapshot
  *                        (source: 'mock-vite').
@@ -139,12 +139,12 @@ const DEV_TOOL_DEFINITIONS = [
     availableIn: 'both' as ToolAvailability,
   },
   {
-    name: 'get_diagnostics',
+    name: 'get_debug_status',
     description:
-      'dev-mode: returns server diagnostics — Vite endpoint URL, last fetch timestamp/error, ' +
-      'mock state endpoint reachability, mode ("dev"), and environment metadata. ' +
-      'Call this when the dev server connection is suspect. ' +
-      'In debug mode this returns tunnel/relay/attach status instead.',
+      'dev-mode: reports the current dev session state — Vite endpoint URL, last fetch ' +
+      'timestamp/error, mock state endpoint reachability, mode ("dev"), and environment metadata — ' +
+      'in one call. Use this any time to confirm what the dev server is doing or when its ' +
+      'connection is suspect. In debug mode this returns tunnel/relay/attach status instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -353,7 +353,7 @@ function buildDevListPagesResult(devtoolsUrl: string) {
 }
 
 /**
- * Builds the `get_diagnostics` dev-mode response.
+ * Builds the `get_debug_status` dev-mode response.
  * Probes the mock state endpoint reachability and returns server metadata.
  */
 async function buildDevDiagnostics(
@@ -532,9 +532,9 @@ export function createDevServer(deps: CreateDevServerDeps = {}): Server {
         case 'list_pages':
           return envelopeResult('list_pages', buildDevListPagesResult(devtoolsUrl));
 
-        case 'get_diagnostics':
+        case 'get_debug_status':
           return envelopeResult(
-            'get_diagnostics',
+            'get_debug_status',
             await buildDevDiagnostics(devtoolsUrl, stateEndpoint, (url) => fetch(url)),
           );
 

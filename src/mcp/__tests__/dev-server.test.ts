@@ -3,14 +3,14 @@
  *
  * Verifies that:
  *   - `list_pages` shim returns the Vite dev URL with devMode: true.
- *   - `get_diagnostics` probes the state endpoint and returns mode metadata.
+ *   - `get_debug_status` probes the state endpoint and returns mode metadata.
  *   - `measure_safe_area` reads safeAreaInsets from mock state.
  *   - `call_sdk("getOperationalEnvironment")` returns a mock-backed result.
  *   - `call_sdk` for unsupported methods returns ok:false with an informative error.
  *   - CDP-only tools (evaluate, take_screenshot, etc.) return tier-filter errors
  *     instead of "Unknown tool".
  *   - AIT.* tools continue to work.
- *   - issue #322: list_pages / get_diagnostics / measure_safe_area / call_sdk
+ *   - issue #322: list_pages / get_debug_status / measure_safe_area / call_sdk
  *     responses are wrapped in ToolEnvelope {ok, data, meta} when compat mode off.
  *   - issue #322: AIT_MCP_COMPAT=chrome-devtools bypasses the envelope.
  *   - issue #323: build_attach_url appears in tools/list and returns a tier-filter
@@ -88,13 +88,13 @@ function parseContent(result: Awaited<ReturnType<Client['callTool']>>): unknown 
 // ---- Tool list -------------------------------------------------------------
 
 describe('createDevServer — tools/list', () => {
-  it('exposes list_pages, get_diagnostics, measure_safe_area, call_sdk', async () => {
+  it('exposes list_pages, get_debug_status, measure_safe_area, call_sdk', async () => {
     const { client, cleanup } = await setupDevClient();
     try {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
       expect(names).toContain('list_pages');
-      expect(names).toContain('get_diagnostics');
+      expect(names).toContain('get_debug_status');
       expect(names).toContain('measure_safe_area');
       expect(names).toContain('call_sdk');
     } finally {
@@ -211,9 +211,9 @@ describe('list_pages shim', () => {
   });
 });
 
-// ---- get_diagnostics -------------------------------------------------------
+// ---- get_debug_status -------------------------------------------------------
 
-describe('get_diagnostics', () => {
+describe('get_debug_status', () => {
   beforeEach(() => {
     delete process.env.AIT_MCP_COMPAT;
   });
@@ -225,12 +225,12 @@ describe('get_diagnostics', () => {
   it('result is wrapped in ToolEnvelope when compat off', async () => {
     const { client, cleanup } = await setupDevClient();
     try {
-      const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+      const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
       const raw = parseContent(result) as Record<string, unknown>;
       expect(raw.ok).toBe(true);
       expect(raw.data).toBeDefined();
       const meta = raw.meta as Record<string, unknown>;
-      expect(meta.tool).toBe('get_diagnostics');
+      expect(meta.tool).toBe('get_debug_status');
       expect(meta.env).toBe('mock');
       expect(meta.contentType).toBe('json');
     } finally {
@@ -243,7 +243,7 @@ describe('get_diagnostics', () => {
     process.env.AIT_MCP_COMPAT = 'chrome-devtools';
     const { client, cleanup } = await setupDevClient();
     try {
-      const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+      const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
       const raw = parseContent(result) as Record<string, unknown>;
       expect(raw.mode).toBe('dev');
       expect('ok' in raw).toBe(false);
@@ -257,7 +257,7 @@ describe('get_diagnostics', () => {
     // Since there is no real server, we expect reachable: false.
     const { client, cleanup } = await setupDevClient();
     try {
-      const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+      const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
       const raw = parseContent(result) as Record<string, unknown>;
       // When envelope is on, data is nested; compat off (default).
       const data = (raw.data ?? raw) as Record<string, unknown>;

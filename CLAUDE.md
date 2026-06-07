@@ -147,6 +147,8 @@ issue #309의 dead-lock(빈 세션 첫 `tools/list`에서 Tier B `build_attach_u
 
 도구는 RFC #277(closed — 구현 완료) Tier 분류를 따른다. 각 descriptor에 `availableIn: 'mock' | 'relay' | 'both'`(`ToolAvailability`)가 박혀 있고, `filterToolsByEnvironment`가 `tools/list`를 env에 맞춰 필터한다 — Tier B(`relay` only, 예: `build_attach_url`)는 local에서 hidden, 환경 불일치 호출은 `tierRejectionError`(한국어 "원인+다음 행동" + 영문 compat 라인을 담은 tool-result error)로 거부된다. Tier A(`mock` only, mock state dial)는 **현재 0개 노출** — webViewType/orientation 등 dial은 패널 UI 전용이고 MCP 표면엔 안 올라와 있다. Tier C(`both`, 평행 13개)에는 `AIT.*` 계열(`getMockState`/`getSdkCallHistory` 포함 — 둘 다 코드상 `'both'`), `list_*`, `get_dom_document`, `take_*`, `measure_safe_area`, `evaluate`, `call_sdk`가 든다. `measure_safe_area`는 양쪽에서 같은 `Runtime.evaluate` probe(`SAFE_AREA_PROBE_EXPRESSION`)를 돌리고 결과에 `source: 'mock' | 'relay'`를 attach해 provenance를 노출한다. mock↔relay 결과 평행은 `scripts/fidelity-qa/`가 정량 diff(`whitelist.json`이 EXPECTED_MISMATCH 등재)로 강제한다.
 
+**MCP 도구 명명 규칙**: 동사+명사(verb-first), 군더더기 prefix 금지. 도메인 prefix(`session_`/`observe_` 등)는 한 클러스터가 도구 3개 이상에 도달할 때만 도입한다 — MCP 서버키(`ait-devtools`)가 이미 1차 네임스페이스를 제공하므로 그 전엔 prefix가 거짓 신호다.
+
 ## 패키지 export 구조
 
 | Import path | 용도 |

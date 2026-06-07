@@ -1,5 +1,5 @@
 /**
- * Tests for the `get_diagnostics` MCP tool (#286).
+ * Tests for the `get_debug_status` MCP tool (#286).
  *
  * Exercises:
  *   - Full response schema (all nullable fields present)
@@ -389,17 +389,17 @@ describe('getDiagnostics helper', () => {
 
 // ---- MCP tool via createDebugServer -----------------------------------------
 
-describe('get_diagnostics MCP tool', () => {
+describe('get_debug_status MCP tool', () => {
   it('is available before any page attaches (bootstrap tier)', async () => {
     const client = await makeClient({ env: 'mock' });
     const tools = await client.listTools();
     const names = tools.tools.map((t) => t.name);
-    expect(names).toContain('get_diagnostics');
+    expect(names).toContain('get_debug_status');
   });
 
   it('is available in mock env', async () => {
     const client = await makeClient({ env: 'mock' });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = parseResult(result) as Record<string, unknown>;
     expect(data.environment).toMatchObject({
@@ -412,7 +412,7 @@ describe('get_diagnostics MCP tool', () => {
 
   it('is available in relay-dev env', async () => {
     const client = await makeClient({ env: 'relay-dev' });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = parseResult(result) as Record<string, unknown>;
     // kind = relay-dev, legacy env = relay (backward-compat), liveGuardActive = false
@@ -426,7 +426,7 @@ describe('get_diagnostics MCP tool', () => {
 
   it('is available in relay-live env and sets liveGuardActive', async () => {
     const client = await makeClient({ env: 'relay-live' });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = parseResult(result) as Record<string, unknown>;
     expect(data.environment).toMatchObject({
@@ -439,7 +439,7 @@ describe('get_diagnostics MCP tool', () => {
   it('returns the current tunnel status', async () => {
     const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
     const client = await makeClient({ env: 'relay-dev', tunnelStatus: tunnelUp });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     const data = parseResult(result) as Record<string, unknown>;
     const tunnel = data.tunnel as Record<string, unknown>;
     expect(tunnel.up).toBe(true);
@@ -451,7 +451,7 @@ describe('get_diagnostics MCP tool', () => {
     for (let i = 0; i < 20; i++) collector.recordError(`err${i}`);
     const client = await makeClient({ diagnosticsCollector: collector });
     const result = await client.callTool({
-      name: 'get_diagnostics',
+      name: 'get_debug_status',
       arguments: { recent_errors_limit: 3 },
     });
     const data = parseResult(result) as Record<string, unknown>;
@@ -463,7 +463,7 @@ describe('get_diagnostics MCP tool', () => {
     const collector = new InMemoryDiagnosticsCollector();
     collector.recordError('auth failed at=654321 for relay');
     const client = await makeClient({ diagnosticsCollector: collector });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     const text = (result.content as Array<{ text?: string }>)[0]!.text!;
     expect(text).not.toContain('654321');
     expect(text).toContain('<redacted>');
@@ -474,7 +474,7 @@ describe('get_diagnostics MCP tool', () => {
       { id: 'tgt1', title: 'SDK Example', url: 'https://sdk-example.aitc.dev' },
     ]);
     const client = await makeClient({ connection, env: 'relay-dev' });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     const data = parseResult(result) as Record<string, unknown>;
     const pages = data.pages as Record<string, unknown>;
     expect(pages).not.toBeNull();
@@ -488,7 +488,7 @@ describe('get_diagnostics MCP tool', () => {
     ]);
     const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
     const client = await makeClient({ connection, env: 'relay-dev', tunnelStatus: tunnelUp });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     const data = parseResult(result) as Record<string, unknown>;
     expect(data.nextRecommendedAction).toBeNull();
   });
@@ -646,7 +646,7 @@ describe('computeNextRecommendedAction', () => {
 // Issue #361 — the version resolvers must read the build-time `define`
 // (bare identifier `__VERSION__` / `__MCP_SDK_VERSION__`), NOT
 // `globalThis.__VERSION__`. The old `globalThis.__VERSION__` access always read
-// `undefined`, so `get_diagnostics` reported `devtoolsVersion: null` in every
+// `undefined`, so `get_debug_status` reported `devtoolsVersion: null` in every
 // real bundle. vitest.config supplies the same defines tsdown does, so these
 // pin that the resolvers return the (non-null) define value.
 //

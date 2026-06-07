@@ -56,7 +56,7 @@ start_debug({mode: 'local-browser'})
   - 응답: `kind: "relay"`, `liveGuardActive: false`
   - 재핸드셰이크·재시작 없음 — 같은 MCP stdio 세션 유지
 
-- [ ] **`get_diagnostics` — relay-staging(env.kind=relay-dev) 상태 확인**
+- [ ] **`get_debug_status` — relay-staging(env.kind=relay-dev) 상태 확인**
   ```json
   {
     "environment": {
@@ -217,7 +217,7 @@ call_sdk("getOperationalEnvironment", [], confirm: true)  → {ok: true, value: 
 evaluate("window.location.href", confirm: true)           → 통과
 ```
 
-**`get_diagnostics`로 상태 확인**:
+**`get_debug_status`로 상태 확인**:
 
 ```json
 {

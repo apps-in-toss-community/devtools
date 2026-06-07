@@ -289,7 +289,7 @@ export interface DebugServerDeps {
   getEnvironmentReason?: () => string;
   /**
    * Diagnostics collector — records server-side errors, attach/detach events,
-   * and surfaces them via `get_diagnostics`. When omitted a no-op collector is
+   * and surfaces them via `get_debug_status`. When omitted a no-op collector is
    * used (backwards-compatible with existing tests that don't inject one).
    */
   diagnosticsCollector?: DiagnosticsCollector;
@@ -571,10 +571,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       }
     }
 
-    // get_diagnostics is a bootstrap tool — it works before any page attaches
+    // get_debug_status is a bootstrap tool — it works before any page attaches
     // and must not require enableDomains. It aggregates all server state into a
     // single response so the agent can diagnose session problems in one call.
-    if (name === 'get_diagnostics') {
+    if (name === 'get_debug_status') {
       try {
         const rawLimit = request.params.arguments?.recent_errors_limit;
         const recentErrorsLimit = typeof rawLimit === 'number' && rawLimit > 0 ? rawLimit : 10;
@@ -2221,7 +2221,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // boot's assertRelayAuthConfigured() / buildRelayVerifyAuth() read the env.
   const devtoolsOpener = new AutoDevtoolsOpener();
   // Diagnostics collector — records server-side errors and attach/detach events
-  // so `get_diagnostics` can surface them in a single call.
+  // so `get_debug_status` can surface them in a single call.
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
   const router = new DualConnectionRouter({

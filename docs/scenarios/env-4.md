@@ -61,7 +61,7 @@ evaluate("window.location.href", confirm: true)
 
 읽기 전용 도구(`list_pages`, `list_console_messages`, `list_network_requests`, `take_screenshot`, `measure_safe_area`, `get_dom_document` 등)는 `confirm` 없이 자유롭게 호출 가능.
 
-`get_diagnostics` 응답의 `environment.liveGuardActive`가 `true`이면 guard 활성 상태:
+`get_debug_status` 응답의 `environment.liveGuardActive`가 `true`이면 guard 활성 상태:
 
 ```json
 {

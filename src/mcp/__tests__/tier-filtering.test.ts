@@ -259,7 +259,7 @@ describe('tools/list — env derived from connection.kind (issue #348)', () => {
     // even before any target attaches (the M2-5 property, now kind-derived).
     expect(names).toContain('build_attach_url');
     expect(names).toContain('list_pages');
-    expect(names).toContain('get_diagnostics');
+    expect(names).toContain('get_debug_status');
     expect(names).toContain('start_debug');
     // Attach-dependent tools are still hidden pre-attach (orthogonal to env).
     expect(names).not.toContain('measure_safe_area');

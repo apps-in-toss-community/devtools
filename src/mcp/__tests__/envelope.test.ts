@@ -6,7 +6,7 @@
  *   - wrapEnvelope: returns raw data when AIT_MCP_COMPAT=chrome-devtools
  *   - isCompatMode: reads AIT_MCP_COMPAT env var
  *   - toEnvelopeEnv: maps McpEnvironment → EnvelopeEnv
- *   - MCP tool results for `list_pages`, `get_diagnostics`, `measure_safe_area`,
+ *   - MCP tool results for `list_pages`, `get_debug_status`, `measure_safe_area`,
  *     `call_sdk` include ok/data/meta fields
  *   - compat mode restores raw 0.1.x payload for those tools
  */
@@ -203,15 +203,15 @@ describe('envelope on MCP tools (default mode)', () => {
     expect(meta.contentType).toBe('json');
   });
 
-  it('get_diagnostics result is wrapped in ToolEnvelope', async () => {
+  it('get_debug_status result is wrapped in ToolEnvelope', async () => {
     const client = await makeClient({ env: 'mock' });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     expect(result.isError).toBeFalsy();
     const raw = parseRaw(result) as Record<string, unknown>;
     expect(raw.ok).toBe(true);
     expect(raw.data).toBeDefined();
     const meta = raw.meta as Record<string, unknown>;
-    expect(meta.tool).toBe('get_diagnostics');
+    expect(meta.tool).toBe('get_debug_status');
     expect(meta.contentType).toBe('json');
   });
 
@@ -265,12 +265,12 @@ describe('envelope compat mode (AIT_MCP_COMPAT=chrome-devtools)', () => {
     expect('meta' in raw).toBe(false);
   });
 
-  it('get_diagnostics returns raw payload without envelope wrapper', async () => {
+  it('get_debug_status returns raw payload without envelope wrapper', async () => {
     const client = await makeClient({ env: 'mock' });
-    const result = await client.callTool({ name: 'get_diagnostics', arguments: {} });
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     expect(result.isError).toBeFalsy();
     const raw = parseRaw(result) as Record<string, unknown>;
-    // Raw get_diagnostics has `environment`, `tunnel`, etc. — NOT `ok`/`meta`.
+    // Raw get_debug_status has `environment`, `tunnel`, etc. — NOT `ok`/`meta`.
     expect(raw.environment).toBeDefined();
     expect('ok' in raw).toBe(false);
     expect('meta' in raw).toBe(false);

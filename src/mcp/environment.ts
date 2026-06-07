@@ -25,7 +25,7 @@
  *      discriminator (`'intoss-webview'` → relay-dev, `'external-pwa'` →
  *      relay-mobile, issue #378). NOT sniffed from the relay URL.
  *
- * `McpEnvironment` survives as an OUTPUT-BOUNDARY type — `get_diagnostics` and
+ * `McpEnvironment` survives as an OUTPUT-BOUNDARY type — `get_debug_status` and
  * the envelope `meta.env` field still surface the precise three-value string —
  * but it is reconstructed from `(connection.kind, liveIntent)` via
  * {@link deriveEnvironment}, never sniffed.
@@ -134,7 +134,7 @@ export function toLegacyEnv(env: McpEnvironment): 'mock' | 'relay' {
  * that distinguishes the env-2 external-PWA relay (`relay-mobile`) from the
  * intoss-private dogfood relay (`relay-dev`); both are `kind: 'relay'`.
  *
- * Pure — used at every output boundary (envelope `meta.env`, `get_diagnostics`,
+ * Pure — used at every output boundary (envelope `meta.env`, `get_debug_status`,
  * `measure_safe_area` provenance) so the surface never sniffs a URL again.
  *
  * Written switch-style so a missing arm is a TS compile error (never falls
