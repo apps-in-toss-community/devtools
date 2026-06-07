@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import aitDevtools from '@ait-co/devtools/unplugin';
+import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 // This config is loaded as ESM ("type": "module"), so __dirname is not defined.
@@ -41,6 +42,7 @@ export default defineConfig({
   // The plugin is kept in the list so forceEnable=true is honoured if rolldown
   // is fixed and these options are re-enabled in the future without other changes.
   plugins: [
+    react(),
     aitDevtools.vite({
       panel: false,
       mock: false,

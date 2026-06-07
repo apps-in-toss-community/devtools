@@ -245,6 +245,21 @@ export const ko = {
   'attach.faq.totp':
     '<strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인',
   'attach.url.section': 'URL (fallback)',
+
+  // Launcher PWA
+  'launcher.title': 'AITC DevTools Launcher',
+  'launcher.description':
+    '카메라를 개발 서버 터미널의 QR에 대거나, 아래에 https://….trycloudflare.com URL을 붙여넣으세요. 개발 앱이 이 런처 안에서 전체 화면으로 열립니다.',
+  'launcher.installCta': '폰에 런처 설치하기',
+  'launcher.openOnce': '설치 없이 한 번만 열기',
+  'launcher.urlPlaceholder': 'https://example.trycloudflare.com',
+  'launcher.openBtn': 'Open',
+  'launcher.scanBtn': 'QR 카메라로 스캔',
+  'launcher.rescanBtn': 'Rescan',
+  'launcher.noCamera': '카메라를 사용할 수 없습니다 — URL을 직접 붙여넣으세요.',
+  'launcher.cameraError': '카메라에 접근할 수 없습니다 — URL을 직접 붙여넣으세요.',
+  'launcher.invalidUrlHttps': '올바른 https:// URL을 입력하세요 (터미널의 터널 URL).',
+  'launcher.invalidUrl': '올바른 http(s):// URL을 입력하세요.',
 } as const;
 
 export type StringKey = keyof typeof ko;

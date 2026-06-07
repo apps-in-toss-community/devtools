@@ -1,11 +1,19 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "rootDir": "..",
-    "types": [],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "noEmit": true
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [],
+    "noEmit": true,
+    "rootDir": "../../.."
   },
-  "include": ["**/*.ts", "../panel.test.ts"],
+  "include": ["**/*.ts", "**/*.tsx", "../panel.test.ts", "../../../src/i18n/**/*.ts"],
   "exclude": ["dist", "node_modules"]
 }
