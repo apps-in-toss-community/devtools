@@ -108,6 +108,137 @@ export async function printTunnelBanner(
   }
 }
 
+/**
+ * Heuristic: can this process open a GUI browser? Mirrors `canOpenBrowser` in
+ * `src/mcp/tools.ts` but is re-declared here (not imported) so the tunnel path
+ * does not statically pull the heavy MCP `tools.ts` module graph into the lazy
+ * `import('./tunnel.js')` chunk. Kept in sync with the MCP copy.
+ *
+ *   - macOS / Windows → assume yes (env-2 dev normally runs on the user's Mac).
+ *   - Linux → require `DISPLAY` or `WAYLAND_DISPLAY`.
+ *   - CI (`CI=true`/`CI=1`) → no.
+ */
+function canOpenBrowser(): boolean {
+  if (process.env.CI === 'true' || process.env.CI === '1') return false;
+  const platform = process.platform;
+  if (platform === 'darwin' || platform === 'win32') return true;
+  if (platform === 'linux') {
+    return Boolean(process.env.DISPLAY ?? process.env.WAYLAND_DISPLAY);
+  }
+  return false;
+}
+
+/** Handle returned by {@link startTunnelDashboard}. */
+export interface TunnelDashboard {
+  /** `http://127.0.0.1:<port>` — the local dashboard URL opened in the browser. */
+  url: string;
+  /** Tear down the local HTTP server. Idempotent via the underlying server. */
+  close: () => Promise<void>;
+}
+
+export interface StartTunnelDashboardOptions {
+  /** The public `https://*.trycloudflare.com` app tunnel URL the launcher frames. */
+  tunnelUrl: string;
+  /** The `wss://` relay URL of the env-2 CDP tunnel. REQUIRED — the dashboard is a CDP-only UX. */
+  relayWssUrl: string;
+  /** Mirror of `tunnel.qr` — when `false` the dashboard is skipped (no browser open). */
+  qr?: boolean;
+  /**
+   * Override the GUI/opt-out gate (testing only). When omitted the real
+   * `canOpenBrowser()` + `AIT_AUTO_DEVTOOLS` checks decide.
+   */
+  shouldOpen?: () => boolean;
+  /** Sink for the one-line "opened in browser" note (default: `console.log`). Injected for testing. */
+  log?: (msg: string) => void;
+}
+
+/**
+ * Env-2 UX parity with env 3/4 (issue #408): when CDP wiring is on and a GUI is
+ * available, start the SAME `127.0.0.1` HTML dashboard (QR image + connect steps
+ * + FAQ) that the MCP `build_attach_url` path serves, and auto-open it in the
+ * browser. headless / opt-out falls back to the terminal ASCII QR (printed
+ * separately by {@link printTunnelBanner}).
+ *
+ * Every part the install-graph invariant depends on (`qrcode`, the MCP HTTP
+ * server, the opener) is reached only through dynamic `import()` here, inside
+ * the already-lazy `tunnel.js` chunk — nothing is added to the common build
+ * graph or the MCP-only install graph.
+ *
+ * TOTP encapsulation: the dashboard's `getDashboardState` closure mints a FRESH
+ * TOTP `at=` code on every call via `generateTotp(secret, Date.now())` and folds
+ * it into a fresh `buildLauncherAttachUrl(...)`. Because the QR is re-rendered on
+ * each SSE push / page reload from this closure, the code a phone scans is always
+ * within its 30 s window — no stale code is baked into static HTML.
+ *
+ * SECRET-HANDLING: the tunnel host, relay wssUrl, TOTP code, and `.ait_relay`
+ * value/path are NEVER written to stdout/stderr/logs here. They live only inside
+ * the attach URL (HTML body + `/qr.png` query, per qr-http-server's invariant).
+ * The only thing opened/logged is `http://127.0.0.1:<port>` (local, safe).
+ *
+ * @returns the dashboard handle when it started (caller wires `close()` into the
+ *   tunnel cleanup), or `undefined` when skipped (no relay, `qr:false`, headless,
+ *   opt-out, or a start failure) — in which case ASCII QR fallback stands alone.
+ */
+export async function startTunnelDashboard(
+  opts: StartTunnelDashboardOptions,
+): Promise<TunnelDashboard | undefined> {
+  const log = opts.log ?? ((m: string) => console.log(m));
+
+  // Gate: dashboard is a CDP-only UX (needs a relay to attach to).
+  if (!opts.relayWssUrl) return undefined;
+  // Opt-out via `tunnel.qr:false` (same toggle that suppresses the ASCII QR).
+  if (opts.qr === false) return undefined;
+
+  // GUI + AIT_AUTO_DEVTOOLS gate. Reuse the MCP opener's opt-out predicate so
+  // the env-2 path honours the same `AIT_AUTO_DEVTOOLS=0` switch as env 3/4.
+  const { isAutoDevtoolsDisabled } = await import('../mcp/devtools-opener.js');
+  const gateOpen = opts.shouldOpen ?? (() => !isAutoDevtoolsDisabled() && canOpenBrowser());
+  if (!gateOpen()) return undefined;
+
+  const { startQrHttpServer } = await import('../mcp/qr-http-server.js');
+  const { buildLauncherAttachUrl } = await import('../mcp/deeplink.js');
+  const { generateTotp } = await import('../mcp/totp.js');
+
+  // getDashboardState — mints a fresh TOTP + attach URL on every call so the QR
+  // the dashboard renders (on load and on each SSE push) is never expired.
+  // SECRET-HANDLING: the secret is read from env AT CALL TIME (it was injected
+  // by ensureRelaySecret in the same CDP block) and is used only to compute the
+  // at= code folded into attachUrl. tunnel.up is always true here — the relay
+  // tunnel is already up by the time this runs.
+  const getDashboardState = () => {
+    const secret = process.env.AIT_DEBUG_TOTP_SECRET;
+    const totpCode = secret ? generateTotp(secret, Date.now()) : undefined;
+    const attachUrl = buildLauncherAttachUrl(opts.tunnelUrl, opts.relayWssUrl, totpCode);
+    return { tunnel: { up: true, wssUrl: opts.relayWssUrl }, pages: [], attachUrl };
+  };
+
+  let server: Awaited<ReturnType<typeof startQrHttpServer>>;
+  try {
+    server = await startQrHttpServer(getDashboardState);
+  } catch {
+    // SECRET-HANDLING: do not surface the error (could embed paths/hosts). The
+    // ASCII QR printed by printTunnelBanner stays as the fallback.
+    return undefined;
+  }
+
+  const dashboardUrl = `http://127.0.0.1:${server.port}`;
+
+  const { openUrlInBrowser } = await import('../mcp/devtools-opener.js');
+  const opened = openUrlInBrowser(dashboardUrl);
+  // SECRET-HANDLING: only the local 127.0.0.1 URL is logged — never the tunnel
+  // host, relay wssUrl, or TOTP code.
+  log(
+    opened
+      ? `  │  Opened a QR dashboard in your browser: ${dashboardUrl}`
+      : `  │  Open this QR dashboard in your browser: ${dashboardUrl}`,
+  );
+
+  return {
+    url: dashboardUrl,
+    close: () => server.close(),
+  };
+}
+
 export interface QuickTunnel {
   /** The public `https://*.trycloudflare.com` URL. */
   url: string;

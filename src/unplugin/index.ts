@@ -233,6 +233,11 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
           // down alongside the HTTP tunnel. Fire-and-forget close on teardown.
           let relayTunnel: { stop: () => void } | null = null;
           let relay: { close: () => Promise<void> } | null = null;
+          // env-2 HTML dashboard (issue #408): local 127.0.0.1 HTTP server that
+          // serves the QR + connect-steps + FAQ page (env 3/4 UX parity), opened
+          // in the browser when CDP is wired + GUI present. Torn down with the
+          // tunnel. Only set when the dashboard actually started.
+          let qrDashboard: { close: () => Promise<void> } | null = null;
           const httpServer = server.httpServer;
 
           httpServer?.once('listening', () => {
@@ -249,7 +254,7 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
             // Dynamic import keeps `cloudflared` / `qrcode-terminal` off the
             // module graph unless the tunnel is actually used.
             import('./tunnel.js')
-              .then(async ({ startQuickTunnel, printTunnelBanner }) => {
+              .then(async ({ startQuickTunnel, printTunnelBanner, startTunnelDashboard }) => {
                 const t = await startQuickTunnel(port);
                 tunnel = t;
 
@@ -299,6 +304,20 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                 }
 
                 await printTunnelBanner(t.url, { qr: tunnelConfig.qr, relayWssUrl });
+
+                // env-2 HTML dashboard (issue #408): when CDP is wired and a GUI
+                // is present, serve the same QR+FAQ dashboard env 3/4 uses and
+                // open it in the browser. No-op (returns undefined) for the
+                // screen-only tunnel, headless, qr:false, or AIT_AUTO_DEVTOOLS=0
+                // — the ASCII QR above remains the fallback in those cases.
+                if (relayWssUrl) {
+                  qrDashboard =
+                    (await startTunnelDashboard({
+                      tunnelUrl: t.url,
+                      relayWssUrl,
+                      qr: tunnelConfig.qr,
+                    })) ?? null;
+                }
               })
               .catch((err: unknown) => {
                 console.warn(
@@ -313,6 +332,7 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
             tunnel?.stop();
             relayTunnel?.stop();
             void relay?.close();
+            void qrDashboard?.close();
           };
           httpServer?.once('close', cleanup);
           process.once('SIGINT', cleanup);
