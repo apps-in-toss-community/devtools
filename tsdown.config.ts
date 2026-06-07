@@ -69,7 +69,10 @@ export default defineConfig([
   },
   {
     ...common,
-    entry: { 'panel/index': 'src/panel/index.ts' },
+    // Panel is a client-side React 19 tree (JSX). React is BUNDLED here (no
+    // `external`), so the published `dist/panel/index.js` is self-contained and
+    // react never reaches consumers' graphs or this package's `dependencies`.
+    entry: { 'panel/index': 'src/panel/index.tsx' },
     format: ['esm'],
   },
   {
