@@ -86,9 +86,10 @@ src/
 │   ├── types.ts       # PermissionName, DeviceMode 등
 │   ├── auth/ navigation/ device/ iap/ ads/ game/ analytics/ partner/
 │   └── index.ts       # 통합 re-export (번들러 alias 대상)
-├── panel/             # Floating DevTools Panel (vanilla DOM)
-│   ├── index.ts helpers.ts styles.ts viewport.ts
-│   └── tabs/          # environment, presets, viewport, permissions, notifications, location, device, iap, ads, events, analytics, storage
+├── panel/             # Floating DevTools Panel (React chrome + 명령형 탭 렌더러)
+│   ├── index.tsx Panel.tsx tab-host.tsx tab-error-boundary.tsx use-draggable.ts
+│   ├── helpers.ts styles.ts viewport.ts device-emulation.ts
+│   └── tabs/          # environment, presets, viewport, permissions, notifications, location, device, iap, ads, events, analytics, storage (명령형 renderXTab(): HTMLElement)
 ├── unplugin/          # Vite/Webpack/Rspack/esbuild/Rollup
 ├── __tests__/         # vitest
 └── __typecheck.ts     # 원본 SDK 대비 타입 호환성 (빌드 미포함)
@@ -98,7 +99,8 @@ src/
 
 ## 코딩 컨벤션
 
-- **외부 의존성 최소화**: panel은 vanilla DOM. React/Preact 등 프레임워크 금지.
+- **사용자 대면 표면은 React + ko/en i18n**: panel·qr-http-server 대시보드·e2e fixture·launcher PWA는 모두 React로 렌더하고 `navigator.language`/`Accept-Language` 기반 ko/en i18n을 지원한다. i18n core는 `src/i18n`(ko.ts가 `StringKey` 정본, en.ts는 typecheck-강제 `Record<StringKey,string>` 미러), React 반응 레이어는 `src/i18n/react.ts`(`useLocale`/`useT`, `LOCALE_CHANGE_EVENT` 위 `useSyncExternalStore`). panel은 chrome(toggle/header/badge/tab bar/body)만 React이고 13개 탭 body는 `renderXTab(): HTMLElement` 명령형 렌더러를 `<TabHost>`로 마운트하는 hybrid다(position은 React state가 아니라 ref+localStorage `__ait_btn_pos`).
+- **install-graph 불변식 — react/react-dom은 `devDependencies`만, `dependencies` 절대 금지**: MCP-only 소비자(`npx -y @ait-co/devtools devtools-mcp`)는 React를 install 그래프로 끌어오면 안 된다. 따라서 MCP 데몬 번들(`dist/mcp/cli.js`·`dist/mcp/server.js`)은 react/react-dom을 import하지 않는다 — `scripts/check-mcp-react-free.sh`(ci.yml 배선)가 강제한다. qr-http-server 대시보드는 이 불변식을 지키려 빌드타임 precompile을 쓴다: JSX 템플릿(`scripts/dashboard/*.tsx`) → `scripts/build-dashboard-html.ts`가 `renderToStaticMarkup`으로 커밋된 `src/mcp/dashboard.generated.ts` 문자열 모듈 생성 → 런타임 `qr-http-server.ts`는 그 문자열만 import(`check:dashboard-html-fresh`가 freshness 강제). 런타임에 React를 import하는 표면은 데몬 그래프 밖(panel/fixture/launcher는 소비자 빌드, 대시보드는 precompiled string)이라야 한다.
 - **모든 mock은 원본 SDK 시그니처와 호환**: `src/__typecheck.ts`의 `Assert<Mock, Original>`로 검증.
 - **권한 함수**: `withPermission(fn, permissionName)`으로 감싸 `.getPermission()`, `.openPermissionDialog()` 부착.
 - **이벤트**: `window.dispatchEvent(new CustomEvent('__ait:eventName'))`. `aitState.trigger('backEvent')` 사용.
