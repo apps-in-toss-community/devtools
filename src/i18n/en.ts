@@ -213,4 +213,34 @@ export const en: Record<StringKey, string> = {
   'notifications.option.newAgreement': 'newAgreement (first-time agree)',
   'notifications.option.alreadyAgreed': 'alreadyAgreed (already opted-in)',
   'notifications.option.agreementRejected': 'agreementRejected (user declined)',
+
+  // qr-http-server — dashboard page (server-side, Node, per-request)
+  'dashboard.title': 'AIT Debug Dashboard',
+  'dashboard.updated': 'Last updated: {ts}',
+  'dashboard.tunnel.section': 'Tunnel status',
+  'dashboard.tunnel.up': 'Connected',
+  'dashboard.tunnel.down': 'Disconnected',
+  'dashboard.attach.section': 'Attach QR',
+  'dashboard.attach.hint': 'Call the build_attach_url MCP tool to show the QR here.',
+  'dashboard.pages.section': 'Connected Pages',
+  'dashboard.pages.empty': 'No attached pages',
+
+  // qr-http-server — attach page (server-side, Node, per-request)
+  'attach.title': 'AIT Debug Session — QR Scan',
+  'attach.deployment': 'deployment: {label}',
+  'attach.steps.section': 'How to scan',
+  'attach.step1': 'Open the Toss app.',
+  'attach.step2': 'Scan the QR code with your phone camera app.',
+  'attach.step3': 'Tap <strong>"Open in Toss"</strong> when the popup appears.',
+  'attach.step4': 'The mini-app opens and the debug session attaches automatically.',
+  'attach.faq.section': 'Troubleshooting checklist',
+  'attach.faq.appNotOpen':
+    '<strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)',
+  'attach.faq.prepare':
+    '<strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter',
+  'attach.faq.chii':
+    '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
+  'attach.faq.totp':
+    '<strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server',
+  'attach.url.section': 'URL (fallback)',
 };

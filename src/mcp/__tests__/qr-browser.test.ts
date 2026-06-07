@@ -94,7 +94,7 @@ describe('startQrHttpServer', () => {
       'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
     const pageUrl = srv.buildAttachPageUrl(attachUrl);
 
-    const res = await fetch(pageUrl);
+    const res = await fetch(pageUrl, { headers: { 'Accept-Language': 'ko' } });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toMatch(/text\/html/);
 

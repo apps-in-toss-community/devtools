@@ -36,6 +36,11 @@ jobs:
       # daemon bundles must never import them (see scripts/check-mcp-react-free.sh).
       - run: pnpm check:mcp-react-free
 
+      # The dashboard/attach HTML is precompiled from scripts/dashboard/*.tsx to
+      # src/mcp/dashboard.generated.ts at build time. This guard fails if a JSX
+      # template was edited without regenerating the committed string module.
+      - run: pnpm check:dashboard-html-fresh
+
       - run: pnpm typecheck
 
       - run: pnpm test

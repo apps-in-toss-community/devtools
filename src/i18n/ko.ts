@@ -215,6 +215,36 @@ export const ko = {
   'notifications.option.newAgreement': 'newAgreement (최초 동의)',
   'notifications.option.alreadyAgreed': 'alreadyAgreed (이미 동의됨)',
   'notifications.option.agreementRejected': 'agreementRejected (사용자 거절)',
+
+  // qr-http-server — dashboard page (server-side, Node, per-request)
+  'dashboard.title': 'AIT 디버그 Dashboard',
+  'dashboard.updated': '마지막 갱신: {ts}',
+  'dashboard.tunnel.section': '터널 상태',
+  'dashboard.tunnel.up': '연결됨',
+  'dashboard.tunnel.down': '끊어짐',
+  'dashboard.attach.section': 'Attach QR',
+  'dashboard.attach.hint': 'build_attach_url MCP tool을 호출하면 QR이 여기에 표시됩니다.',
+  'dashboard.pages.section': '연결된 Pages',
+  'dashboard.pages.empty': 'attach된 페이지 없음',
+
+  // qr-http-server — attach page (server-side, Node, per-request)
+  'attach.title': 'AIT 디버그 세션 — QR 스캔',
+  'attach.deployment': 'deployment: {label}',
+  'attach.steps.section': '스캔 절차',
+  'attach.step1': '토스 앱을 실행하세요.',
+  'attach.step2': '폰 카메라 앱으로 QR 코드를 스캔하세요.',
+  'attach.step3': '팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.',
+  'attach.step4': '미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.',
+  'attach.faq.section': '진단 체크리스트',
+  'attach.faq.appNotOpen':
+    '<strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)',
+  'attach.faq.prepare':
+    '<strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인',
+  'attach.faq.chii':
+    '<strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인',
+  'attach.faq.totp':
+    '<strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인',
+  'attach.url.section': 'URL (fallback)',
 } as const;
 
 export type StringKey = keyof typeof ko;
