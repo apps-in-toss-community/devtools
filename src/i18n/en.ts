@@ -246,10 +246,8 @@ export const en: Record<StringKey, string> = {
 
   // Launcher PWA
   'launcher.title': 'AITC DevTools Launcher',
-  'launcher.description':
-    'Point your camera at the QR shown in your dev server’s terminal, or paste the https://…trycloudflare.com URL below. The dev app then opens full-screen inside this launcher.',
+  'launcher.description': 'Scan the terminal QR code or paste the tunnel URL.',
   'launcher.installCta': 'Install launcher to your phone',
-  'launcher.openOnce': 'Open this once without installing',
   'launcher.urlPlaceholder': 'https://example.trycloudflare.com',
   'launcher.openBtn': 'Open',
   'launcher.scanBtn': 'Scan QR with camera',

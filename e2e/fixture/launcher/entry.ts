@@ -30,8 +30,13 @@ export interface LauncherEntryInput {
  *
  * Fix: when a deep-link (or saved last URL) arrives but the launcher is NOT yet
  * installed AND this isn't local-dev, show the setup screen (install CTA) FIRST,
- * preserving the URL as `pendingUrl` so an "open this once without installing"
- * button keeps the path from being a dead end. Installed (standalone) or
+ * preserving the URL as `pendingUrl` so the user never loses their deep-link.
+ *
+ * Dead-end avoidance (#433): previously a separate "open this once without
+ * installing" button consumed pendingUrl. That button is now replaced by the
+ * pwa-install library's dismiss event (`pwa-user-choice-result-event` with
+ * detail="dismissed") — when the user closes the install dialog, Launcher.tsx
+ * picks up pendingUrl and calls showLive(pendingUrl). Installed (standalone) or
  * local-dev contexts keep the existing straight-to-live behaviour.
  */
 export function resolveLauncherEntry(input: LauncherEntryInput): LauncherEntry {

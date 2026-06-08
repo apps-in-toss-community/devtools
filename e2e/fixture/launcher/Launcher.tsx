@@ -10,16 +10,22 @@
 
 import QrScanner from 'qr-scanner';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useT } from '../../../src/i18n/react.js';
+import type { Locale } from '../../../src/i18n/index.js';
+import { setLocale } from '../../../src/i18n/index.js';
+import { useLocale, useT } from '../../../src/i18n/react.js';
 import { resolveLauncherEntry } from './entry.js';
 
 const STORAGE_KEY = 'aitc-launcher:last-url';
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
 
-// Minimal type for the <pwa-install> custom element surface we actually use.
+// Extend the minimal type for <pwa-install> to include attributes and events
+// we interact with after removing disable-install-description and manual-chrome.
 type PwaInstallElement = HTMLElement & {
   showDialog: (forced?: boolean) => void;
+  hideDialog: () => void;
   isDialogHidden?: boolean;
+  isInstallAvailable?: boolean;
+  isUnderStandaloneMode?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -97,6 +103,64 @@ function consumeDeepLinkUrl(): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// LanguageSwitcher
+// ---------------------------------------------------------------------------
+
+function LanguageSwitcher(): React.JSX.Element {
+  const t = useT();
+  const locale = useLocale();
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 'max(12px, env(safe-area-inset-top))',
+        right: '16px',
+        display: 'flex',
+        gap: '6px',
+        fontSize: '12px',
+      }}
+    >
+      <span style={{ color: '#9aa0a6', alignSelf: 'center' }}>{t('env.language.row')}:</span>
+      <button
+        type="button"
+        onClick={() => setLocale('ko' as Locale)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: '2px 6px',
+          cursor: 'pointer',
+          color: locale === 'ko' ? '#e8eaed' : '#9aa0a6',
+          fontWeight: locale === 'ko' ? 600 : 400,
+          fontSize: '12px',
+          borderRadius: '4px',
+          textDecoration: locale === 'ko' ? 'underline' : 'none',
+        }}
+      >
+        {t('env.language.ko')}
+      </button>
+      <button
+        type="button"
+        onClick={() => setLocale('en' as Locale)}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: '2px 6px',
+          cursor: 'pointer',
+          color: locale === 'en' ? '#e8eaed' : '#9aa0a6',
+          fontWeight: locale === 'en' ? 600 : 400,
+          fontSize: '12px',
+          borderRadius: '4px',
+          textDecoration: locale === 'en' ? 'underline' : 'none',
+        }}
+      >
+        {t('env.language.en')}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -115,21 +179,24 @@ export function Launcher(): React.JSX.Element {
 
   const [setupToolsVisible, setSetupToolsVisible] = useState(false);
   const [installCtaVisible, setInstallCtaVisible] = useState(false);
-  const [openOnceVisible, setOpenOnceVisible] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pwaInstallRef = useRef<PwaInstallElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
 
+  // Keep a stable ref to pendingUrl so event handlers can read the latest
+  // value without becoming stale closures.
+  const pendingUrlRef = useRef<string | null>(null);
+  pendingUrlRef.current = pendingUrl;
+
   // ---------------------------------------------------------------------------
   // Gate helpers
   // ---------------------------------------------------------------------------
 
-  const applyPwaGate = useCallback((pending: string | null) => {
+  const applyPwaGate = useCallback(() => {
     const gated = !isStandalone() && !isLocalDev();
     setSetupToolsVisible(!gated);
     setInstallCtaVisible(!isStandalone());
-    setOpenOnceVisible(!!pending);
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -151,7 +218,6 @@ export function Launcher(): React.JSX.Element {
     (url: string) => {
       stopScanner();
       setPendingUrl(null);
-      setOpenOnceVisible(false);
       localStorage.setItem(STORAGE_KEY, url);
       setLiveUrl(url);
       setScreen('live');
@@ -161,11 +227,10 @@ export function Launcher(): React.JSX.Element {
   );
 
   const showSetup = useCallback(
-    (pending: string | null) => {
+    (_pending: string | null) => {
       stopScanner();
       setLiveUrl(null);
       setScreen('setup');
-      setOpenOnceVisible(!!pending);
       const last = localStorage.getItem(STORAGE_KEY);
       if (last) setUrlValue(last);
     },
@@ -202,35 +267,65 @@ export function Launcher(): React.JSX.Element {
       setPendingUrl(pending);
       const last = localStorage.getItem(STORAGE_KEY);
       if (last) setUrlValue(last);
-      applyPwaGate(pending);
+      applyPwaGate();
     }
 
     const onInstalled = () => {
-      applyPwaGate(null);
+      applyPwaGate();
     };
     window.addEventListener('appinstalled', onInstalled);
     return () => window.removeEventListener('appinstalled', onInstalled);
   }, [applyPwaGate]);
 
-  // Re-apply gate whenever pendingUrl changes on the setup screen.
+  // Re-apply gate whenever screen returns to setup.
   useEffect(() => {
     if (screen === 'setup') {
-      applyPwaGate(pendingUrl);
+      applyPwaGate();
     }
-  }, [pendingUrl, screen, applyPwaGate]);
+  }, [screen, applyPwaGate]);
 
   // If installed (appinstalled fired) and pendingUrl exists, enter live.
-  // This is wired via a separate effect that watches pendingUrl so the
-  // appinstalled handler above stays simple.
   useEffect(() => {
     const onInstalled = () => {
-      if (pendingUrl && isStandalone()) {
-        showLive(pendingUrl);
+      const pending = pendingUrlRef.current;
+      if (pending && isStandalone()) {
+        showLive(pending);
       }
     };
     window.addEventListener('appinstalled', onInstalled);
     return () => window.removeEventListener('appinstalled', onInstalled);
-  }, [pendingUrl, showLive]);
+  }, [showLive]);
+
+  // Wire up the pwa-install dialog dismiss event (#433 defect 2 replacement).
+  //
+  // @khmyznikov/pwa-install fires `pwa-user-choice-result-event` with
+  // detail="dismissed" when the user closes the dialog on ALL platforms
+  // (including iOS Safari — the dismiss is triggered by `_hideDialogUser`
+  // which always calls `eventUserChoiceResult(this, "dismissed")`).
+  //
+  // When the user dismisses the dialog but there is a pendingUrl preserved
+  // from the deep-link/entry gate, we enter live immediately so the user
+  // is never left in a dead end. This replaces the previous open-once button
+  // (#411 intent preserved: the URL is never lost).
+  useEffect(() => {
+    const el = pwaInstallRef.current;
+    if (!el) return;
+
+    const onUserChoice = (e: Event) => {
+      const result = (e as CustomEvent<string>).detail;
+      if (result === 'dismissed') {
+        const pending = pendingUrlRef.current;
+        if (pending) {
+          showLive(pending);
+        }
+      }
+    };
+
+    el.addEventListener('pwa-user-choice-result-event', onUserChoice);
+    return () => el.removeEventListener('pwa-user-choice-result-event', onUserChoice);
+    // Re-register after pwaInstallRef.current becomes available (mount cycle).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLive]);
 
   // ---------------------------------------------------------------------------
   // Scanner start
@@ -290,10 +385,6 @@ export function Launcher(): React.JSX.Element {
     pwaInstallRef.current?.showDialog(true);
   }, []);
 
-  const handleOpenOnce = useCallback(() => {
-    if (pendingUrl) showLive(pendingUrl);
-  }, [pendingUrl, showLive]);
-
   const handleRescan = useCallback(() => {
     setPendingUrl(null);
     showSetup(null);
@@ -317,8 +408,11 @@ export function Launcher(): React.JSX.Element {
           gap: '16px',
           padding:
             'max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom))',
+          position: 'relative',
         }}
       >
+        <LanguageSwitcher />
+
         <h1 style={{ fontSize: '18px', fontWeight: 600, margin: 0 }}>{t('launcher.title')}</h1>
         <p
           style={{
@@ -343,6 +437,19 @@ export function Launcher(): React.JSX.Element {
           {t('launcher.installCta')}
         </button>
 
+        {/*
+          manual-apple=true: on iOS Safari, _checkInstallAvailable calls hideDialog() to
+          suppress the auto-popup, then _triggerAppleDialog sets isInstallAvailable=true.
+          showDialog(true) (called from the install CTA) opens the iOS how-to guide.
+
+          manual-chrome=true: on Chrome/Android, BeforeInstallPromptEvent is captured but
+          hideDialog() is called immediately, so no auto-popup. showDialog(true) from
+          the CTA opens the native Chrome install dialog.
+
+          Both manual-* flags leave control entirely in our hands (CTA click → showDialog),
+          which is the UX we want. disable-install-description was previously masking the
+          iOS how-to illustration — removing it restores the library's native iOS guidance.
+        */}
         <pwa-install
           ref={(el: PwaInstallElement | null) => {
             pwaInstallRef.current = el;
@@ -352,20 +459,9 @@ export function Launcher(): React.JSX.Element {
           manifest-url="/launcher/manifest.webmanifest"
           name={t('launcher.title')}
           description={t('launcher.description')}
-          disable-install-description="true"
+          manual-apple="true"
           manual-chrome="true"
         />
-
-        <button
-          type="button"
-          id="open-once"
-          className="secondary"
-          data-testid="launcher-open-once"
-          style={{ display: openOnceVisible ? '' : 'none' }}
-          onClick={handleOpenOnce}
-        >
-          {t('launcher.openOnce')}
-        </button>
 
         <div
           id="setup-tools"
