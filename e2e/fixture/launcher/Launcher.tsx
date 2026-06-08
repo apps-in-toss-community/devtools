@@ -179,6 +179,7 @@ export function Launcher(): React.JSX.Element {
 
   const [setupToolsVisible, setSetupToolsVisible] = useState(false);
   const [installCtaVisible, setInstallCtaVisible] = useState(false);
+  const [authBlocked, setAuthBlocked] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pwaInstallRef = useRef<PwaInstallElement | null>(null);
@@ -222,6 +223,7 @@ export function Launcher(): React.JSX.Element {
       setLiveUrl(url);
       setScreen('live');
       setMsg('');
+      setAuthBlocked(false);
     },
     [stopScanner],
   );
@@ -327,6 +329,26 @@ export function Launcher(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showLive]);
 
+  // Defect 2: listen for the framed tunnel page's TOTP-auth-block signal.
+  // Cross-origin: the child posts from *.trycloudflare.com with targetOrigin '*'.
+  // We do NOT trust arbitrary origins for anything privileged — the only effect
+  // is flipping a boolean that shows a localized banner. Strict shape guard.
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as unknown;
+      if (
+        typeof data === 'object' &&
+        data !== null &&
+        (data as { type?: unknown }).type === 'ait:debug-attach-blocked' &&
+        (data as { reason?: unknown }).reason === 'auth'
+      ) {
+        setAuthBlocked(true);
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Scanner start
   // ---------------------------------------------------------------------------
@@ -387,6 +409,7 @@ export function Launcher(): React.JSX.Element {
 
   const handleRescan = useCallback(() => {
     setPendingUrl(null);
+    setAuthBlocked(false);
     showSetup(null);
   }, [showSetup]);
 
@@ -572,6 +595,69 @@ export function Launcher(): React.JSX.Element {
           display: screen === 'live' ? 'block' : 'none',
         }}
       />
+
+      {screen === 'live' && authBlocked && (
+        <div
+          role="alert"
+          data-testid="launcher-auth-error"
+          style={{
+            position: 'fixed',
+            top: 'max(16px, env(safe-area-inset-top))',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 20,
+            background: 'rgba(20,22,26,.95)',
+            border: '1px solid #f28b82',
+            borderRadius: '12px',
+            padding: '16px 20px',
+            maxWidth: 'min(92vw, 360px)',
+            width: 'max-content',
+            textAlign: 'center',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <span
+            style={{
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#f28b82',
+            }}
+          >
+            {t('launcher.debugAuthFailed')}
+          </span>
+          <span
+            style={{
+              fontSize: '12px',
+              color: '#9aa0a6',
+              lineHeight: '1.5',
+            }}
+          >
+            {t('launcher.debugAuthFailedHint')}
+          </span>
+          <button
+            type="button"
+            data-testid="launcher-auth-error-rescan"
+            onClick={handleRescan}
+            style={{
+              marginTop: '4px',
+              padding: '8px 16px',
+              fontSize: '13px',
+              borderRadius: '999px',
+              background: '#f28b82',
+              color: '#14161a',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            {t('launcher.debugAuthRescanCta')}
+          </button>
+        </div>
+      )}
 
       <button
         type="button"

@@ -39,7 +39,9 @@ function passResult(relayUrl = 'wss://abc.trycloudflare.com/'): GateResult {
 }
 
 /** A gate result that should block attachment. */
-function blockResult(reason: 'entry' | 'opt-in' | 'invalid-relay' = 'opt-in'): GateResult {
+function blockResult(
+  reason: 'host' | 'entry' | 'opt-in' | 'invalid-relay' | 'auth' = 'opt-in',
+): GateResult {
   return { attach: false, reason };
 }
 
@@ -169,6 +171,134 @@ describe('maybeAttach', () => {
     maybeAttach(passResult('wss://relay.example.com:9100/ws'));
     const script = document.head.querySelector('script');
     expect(script?.src).toBe('https://relay.example.com:9100/target.js');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Defect 2: auth-block postMessage signal
+  // ---------------------------------------------------------------------------
+
+  it('auth block with framed window — postMessage called once with exact envelope', () => {
+    // Stub window.parent to a distinct object (simulates a real parent frame).
+    const postMessageSpy = vi.fn();
+    const fakeParent = { postMessage: postMessageSpy };
+    Object.defineProperty(window, 'parent', {
+      value: fakeParent,
+      writable: true,
+      configurable: true,
+    });
+
+    maybeAttach(blockResult('auth'));
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+    // Deep-equal the full 2-key object — no extra keys must leak.
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'ait:debug-attach-blocked', reason: 'auth' },
+      '*',
+    );
+
+    // Restore
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('opt-in block — postMessage NOT called (false-positive guard)', () => {
+    const postMessageSpy = vi.fn();
+    const fakeParent = { postMessage: postMessageSpy };
+    Object.defineProperty(window, 'parent', {
+      value: fakeParent,
+      writable: true,
+      configurable: true,
+    });
+
+    maybeAttach(blockResult('opt-in'));
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('invalid-relay block — postMessage NOT called (false-positive guard)', () => {
+    const postMessageSpy = vi.fn();
+    const fakeParent = { postMessage: postMessageSpy };
+    Object.defineProperty(window, 'parent', {
+      value: fakeParent,
+      writable: true,
+      configurable: true,
+    });
+
+    maybeAttach(blockResult('invalid-relay'));
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('host block — postMessage NOT called (false-positive guard)', () => {
+    const postMessageSpy = vi.fn();
+    const fakeParent = { postMessage: postMessageSpy };
+    Object.defineProperty(window, 'parent', {
+      value: fakeParent,
+      writable: true,
+      configurable: true,
+    });
+
+    maybeAttach(blockResult('host'));
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('entry block — postMessage NOT called (false-positive guard)', () => {
+    const postMessageSpy = vi.fn();
+    const fakeParent = { postMessage: postMessageSpy };
+    Object.defineProperty(window, 'parent', {
+      value: fakeParent,
+      writable: true,
+      configurable: true,
+    });
+
+    maybeAttach(blockResult('entry'));
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('auth block at top-level (window.parent === window) — postMessage NOT called', () => {
+    // Default jsdom environment already has window.parent === window, but
+    // be explicit to document the intent.
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+    const postMessageSpy = vi.spyOn(window, 'postMessage');
+
+    maybeAttach(blockResult('auth'));
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+
+    postMessageSpy.mockRestore();
   });
 });
 

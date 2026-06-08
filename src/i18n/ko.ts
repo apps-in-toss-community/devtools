@@ -258,6 +258,9 @@ export const ko = {
   'launcher.cameraError': '카메라에 접근할 수 없습니다 — URL을 직접 붙여넣으세요.',
   'launcher.invalidUrlHttps': '올바른 https:// URL을 입력하세요 (터미널의 터널 URL).',
   'launcher.invalidUrl': '올바른 http(s):// URL을 입력하세요.',
+  'launcher.debugAuthFailed': '디버그 연결 인증 실패',
+  'launcher.debugAuthFailedHint': 'QR 코드가 만료되었을 수 있어요. 새 QR을 다시 스캔하세요.',
+  'launcher.debugAuthRescanCta': '새 QR 스캔하기',
 } as const;
 
 export type StringKey = keyof typeof ko;
