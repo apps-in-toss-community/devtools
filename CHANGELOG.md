@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.1.59
+
+### Patch Changes
+
+- dadd97e: cloudflared 종료/타임아웃 에러에 stderr 진단 첨부: cloudflared가 URL 보고 전에 죽으면 이제 에러 메시지에 마지막 15줄의 stderr 출력이 포함되어 근본 원인(Cloudflare error 1101 등)을 즉시 확인할 수 있습니다. trycloudflare.com 호스트명은 `<HOST>.trycloudflare.com` 플레이스홀더로 마스킹됩니다. (#421)
+- 30c297c: e2e fixture(`e2e/fixture/`)를 vanilla DOM에서 client-side React 19로 전환한다 (#413 PR4). `helpers.ts`의 `apiSection`/`apiButton`/`apiInput`/`apiValue`/`apiSubscriber` DOM 헬퍼를 React 컴포넌트(`components.tsx`)로 재구현하되 emit하는 DOM 구조와 `data-testid` 계약(`section-<id>`, `<id>-btn`, `<id>-result`, `<id>-input`, `<id>-value`, `<id>-log`, `<id>-empty`)을 byte-identical로 유지한다. `main.ts` 549줄 IIFE 블록을 `main.tsx` JSX로 변환하고 `createRoot`로 마운트한다. `@ait-co/devtools/panel` import 최상단 순서와 ENV-2 CDP gate(`?debug=1&relay=` → `@ait-co/devtools/in-app` dynamic import) 블록을 그대로 보존한다. `pnpm test:e2e` 40/40 무수정 통과 확인. fixture는 npm 패키지에 포함되지 않으므로 package surface 변경 없음.
+- b72967c: 환경 2(unplugin 터널 대시보드 + launcher PWA)에서 PR #409가 실기기에서 드러낸 절반 패리티 결함 두 개를 정정한다 (#411).
+
+  - 대시보드 "연결된 Pages" 섹션: env 2(unplugin 터널)는 plugin 핸들이 connected target을 노출하지 않아 라이브 page 목록을 알 수 없는데도 항상 빈 목록을 보여줬다. 거짓 빈 목록 대신 섹션 자체를 숨긴다 — `DashboardState.pages`를 `Array | null`로 넓혀 `null`이면 정적 렌더와 SSE 갱신 양쪽에서 섹션을 생략하고, env 3/4(MCP)는 기존대로 `router.active.listTargets()`로 실제 목록(빈 배열은 "attach된 페이지 없음")을 채운다.
+  - launcher deep-link: 미설치 브라우저 탭에서 `?url=` deep-link가 도착하면 곧장 live로 넘어가 설치 안내(install CTA)를 영구히 가려버렸다. 미설치(`!standalone && !local-dev`) 상태면 deep-link/저장 URL을 보존한 채 설치 화면을 먼저 띄우고 "설치 없이 이번만 열기" 버튼으로 막다른 길을 피한다. standalone/local-dev는 기존대로 바로 live, 설치 완료(`appinstalled`) 시 보존된 URL로 진입한다.
+
+- a59da69: 환경 2(unplugin `tunnel: { cdp: true }`) 터널에 HTML 대시보드 + 브라우저 자동 오픈을 더해 환경 3/4(`build_attach_url`)와 UX 패리티를 맞춘다 (#408). CDP가 배선되고 GUI가 감지되면 env 3/4가 쓰는 것과 동일한 `127.0.0.1` 대시보드(QR 이미지 + 연결 방법 + FAQ)를 띄우고 브라우저로 연다. QR에는 폰이 relay WS upgrade를 통과하도록 매 요청마다 새로 생성한 TOTP 코드가 캡슐화되며(SSE/재로드 시 갱신 — 만료 없음), 터미널 ASCII QR fallback은 headless·`tunnel:{qr:false}`·`AIT_AUTO_DEVTOOLS=0`에서 회귀 없이 유지된다. `qrcode`/QR HTTP 서버는 기존대로 동적 import만 거치므로 터널 미사용 빌드 그래프엔 들어가지 않는다.
+- 912d43b: 환경 2 cold-start URL을 `.ait_urls` 파일 자동 발견으로 대체 (#424)
+
+  env-2(AITC Sandbox PWA) cold-start 시 `AIT_RELAY_BASE_URL`·`AIT_TUNNEL_BASE_URL`을 매번 수동으로 env var에 복붙해야 했던 문제를 파일 기반 자동 발견으로 대체한다. unplugin이 tunnel/relay URL을 `<projectRoot>/.ait_urls`(mode 0600)에 기록하고, MCP 데몬은 env가 설정되지 않은 경우 해당 파일에서 URL을 읽는다(env가 있으면 env 우선). `cleanup()` 시 파일을 삭제해 stale URL이 다음 부팅에 남지 않도록 한다. `.ait_relay` TOTP 시크릿 저장 패턴을 그대로 재사용(쓰기=unplugin만, 읽기=daemon 전용 read-only). SECRET-HANDLING: URL 값과 파일 경로는 어느 로그·stderr·오류 메시지에도 절대 출력하지 않는다.
+
+- 1d522c7: qr-http-server 대시보드/attach 페이지에 Accept-Language i18n 적용 및 React 빌드타임 precompile 전환 (#413)
+
+  - `buildDashboardHtml`·`buildAttachHtml` HTML을 React JSX + `renderToStaticMarkup`으로 빌드타임에 precompile해 `src/mcp/dashboard.generated.ts`(plain string exports)로 커밋
+  - 런타임 `qr-http-server.ts`는 생성된 string만 import — react/react-dom을 정적·동적으로 절대 import하지 않음, INSTALL-GRAPH 불변식 유지
+  - `GET /`·`GET /attach` 요청에서 `Accept-Language` 헤더를 읽어 per-request locale 결정 (`parseAcceptLanguage()`); ko·en 문자열을 공유 i18n 테이블(`ko.ts`/`en.ts`)에서 해결
+  - ko.ts/en.ts에 dashboard·attach 전용 키 추가(`dashboard.*`, `attach.*` 32개)
+  - `pnpm build:dashboard-html` 스크립트 추가 (빌드 체인에 tsdown 앞에 자동 실행), `check:dashboard-html-fresh` CI 가드 추가
+  - `check-mcp-react-free.sh` 가드: `dist/mcp/cli.js`·`dist/mcp/server.js` react 유입 없음 확인
+
+- 5167e29: 사용자 대면 표면 전면 React 전환의 토대를 추가한다 (#413). 기존 vanilla i18n 코어(`src/i18n`) 위에 React 반응성 레이어 `src/i18n/react.ts`(`useLocale`/`useT`, `useSyncExternalStore`로 `LOCALE_CHANGE_EVENT` 구독)를 얹어 두 번째 i18n 시스템 없이 React 표면이 locale 변경에 리렌더하도록 한다. `useT`는 `(key: StringKey, …)` 시그니처를 유지해 `ko.ts` 타입 소스 → `en.ts` typecheck-enforced mirror 안전망이 JSX 호출부까지 전파된다. navigator가 없는 Node 표면(qr-http-server)을 위해 `parseAcceptLanguage`(Accept-Language 헤더 → locale)와 `resolveLocaleStrings`(동일 169키 카탈로그를 공유하는 locale-bound resolver)를 같은 모듈에 더한다. 루트 tsconfig에 `jsx: react-jsx`를 켜고 react-dom·@testing-library/react·@vitejs/plugin-react를 devDependency로만 추가한다(install-graph 불변식 유지 — `dependencies`엔 react가 없다). MCP 데몬 번들(`dist/mcp/cli.js`·`dist/mcp/server.js`)이 react를 import하지 않음을 빌드 후 강제하는 CI 가드(`scripts/check-mcp-react-free.sh`)를 추가한다. 이 PR은 순수 가산 토대로, 어떤 표면도 아직 변환하지 않으며 기존 테스트는 모두 green이다.
+- 9d33c2a: launcher PWA를 vanilla DOM에서 client-side React로 전환하고 ko/en i18n을 적용합니다(#413 일부).
+
+  - `e2e/fixture/launcher/main.ts` → `main.tsx`로 전환, `createRoot`로 `<Launcher/>` 마운트
+  - `e2e/fixture/launcher/Launcher.tsx` 신규: 모든 data-testid 계약 보존, QrScanner/pwa-install ref·effect 배선, iframe src prop, localStorage 효과, 서비스워커 등록을 React 패턴으로 재구현
+  - `entry.ts` 순수 함수 무수정 유지 — entry.vitest.ts 7개 테스트 무변경 통과
+  - `src/i18n/ko.ts`·`en.ts`에 `launcher.*` 키 12개 추가(StringKey 타입 확장, en mirror parity 유지)
+  - `e2e/fixture/vite.config.ts`에 `@vitejs/plugin-react` 추가
+  - `e2e/fixture/tsconfig.json`: JSX 설정 포함 독립 tsconfig로 재작성, `src/i18n/**` 포함
+  - `launcher/index.html`을 `<div id="root">` shell로 단순화
+
+- b6d66a8: unplugin 터널 경로에 부모-PID watcher 배선: `startParentWatcher`·`isPidAlive`를 `src/shared/parent-watcher.ts`로 추출하고, vite tunnel boot 완료 후 parent-PID watcher를 등록해 부모 프로세스가 죽거나 reparent될 때 cloudflared 자식 프로세스를 동기적으로 정리하도록 합니다. `process.once('SIGHUP', cleanup)` 핸들러도 추가합니다. (#420)
+- 0cb18de: 환경 2 터널 토글을 plugin이 직접 `AIT_TUNNEL` / `AIT_TUNNEL_CDP` env var로 fallback 읽도록 내재화. 소비자 `vite.config.ts`에서 `tunnel: process.env.AIT_TUNNEL_CDP ? { cdp: true } : !!process.env.AIT_TUNNEL` 한 줄이 더 이상 필요 없음. 명시 `tunnel` 옵션(`false` 포함)이 항상 우선(`??` 의미론, non-breaking), 기존 `isDev &&` 가드로 prod 안전성 불변. `resolveTunnelOption(explicit, env)` 순수 함수로 추출해 단위 테스트 추가. (#425)
+- 20ecb09: Floating DevTools Panel을 vanilla DOM에서 client-side React 19로 전환하고 i18n을 반응형으로 만든다. locale 변경 시 패널을 disposePanel→mount로 다시 마운트하지 않고, `useT()`(i18n store 구독)로 패널 subtree만 제자리에서 다시 렌더한다 — 현재 탭과 토글 버튼 위치가 그대로 유지된다. 패널 chrome(토글/헤더/배지/탭바/바디)만 React로 바꾸고 탭 본체는 명령형 렌더러로 유지하며, React는 `dist/panel/index.js`에 번들된다(published `dependencies`에는 들어가지 않음). `e2e/panel.test.ts`가 의존하는 CSS 클래스/속성 계약은 그대로 보존된다.
+
 ## 0.1.58
 
 ### Patch Changes
