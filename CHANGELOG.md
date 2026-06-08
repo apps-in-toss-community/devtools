@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.61
+
+### Patch Changes
+
+- 8ec343c: env-2 PWA TOTP 인증 실패 시 launcher에 에러 배너 표면화 (Defect 2, #436)
+- d0217ef: MCP 대시보드·`/attach` 페이지 TOTP `at=` 코드 실시간 재발급 (Defect 1, #435): `lastAttachUrl` 문자열 캐시를 `AttachUrlParts` 컴포넌트로 교체해 `getDashboardState` 호출마다 `generateTotp()`로 신선한 코드를 mint하도록 수정. `/attach` HTML에 SSE 구독 스크립트를 주입하고 `id="attach-section"` wrapper를 추가해 QR 실시간 갱신을 지원.
+- a24ecf5: relay TOTP 활성 시 MCP client WS에 at= 코드 첨부 → 401 self-reject 해소
+
 ## 0.1.60
 
 ### Patch Changes
