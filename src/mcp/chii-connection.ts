@@ -29,6 +29,7 @@ import type {
   CdpTarget,
 } from './cdp-connection.js';
 import { logInfo } from './log.js';
+import { generateTotp } from './totp.js';
 
 /** Max events retained per domain ring buffer. */
 const DEFAULT_BUFFER_SIZE = 500;
@@ -115,6 +116,14 @@ export interface ChiiCdpConnectionOptions {
    * Defaults to 30 000 ms (30s).
    */
   commandTimeoutMs?: number;
+  /**
+   * Hex-encoded TOTP secret (the SECRET, never a code). When set, each client WS
+   * (re)connect mints a fresh `at=` code so it lands inside the relay's 90s
+   * acceptance window. Leave undefined when the relay has TOTP disabled.
+   * SECRET-HANDLING: stored privately, never logged; the minted code rides only
+   * in the WS URL query.
+   */
+  totpSecret?: string;
 }
 
 /** Default per-command timeout if neither option nor env var is set. */
@@ -131,6 +140,7 @@ export class ChiiCdpConnection implements CdpConnection {
   private readonly relayBaseUrl: string;
   private readonly bufferSize: number;
   private readonly commandTimeoutMs: number;
+  private readonly totpSecret: string | undefined;
   private readonly emitter = new EventEmitter();
   private readonly buffers = new Map<CdpEventName, unknown[]>();
   private readonly targets = new Map<string, CdpTarget>();
@@ -173,6 +183,7 @@ export class ChiiCdpConnection implements CdpConnection {
   constructor(options: ChiiCdpConnectionOptions) {
     this.relayBaseUrl = options.relayBaseUrl.replace(/\/$/, '');
     this.bufferSize = options.bufferSize ?? DEFAULT_BUFFER_SIZE;
+    this.totpSecret = options.totpSecret;
     const envMs = process.env.AIT_CDP_COMMAND_TIMEOUT_MS
       ? Number(process.env.AIT_CDP_COMMAND_TIMEOUT_MS)
       : undefined;
@@ -390,9 +401,18 @@ export class ChiiCdpConnection implements CdpConnection {
 
     const wsBase = this.relayBaseUrl.replace(/^http/, 'ws');
     const clientId = `devtools-mcp-${Date.now()}`;
-    const ws = new WebSocket(
-      `${wsBase}/client/${clientId}?target=${encodeURIComponent(target.id)}`,
-    );
+    let clientUrl = `${wsBase}/client/${clientId}?target=${encodeURIComponent(target.id)}`;
+    // Append a freshly-minted TOTP code so the relay's WS upgrade gate
+    // (chii-relay.ts verifyAuth) accepts this /client upgrade. Minted per-connect
+    // so reconnects stay inside the 90s acceptance window. generateTotp defaults
+    // `when` to Date.now() — rely on that default; never hand-compute the time.
+    // SECRET-HANDLING: never log `code` or `this.totpSecret`; the code rides only
+    // in the URL query.
+    if (this.totpSecret) {
+      const code = generateTotp(this.totpSecret);
+      clientUrl += `&at=${encodeURIComponent(code)}`;
+    }
+    const ws = new WebSocket(clientUrl);
     this.ws = ws;
 
     await new Promise<void>((resolve, reject) => {
