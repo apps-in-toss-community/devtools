@@ -177,6 +177,14 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'Only works when the MCP server is running on a local GUI machine — headless or ' +
             'remote container environments should set this to false to use the text QR fallback.',
         },
+        projectRoot: {
+          type: 'string',
+          description:
+            'Absolute path to the mini-app project root (the directory containing its package.json and .ait_urls). ' +
+            'When AIT_TUNNEL_BASE_URL is unset (env 2 / relay-mobile only), the daemon reads the app tunnel URL ' +
+            'from <projectRoot>/.ait_urls written by the dev server (tunnel:{cdp:true}). ' +
+            "Pass this because the daemon's own cwd is fixed at launch. Omit when AIT_TUNNEL_BASE_URL is set explicitly.",
+        },
       },
       // scheme_url is required only for env 3/relay-staging; env 2/relay-sandbox uses AIT_TUNNEL_BASE_URL.
       // The handler enforces the requirement at runtime based on the active environment.
