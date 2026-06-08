@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveTunnelOption } from '../unplugin/index.js';
 import {
   buildLauncherDeepLink,
   parseTrycloudflareUrl,
@@ -307,6 +308,56 @@ describe('startTunnelDashboard', () => {
     } finally {
       await handle.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// tunnel option env-gating (#425) — resolveTunnelOption pure helper
+//
+// An explicit `tunnel` option always wins (non-breaking, ?? semantics).
+// When omitted, AIT_TUNNEL / AIT_TUNNEL_CDP env vars provide the fallback.
+// ---------------------------------------------------------------------------
+
+describe('tunnel option env-gating (#425)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('resolves to false when no env and no explicit option (disabled)', () => {
+    vi.stubEnv('AIT_TUNNEL', '');
+    vi.stubEnv('AIT_TUNNEL_CDP', '');
+    expect(resolveTunnelOption(undefined, {})).toBe(false);
+  });
+
+  it('AIT_TUNNEL=1 with no explicit option → screen-preview tunnel enabled (cdp: false)', () => {
+    vi.stubEnv('AIT_TUNNEL', '1');
+    const result = resolveTunnelOption(undefined, { AIT_TUNNEL: '1' });
+    expect(result).toEqual({ cdp: false });
+  });
+
+  it('AIT_TUNNEL=1 + AIT_TUNNEL_CDP=1 → CDP relay enabled ({ cdp: true })', () => {
+    const result = resolveTunnelOption(undefined, { AIT_TUNNEL: '1', AIT_TUNNEL_CDP: '1' });
+    expect(result).toEqual({ cdp: true });
+  });
+
+  it('explicit false wins over AIT_TUNNEL (non-breaking: explicit option preserved)', () => {
+    const result = resolveTunnelOption(false, { AIT_TUNNEL: '1', AIT_TUNNEL_CDP: '1' });
+    expect(result).toBe(false);
+  });
+
+  it('explicit true wins over absent env vars (explicit option preserved)', () => {
+    const result = resolveTunnelOption(true, {});
+    expect(result).toBe(true);
+  });
+
+  it('explicit object option wins over env vars (explicit option preserved)', () => {
+    const result = resolveTunnelOption({ cdp: true }, { AIT_TUNNEL: '1', AIT_TUNNEL_CDP: '' });
+    expect(result).toEqual({ cdp: true });
+  });
+
+  it('AIT_TUNNEL absent (even if AIT_TUNNEL_CDP is set) → false (AIT_TUNNEL gates the base)', () => {
+    const result = resolveTunnelOption(undefined, { AIT_TUNNEL_CDP: '1' });
+    expect(result).toBe(false);
   });
 });
 

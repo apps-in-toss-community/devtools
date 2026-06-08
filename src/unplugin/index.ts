@@ -105,6 +105,31 @@ const WEBVIEW_BRIDGE_ID = '@apps-in-toss/webview-bridge'; // 3.0+
 /** MCP state endpoint path — browser panel POSTs here, MCP server GETs here */
 const MCP_STATE_PATH = '/api/ait-devtools/state';
 
+/**
+ * Resolves the effective tunnel option (#425).
+ *
+ * An explicit `tunnel` value (including `false`) always takes priority over
+ * env vars — the `??` operator means `undefined` (= omitted) falls through,
+ * but `false` / `true` / an object are preserved as-is (non-breaking).
+ *
+ * When the option is omitted:
+ * - `AIT_TUNNEL=1` enables the base screen-preview tunnel.
+ * - `AIT_TUNNEL_CDP=1` (requires `AIT_TUNNEL`) upgrades to the CDP relay.
+ * - Neither set → `false` (disabled).
+ *
+ * Extracted as a pure function so it can be unit-tested without standing up
+ * a full Vite dev server.
+ *
+ * @param explicit - The `tunnel` option as passed by the consumer (or `undefined` when omitted).
+ * @param env - The process environment (injectable for testing).
+ */
+export function resolveTunnelOption(
+  explicit: AitDevtoolsOptions['tunnel'],
+  env: Record<string, string | undefined>,
+): AitDevtoolsOptions['tunnel'] {
+  return explicit ?? (env.AIT_TUNNEL ? { cdp: !!env.AIT_TUNNEL_CDP } : false);
+}
+
 const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   const isDev = process.env.NODE_ENV !== 'production';
   const shouldEnable = isDev || (options?.forceEnable ?? false);
@@ -118,7 +143,14 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
 
   // Tunnel is dev-only and Vite-only. Never under production — even with
   // forceEnable — so a production build can't accidentally expose itself.
-  const tunnelOpt = options?.tunnel;
+  //
+  // Tunnel toggle resolution (#425): an explicit `tunnel` option always wins;
+  // when omitted, fall back to the AIT_TUNNEL / AIT_TUNNEL_CDP env vars so a
+  // consumer needs no `tunnel:` line in vite.config to enable env-2 preview.
+  // AIT_TUNNEL gates the base (screen preview); AIT_TUNNEL_CDP upgrades to the
+  // CDP relay. Production safety is unchanged — the existing
+  // `shouldTunnel = isDev && !!tunnelOpt` guard below still blocks prod builds.
+  const tunnelOpt = resolveTunnelOption(options?.tunnel, process.env);
   const shouldTunnel = isDev && !!tunnelOpt;
   const tunnelConfig = typeof tunnelOpt === 'object' ? tunnelOpt : {};
 
