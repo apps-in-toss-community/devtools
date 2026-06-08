@@ -1,17 +1,20 @@
 /**
- * Unit tests for `ChiiCdpConnection` — timeout + disconnect paths.
+ * Unit tests for `ChiiCdpConnection` — timeout + disconnect paths + TOTP auth.
  *
  * Coverage:
  *   - sendCommand times out when the relay never replies.
  *   - WebSocket close event rejects all pending commands.
  *   - Subsequent sendCommand after disconnect fails fast (no hang).
  *   - close() rejects in-flight commands.
+ *   - TOTP: client WS URL includes `&at=` when totpSecret is set.
+ *   - TOTP: client WS URL has NO `at=` when totpSecret is absent.
  */
 
 import http from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { ChiiCdpConnection } from '../chii-connection.js';
+import { generateTotp } from '../totp.js';
 
 // ---- Fake relay helpers ----------------------------------------------------
 
@@ -247,6 +250,149 @@ describe('ChiiCdpConnection — close() rejects pending', () => {
 
       await expect(pending).rejects.toThrow(/closed/);
     } finally {
+      await relay.close();
+    }
+  });
+});
+
+// ---- TOTP client URL tests -------------------------------------------------
+
+interface FakeRelayWithUpgrade extends FakeRelay {
+  /** URL paths seen in upgrade requests (WS connections). */
+  upgradeUrls: string[];
+}
+
+/**
+ * Fake relay that also records the raw URL of every WS upgrade request.
+ * Used to verify that ChiiCdpConnection appends (or omits) `&at=` correctly.
+ */
+async function createFakeRelayWithUpgradeCapture(): Promise<FakeRelayWithUpgrade> {
+  const upgradeUrls: string[] = [];
+  const receivedMessages: string[] = [];
+  let clientSocket: import('ws').WebSocket | null = null;
+  const pendingOutbound: string[] = [];
+
+  const httpServer = http.createServer((req, res) => {
+    if (req.url?.startsWith('/targets')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          targets: [{ id: 'target-1', title: 'Test Mini-App', url: 'http://localhost/' }],
+        }),
+      );
+    } else {
+      res.writeHead(404);
+      res.end();
+    }
+  });
+
+  const wss = new WebSocketServer({ server: httpServer });
+
+  // Capture the raw upgrade URL before the WS handshake completes.
+  httpServer.on('upgrade', (req) => {
+    upgradeUrls.push(req.url ?? '');
+  });
+
+  wss.on('connection', (ws) => {
+    clientSocket = ws;
+    for (const msg of pendingOutbound) ws.send(msg);
+    pendingOutbound.length = 0;
+    ws.on('message', (data: Buffer) => receivedMessages.push(data.toString()));
+    ws.on('close', () => {
+      clientSocket = null;
+    });
+  });
+
+  const port = await new Promise<number>((resolve) => {
+    httpServer.listen(0, '127.0.0.1', () => {
+      const addr = httpServer.address();
+      resolve(typeof addr === 'object' && addr !== null ? addr.port : 0);
+    });
+  });
+
+  return {
+    baseUrl: `http://127.0.0.1:${port}`,
+    receivedMessages,
+    upgradeUrls,
+    sendToClient(msg: object) {
+      const raw = JSON.stringify(msg);
+      if (clientSocket) {
+        clientSocket.send(raw);
+      } else {
+        pendingOutbound.push(raw);
+      }
+    },
+    dropClient() {
+      clientSocket?.close();
+    },
+    close(): Promise<void> {
+      return new Promise((resolve, reject) => {
+        wss.close(() => {
+          httpServer.close((err) => (err ? reject(err) : resolve()));
+        });
+      });
+    },
+  };
+}
+
+/** Shared test secret — hex-encoded 32-byte value (arbitrary, same pattern as relay-auth.test.ts). */
+const TOTP_TEST_SECRET = 'deadbeef'.repeat(8); // 64 hex chars = 32 bytes
+
+describe('ChiiCdpConnection — TOTP at= in client WS URL', () => {
+  it('appends &at=<code> to the client WS URL when totpSecret is set', async () => {
+    const relay = await createFakeRelayWithUpgradeCapture();
+    const conn = new ChiiCdpConnection({
+      relayBaseUrl: relay.baseUrl,
+      totpSecret: TOTP_TEST_SECRET,
+    });
+
+    try {
+      // Record the time just before connect so we can compute the expected code.
+      const beforeConnect = Date.now();
+      await conn.enableDomains();
+      const afterConnect = Date.now();
+
+      // Find the /client/... upgrade URL (not /targets HTTP).
+      const clientUpgradeUrl = relay.upgradeUrls.find((u) => u.includes('/client/'));
+      expect(clientUpgradeUrl).toBeDefined();
+
+      const params = new URLSearchParams(clientUpgradeUrl!.split('?')[1] ?? '');
+      const atParam = params.get('at');
+      expect(atParam).not.toBeNull();
+
+      // The code must match what generateTotp would produce at some point in
+      // [beforeConnect, afterConnect]. Because the time step is 30 s we can
+      // compute all candidates in that window (at most 2 distinct steps).
+      const steps = new Set([
+        Math.floor(beforeConnect / 1000 / 30),
+        Math.floor(afterConnect / 1000 / 30),
+      ]);
+      const validCodes = [...steps].map((step) => generateTotp(TOTP_TEST_SECRET, step * 30 * 1000));
+      expect(validCodes).toContain(atParam);
+      // SECRET-HANDLING: we never print atParam or TOTP_TEST_SECRET in assertion messages.
+    } finally {
+      conn.close();
+      await relay.close();
+    }
+  });
+
+  it('does NOT append &at= to the client WS URL when totpSecret is absent', async () => {
+    const relay = await createFakeRelayWithUpgradeCapture();
+    const conn = new ChiiCdpConnection({
+      relayBaseUrl: relay.baseUrl,
+      // totpSecret intentionally omitted
+    });
+
+    try {
+      await conn.enableDomains();
+
+      const clientUpgradeUrl = relay.upgradeUrls.find((u) => u.includes('/client/'));
+      expect(clientUpgradeUrl).toBeDefined();
+
+      const params = new URLSearchParams(clientUpgradeUrl!.split('?')[1] ?? '');
+      expect(params.has('at')).toBe(false);
+    } finally {
+      conn.close();
       await relay.close();
     }
   });

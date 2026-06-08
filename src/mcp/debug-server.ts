@@ -1563,7 +1563,15 @@ export { buildRelayVerifyAuth };
  * the factory is called right after that point (same as before this refactor).
  */
 function createRelayConnection(relayBaseUrl: string): ChiiCdpConnection {
-  return new ChiiCdpConnection({ relayBaseUrl });
+  // Pass the SECRET (not a code) so the connection mints a fresh TOTP per
+  // (re)connect. Read from env directly: both callers run
+  // assertRelayAuthConfigured() first, so when a TOTP-gated relay is up this is
+  // a valid hex secret; when TOTP is disabled it is undefined and no `at=` is
+  // appended (backward compatible). SECRET-HANDLING: forwarded, never logged.
+  return new ChiiCdpConnection({
+    relayBaseUrl,
+    totpSecret: process.env.AIT_DEBUG_TOTP_SECRET,
+  });
 }
 
 /**
