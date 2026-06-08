@@ -5,6 +5,7 @@ import {
   buildLauncherDeepLink,
   parseTrycloudflareUrl,
   printTunnelBanner,
+  sanitizeCloudflaredOutput,
   startTunnelDashboard,
 } from '../unplugin/tunnel.js';
 
@@ -362,5 +363,52 @@ describe('install-graph invariant (env-2 dashboard wiring)', () => {
     expect(src).toContain("import('qrcode-terminal')");
     expect(src).toContain("import('../mcp/qr-http-server.js')");
     expect(src).toContain("import('../mcp/devtools-opener.js')");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeCloudflaredOutput (#421) — SECRET-HANDLING
+// ---------------------------------------------------------------------------
+
+describe('sanitizeCloudflaredOutput', () => {
+  it('replaces full https:// trycloudflare URL with placeholder', () => {
+    const line = 'Registered tunnel connection: https://chunky-purple-frog.trycloudflare.com\n';
+    const result = sanitizeCloudflaredOutput(line);
+    expect(result).not.toContain('chunky-purple-frog');
+    expect(result).toContain('<HOST>.trycloudflare.com');
+  });
+
+  it('replaces wss:// trycloudflare URL with placeholder', () => {
+    const line = 'Relay URL: wss://chunky-purple-frog.trycloudflare.com/relay\n';
+    const result = sanitizeCloudflaredOutput(line);
+    expect(result).not.toContain('chunky-purple-frog');
+    expect(result).toContain('<HOST>.trycloudflare.com');
+  });
+
+  it('replaces bare trycloudflare hostname', () => {
+    const line = '{"url":"chunky-purple-frog.trycloudflare.com","level":"info"}\n';
+    const result = sanitizeCloudflaredOutput(line);
+    expect(result).not.toContain('chunky-purple-frog');
+    expect(result).toContain('<HOST>.trycloudflare.com');
+  });
+
+  it('preserves non-trycloudflare diagnostic content unchanged', () => {
+    const line = 'level=error msg="failed to serve tunnel" error="context canceled"\n';
+    const result = sanitizeCloudflaredOutput(line);
+    expect(result).toBe(line);
+  });
+
+  it('preserves generic error codes and messages (diagnostic value)', () => {
+    const line = 'error 1101: An error occurred on the server\n';
+    const result = sanitizeCloudflaredOutput(line);
+    expect(result).toBe(line);
+  });
+
+  it('handles multiple hostnames in one line', () => {
+    const line = 'http://alpha.trycloudflare.com and wss://beta.trycloudflare.com\n';
+    const result = sanitizeCloudflaredOutput(line);
+    expect(result).not.toContain('alpha');
+    expect(result).not.toContain('beta');
+    expect(result.match(/<HOST>\.trycloudflare\.com/g)?.length).toBe(2);
   });
 });
