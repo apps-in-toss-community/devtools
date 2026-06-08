@@ -485,16 +485,18 @@ describe('familyKeyForMode (#378)', () => {
   });
 });
 
-describe('readMobileRelayBaseUrl (#378) — SECRET-HANDLING', () => {
-  it('returns the trimmed AIT_RELAY_BASE_URL when present', () => {
-    expect(readMobileRelayBaseUrl({ AIT_RELAY_BASE_URL: '  https://relay.example  ' })).toBe(
-      'https://relay.example',
-    );
+describe('readMobileRelayBaseUrl (#378, #424) — SECRET-HANDLING', () => {
+  it('returns the trimmed AIT_RELAY_BASE_URL when present (env wins)', async () => {
+    await expect(
+      readMobileRelayBaseUrl({ AIT_RELAY_BASE_URL: '  https://relay.example  ' }),
+    ).resolves.toBe('https://relay.example');
   });
 
-  it('throws the precise missing-URL message when unset or empty', () => {
-    expect(() => readMobileRelayBaseUrl({})).toThrow(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE);
-    expect(() => readMobileRelayBaseUrl({ AIT_RELAY_BASE_URL: '   ' })).toThrow(
+  it('throws the precise missing-URL message when env is unset and no projectRoot given', async () => {
+    await expect(readMobileRelayBaseUrl({}, undefined)).rejects.toThrow(
+      MOBILE_RELAY_BASE_URL_MISSING_MESSAGE,
+    );
+    await expect(readMobileRelayBaseUrl({ AIT_RELAY_BASE_URL: '   ' }, undefined)).rejects.toThrow(
       MOBILE_RELAY_BASE_URL_MISSING_MESSAGE,
     );
   });
