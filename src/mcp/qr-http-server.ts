@@ -247,6 +247,10 @@ function buildSseScript(strings: SseScriptStrings): string {
  *   - __SAFE_LABEL__      : HTML-escaped deploymentId label
  *   - __SAFE_ATTACH_URL__ : HTML-escaped attach URL (TOTP at= 코드 포함 — 의도된 전달)
  *
+ * SSE 스크립트도 주입 — `#attach-section` hook이 있으면 `/events` push 때 QR이
+ * `/qr.png?u=<fresh attachUrl>`로 자동 갱신된다. `#tunnel-status`·`#pages-list` 등
+ * 나머지 selector는 /attach 페이지에 없으므로 null-guard로 no-op.
+ *
  * SECRET-HANDLING: TOTP at= 코드는 attachUrl 캡슐 안에서만 노출 — 의도된 transport.
  */
 function buildAttachHtml(
@@ -255,11 +259,24 @@ function buildAttachHtml(
   safeAttachUrl: string,
   locale: 'ko' | 'en',
 ): string {
+  const s = resolveLocaleStrings(locale);
   const chrome = attachChromeByLocale[locale];
-  return chrome
+  const filled = chrome
     .replaceAll('__QR_DATA_URL__', qrDataUrl)
     .replaceAll('__SAFE_LABEL__', safeLabel)
     .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl);
+
+  // Inject SSE script so QR auto-refreshes on each /events push.
+  // `#attach-section` is the only selector present on /attach — other selectors
+  // (#tunnel-status, #pages-list, #updated) are null-guarded and are no-ops here.
+  const sseStrings = {
+    tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
+    tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
+    pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
+    attachHint: JSON.stringify(s('dashboard.attach.hint')),
+  };
+  const sseScript = buildSseScript(sseStrings);
+  return filled.replace('</body>', `${sseScript}\n</body>`);
 }
 
 /**

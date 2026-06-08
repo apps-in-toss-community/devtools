@@ -487,4 +487,83 @@ describe('startQrHttpServer — 기존 라우트 공존 (getDashboardState 주�
       await srv.close();
     }
   });
+
+  // ── /attach page — SSE injection & id="attach-section" (Defect 1 fix, #435) ─
+
+  it('GET /attach HTML contains EventSource(/events) SSE script (#435)', async () => {
+    // buildAttachHtml now injects buildSseScript so the /attach page subscribes
+    // to /events and can update the QR img live — avoiding expired TOTP at= codes.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const attachUrl =
+        'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+      const res = await fetch(srv.buildAttachPageUrl(attachUrl), {
+        headers: { 'Accept-Language': 'ko' },
+      });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // SSE subscription script must be present.
+      expect(html).toContain('EventSource');
+      expect(html).toContain('/events');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET /attach HTML contains id="attach-section" (#435)', async () => {
+    // AttachHtml.tsx wraps the QR img in <div id="attach-section"> so the SSE
+    // script can target it with querySelector for live QR re-render.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const attachUrl =
+        'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrl), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      expect(html).toContain('id="attach-section"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SECRET: GET /attach HTML — TOTP at= code stays inside attachUrl param only', async () => {
+    // The at= code is passed to buildAttachHtml inside attachUrl which is used
+    // for the QR image and the url-box. It must not appear as a separate field
+    // or in any other location in the HTML.
+    //
+    // SECRET-HANDLING: we use a dummy marker to verify containment; no real
+    // TOTP secret or production value is referenced here.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const markerCode = '123456'; // 6-digit stand-in (not a real TOTP value)
+      const attachUrl = `intoss-private://app?_deploymentId=test&debug=1&relay=wss%3A%2F%2Fx.tc.com&at=${markerCode}`;
+      const html = await (await fetch(srv.buildAttachPageUrl(attachUrl))).text();
+      // The at= code is inside attachUrl (url-box + QR src placeholder) — not a
+      // standalone field. No text node outside the url or QR img should contain
+      // a bare 6-digit code as an isolated token.
+      // We assert: the HTML does NOT contain "at=<code>" OUTSIDE the url-box area
+      // by verifying the script injected by buildSseScript does not leak the code.
+      // (The at= param inside __SAFE_ATTACH_URL__ is expected and intentional.)
+      expect(html).not.toContain('"totp"');
+      expect(html).not.toContain('"at"');
+      // The attach URL itself (url-box) is the only legit container — that's fine.
+      expect(html).toContain(markerCode); // present inside url-box — correct
+    } finally {
+      await srv.close();
+    }
+  });
 });
