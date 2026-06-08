@@ -239,6 +239,10 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
           // in the browser when CDP is wired + GUI present. Torn down with the
           // tunnel. Only set when the dashboard actually started.
           let qrDashboard: { close: () => Promise<void> } | null = null;
+          // env-2 URL file store (#424): captured after the first writeRelayUrls
+          // call so cleanup() can call deleteRelayUrls without a re-import.
+          // SECRET-HANDLING: the stored function reference never carries URL values.
+          let relayUrlDeleteFn: ((projectRoot: string) => Promise<void>) | null = null;
           // #420: parent-PID watcher — self-terminate when vite's parent dies so
           // cloudflared children don't become zombies holding stale tunnels.
           let parentWatcher: { stop(): void } | null = null;
@@ -266,6 +270,8 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                 // second quick tunnel to it. The relay's https tunnel URL becomes
                 // the `wss://` relay the launcher QR carries (&debug=1&relay=).
                 let relayWssUrl: string | undefined;
+                // SECRET-HANDLING: relayHttpUrl carries the relay host — never logged.
+                let relayHttpUrl: string | undefined;
                 if (tunnelConfig.cdp) {
                   try {
                     // Relay-auth baseline (issue #250): the env-2 CDP relay is
@@ -297,6 +303,9 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                     relay = r;
                     const rt = await startQuickTunnel(r.port);
                     relayTunnel = rt;
+                    // SECRET-HANDLING: rt.url is the https relay base — stored in
+                    // relayHttpUrl for .ait_urls write below; never logged.
+                    relayHttpUrl = rt.url;
                     relayWssUrl = rt.url.replace(/^https:/, 'wss:');
                   } catch (err: unknown) {
                     console.warn(
@@ -308,6 +317,21 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                 }
 
                 await printTunnelBanner(t.url, { qr: tunnelConfig.qr, relayWssUrl });
+
+                // env-2 URL file-based discovery (#424): write .ait_urls so the
+                // MCP daemon can discover the relay/tunnel URLs without manual env
+                // var copy-paste. SECRET-HANDLING: URL values are never logged.
+                // Capture deleteRelayUrls in the outer-scope fn so cleanup() can
+                // call it without re-importing (no async in signal handlers).
+                const { writeRelayUrls, deleteRelayUrls } = await import(
+                  '../mcp/relay-url-store.js'
+                );
+                await writeRelayUrls({
+                  projectRoot: server.config.root,
+                  tunnelBaseUrl: t.url,
+                  ...(relayHttpUrl !== undefined ? { relayBaseUrl: relayHttpUrl } : {}),
+                });
+                relayUrlDeleteFn = (root: string) => deleteRelayUrls({ projectRoot: root });
 
                 // env-2 HTML dashboard (issue #408): when CDP is wired and a GUI
                 // is present, serve the same QR+FAQ dashboard env 3/4 uses and
@@ -346,6 +370,10 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
             relayTunnel?.stop();
             void relay?.close();
             void qrDashboard?.close();
+            // env-2 URL file cleanup (#424): remove .ait_urls on teardown so a
+            // stale file doesn't cause the MCP daemon to attempt a doomed attach.
+            // SECRET-HANDLING: relayUrlDeleteFn never logs the path or URL values.
+            void relayUrlDeleteFn?.(server.config.root);
           };
           httpServer?.once('close', cleanup);
           process.once('SIGINT', cleanup);

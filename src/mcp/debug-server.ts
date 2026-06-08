@@ -614,12 +614,22 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       if (env === 'relay-mobile') {
         // SECRET-HANDLING: AIT_TUNNEL_BASE_URL carries the app tunnel host —
         // NEVER echo the value in error messages or logs.
-        const tunnelHttpUrl = process.env.AIT_TUNNEL_BASE_URL?.trim() ?? '';
+        // (#424) env wins; .ait_urls is the fallback when env is unset.
+        const rawBuildProjectRoot = request.params.arguments?.projectRoot;
+        const buildProjectRoot =
+          typeof rawBuildProjectRoot === 'string' ? rawBuildProjectRoot : undefined;
+        const envTunnelUrl = process.env.AIT_TUNNEL_BASE_URL?.trim() ?? '';
+        let tunnelHttpUrl = envTunnelUrl;
+        if (tunnelHttpUrl === '' && buildProjectRoot !== undefined) {
+          const { readRelayUrls } = await import('./relay-url-store.js');
+          const stored = await readRelayUrls({ projectRoot: buildProjectRoot });
+          tunnelHttpUrl = stored?.tunnelBaseUrl ?? '';
+        }
         if (tunnelHttpUrl === '') {
           return mcpError(
             'build_attach_url(mobile): AIT_TUNNEL_BASE_URL이 설정되지 않았습니다. ' +
-              'unplugin tunnel:{cdp:true} 배너에 출력되는 앱 HTTP 터널 URL을 ' +
-              'AIT_TUNNEL_BASE_URL 환경변수로 전달하세요.',
+              'dev 서버가 tunnel:{cdp:true}로 기동 중이면 .ait_urls 파일이 자동 생성돼 있어야 합니다. ' +
+              '자동 발견이 되지 않을 경우 앱 HTTP 터널 URL을 AIT_TUNNEL_BASE_URL 환경변수로 직접 전달하세요.',
           );
         }
         const tunnelStatus = getTunnelStatus();
@@ -1843,25 +1853,47 @@ export function familyKeyForMode(mode: StartDebugMode): FamilyKey {
 
 /** The error thrown / surfaced when entering `mobile` without AIT_RELAY_BASE_URL. */
 export const MOBILE_RELAY_BASE_URL_MISSING_MESSAGE =
-  'start_debug(mobile): AIT_RELAY_BASE_URL이 설정되지 않았습니다 — unplugin이 tunnel:{cdp:true}로 띄운 relay base URL을 AIT_RELAY_BASE_URL 환경변수로 전달하세요. 환경 2(실기기 PWA) 진입은 외부 relay base가 필요합니다.';
+  'start_debug(mobile): AIT_RELAY_BASE_URL이 설정되지 않았습니다. ' +
+  'dev 서버가 tunnel:{cdp:true}로 기동 중이면 .ait_urls 파일이 자동 생성돼 있어야 합니다. ' +
+  '자동 발견이 되지 않을 경우 relay base URL을 AIT_RELAY_BASE_URL 환경변수로 직접 전달하세요. ' +
+  '환경 2(실기기 PWA) 진입은 외부 relay base가 필요합니다.';
 
 /**
- * Reads `AIT_RELAY_BASE_URL` from the environment for the env-2 (`mobile`) boot
- * site (issue #378). Returns the trimmed value, or throws the precise
- * {@link MOBILE_RELAY_BASE_URL_MISSING_MESSAGE} when unset/empty.
+ * Reads the env-2 relay base URL for the `mobile` boot site (issue #378, #424).
  *
- * SECRET-HANDLING: `AIT_RELAY_BASE_URL` carries the relay host (same class as a
- * wss URL). On the missing path the thrown message describes the env var name
- * and how to obtain it — it NEVER echoes any partial/garbled URL value. The
+ * Resolution order (env wins — file is the fallback):
+ *   1. `env.AIT_RELAY_BASE_URL` set and non-empty → return it (operator override).
+ *   2. `projectRoot` given → read `<nearest package.json dir>/.ait_urls`;
+ *      if `relayBaseUrl` is present → return it (auto-discovered from dev server).
+ *   3. Neither → throw {@link MOBILE_RELAY_BASE_URL_MISSING_MESSAGE}.
+ *
+ * SECRET-HANDLING: `AIT_RELAY_BASE_URL` and the file-discovered value carry the
+ * relay host. On the missing path the thrown message names the env var and notes
+ * that the dev server auto-publishes it — it NEVER echoes any URL value. The
  * present value is returned to the caller (the CDP client) but never logged.
  */
-export function readMobileRelayBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+export async function readMobileRelayBaseUrl(
+  env: NodeJS.ProcessEnv = process.env,
+  projectRoot?: string,
+): Promise<string> {
+  // 1. Env wins — operator override.
   const raw = env.AIT_RELAY_BASE_URL;
-  const value = typeof raw === 'string' ? raw.trim() : '';
-  if (value === '') {
-    throw new Error(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE);
+  const envValue = typeof raw === 'string' ? raw.trim() : '';
+  if (envValue !== '') {
+    return envValue;
   }
-  return value;
+
+  // 2. File fallback — auto-discovered from dev server (#424).
+  if (projectRoot !== undefined) {
+    const { readRelayUrls } = await import('./relay-url-store.js');
+    const stored = await readRelayUrls({ projectRoot });
+    if (stored?.relayBaseUrl !== undefined) {
+      return stored.relayBaseUrl;
+    }
+  }
+
+  // 3. Neither source — throw the precise guidance message.
+  throw new Error(MOBILE_RELAY_BASE_URL_MISSING_MESSAGE);
 }
 
 /**
@@ -1882,8 +1914,12 @@ export interface DualRouterDeps {
    * #378 — keyed so an intoss relay and an external relay can be warm-kept
    * simultaneously). Since #396 NO family is booted eagerly, so this boots the
    * family for ANY of the three FamilyKey values on first use.
+   *
+   * `projectRoot` is threaded from the per-session `start_debug` call (#424) so
+   * `relay-sandbox` boot can fall back to the `.ait_urls` file discovery when
+   * `AIT_RELAY_BASE_URL` is not set.
    */
-  bootLazyFor: (key: FamilyKey) => Promise<BootedFamily>;
+  bootLazyFor: (key: FamilyKey, projectRoot?: string) => Promise<BootedFamily>;
   /** Diagnostics collector (re-armed watcher records attach there). */
   diagnosticsCollector: DiagnosticsCollector;
   /** Auto-opens Chrome DevTools on the first relay attach (env 3/4 only). */
@@ -2052,14 +2088,18 @@ export class DualConnectionRouter implements ConnectionRouter {
 
   /**
    * Resolves the `BootedFamily` for `key`: the warm family if already booted,
-   * otherwise boots it via `bootLazyFor(key)` and stores it (once per key).
-   * Since #396 every family is lazy, so this is the single boot path for all
-   * three keys.
+   * otherwise boots it via `bootLazyFor(key, projectRoot)` and stores it (once
+   * per key). Since #396 every family is lazy, so this is the single boot path
+   * for all three keys.
+   *
+   * `projectRoot` is forwarded to `bootLazyFor` so `relay-sandbox` boot can
+   * fall back to `.ait_urls` file discovery (#424) when `AIT_RELAY_BASE_URL` is
+   * not set in the environment.
    */
-  private async familyFor(key: FamilyKey): Promise<BootedFamily> {
+  private async familyFor(key: FamilyKey, projectRoot?: string): Promise<BootedFamily> {
     const warm = this.lazyFamilies.get(key);
     if (warm) return warm;
-    const booted = await this.deps.bootLazyFor(key);
+    const booted = await this.deps.bootLazyFor(key, projectRoot);
     this.lazyFamilies.set(key, booted);
     return booted;
   }
@@ -2094,9 +2134,11 @@ export class DualConnectionRouter implements ConnectionRouter {
       }
 
       // (2) Resolve the family by key (#378). `bootLazyFor` may throw (e.g.
-      // mobile without AIT_RELAY_BASE_URL) — let it propagate WITHOUT flipping
-      // active or arming liveIntent, so a failed entry leaves state untouched.
-      const target = await this.familyFor(familyKeyForMode(mode));
+      // mobile without AIT_RELAY_BASE_URL / .ait_urls) — let it propagate
+      // WITHOUT flipping active or arming liveIntent, so a failed entry leaves
+      // state untouched. Pass projectRoot so relay-sandbox boot can discover
+      // the relay URL from .ait_urls (#424).
+      const target = await this.familyFor(familyKeyForMode(mode), projectRoot);
 
       // (3) Flip the active pointer. The MCP Server reads through `active` per
       // request, so no re-handshake / restart is needed.
@@ -2161,15 +2203,15 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
   const router = new DualConnectionRouter({
-    // Lazy resolver for all three family slots (#378, #396).
-    // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL only here,
-    // at the mobile boot site, and never logs its value.
+    // Lazy resolver for all three family slots (#378, #396, #424).
+    // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL (or .ait_urls
+    // fallback) only here, at the mobile boot site, and never logs its value.
     // verifyAuth is built INSIDE the lambda (lazily, at the relay boot site) so it
     // reads the env AFTER switchMode's project-local secret load (#396) has
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
-    bootLazyFor: (key) =>
+    bootLazyFor: async (key, projectRoot) =>
       key === 'relay-sandbox'
-        ? bootExternalRelayFamily(readMobileRelayBaseUrl())
+        ? bootExternalRelayFamily(await readMobileRelayBaseUrl(process.env, projectRoot))
         : key === 'local-browser'
           ? bootLocalFamily()
           : bootRelayFamily({
@@ -2437,15 +2479,15 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
   const router = new DualConnectionRouter({
-    // Lazy resolver for all three family slots (#378, #396).
-    // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL only here,
-    // at the mobile boot site, and never logs its value.
+    // Lazy resolver for all three family slots (#378, #396, #424).
+    // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL (or .ait_urls
+    // fallback) only here, at the mobile boot site, and never logs its value.
     // verifyAuth is built INSIDE the lambda (lazily, at the relay boot site) so it
     // reads the env AFTER switchMode's project-local secret load (#396) has
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
-    bootLazyFor: (key) =>
+    bootLazyFor: async (key, projectRoot) =>
       key === 'relay-sandbox'
-        ? bootExternalRelayFamily(readMobileRelayBaseUrl())
+        ? bootExternalRelayFamily(await readMobileRelayBaseUrl(process.env, projectRoot))
         : key === 'local-browser'
           ? bootLocalFamilyForEntry()
           : bootRelayFamily({
@@ -2606,6 +2648,12 @@ export interface RunMobileDebugServerOptions {
    * Default `false`.
    */
   force?: boolean;
+  /**
+   * Project root for `.ait_urls` file-based URL discovery (#424). When supplied,
+   * `readMobileRelayBaseUrl` falls back to the `.ait_urls` file written by the
+   * unplugin if `AIT_RELAY_BASE_URL` is not set. Defaults to `process.cwd()`.
+   */
+  projectRoot?: string;
 }
 
 /**
@@ -2642,7 +2690,12 @@ export async function runMobileDebugServer(
   // invocation fails fast (fatal stderr via the bin entry) without taking the
   // single-session lock or opening any connection. Kept pre-flight (NOT moved
   // into the lazy lambda) so the fail-fast still precedes the lock.
-  const relayBaseUrl = readMobileRelayBaseUrl();
+  // (#424) Falls back to .ait_urls if AIT_RELAY_BASE_URL is unset.
+  // SECRET-HANDLING: relayBaseUrl is passed to the CDP client only, never logged.
+  const relayBaseUrl = await readMobileRelayBaseUrl(
+    process.env,
+    options.projectRoot ?? process.cwd(),
+  );
 
   // Enforce a single debug session per machine (same lock as the other modes).
   // `force: true` kills the existing process and takes over the lock.
@@ -2656,13 +2709,13 @@ export async function runMobileDebugServer(
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
   const router = new DualConnectionRouter({
-    // Lazy resolver for all three family slots (#378, #396). The external relay
-    // boot captures the pre-flight `relayBaseUrl`. Its stop() closes ONLY the CDP
-    // client — the unplugin owns the relay + its tunnel.
+    // Lazy resolver for all three family slots (#378, #396, #424). The external
+    // relay boot captures the pre-flight `relayBaseUrl`. Its stop() closes ONLY
+    // the CDP client — the unplugin owns the relay + its tunnel.
     // verifyAuth is built INSIDE the lambda (lazily, at the relay boot site) so it
     // reads the env AFTER switchMode's project-local secret load (#396) has
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
-    bootLazyFor: (key) =>
+    bootLazyFor: async (key) =>
       key === 'relay-sandbox'
         ? bootExternalRelayFamily(relayBaseUrl)
         : key === 'local-browser'
