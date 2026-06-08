@@ -256,4 +256,7 @@ export const en: Record<StringKey, string> = {
   'launcher.cameraError': 'Could not access the camera — paste the URL instead.',
   'launcher.invalidUrlHttps': 'Enter a valid https:// URL (the tunnel URL from your terminal).',
   'launcher.invalidUrl': 'Enter a valid http(s):// URL.',
+  'launcher.debugAuthFailed': 'Debug connection authentication failed',
+  'launcher.debugAuthFailedHint': 'The QR code may have expired. Scan a fresh QR code.',
+  'launcher.debugAuthRescanCta': 'Scan a new QR',
 };

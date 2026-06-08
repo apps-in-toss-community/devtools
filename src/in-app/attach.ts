@@ -68,6 +68,17 @@ export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
     console.debug(
       `[@ait-co/devtools] debug attach skipped — gate blocked (reason: ${gateResult.reason})`,
     );
+    // Defect 2: a wrong/expired TOTP code is the ONLY block reason that is a
+    // user-actionable failure inside a deliberate debug session — the operator
+    // scanned a QR expecting an attach. Surface it to the parent launcher shell
+    // so it can show a "rescan the QR" banner. Every other reason
+    // ('host'/'entry'/'opt-in'/'invalid-relay') fires on ordinary non-debug page
+    // loads and must stay silent to avoid a banner on every plain pageview.
+    // SECRET-HANDLING: the message carries ONLY the 'auth' reason enum — never
+    // the code, secret, host, or relay URL.
+    if (gateResult.reason === 'auth' && typeof window !== 'undefined' && window.parent !== window) {
+      window.parent.postMessage({ type: 'ait:debug-attach-blocked', reason: 'auth' }, '*');
+    }
     return;
   }
 
