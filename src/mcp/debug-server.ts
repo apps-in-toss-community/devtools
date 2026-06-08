@@ -45,6 +45,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { startParentWatcher } from '../shared/parent-watcher.js';
 import { ChiiAitSource } from './ait-chii-source.js';
 import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
@@ -75,7 +76,7 @@ import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
 import { type DashboardState, type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
 import { loadRelaySecretReadOnly } from './relay-secret-store.js';
-import { acquireLock, isPidAlive, readServerLock } from './server-lock.js';
+import { acquireLock, readServerLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
   buildAttachUrl,
@@ -106,6 +107,9 @@ import {
   takeSnapshot,
 } from './tools.js';
 import { assertRelayAuthConfigured, buildRelayVerifyAuth, generateTotp } from './totp.js';
+
+export { startParentWatcher } from '../shared/parent-watcher.js';
+
 import {
   generateAttachToken,
   makeTunnelStatus,
@@ -1502,74 +1506,6 @@ export function startAttachWatcher(
       void server.sendToolListChanged();
       onFirstAttach?.();
       clearInterval(handle);
-    }
-  }, intervalMs);
-
-  return {
-    stop() {
-      clearInterval(handle);
-    },
-  };
-}
-
-/**
- * Starts a periodic watcher that detects when the parent process (e.g. Claude
- * Code) has died without sending SIGTERM/SIGHUP, and calls `onOrphaned` so the
- * daemon can self-terminate rather than running as a zombie.
- *
- * Mirrors the `startAttachWatcher` pattern: `setInterval`-based, returns
- * `{ stop(): void }`, injectable deps for testability.
- *
- * @param onOrphaned - Called once when the parent is gone.
- * @param opts.intervalMs   - Poll interval in milliseconds (default 5 000).
- * @param opts.initialPpid  - Parent PID to watch (default `process.ppid`).
- * @param opts.isAlive      - Predicate to test if a PID is running (default `isPidAlive`).
- * @param opts.getPpid      - Supplier of current ppid (default `() => process.ppid`).
- *                            Detects ppid changes as well as death.
- * @param opts.log          - Logger (default `process.stderr.write`).
- *
- * @returns `stop` — call during shutdown to clear the interval.
- */
-export function startParentWatcher(
-  onOrphaned: () => void,
-  opts?: {
-    intervalMs?: number;
-    initialPpid?: number;
-    isAlive?: (pid: number) => boolean;
-    getPpid?: () => number;
-    log?: (msg: string) => void;
-  },
-): { stop(): void } {
-  const {
-    intervalMs = 5_000,
-    initialPpid = process.ppid,
-    isAlive = isPidAlive,
-    getPpid = () => process.ppid,
-    log = (msg: string) => process.stderr.write(msg),
-  } = opts ?? {};
-
-  // PID 1 is init/launchd — running under a process manager or as a detached
-  // daemon. There is no meaningful parent to watch; skip the watcher entirely.
-  if (initialPpid <= 1) {
-    log('[ait-debug] parent-pid watcher: no parent to watch (ppid<=1), skipping\n');
-    return { stop() {} };
-  }
-
-  let fired = false;
-
-  const handle = setInterval(() => {
-    if (fired) return;
-
-    const currentPpid = getPpid();
-    const orphaned = currentPpid !== initialPpid || !isAlive(initialPpid);
-
-    if (orphaned) {
-      fired = true;
-      clearInterval(handle);
-      log(
-        `[ait-debug] parent-pid watcher: parent PID ${initialPpid} is gone (currentPpid=${currentPpid}) — shutting down\n`,
-      );
-      onOrphaned();
     }
   }, intervalMs);
 
