@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.60
+
+### Patch Changes
+
+- 30f7cde: build_attach_url(env-2/relay-mobile): inputSchema에 projectRoot 추가 — .ait_urls의 tunnelBaseUrl 자동발견이 MCP 클라이언트에서 도달 가능해진다 (start_debug와 대칭). 핸들러는 이미 인자를 읽고 있었고 inputSchema 선언만 누락돼 dead path였다. (#430)
+- 8ada9f5: launcher PWA install UX를 pwa-install 라이브러리에 위임 — iOS 설치 안내 복원, 손수 만든 openOnce 탈출구 제거
+
 ## 0.1.59
 
 ### Patch Changes
