@@ -250,6 +250,26 @@ export interface QuickTunnel {
   stop: () => void;
 }
 
+/**
+ * Sanitize cloudflared stderr output for error diagnostics (#421).
+ *
+ * Masks `*.trycloudflare.com` hostnames and full `https://` / `wss://` URLs
+ * that carry those hostnames so tunnel host values never appear in error
+ * messages. Diagnostic content (error codes, reasons, JSON blobs) is preserved.
+ *
+ * SECRET-HANDLING: tunnel host is SECRET-class per harness policy — only
+ * placeholder text is emitted.
+ */
+export function sanitizeCloudflaredOutput(line: string): string {
+  // Full URL forms: https://xxx.trycloudflare.com/… and wss://xxx.trycloudflare.com/…
+  let s = line.replace(/(?:https?|wss?):\/\/[a-z0-9-]+\.trycloudflare\.com(?:\/[^\s]*)*/gi, (m) =>
+    m.replace(/[a-z0-9-]+\.trycloudflare\.com/i, '<HOST>.trycloudflare.com'),
+  );
+  // Bare hostname without scheme (e.g. printed in cloudflared JSON logs)
+  s = s.replace(/[a-z0-9-]+\.trycloudflare\.com/gi, '<HOST>.trycloudflare.com');
+  return s;
+}
+
 const URL_TIMEOUT_MS = 20_000;
 
 /**
@@ -280,6 +300,20 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
   };
 
   return new Promise<QuickTunnel>((resolve, reject) => {
+    // #421: accumulate stderr to attach as diagnostics on failure.
+    // SECRET-HANDLING: lines are sanitized before inclusion in error messages.
+    const stderrLines: string[] = [];
+
+    /**
+     * Format the last `n` sanitized stderr lines as a diagnostic appendix.
+     * Returns an empty string when no lines have been collected.
+     */
+    const stderrTail = (n = 15): string => {
+      if (stderrLines.length === 0) return '';
+      const tail = stderrLines.slice(-n).map(sanitizeCloudflaredOutput).join('');
+      return `\ncloudflared 출력 (마지막 ${Math.min(n, stderrLines.length)}줄):\n${tail}`;
+    };
+
     const timer = setTimeout(() => {
       cleanup();
       stop();
@@ -287,7 +321,7 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
         new Error(
           `[@ait-co/devtools] cloudflared did not report a tunnel URL within ${
             URL_TIMEOUT_MS / 1000
-          }s. Check your network connection, or run \`cloudflared tunnel --url http://localhost:${port}\` manually.`,
+          }s. Check your network connection, or run \`cloudflared tunnel --url http://localhost:${port}\` manually.${stderrTail()}`,
         ),
       );
     }, URL_TIMEOUT_MS);
@@ -301,9 +335,16 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
       resolve({ url: found, stop });
     };
 
+    // Accumulate stderr lines for diagnostics (#421). Named so it can be
+    // removed from the listener list when cleanup() runs.
+    const pushStderr = (line: string) => {
+      stderrLines.push(line);
+    };
+
     const cleanup = () => {
       tunnel.off('stdout', onUrl);
       tunnel.off('stderr', onUrl);
+      tunnel.off('stderr', pushStderr);
     };
 
     // The library emits a parsed `url` event; we also scan raw stdout/stderr in
@@ -311,6 +352,8 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
     tunnel.once('url', onUrl);
     tunnel.on('stdout', onUrl);
     tunnel.on('stderr', onUrl);
+    // Second stderr listener: accumulate all lines for error diagnostics.
+    tunnel.on('stderr', pushStderr);
     tunnel.once('error', (err: Error) => {
       clearTimeout(timer);
       cleanup();
@@ -323,7 +366,7 @@ export async function startQuickTunnel(port: number): Promise<QuickTunnel> {
       cleanup();
       reject(
         new Error(
-          `[@ait-co/devtools] cloudflared exited (code ${code ?? 'null'}) before reporting a tunnel URL.`,
+          `[@ait-co/devtools] cloudflared exited (code ${code ?? 'null'}) before reporting a tunnel URL.${stderrTail()}`,
         ),
       );
     });
