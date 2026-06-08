@@ -37,6 +37,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isPidAlive as _isPidAlive } from '../shared/parent-watcher.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,20 +108,10 @@ function ensureLockDir(lockPath: string): void {
 /**
  * Returns `true` when the given PID refers to a running process.
  *
- * Uses `process.kill(pid, 0)` — a no-op signal that succeeds when the process
- * exists and we have permission to signal it; throws ESRCH when it doesn't exist.
+ * Re-exported from `../shared/parent-watcher` so external callers that
+ * import from `./server-lock` keep working without an import-path change.
  */
-export function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    // ESRCH = no such process → stale lock.
-    // EPERM = process exists but we can't signal it (still alive).
-    if ((err as NodeJS.ErrnoException).code === 'EPERM') return true;
-    return false;
-  }
-}
+export const isPidAlive: (pid: number) => boolean = _isPidAlive;
 
 // ---------------------------------------------------------------------------
 // Read / write helpers

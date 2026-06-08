@@ -25,6 +25,7 @@
 
 import { fileURLToPath } from 'node:url';
 import { createUnplugin } from 'unplugin';
+import { startParentWatcher } from '../shared/parent-watcher.js';
 
 /**
  * Resolve `@ait-co/devtools/mock` to its real file path at plugin-load time.
@@ -238,6 +239,9 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
           // in the browser when CDP is wired + GUI present. Torn down with the
           // tunnel. Only set when the dashboard actually started.
           let qrDashboard: { close: () => Promise<void> } | null = null;
+          // #420: parent-PID watcher — self-terminate when vite's parent dies so
+          // cloudflared children don't become zombies holding stale tunnels.
+          let parentWatcher: { stop(): void } | null = null;
           const httpServer = server.httpServer;
 
           httpServer?.once('listening', () => {
@@ -318,6 +322,14 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                       qr: tunnelConfig.qr,
                     })) ?? null;
                 }
+
+                // #420: start watching the parent PID now that tunnel resources
+                // are allocated. When the parent dies/reparents, clean up
+                // synchronously (stops cloudflared children) then exit.
+                parentWatcher = startParentWatcher(() => {
+                  cleanup();
+                  process.exit(0);
+                });
               })
               .catch((err: unknown) => {
                 console.warn(
@@ -329,6 +341,7 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
           });
 
           const cleanup = () => {
+            parentWatcher?.stop();
             tunnel?.stop();
             relayTunnel?.stop();
             void relay?.close();
@@ -337,6 +350,7 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
           httpServer?.once('close', cleanup);
           process.once('SIGINT', cleanup);
           process.once('SIGTERM', cleanup);
+          process.once('SIGHUP', cleanup);
           process.once('exit', cleanup);
         }
       },
