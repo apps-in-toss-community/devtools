@@ -51,7 +51,7 @@ import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
-import { buildLauncherAttachUrl } from './deeplink.js';
+import { buildDeepLinkAttachUrl, buildLauncherAttachUrl } from './deeplink.js';
 import { AutoDevtoolsOpener } from './devtools-opener.js';
 import { wrapEnvelope } from './envelope.js';
 import {
@@ -207,6 +207,22 @@ export function isRelayMode(mode: StartDebugMode): boolean {
 }
 
 /**
+ * Attach URL components — stored in the run functions instead of a finished
+ * URL string so that `getDashboardState` can RE-MINT a fresh TOTP code on
+ * every call (Defect 1: baked codes expire → relay 401 reason:'auth').
+ *
+ * `kind: 'launcher'` = env 2 (launcher PWA QR, `buildLauncherAttachUrl`).
+ * `kind: 'scheme'`   = env 3/4 (intoss-private deep-link, `buildDeepLinkAttachUrl`).
+ *
+ * SECRET-HANDLING: these components contain tunnel/scheme hosts. They are
+ * NEVER logged. The TOTP code is minted fresh at call time via `rebuildAttachUrl`
+ * and rides inside the assembled URL's `at=` param only.
+ */
+export type AttachUrlParts =
+  | { kind: 'launcher'; tunnelHttpUrl: string; wssUrl: string }
+  | { kind: 'scheme'; schemeUrl: string; wssUrl: string };
+
+/**
  * Owns the two coexisting CDP connections (local + relay) and the `active`
  * pointer that `start_debug` flips (issue #348 — DUAL-CONNECTION-COEXIST).
  *
@@ -336,14 +352,19 @@ export interface DebugServerDeps {
    */
   getTotpSecret?: () => string | undefined;
   /**
-   * `build_attach_url` 핸들러가 attachUrl을 확정한 직후 호출되는 콜백.
-   * run 함수에서 `lastAttachUrl` 갱신 + `qrHttpServer.notifyStateChange()` 트리거에 사용.
+   * `build_attach_url` 핸들러가 attach URL 컴포넌트를 확정한 직후 호출되는 콜백.
+   * run 함수에서 `lastAttachParts` 갱신 + `qrHttpServer.notifyStateChange()` 트리거에 사용.
    * 테스트에서는 주입하지 않아도 되고, 미주입 시 no-op.
    *
-   * SECRET-HANDLING: attachUrl에는 TOTP at= 코드가 캡슐화돼 있으므로
-   * 이 콜백 안에서 로그 출력 금지.
+   * 완성된 URL 문자열이 아니라 컴포넌트를 전달하는 이유: `getDashboardState`가
+   * 호출될 때마다 최신 TOTP 코드를 freshly mint해 QR을 갱신하기 위함이다.
+   * 정적 URL에 구워진 코드는 30-90초 후 만료 → relay 401 reason:'auth' (Defect 1).
+   * rebuildAttachUrl()이 매 호출 시 generateTotp(secret)를 새로 계산한다.
+   *
+   * SECRET-HANDLING: 컴포넌트 안의 tunnel/scheme host와 wssUrl은 NEVER 로그 출력.
+   * TOTP 코드는 rebuildAttachUrl() 내부에서만 mint되며 attachUrl의 at= param 안에만 노출.
    */
-  onAttachUrlBuilt?: (attachUrl: string) => void;
+  onAttachUrlBuilt?: (parts: AttachUrlParts) => void;
 }
 
 /**
@@ -662,8 +683,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // SECRET-HANDLING: attachUrl encodes tunnelHttpUrl and wssUrl inside
         // the QR payload only — not logged or returned as standalone fields.
         const attachUrl = buildLauncherAttachUrl(tunnelHttpUrl, tunnelStatus.wssUrl, totpCode);
-        // Notify dashboard of new attachUrl — TOTP at= 코드는 attachUrl 안에만 있고 별도 노출 없음.
-        onAttachUrlBuilt?.(attachUrl);
+        // Notify dashboard with components (not a finished URL) so getDashboardState
+        // re-mints a fresh TOTP code on every SSE push/reload (Defect 1).
+        // SECRET-HANDLING: components contain tunnel host — never logged.
+        onAttachUrlBuilt?.({ kind: 'launcher', tunnelHttpUrl, wssUrl: tunnelStatus.wssUrl });
         const relayUrl = tunnelStatus.wssUrl;
         const authorityWarning: string | undefined = undefined; // no scheme authority for launcher
         const totp = totpMeta;
@@ -941,13 +964,21 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // never logged or included in output other than the at= param in attachUrl.
         // Read at call time (#396) so the project-local .ait_relay secret loaded
         // by switchMode is visible.
+        // Snapshot the tunnel once so we use a consistent wssUrl in both buildAttachUrl
+        // and the onAttachUrlBuilt components (avoids a torn read if tunnel reissues mid-call).
+        const tunnelForBuild = getTunnelStatus();
         const { attachUrl, relayUrl, authorityWarning, totp } = buildAttachUrl(
           schemeUrl,
-          getTunnelStatus(),
+          tunnelForBuild,
           getTotpSecret(),
         );
-        // Notify dashboard of new attachUrl — TOTP at= 코드는 attachUrl 안에만 있고 별도 노출 없음.
-        onAttachUrlBuilt?.(attachUrl);
+        // Notify dashboard with components (not a finished URL) so getDashboardState
+        // re-mints a fresh TOTP code on every SSE push/reload (Defect 1).
+        // buildAttachUrl already throws on tunnel-down before this, so wssUrl is non-null.
+        // SECRET-HANDLING: components contain scheme/wss host — never logged.
+        if (tunnelForBuild.wssUrl !== null) {
+          onAttachUrlBuilt?.({ kind: 'scheme', schemeUrl, wssUrl: tunnelForBuild.wssUrl });
+        }
 
         // Prepend a non-fatal authority warning when the scheme URL host looks wrong.
         const warningPrefix = authorityWarning ? `⚠️  scheme_url 경고: ${authorityWarning}\n\n` : '';
@@ -1409,6 +1440,21 @@ export function makeSingleConnectionRouter(connection: CdpConnection): Connectio
       });
     },
   };
+}
+
+/**
+ * Re-builds an attach URL from stored components with a FRESHLY-minted TOTP code,
+ * so the dashboard/`/attach` QR is never an expired bake-in (Defect 1).
+ * SECRET-HANDLING: reads AIT_DEBUG_TOTP_SECRET at call time (mirrors tunnel.ts
+ * getDashboardState). The minted code rides inside attachUrl's at= param only —
+ * never logged. generateTotp() relies on its Date.now() default.
+ */
+function rebuildAttachUrl(parts: AttachUrlParts): string {
+  const secret = process.env.AIT_DEBUG_TOTP_SECRET;
+  const code = secret ? generateTotp(secret) : undefined;
+  return parts.kind === 'launcher'
+    ? buildLauncherAttachUrl(parts.tunnelHttpUrl, parts.wssUrl, code)
+    : buildDeepLinkAttachUrl(parts.schemeUrl, parts.wssUrl, code);
 }
 
 function jsonResult(value: unknown) {
@@ -2239,16 +2285,18 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     return active;
   });
 
-  // dashboard용 lastAttachUrl 상태 — build_attach_url 호출마다 갱신.
-  // SECRET-HANDLING: attachUrl에는 TOTP at= 코드가 캡슐화. 로그 출력 금지.
-  let lastAttachUrl: string | null = null;
+  // dashboard용 lastAttachParts 상태 — build_attach_url 호출마다 갱신.
+  // 완성 URL 대신 컴포넌트를 저장해 getDashboardState 호출마다 fresh TOTP를 mint (Defect 1).
+  // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
+  let lastAttachParts: AttachUrlParts | null = null;
 
   // getDashboardState 클로저 — qr-http-server dashboard에 현재 상태 전달.
+  // rebuildAttachUrl()로 매 호출마다 최신 TOTP 코드를 mint한 URL을 생성한다 (Defect 1).
   // SECRET-HANDLING: tunnel wssUrl은 up/down 상태 표시에만 사용; host 값은 HTML에 노출 안 함.
   const getDashboardState = (): DashboardState => ({
     tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
     pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
-    attachUrl: lastAttachUrl,
+    attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
   });
 
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
@@ -2279,9 +2327,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // switchMode (#396) is visible. It is used only to generate the at= code and
     // is never logged or surfaced in any output.
     getTotpSecret: () => process.env.AIT_DEBUG_TOTP_SECRET,
-    // dashboard 갱신 콜백 — attachUrl 확정 후 SSE push.
-    onAttachUrlBuilt: (url) => {
-      lastAttachUrl = url;
+    // dashboard 갱신 콜백 — URL 컴포넌트 저장 후 SSE push.
+    // 컴포넌트를 저장해 getDashboardState가 fresh TOTP로 URL을 재빌드 (Defect 1).
+    onAttachUrlBuilt: (parts) => {
+      lastAttachParts = parts;
       qrServer?.notifyStateChange();
     },
   });
@@ -2511,13 +2560,15 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     return active;
   });
 
-  // dashboard용 lastAttachUrl 상태 — build_attach_url 호출마다 갱신.
-  let lastAttachUrl: string | null = null;
+  // dashboard용 lastAttachParts 상태 — build_attach_url 호출마다 갱신.
+  // 완성 URL 대신 컴포넌트를 저장해 getDashboardState 호출마다 fresh TOTP를 mint (Defect 1).
+  // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
+  let lastAttachParts: AttachUrlParts | null = null;
 
   const getDashboardState = (): DashboardState => ({
     tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
     pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
-    attachUrl: lastAttachUrl,
+    attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
   });
 
   // Local QR HTTP server — awaited so the first build_attach_url call (after a
@@ -2547,8 +2598,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // switchMode (#396) is visible. It is used only to generate the at= code and
     // is never logged or surfaced in any output.
     getTotpSecret: () => process.env.AIT_DEBUG_TOTP_SECRET,
-    onAttachUrlBuilt: (url) => {
-      lastAttachUrl = url;
+    // dashboard 갱신 콜백 — URL 컴포넌트 저장 후 SSE push (Defect 1 fix).
+    onAttachUrlBuilt: (parts) => {
+      lastAttachParts = parts;
       qrServer?.notifyStateChange();
     },
   });
@@ -2742,13 +2794,15 @@ export async function runMobileDebugServer(
     return active;
   });
 
-  // dashboard용 lastAttachUrl 상태 — build_attach_url 호출마다 갱신.
-  let lastAttachUrl: string | null = null;
+  // dashboard용 lastAttachParts 상태 — build_attach_url 호출마다 갱신.
+  // 완성 URL 대신 컴포넌트를 저장해 getDashboardState 호출마다 fresh TOTP를 mint (Defect 1).
+  // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
+  let lastAttachParts: AttachUrlParts | null = null;
 
   const getDashboardState = (): DashboardState => ({
     tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
     pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
-    attachUrl: lastAttachUrl,
+    attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
   });
 
   // Local QR HTTP server — awaited so the first build_attach_url call doesn't
@@ -2778,8 +2832,9 @@ export async function runMobileDebugServer(
     // switchMode (#396) is visible. It is used only to generate the at= code and
     // is never logged or surfaced in any output.
     getTotpSecret: () => process.env.AIT_DEBUG_TOTP_SECRET,
-    onAttachUrlBuilt: (url) => {
-      lastAttachUrl = url;
+    // dashboard 갱신 콜백 — URL 컴포넌트 저장 후 SSE push (Defect 1 fix).
+    onAttachUrlBuilt: (parts) => {
+      lastAttachParts = parts;
       qrServer?.notifyStateChange();
     },
   });

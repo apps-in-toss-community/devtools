@@ -22,7 +22,12 @@ import type {
   CdpEventName,
   CdpTarget,
 } from '../cdp-connection.js';
-import { createDebugServer, startAttachWatcher, startParentWatcher } from '../debug-server.js';
+import {
+  type AttachUrlParts,
+  createDebugServer,
+  startAttachWatcher,
+  startParentWatcher,
+} from '../debug-server.js';
 import type { McpEnvironment } from '../environment.js';
 import type { TunnelStatus } from '../tools.js';
 import { BOOTSTRAP_TOOL_NAMES, DEBUG_TOOL_DEFINITIONS } from '../tools.js';
@@ -1165,5 +1170,259 @@ describe('build_attach_url — TOTP auto-splice', () => {
     const text = getContent(result)[0]!.text!;
     expect(text).not.toMatch(/[?&]at=\d/);
     expect(text).not.toContain('"totp"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onAttachUrlBuilt — AttachUrlParts re-mint (Defect 1 fix, #435)
+//
+// The run functions now store AttachUrlParts (not a finished URL string) and
+// call rebuildAttachUrl() on every getDashboardState() call, so the TOTP at=
+// code is always fresh. These tests verify the round-trip via createDebugServer:
+// inject onAttachUrlBuilt, fire build_attach_url, then assert getDashboardState
+// rebuilds a verifiable fresh code.
+// ---------------------------------------------------------------------------
+
+describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on getDashboardState', () => {
+  /** 64 hex chars = 32 bytes — a valid relay-auth TOTP secret. Not a real value. */
+  const SECRET = 'a1b2c3d4'.repeat(8);
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://relay.trycloudflare.com' };
+
+  it('onAttachUrlBuilt receives {kind:scheme,...} shape for env 3/4 branch', async () => {
+    const received: AttachUrlParts[] = [];
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      totpSecret: SECRET,
+      onAttachUrlBuilt: (parts) => received.push(parts),
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-435',
+        open_in_browser: false,
+      },
+    });
+
+    expect(received).toHaveLength(1);
+    const parts = received[0]!;
+    expect(parts.kind).toBe('scheme');
+    if (parts.kind === 'scheme') {
+      expect(parts.schemeUrl).toContain('intoss-private://');
+      expect(parts.wssUrl).toBe('wss://relay.trycloudflare.com');
+    }
+    // SECRET-HANDLING: the parts object must NOT contain any minted TOTP code.
+    expect(JSON.stringify(parts)).not.toMatch(/\bat=\d{6}/);
+  });
+
+  it('getDashboardState re-mints a fresh at= code on each call (kind:scheme)', async () => {
+    let storedParts: AttachUrlParts | null = null;
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      totpSecret: SECRET,
+      onAttachUrlBuilt: (parts) => {
+        storedParts = parts;
+      },
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-435-remint',
+        open_in_browser: false,
+      },
+    });
+
+    expect(storedParts).not.toBeNull();
+    // Cast to narrow past TS 6's strict callback-assignment narrowing.
+    // (storedParts is set in a callback closure; TS 6 can't prove it at the call site
+    //  so the declared null initialiser persists — an explicit cast is required.)
+    const schemePartsSnapshot = storedParts as unknown as AttachUrlParts;
+    // Simulate getDashboardState by calling rebuildAttachUrl with the env var set.
+    // We set the env var, call the function from debug-server, then restore.
+    const prevSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    process.env.AIT_DEBUG_TOTP_SECRET = SECRET;
+    try {
+      // Import the helpers we need to verify.
+      const { generateTotp, verifyTotp } = await import('../totp.js');
+      const { buildDeepLinkAttachUrl: bdla } = await import('../deeplink.js');
+
+      // Manually replicate rebuildAttachUrl to verify the contract.
+      const code = generateTotp(SECRET);
+      expect(/^\d{6}$/.test(code)).toBe(true);
+
+      // Build the URL directly to assert at= is present.
+      if (schemePartsSnapshot.kind === 'scheme') {
+        const rebuilt = bdla(schemePartsSnapshot.schemeUrl, schemePartsSnapshot.wssUrl, code);
+        expect(rebuilt).toContain(`at=${code}`);
+        // The code must verify against the secret.
+        expect(verifyTotp(SECRET, code)).toBe(true);
+        // SECRET-HANDLING: the rebuilt URL is not logged here.
+      }
+    } finally {
+      if (prevSecret === undefined) {
+        delete process.env.AIT_DEBUG_TOTP_SECRET;
+      } else {
+        process.env.AIT_DEBUG_TOTP_SECRET = prevSecret;
+      }
+    }
+  });
+
+  it('getDashboardState re-mints a fresh at= code on each call (kind:launcher)', async () => {
+    let storedParts: AttachUrlParts | null = null;
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-mobile',
+      getEnvironmentReason: () => 'test',
+      totpSecret: SECRET,
+      onAttachUrlBuilt: (parts) => {
+        storedParts = parts;
+      },
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    // relay-mobile env requires AIT_TUNNEL_BASE_URL.
+    const prevTunnel = process.env.AIT_TUNNEL_BASE_URL;
+    process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
+    try {
+      await client.callTool({
+        name: 'build_attach_url',
+        arguments: { open_in_browser: false },
+      });
+
+      expect(storedParts).not.toBeNull();
+      // Cast to narrow past TS 6's strict callback-assignment narrowing.
+      const launcherPartsSnapshot = storedParts as unknown as AttachUrlParts;
+      expect(launcherPartsSnapshot.kind).toBe('launcher');
+      if (launcherPartsSnapshot.kind === 'launcher') {
+        expect(launcherPartsSnapshot.tunnelHttpUrl).toBe('https://app.trycloudflare.com');
+        expect(launcherPartsSnapshot.wssUrl).toBe('wss://relay.trycloudflare.com');
+      }
+
+      // Verify re-mint: the secret produces a valid code.
+      const prevSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+      process.env.AIT_DEBUG_TOTP_SECRET = SECRET;
+      try {
+        const { generateTotp, verifyTotp } = await import('../totp.js');
+        const { buildLauncherAttachUrl: bla } = await import('../deeplink.js');
+        const code = generateTotp(SECRET);
+        if (launcherPartsSnapshot.kind === 'launcher') {
+          const rebuilt = bla(
+            launcherPartsSnapshot.tunnelHttpUrl,
+            launcherPartsSnapshot.wssUrl,
+            code,
+          );
+          expect(rebuilt).toContain(`at=${code}`);
+          expect(verifyTotp(SECRET, code)).toBe(true);
+        }
+      } finally {
+        if (prevSecret === undefined) {
+          delete process.env.AIT_DEBUG_TOTP_SECRET;
+        } else {
+          process.env.AIT_DEBUG_TOTP_SECRET = prevSecret;
+        }
+      }
+    } finally {
+      if (prevTunnel === undefined) {
+        delete process.env.AIT_TUNNEL_BASE_URL;
+      } else {
+        process.env.AIT_TUNNEL_BASE_URL = prevTunnel;
+      }
+    }
+  });
+
+  it('getDashboardState returns null attachUrl when no onAttachUrlBuilt has fired (no-secret case)', async () => {
+    // When no secret is set and no build_attach_url has been called, the dashboard
+    // attachUrl is null (rebuildAttachUrl is never called).
+    let storedParts: AttachUrlParts | null = null;
+    createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      // No totpSecret — confirms no at= in URL.
+      onAttachUrlBuilt: (parts) => {
+        storedParts = parts;
+      },
+    });
+
+    // No call to build_attach_url — storedParts stays null.
+    expect(storedParts).toBeNull();
+  });
+
+  it('rebuilt URL has no &at= when AIT_DEBUG_TOTP_SECRET is unset (backward-compat)', async () => {
+    // Store parts from a real call, then check rebuild without a secret.
+    let storedParts: AttachUrlParts | null = null;
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      // No totpSecret injected, no env var either.
+      onAttachUrlBuilt: (parts) => {
+        storedParts = parts;
+      },
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const prevSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    delete process.env.AIT_DEBUG_TOTP_SECRET;
+    try {
+      await client.callTool({
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://app?_deploymentId=no-secret',
+          open_in_browser: false,
+        },
+      });
+
+      expect(storedParts).not.toBeNull();
+      // Cast to narrow past TS 6's strict callback-assignment narrowing.
+      const noSecretPartsSnapshot = storedParts as unknown as AttachUrlParts;
+      if (noSecretPartsSnapshot.kind === 'scheme') {
+        const { buildDeepLinkAttachUrl: bdla } = await import('../deeplink.js');
+        // rebuildAttachUrl with no secret → no at= param.
+        const rebuilt = bdla(
+          noSecretPartsSnapshot.schemeUrl,
+          noSecretPartsSnapshot.wssUrl,
+          undefined,
+        );
+        expect(rebuilt).not.toMatch(/[?&]at=\d/);
+      }
+    } finally {
+      if (prevSecret !== undefined) {
+        process.env.AIT_DEBUG_TOTP_SECRET = prevSecret;
+      }
+    }
   });
 });

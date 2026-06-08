@@ -88,8 +88,11 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
         <h1>{strings.title}</h1>
         {/* __SAFE_LABEL__ filled at runtime */}
         <p className="label">{strings.deploymentPrefix}__SAFE_LABEL__</p>
-        {/* __QR_DATA_URL__ filled at runtime */}
-        <img className="qr" src="__QR_DATA_URL__" alt="attach QR" />
+        {/* #attach-section: target for buildSseScript QR re-render on SSE push */}
+        <div id="attach-section">
+          {/* __QR_DATA_URL__ filled at runtime */}
+          <img className="qr" src="__QR_DATA_URL__" alt="attach QR" />
+        </div>
 
         <section>
           <h2>{strings.stepsSection}</h2>
