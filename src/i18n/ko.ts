@@ -248,10 +248,8 @@ export const ko = {
 
   // Launcher PWA
   'launcher.title': 'AITC DevTools Launcher',
-  'launcher.description':
-    '카메라를 개발 서버 터미널의 QR에 대거나, 아래에 https://….trycloudflare.com URL을 붙여넣으세요. 개발 앱이 이 런처 안에서 전체 화면으로 열립니다.',
+  'launcher.description': '터미널 QR을 스캔하거나 URL을 입력하세요.',
   'launcher.installCta': '폰에 런처 설치하기',
-  'launcher.openOnce': '설치 없이 한 번만 열기',
   'launcher.urlPlaceholder': 'https://example.trycloudflare.com',
   'launcher.openBtn': 'Open',
   'launcher.scanBtn': 'QR 카메라로 스캔',
