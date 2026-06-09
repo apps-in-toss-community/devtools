@@ -216,6 +216,10 @@ export const ko = {
   'notifications.option.alreadyAgreed': 'alreadyAgreed (이미 동의됨)',
   'notifications.option.agreementRejected': 'agreementRejected (사용자 거절)',
 
+  // qr-http-server — lang switcher (dashboard / attach pages)
+  'dashboard.lang.ko': '한국어',
+  'dashboard.lang.en': 'English',
+
   // qr-http-server — dashboard page (server-side, Node, per-request)
   'dashboard.title': 'AIT 디버그 Dashboard',
   'dashboard.updated': '마지막 갱신: {ts}',

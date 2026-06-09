@@ -35,6 +35,9 @@ interface DashboardChromeProps {
     tunnelSection: string;
     attachSection: string;
     updatedPrefix: string;
+    /** Lang switcher labels — "한국어" / "English". */
+    langKo: string;
+    langEn: string;
   };
 }
 
@@ -87,12 +90,17 @@ li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
 .page-id { font-family: monospace; font-size: 0.75rem; opacity: 0.5; margin-right: 0.4rem; }
 .page-url { word-break: break-all; }
 hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
 `,
           }}
         />
       </head>
       <body>
         <h1>{strings.title}</h1>
+        {/* __LANG_SWITCHER__ is filled at runtime by qr-http-server.ts */}
+        {'__LANG_SWITCHER__'}
         {/* __NOW__ is filled at runtime by qr-http-server.ts */}
         <p className="updated" id="updated">
           {strings.updatedPrefix}__NOW__

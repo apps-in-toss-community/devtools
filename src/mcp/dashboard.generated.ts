@@ -14,11 +14,13 @@
  *   __ATTACH_SECTION__  QR img+url-box HTML, or hint text
  *   __PAGES_SECTION__   pages <section> block, or empty string
  *   __NOW__             ISO timestamp of current render
+ *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)
  *
  * Token map (attach chrome):
  *   __QR_DATA_URL__     base64 data URL for the QR image
  *   __SAFE_LABEL__      HTML-escaped deploymentId label
  *   __SAFE_ATTACH_URL__ HTML-escaped attach URL
+ *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)
  *
  * SECRET-HANDLING: wssUrl MUST NOT appear here. If it does, the build script's
  *   assertion would have caught it — this file should be react-free and secret-free.
@@ -65,7 +67,10 @@ li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
 .page-id { font-family: monospace; font-size: 0.75rem; opacity: 0.5; margin-right: 0.4rem; }
 .page-url { word-break: break-all; }
 hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
-</style></head><body><h1>AIT 디버그 Dashboard</h1><p class="updated" id="updated">마지막 갱신: __NOW__</p><section><h2>터널 상태</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+</style></head><body><h1>AIT 디버그 Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">마지막 갱신: __NOW__</p><section><h2>터널 상태</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
 
 export const attachChromeHtmlKo =
 `<!DOCTYPE html>
@@ -97,7 +102,10 @@ li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
   border-radius: 6px; border: 1px solid #30363d;
 }
 hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0; }
-</style></head><body><h1>AIT 디버그 세션 — QR 스캔</h1><p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>스캔 절차</h2><ol><li>토스 앱을 실행하세요.</li><li>폰 카메라 앱으로 QR 코드를 스캔하세요.</li><li>팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.</li><li>미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.</li></ol></section><hr/><section><h2>진단 체크리스트</h2><ul><li><strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)</li><li><strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인</li><li><strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인</li><li><strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인</li></ul></section><hr/><section><h2>URL (fallback)</h2><p class="url-box">__SAFE_ATTACH_URL__</p></section></body></html>`;
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+</style></head><body><h1>AIT 디버그 세션 — QR 스캔</h1>__LANG_SWITCHER__<p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>스캔 절차</h2><ol><li>토스 앱을 실행하세요.</li><li>폰 카메라 앱으로 QR 코드를 스캔하세요.</li><li>팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.</li><li>미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.</li></ol></section><hr/><section><h2>진단 체크리스트</h2><ul><li><strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)</li><li><strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인</li><li><strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인</li><li><strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인</li></ul></section><hr/><section><h2>URL (fallback)</h2><p class="url-box">__SAFE_ATTACH_URL__</p></section></body></html>`;
 
 // ── locale: en ──────────────────────────────────────────────────────
 
@@ -138,7 +146,10 @@ li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
 .page-id { font-family: monospace; font-size: 0.75rem; opacity: 0.5; margin-right: 0.4rem; }
 .page-url { word-break: break-all; }
 hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
-</style></head><body><h1>AIT Debug Dashboard</h1><p class="updated" id="updated">Last updated: __NOW__</p><section><h2>Tunnel status</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+</style></head><body><h1>AIT Debug Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">Last updated: __NOW__</p><section><h2>Tunnel status</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
 
 export const attachChromeHtmlEn =
 `<!DOCTYPE html>
@@ -170,7 +181,10 @@ li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
   border-radius: 6px; border: 1px solid #30363d;
 }
 hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0; }
-</style></head><body><h1>AIT Debug Session — QR Scan</h1><p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>How to scan</h2><ol><li>Open the Toss app.</li><li>Scan the QR code with your phone camera app.</li><li>Tap <strong>"Open in Toss"</strong> when the popup appears.</li><li>The mini-app opens and the debug session attaches automatically.</li></ol></section><hr/><section><h2>Troubleshooting checklist</h2><ul><li><strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)</li><li><strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter</li><li><strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import</li><li><strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server</li></ul></section><hr/><section><h2>URL (fallback)</h2><p class="url-box">__SAFE_ATTACH_URL__</p></section></body></html>`;
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+</style></head><body><h1>AIT Debug Session — QR Scan</h1>__LANG_SWITCHER__<p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>How to scan</h2><ol><li>Open the Toss app.</li><li>Scan the QR code with your phone camera app.</li><li>Tap <strong>"Open in Toss"</strong> when the popup appears.</li><li>The mini-app opens and the debug session attaches automatically.</li></ol></section><hr/><section><h2>Troubleshooting checklist</h2><ul><li><strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)</li><li><strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter</li><li><strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import</li><li><strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server</li></ul></section><hr/><section><h2>URL (fallback)</h2><p class="url-box">__SAFE_ATTACH_URL__</p></section></body></html>`;
 
 /** Map from Locale to the precompiled dashboard chrome string. */
 export const dashboardChromeByLocale: Record<Locale, string> = {

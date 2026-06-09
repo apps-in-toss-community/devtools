@@ -77,6 +77,30 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * 현재 path+query에서 lang 파라미터만 교체한 ko/en 토글 링크를 생성한다.
+ *
+ * SECRET-HANDLING: u= (attachUrl, TOTP at= 캡슐 포함) 등 기존 query를 보존한다.
+ * lang= 만 덮어쓴다. 링크 href에 at= 코드가 들어가는 건 의도된 전달 경로.
+ */
+function buildLangSwitcher(
+  path: string,
+  existingParams: URLSearchParams,
+  locale: 'ko' | 'en',
+  s: ReturnType<typeof resolveLocaleStrings>,
+): string {
+  function switcherHref(targetLang: 'ko' | 'en'): string {
+    const p = new URLSearchParams(existingParams);
+    p.set('lang', targetLang);
+    return `${escapeHtml(path)}?${p.toString()}`;
+  }
+  const koLabel = escapeHtml(s('dashboard.lang.ko'));
+  const enLabel = escapeHtml(s('dashboard.lang.en'));
+  const koClass = locale === 'ko' ? 'active' : '';
+  const enClass = locale === 'en' ? 'active' : '';
+  return `<div class="lang-switcher"><a href="${switcherHref('ko')}" class="${koClass}">${koLabel}</a><a href="${switcherHref('en')}" class="${enClass}">${enLabel}</a></div>`;
+}
+
+/**
  * Dashboard HTML — precompiled chrome에 per-request 동적 값을 채워 완성한다.
  *
  * 토큰 채우기 순서:
@@ -100,6 +124,8 @@ function buildDashboardHtml(
   state: DashboardState,
   qrDataUrl: string | null,
   locale: 'ko' | 'en',
+  path = '/',
+  params = new URLSearchParams(),
 ): string {
   const s = resolveLocaleStrings(locale);
   const now = new Date().toISOString();
@@ -142,11 +168,14 @@ function buildDashboardHtml(
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
   };
 
+  const langSwitcher = buildLangSwitcher(path, params, locale, s);
+
   // Fill token placeholders in the precompiled chrome.
   // replaceAll is safe because these __TOKEN__ strings cannot appear in
   // any legitimate user-facing value (they are sentinel strings).
   const chrome = dashboardChromeByLocale[locale];
   const filled = chrome
+    .replaceAll('__LANG_SWITCHER__', langSwitcher)
     .replaceAll('__NOW__', escapeHtml(now))
     .replaceAll('__TUNNEL_CLASS__', tunnelClass)
     .replaceAll('__TUNNEL_STATUS__', escapeHtml(tunnelStatus))
@@ -258,10 +287,14 @@ function buildAttachHtml(
   safeLabel: string,
   safeAttachUrl: string,
   locale: 'ko' | 'en',
+  path = '/attach',
+  params = new URLSearchParams(),
 ): string {
   const s = resolveLocaleStrings(locale);
+  const langSwitcher = buildLangSwitcher(path, params, locale, s);
   const chrome = attachChromeByLocale[locale];
   const filled = chrome
+    .replaceAll('__LANG_SWITCHER__', langSwitcher)
     .replaceAll('__QR_DATA_URL__', qrDataUrl)
     .replaceAll('__SAFE_LABEL__', safeLabel)
     .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl);
@@ -311,8 +344,12 @@ export async function startQrHttpServer(
     const [path, query = ''] = rawUrl.split('?', 2) as [string, string | undefined];
     const params = new URLSearchParams(query ?? '');
 
-    // per-request locale — Accept-Language header에서 결정.
-    const locale = parseAcceptLanguage(req.headers['accept-language']);
+    // per-request locale — ?lang= query param이 있으면 우선 적용, 없으면 Accept-Language header에서 결정.
+    const langParam = params.get('lang');
+    const locale =
+      langParam === 'ko' || langParam === 'en'
+        ? langParam
+        : parseAcceptLanguage(req.headers['accept-language']);
 
     // ── GET / — dashboard 루트 ─────────────────────────────────────────────
     if (path === '/') {
@@ -333,7 +370,7 @@ export async function startQrHttpServer(
           // QR 생성 실패 시 null 유지 — dashboard는 텍스트 fallback 표시
         }
       }
-      const html = buildDashboardHtml(state, qrDataUrl, locale);
+      const html = buildDashboardHtml(state, qrDataUrl, locale, path, params);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -396,7 +433,7 @@ export async function startQrHttpServer(
         .then((dataUrl: string) => {
           const safeLabel = escapeHtml(deploymentIdLabel);
           const safeAttachUrl = escapeHtml(attachUrl);
-          const html = buildAttachHtml(dataUrl, safeLabel, safeAttachUrl, locale);
+          const html = buildAttachHtml(dataUrl, safeLabel, safeAttachUrl, locale, path, params);
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-store',
