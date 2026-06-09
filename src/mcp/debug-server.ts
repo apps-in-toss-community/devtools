@@ -2603,6 +2603,20 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
   }
 
+  // TOTP 주기 갱신 타이머 — 이벤트 없이 페이지가 방치될 때 at= 코드가 stale되는 갭 수정 (#448).
+  // TOTP step은 30초이므로 20초 주기로 push해 step 경계를 놓치지 않는다.
+  // local-only 동안엔 lastAttachParts가 null이라 no-op — relay로 전환된 뒤 첫 build_attach_url
+  // 호출 시 lastAttachParts가 세팅되면 갱신이 시작된다.
+  // SECRET-HANDLING: 콜백은 단순 trigger만 — TOTP 값·at= 코드는 절대 로그/stdout 출력 금지.
+  const TOTP_REFRESH_INTERVAL_MS = 20_000;
+  let totpRefreshHandle: ReturnType<typeof setInterval> | null = null;
+  totpRefreshHandle = setInterval(() => {
+    if (lastAttachParts !== null) {
+      qrServer?.notifyStateChange();
+    }
+  }, TOTP_REFRESH_INTERVAL_MS);
+  totpRefreshHandle.unref();
+
   const server = createDebugServer({
     connection: router.active,
     router,
@@ -2644,6 +2658,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
+    if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     // Tear down every booted family (all lazy, #396 — only those ever started).
     for (const family of router.bootedFamilies()) family.stop();
@@ -2661,6 +2676,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
       lockHandle.release();
@@ -2837,6 +2853,18 @@ export async function runMobileDebugServer(
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
   }
 
+  // TOTP 주기 갱신 타이머 — 이벤트 없이 페이지가 방치될 때 at= 코드가 stale되는 갭 수정 (#448).
+  // TOTP step은 30초이므로 20초 주기로 push해 step 경계를 놓치지 않는다.
+  // SECRET-HANDLING: 콜백은 단순 trigger만 — TOTP 값·at= 코드는 절대 로그/stdout 출력 금지.
+  const TOTP_REFRESH_INTERVAL_MS = 20_000;
+  let totpRefreshHandle: ReturnType<typeof setInterval> | null = null;
+  totpRefreshHandle = setInterval(() => {
+    if (lastAttachParts !== null) {
+      qrServer?.notifyStateChange();
+    }
+  }, TOTP_REFRESH_INTERVAL_MS);
+  totpRefreshHandle.unref();
+
   const server = createDebugServer({
     connection: router.active,
     router,
@@ -2879,6 +2907,7 @@ export async function runMobileDebugServer(
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
+    if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     for (const family of router.bootedFamilies()) family.stop();
     void server.close();
@@ -2894,6 +2923,7 @@ export async function runMobileDebugServer(
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
       lockHandle.release();
