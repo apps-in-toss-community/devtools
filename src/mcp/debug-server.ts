@@ -2318,6 +2318,18 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
   }
 
+  // TOTP 주기 갱신 타이머 — 이벤트 없이 페이지가 방치될 때 at= 코드가 stale되는 갭 수정 (#445).
+  // TOTP step은 30초이므로 20초 주기로 push해 step 경계를 놓치지 않는다.
+  // SECRET-HANDLING: 콜백은 단순 trigger만 — TOTP 값·at= 코드는 절대 로그/stdout에 출력 금지.
+  const TOTP_REFRESH_INTERVAL_MS = 20_000;
+  let totpRefreshHandle: ReturnType<typeof setInterval> | null = null;
+  totpRefreshHandle = setInterval(() => {
+    if (lastAttachParts !== null) {
+      qrServer?.notifyStateChange();
+    }
+  }, TOTP_REFRESH_INTERVAL_MS);
+  totpRefreshHandle.unref();
+
   const server = createDebugServer({
     // `connection` is still required by the deps shape; the router overrides
     // which connection the handlers actually read (NULL until the first switch).
@@ -2368,6 +2380,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     closed = true;
 
     parentWatcher?.stop();
+    if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     // Tear down every booted family (all lazy, #396 — only those ever started).
     // family.stop() is synchronous for the infra (tunnel/Chromium kill) — safe
@@ -2392,6 +2405,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
       // Synchronous lock release — rmSync is safe from exit handlers.
