@@ -666,9 +666,23 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // Read at call time (#396) so the project-local .ait_relay secret loaded
         // by switchMode is visible.
         const secret = getTotpSecret();
+        // Defense-in-depth (#452): relay mode requires TOTP auth — if the secret
+        // is missing, fail-closed rather than issuing an unauthenticated attach URL.
+        // assertRelayAuthConfigured() at bootRelayFamily/bootExternalRelayFamily
+        // already gates relay startup, so this branch is dead code in normal
+        // operation; the guard exists to prevent accidental TOTP bypass if the
+        // boot-time guard is ever bypassed or removed.
+        // SECRET-HANDLING: error message names the requirement only — never the
+        // secret value, length, or any derived fragment.
+        if (secret === undefined || secret === '') {
+          return mcpError(
+            'build_attach_url(relay): TOTP secret(AIT_DEBUG_TOTP_SECRET)이 설정되지 않았습니다. ' +
+              'relay 환경은 TOTP 인증이 필수입니다 — relay를 secret과 함께 재기동하세요.',
+          );
+        }
         let totpCode: string | undefined;
         let totpMeta: { enabled: true; ttlSeconds: number; expiresAt: string } | undefined;
-        if (secret !== undefined && secret !== '') {
+        {
           const now = Date.now();
           totpCode = generateTotp(secret, now);
           const STEP_SECONDS = 30;
@@ -959,6 +973,21 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         );
       };
 
+      // Defense-in-depth (#452): relay-dev/live mode requires TOTP auth.
+      // Read secret before entering try{} so we can return mcpError (not throw).
+      // assertRelayAuthConfigured() at bootRelayFamily already gates relay startup,
+      // so this is dead code in normal operation — the guard closes the fail-open
+      // branch in buildAttachUrl if the boot-time guard is ever bypassed.
+      // SECRET-HANDLING: error message names the requirement only.
+      {
+        const relaySecret = getTotpSecret();
+        if (relaySecret === undefined || relaySecret === '') {
+          return mcpError(
+            'build_attach_url(relay): TOTP secret(AIT_DEBUG_TOTP_SECRET)이 설정되지 않았습니다. ' +
+              'relay 환경은 TOTP 인증이 필수입니다 — relay를 secret과 함께 재기동하세요.',
+          );
+        }
+      }
       try {
         // SECRET-HANDLING: the secret is passed to buildAttachUrl only; it is
         // never logged or included in output other than the at= param in attachUrl.
