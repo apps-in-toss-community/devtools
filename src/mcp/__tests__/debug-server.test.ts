@@ -123,10 +123,19 @@ interface MakeClientOptions {
   env?: McpEnvironment;
   /**
    * Hex-encoded TOTP secret for build_attach_url auto-splice tests.
-   * When provided, the server will splice `at=<code>` into attachUrl.
+   * Defaults to DUMMY_SECRET_FOR_TESTS so that relay-mode tests pass the
+   * defense-in-depth (#452) fail-closed guard without needing a real secret.
+   * Pass `undefined` explicitly to test the no-secret rejection path.
    */
-  totpSecret?: string;
+  totpSecret?: string | null;
 }
+
+/**
+ * Dummy 32-byte hex secret used as the default for relay-env tests.
+ * Not a real secret — safe to have in source.
+ * SECRET-HANDLING: this is a fixed test placeholder, never a real secret.
+ */
+const DUMMY_SECRET_FOR_TESTS = 'cafebabe'.repeat(8);
 
 /** Connects a createDebugServer instance via InMemoryTransport and returns a ready Client. */
 async function makeClient({
@@ -135,7 +144,7 @@ async function makeClient({
   waitForAttachTimeoutMs,
   qrHttpServer,
   env = 'relay-dev',
-  totpSecret,
+  totpSecret = DUMMY_SECRET_FOR_TESTS,
 }: MakeClientOptions): Promise<Client> {
   const server = createDebugServer({
     connection: connection ?? new FakeCdpConnection(),
@@ -145,7 +154,9 @@ async function makeClient({
     qrHttpServer,
     getEnvironment: () => env,
     getEnvironmentReason: () => `test-pinned-${env}`,
-    ...(totpSecret !== undefined ? { totpSecret } : {}),
+    // null = caller explicitly wants no secret (for fail-closed tests).
+    // undefined-default = DUMMY_SECRET_FOR_TESTS above.
+    ...(totpSecret !== null ? { totpSecret } : {}),
   });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -203,7 +214,8 @@ describe('build_attach_url — response includes unicode QR', () => {
     const text = block!.text!;
 
     // JSON portion: must contain attachUrl and relayUrl keys.
-    const jsonMatch = text.match(/\{[\s\S]*?\}/);
+    // Use a greedy match to capture the full JSON object (may include nested totp).
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
     expect(jsonMatch).toBeTruthy();
     const parsed = JSON.parse(jsonMatch![0]!);
     expect(parsed).toHaveProperty('attachUrl');
@@ -1156,8 +1168,11 @@ describe('build_attach_url — TOTP auto-splice', () => {
     expect(text).toContain('"expiresAt"');
   });
 
-  it('does NOT include at= in attachUrl when totpSecret is not set', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+  // Defense-in-depth (#452): relay mode must fail-closed when no secret is set.
+  // "no secret → no at= URL" no longer applies — relay now rejects the call entirely.
+  it('returns mcpError (not a URL) when totpSecret is absent (#452 fail-closed)', async () => {
+    // null explicitly opts out of the default DUMMY_SECRET_FOR_TESTS.
+    const client = await makeClient({ getTunnelStatus: () => tunnelUp, totpSecret: null });
 
     const result = await client.callTool({
       name: 'build_attach_url',
@@ -1167,9 +1182,11 @@ describe('build_attach_url — TOTP auto-splice', () => {
       },
     });
 
-    const text = getContent(result)[0]!.text!;
-    expect(text).not.toMatch(/[?&]at=\d/);
-    expect(text).not.toContain('"totp"');
+    expect(result.isError).toBe(true);
+    const text = getContent(result)[0]!.text ?? '';
+    expect(text).toContain('AIT_DEBUG_TOTP_SECRET');
+    // SECRET-HANDLING: error message must not embed secret value/length/fragments.
+    expect(text).not.toMatch(/\b[0-9a-fA-F]{32,}\b/);
   });
 });
 
@@ -1375,19 +1392,18 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     expect(storedParts).toBeNull();
   });
 
-  it('rebuilt URL has no &at= when AIT_DEBUG_TOTP_SECRET is unset (backward-compat)', async () => {
-    // Store parts from a real call, then check rebuild without a secret.
-    let storedParts: AttachUrlParts | null = null;
+  // Defense-in-depth (#452): relay-dev/live path must refuse when TOTP secret is absent.
+  // assertRelayAuthConfigured() at boot already gates relay startup, so this is dead
+  // code in normal operation — but the handler must fail-closed if the guard is bypassed.
+  it('build_attach_url(relay-dev) returns mcpError when TOTP secret is unset (#452)', async () => {
     const server = createDebugServer({
       connection: new FakeCdpConnection(),
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnelUp,
       getEnvironment: () => 'relay-dev',
       getEnvironmentReason: () => 'test',
-      // No totpSecret injected, no env var either.
-      onAttachUrlBuilt: (parts) => {
-        storedParts = parts;
-      },
+      // No totpSecret — simulates missing secret reaching the handler.
+      // (totpSecret omitted: createDebugServer will have getTotpSecret return undefined)
     });
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -1398,30 +1414,71 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     const prevSecret = process.env.AIT_DEBUG_TOTP_SECRET;
     delete process.env.AIT_DEBUG_TOTP_SECRET;
     try {
-      await client.callTool({
+      const result = await client.callTool({
         name: 'build_attach_url',
         arguments: {
           scheme_url: 'intoss-private://app?_deploymentId=no-secret',
           open_in_browser: false,
         },
       });
-
-      expect(storedParts).not.toBeNull();
-      // Cast to narrow past TS 6's strict callback-assignment narrowing.
-      const noSecretPartsSnapshot = storedParts as unknown as AttachUrlParts;
-      if (noSecretPartsSnapshot.kind === 'scheme') {
-        const { buildDeepLinkAttachUrl: bdla } = await import('../deeplink.js');
-        // rebuildAttachUrl with no secret → no at= param.
-        const rebuilt = bdla(
-          noSecretPartsSnapshot.schemeUrl,
-          noSecretPartsSnapshot.wssUrl,
-          undefined,
-        );
-        expect(rebuilt).not.toMatch(/[?&]at=\d/);
-      }
+      // Must be a tool-level error (isError: true) — not a successful attach URL.
+      expect(result.isError).toBe(true);
+      const content = result.content as Array<{ type: string; text?: string }>;
+      const text = content[0]?.text ?? '';
+      // Error message must name the requirement but NEVER the secret value/length.
+      expect(text).toContain('AIT_DEBUG_TOTP_SECRET');
+      expect(text).toContain('TOTP');
+      // SECRET-HANDLING: must not leak secret value, length, or any derived fragment.
+      expect(text).not.toMatch(/\b[0-9a-fA-F]{32,}\b/);
     } finally {
       if (prevSecret !== undefined) {
         process.env.AIT_DEBUG_TOTP_SECRET = prevSecret;
+      }
+    }
+  });
+
+  // Defense-in-depth (#452): relay-mobile path must also refuse when TOTP secret is absent.
+  it('build_attach_url(relay-mobile) returns mcpError when TOTP secret is unset (#452)', async () => {
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-mobile',
+      getEnvironmentReason: () => 'test',
+      // No totpSecret — simulates missing secret reaching the handler.
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const prevSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    const prevTunnel = process.env.AIT_TUNNEL_BASE_URL;
+    delete process.env.AIT_DEBUG_TOTP_SECRET;
+    process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
+    try {
+      const result = await client.callTool({
+        name: 'build_attach_url',
+        arguments: { open_in_browser: false },
+      });
+      // Must be a tool-level error (isError: true) — not a successful attach URL.
+      expect(result.isError).toBe(true);
+      const content = result.content as Array<{ type: string; text?: string }>;
+      const text = content[0]?.text ?? '';
+      // Error message must name the requirement but NEVER the secret value/length.
+      expect(text).toContain('AIT_DEBUG_TOTP_SECRET');
+      expect(text).toContain('TOTP');
+      // SECRET-HANDLING: must not leak secret value, length, or any derived fragment.
+      expect(text).not.toMatch(/\b[0-9a-fA-F]{32,}\b/);
+    } finally {
+      if (prevSecret !== undefined) {
+        process.env.AIT_DEBUG_TOTP_SECRET = prevSecret;
+      }
+      if (prevTunnel === undefined) {
+        delete process.env.AIT_TUNNEL_BASE_URL;
+      } else {
+        process.env.AIT_TUNNEL_BASE_URL = prevTunnel;
       }
     }
   });
