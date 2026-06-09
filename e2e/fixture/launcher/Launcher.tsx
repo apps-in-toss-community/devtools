@@ -543,7 +543,11 @@ export function Launcher(): React.JSX.Element {
                 flex: 1,
                 minWidth: 0,
                 padding: '10px 12px',
-                fontSize: '15px',
+                // iOS Safari auto-zooms when focused input font-size < 16px.
+                // 16px is the minimum to prevent auto-zoom (Fix #451).
+                // Manual e2e verification on real device required — desktop
+                // Chromium cannot reproduce the iOS zoom behaviour.
+                fontSize: '16px',
                 borderRadius: '8px',
                 border: '1px solid #2a2e33',
                 background: '#16191d',
