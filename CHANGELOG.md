@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.62
+
+### Patch Changes
+
+- 3143e1f: fix: /attach 페이지 QR 이미지 가운데 정렬 (img.qr에 display:block; margin:0 auto 추가)
+- f29e3fc: fix: launcher PWA 가로 잘림 수정 (WebKit standalone에서 iframe·fixed 요소를 visual viewport 폭에 clamp)
+
 ## 0.1.61
 
 ### Patch Changes
