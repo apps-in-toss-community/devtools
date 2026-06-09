@@ -225,6 +225,19 @@ export async function startTunnelDashboard(
     return undefined;
   }
 
+  // TOTP periodic refresh timer — pushes a fresh at= code to SSE clients every
+  // 20 s so a page left open never stales past the 90 s acceptance window (#448).
+  // tunnel.ts always has relayWssUrl available here (gated above), so no
+  // lastAttachParts guard is needed — getDashboardState mints a fresh TOTP on
+  // every call unconditionally.
+  // SECRET-HANDLING: callback is a plain trigger only — TOTP value and at= code
+  // must never be logged or written to stdout.
+  const TOTP_REFRESH_INTERVAL_MS = 20_000;
+  let totpRefreshHandle: ReturnType<typeof setInterval> | null = setInterval(() => {
+    server.notifyStateChange();
+  }, TOTP_REFRESH_INTERVAL_MS);
+  totpRefreshHandle.unref();
+
   const dashboardUrl = `http://127.0.0.1:${server.port}`;
 
   const { openUrlInBrowser } = await import('../mcp/devtools-opener.js');
@@ -239,7 +252,13 @@ export async function startTunnelDashboard(
 
   return {
     url: dashboardUrl,
-    close: () => server.close(),
+    close: () => {
+      if (totpRefreshHandle) {
+        clearInterval(totpRefreshHandle);
+        totpRefreshHandle = null;
+      }
+      return server.close();
+    },
   };
 }
 
