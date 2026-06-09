@@ -34,6 +34,9 @@ interface AttachHtmlProps {
     faqChii: string;
     faqTotp: string;
     urlSection: string;
+    /** Lang switcher labels — "한국어" / "English". */
+    langKo: string;
+    langEn: string;
   };
 }
 
@@ -81,12 +84,17 @@ li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
   border-radius: 6px; border: 1px solid #30363d;
 }
 hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0; }
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
 `,
           }}
         />
       </head>
       <body>
         <h1>{strings.title}</h1>
+        {/* __LANG_SWITCHER__ is filled at runtime by qr-http-server.ts */}
+        {'__LANG_SWITCHER__'}
         {/* __SAFE_LABEL__ filled at runtime */}
         <p className="label">{strings.deploymentPrefix}__SAFE_LABEL__</p>
         {/* #attach-section: target for buildSseScript QR re-render on SSE push */}

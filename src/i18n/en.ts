@@ -214,6 +214,10 @@ export const en: Record<StringKey, string> = {
   'notifications.option.alreadyAgreed': 'alreadyAgreed (already opted-in)',
   'notifications.option.agreementRejected': 'agreementRejected (user declined)',
 
+  // qr-http-server — lang switcher (dashboard / attach pages)
+  'dashboard.lang.ko': '한국어',
+  'dashboard.lang.en': 'English',
+
   // qr-http-server — dashboard page (server-side, Node, per-request)
   'dashboard.title': 'AIT Debug Dashboard',
   'dashboard.updated': 'Last updated: {ts}',

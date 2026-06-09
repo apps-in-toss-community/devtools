@@ -69,11 +69,11 @@ export function detectLocale(): Locale {
  * surfaces (e.g. the qr-http-server dashboard) have no `navigator`, so the
  * request header is the only language signal. Reads the FIRST language tag
  * (highest priority, ignoring `q=` weights — good enough for ko/en) and feeds
- * it through the same `ko`-vs-`en` heuristic `detectLocale` uses. Returns `'en'`
- * for an empty/missing header.
+ * it through the same `ko`-vs-`en` heuristic `detectLocale` uses. Returns `'ko'`
+ * for an empty/missing header (ko is the primary locale).
  */
 export function parseAcceptLanguage(header: string | undefined | null): Locale {
-  if (!header) return 'en';
+  if (!header) return 'ko';
   const first = header.split(',')[0]?.trim().split(';')[0]?.trim() ?? '';
   return localeFromLanguageTag(first);
 }

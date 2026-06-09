@@ -3,10 +3,10 @@ import { parseAcceptLanguage, resolveLocaleStrings } from './index.js';
 import { ko } from './ko.js';
 
 describe('parseAcceptLanguage', () => {
-  it('returns en for missing / empty header', () => {
-    expect(parseAcceptLanguage(undefined)).toBe('en');
-    expect(parseAcceptLanguage(null)).toBe('en');
-    expect(parseAcceptLanguage('')).toBe('en');
+  it('returns ko for missing / empty header (ko is the primary locale)', () => {
+    expect(parseAcceptLanguage(undefined)).toBe('ko');
+    expect(parseAcceptLanguage(null)).toBe('ko');
+    expect(parseAcceptLanguage('')).toBe('ko');
   });
 
   it('detects ko from a Korean first tag', () => {
