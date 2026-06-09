@@ -418,7 +418,16 @@ export function Launcher(): React.JSX.Element {
   // ---------------------------------------------------------------------------
 
   return (
-    <>
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        width: '100dvw',
+        maxWidth: '100dvw',
+        overflowX: 'hidden',
+        overflowY: 'auto',
+      }}
+    >
       <main
         id="setup"
         data-testid="launcher-setup"
@@ -589,7 +598,8 @@ export function Launcher(): React.JSX.Element {
           position: 'fixed',
           inset: 0,
           border: 0,
-          width: '100%',
+          width: '100dvw',
+          maxWidth: '100dvw',
           height: '100dvh',
           background: '#fff',
           display: screen === 'live' ? 'block' : 'none',
@@ -681,6 +691,6 @@ export function Launcher(): React.JSX.Element {
       >
         {t('launcher.rescanBtn')}
       </button>
-    </>
+    </div>
   );
 }
