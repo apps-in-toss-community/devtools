@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.63
+
+### Patch Changes
+
+- 60f3a54: fix: MCP dashboard·/attach 페이지 TOTP at= 코드 주기 갱신 — 방치된 페이지가 90초 후 stale되던 갭 수정 (20초 주기로 SSE push)
+
 ## 0.1.62
 
 ### Patch Changes
