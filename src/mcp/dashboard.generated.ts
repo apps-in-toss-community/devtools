@@ -84,6 +84,7 @@ img.qr {
   width: min(90vw, 360px); height: auto;
   image-rendering: pixelated;
   background: #fff; padding: 1rem; border-radius: 12px;
+  display: block; margin: 0 auto;
 }
 section { width: 100%; max-width: 480px; }
 h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
@@ -156,6 +157,7 @@ img.qr {
   width: min(90vw, 360px); height: auto;
   image-rendering: pixelated;
   background: #fff; padding: 1rem; border-radius: 12px;
+  display: block; margin: 0 auto;
 }
 section { width: 100%; max-width: 480px; }
 h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
