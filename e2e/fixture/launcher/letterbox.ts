@@ -12,6 +12,19 @@
 //
 //   window.innerHeight ≈ screen.height − statusBar   (shortfall)
 //   display-mode: standalone
+//   env(safe-area-inset-top) > 0
+//
+// env(safe-area-inset-top) discriminator (#479): real-device CDP measurements
+// confirm that the top inset is reliable:
+//   - letterboxed (top-anchored, bottom strip dead): safeAreaTop = 47
+//   - healthy below-status-bar standalone:           safeAreaTop = 0
+// This single bit resolves the false-positive accepted in #475/#476 — a
+// healthy reinstalled device now correctly gets detected: false.
+//
+// Limits of the heuristic: a hypothetical "middle-floating" window that touches
+// neither the top nor the bottom of the screen would also report safeAreaTop 0
+// and would be missed. No such geometry has been observed in the wild; phantom
+// behaviour has only been seen on the bottom inset (#475).
 //
 // env(safe-area-inset-bottom) is NOT part of the signature (#475): the
 // Simulator reports 0 in the letterboxed state (the viewport never reaches the
@@ -27,6 +40,8 @@
 //   - home-button devices (20pt status bar) → shortfall stays under the
 //                                    threshold below (the threshold, not the
 //                                    inset, carries this guard).
+//   - healthy below-status-bar     → safeAreaTop === 0, so detected: false
+//                                    (trade-off from #475/#476 resolved by #479).
 
 /** A snapshot of the page-visible viewport geometry. */
 export interface ViewportMetrics {
@@ -80,7 +95,18 @@ export function detectLetterbox(metrics: ViewportMetrics): LetterboxVerdict {
   // safeAreaBottom is deliberately NOT consulted (#475 phantom inset — see the
   // header comment): real iOS 26 devices report a non-zero bottom inset even
   // when the window never reaches the home indicator.
-  const detected = metrics.standalone && portrait && shortfallPx >= LETTERBOX_MIN_SHORTFALL_PX;
+  //
+  // safeAreaTop IS consulted (#479): the top inset proved reliable as a
+  // discriminator. A letterboxed window is anchored at the screen top, so iOS
+  // reports the full status-bar height as safeAreaTop (e.g. 47). A healthy
+  // below-status-bar standalone window starts below the status bar, so
+  // safeAreaTop === 0. Requiring safeAreaTop > 0 eliminates the false-positive
+  // for healthy reinstalled devices (the trade-off accepted in #475/#476).
+  const detected =
+    metrics.standalone &&
+    portrait &&
+    shortfallPx >= LETTERBOX_MIN_SHORTFALL_PX &&
+    metrics.safeAreaTop > 0;
 
   return { detected, shortfallPx };
 }
