@@ -200,6 +200,12 @@ function LanguageSwitcher(): React.JSX.Element {
 
 type Screen = 'setup' | 'live';
 
+// Reasons the framed page may report via the `ait:debug-attach-blocked`
+// postMessage. 'auth' = gate Layer C rejected a present-but-wrong code at
+// load (#438); 'auth-expired' = the relay rejected a stale code with close
+// 4401 — first load with an expired QR or a post-attach reconnect (#478).
+type AuthBlockReason = 'auth' | 'auth-expired';
+
 export function Launcher(): React.JSX.Element {
   const t = useT();
 
@@ -213,7 +219,7 @@ export function Launcher(): React.JSX.Element {
 
   const [setupToolsVisible, setSetupToolsVisible] = useState(false);
   const [installCtaVisible, setInstallCtaVisible] = useState(false);
-  const [authBlocked, setAuthBlocked] = useState(false);
+  const [authBlockReason, setAuthBlockReason] = useState<AuthBlockReason | null>(null);
 
   const [diagOpen, setDiagOpen] = useState(false);
   const [metrics, setMetrics] = useState<ViewportMetrics | null>(null);
@@ -261,7 +267,7 @@ export function Launcher(): React.JSX.Element {
       setLiveUrl(url);
       setScreen('live');
       setMsg('');
-      setAuthBlocked(false);
+      setAuthBlockReason(null);
     },
     [stopScanner],
   );
@@ -359,20 +365,24 @@ export function Launcher(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showLive]);
 
-  // Defect 2: listen for the framed tunnel page's TOTP-auth-block signal.
-  // Cross-origin: the child posts from *.trycloudflare.com with targetOrigin '*'.
-  // We do NOT trust arbitrary origins for anything privileged — the only effect
-  // is flipping a boolean that shows a localized banner. Strict shape guard.
+  // Defect 2 (#438) + expired-TOTP surfacing (#478): listen for the framed
+  // tunnel page's debug-attach-blocked signal. Cross-origin: the child posts
+  // from *.trycloudflare.com with targetOrigin '*'. We do NOT trust arbitrary
+  // origins for anything privileged — the only effect is picking a localized
+  // banner variant. Strict shape guard; reason is an enum allow-list.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       const data = e.data as unknown;
       if (
-        typeof data === 'object' &&
-        data !== null &&
-        (data as { type?: unknown }).type === 'ait:debug-attach-blocked' &&
-        (data as { reason?: unknown }).reason === 'auth'
+        typeof data !== 'object' ||
+        data === null ||
+        (data as { type?: unknown }).type !== 'ait:debug-attach-blocked'
       ) {
-        setAuthBlocked(true);
+        return;
+      }
+      const reason = (data as { reason?: unknown }).reason;
+      if (reason === 'auth' || reason === 'auth-expired') {
+        setAuthBlockReason(reason);
       }
     };
     window.addEventListener('message', onMessage);
@@ -471,7 +481,7 @@ export function Launcher(): React.JSX.Element {
 
   const handleRescan = useCallback(() => {
     setPendingUrl(null);
-    setAuthBlocked(false);
+    setAuthBlockReason(null);
     showSetup(null);
   }, [showSetup]);
 
@@ -684,7 +694,7 @@ export function Launcher(): React.JSX.Element {
         }}
       />
 
-      {screen === 'live' && authBlocked && (
+      {screen === 'live' && authBlockReason !== null && (
         <div
           role="alert"
           data-testid="launcher-auth-error"
@@ -718,13 +728,18 @@ export function Launcher(): React.JSX.Element {
             {t('launcher.debugAuthFailed')}
           </span>
           <span
+            data-testid="launcher-auth-error-hint"
             style={{
               fontSize: '12px',
               color: '#9aa0a6',
               lineHeight: '1.5',
             }}
           >
-            {t('launcher.debugAuthFailedHint')}
+            {t(
+              authBlockReason === 'auth-expired'
+                ? 'launcher.debugAuthExpiredHint'
+                : 'launcher.debugAuthFailedHint',
+            )}
           </span>
           <button
             type="button"

@@ -10,12 +10,27 @@
  * entries.
  *
  * TOTP auth (relay-side, authoritative gate):
- *   When `verifyAuth` is provided, this module registers HTTP 'upgrade' and
- *   'request' listeners on the server BEFORE calling `chii.start({server})`.
- *   Node's `http.Server` calls listeners in registration order; the first to
- *   call `socket.destroy()` (upgrade) or `res.end()` (request) wins. Invalid
- *   auth → 401 + destroy (chii never sees the connection). Valid auth →
- *   return without side-effect (chii handles it).
+ *   When `verifyAuth` is provided, this module gates both inbound surfaces:
+ *
+ *   - HTTP 'request': a listener registered BEFORE `chii.start({server})`.
+ *     Node's `http.Server` calls listeners in registration order; the first
+ *     to call `res.end()` wins. Invalid auth → 401 + CORS header + a tiny
+ *     JSON body (`{"error":"totp-rejected"}`) so a cross-origin script
+ *     `fetch()` probe can READ the status (issue #478). Valid auth → return
+ *     without side-effect (chii's Koa handler serves it).
+ *
+ *   - WS 'upgrade': after `chii.start()` has registered chii's own upgrade
+ *     listener, we take over the upgrade chain (remove chii's listeners,
+ *     re-dispatch manually). Invalid auth → accept-then-close: complete the
+ *     handshake via a `noServer` WebSocketServer, then immediately close
+ *     with code 4401 reason 'totp-rejected' (issue #478). A raw 401 +
+ *     `socket.destroy()` only ever surfaced as close code 1006 in the
+ *     browser — indistinguishable from a tunnel failure, which left the
+ *     env-2 phone UI silent. The explicit dispatch (not listener ordering)
+ *     is what keeps chii away from rejected sockets: accept-then-close
+ *     leaves the socket alive, so an order-based early-return would let
+ *     chii's later listener complete a SECOND handshake on the same socket
+ *     — an auth bypass. Valid auth → forward to chii's captured listeners.
  *
  * TOTP code transports (issue #466) — two equivalent ways to carry the code:
  *   1. Query param `at=<code>` — used by the daemon-side `/client` connection
@@ -46,6 +61,15 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { createRequire } from 'node:module';
 import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
+// `ws` is a direct dependency of this package (NOT a transitive reach into
+// chii's tree — same principle as the ajv incident): the reject path below
+// needs `WebSocketServer.handleUpgrade` to complete a handshake we are about
+// to close with a named code.
+import { WebSocketServer } from 'ws';
+import {
+  RELAY_AUTH_REJECT_CLOSE_CODE,
+  RELAY_AUTH_REJECT_REASON,
+} from '../shared/relay-auth-close.js';
 
 const require = createRequire(import.meta.url);
 
@@ -201,42 +225,19 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
     }
   };
 
-  // Register our auth listeners BEFORE chii.start() so they fire first.
-  // Node's http.Server emits 'upgrade'/'request' to all listeners in
-  // registration order; the first to destroy() the socket (upgrade) or end()
-  // the response (request) wins. Valid requests return without side-effect so
-  // chii's own handlers take over normally — and because listeners run
-  // synchronously in order, mutating `req.url` here (path-prefix strip,
-  // issue #466) means chii's later-registered handlers only ever see the
-  // stripped URL.
+  // Register the HTTP-request auth listener BEFORE chii.start() so it fires
+  // first. Node's http.Server emits 'request' to all listeners in registration
+  // order; the first to end() the response wins. Valid requests return without
+  // side-effect so chii's own handler takes over normally — and because
+  // listeners run synchronously in order, mutating `req.url` here (path-prefix
+  // strip, issue #466) means chii's later-registered handler only ever sees
+  // the stripped URL.
   //
   // We only register when verifyAuth is provided so the no-auth path is
   // zero-overhead for tests and local-only dev sessions. (The phone-side
   // `/at/<code>/` prefix only ever appears when TOTP is armed — the launcher
   // QR carries the `at` code — so the no-auth path never needs the strip.)
   if (verifyAuth) {
-    httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex) => {
-      // Phone-target transport (issue #466): normalise a `/at/<code>/…` path
-      // prefix into the query form before verification, and strip it from the
-      // URL chii will see. No-prefix URLs pass through untouched (daemon
-      // client query transport — back-compat).
-      const rewritten = rewriteAtPathPrefix(req.url ?? '');
-      if (rewritten !== null) {
-        req.url = rewritten;
-      }
-      if (!verifyAuth(req)) {
-        // Reject: send a minimal HTTP 401 response and close the socket.
-        // We do NOT log req.url or any auth param here to avoid leaking codes.
-        socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');
-        socket.destroy();
-        notifyAuthReject('ws-upgrade');
-        // Early return — chii's handler is NOT called for this socket.
-        return;
-      }
-      // Auth passed: no-op. Chii's upgrade listener (registered below by
-      // chii.start) will handle the rest.
-    });
-
     // Plain HTTP requests: only the path-prefixed form is ours — the phone
     // fetches `target.js` via `https://<host>/at/<code>/target.js` (issue
     // #466), which must be verified + stripped so chii's Koa static handler
@@ -248,8 +249,15 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
       req.url = rewritten;
       if (!verifyAuth(req)) {
         // We do NOT log req.url or any auth param here to avoid leaking codes.
+        // CORS header + tiny JSON body (issue #478): the script URL is
+        // cross-origin from the phone page (tunnel origin ≠ relay origin), so
+        // without ACAO a fetch() probe sees an opaque error and cannot tell
+        // auth rejection from a network failure. The header rides ONLY on
+        // this error response — no relay asset is exposed through it.
         res.statusCode = 401;
-        res.end();
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: RELAY_AUTH_REJECT_REASON }));
         notifyAuthReject('http-request');
       }
       // Auth passed: no-op — chii's Koa 'request' listener (registered below
@@ -264,6 +272,53 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
   // to our HTTP server rather than creating its own listener.
   // Note: port/domain here are display-only inside chii — the TCP bind is ours.
   await chii.start({ server: httpServer, domain: `${host}:${requestedPort}`, port: requestedPort });
+
+  // WS upgrade gate (issue #478, accept-then-close): take over the upgrade
+  // chain AFTER chii.start() has registered chii's own upgrade listener.
+  // Listener ordering alone protected chii when rejection meant
+  // socket.destroy(); accept-then-close keeps the socket ALIVE, so chii's
+  // listener (which always runs on every 'upgrade' emit) would complete a
+  // second handshake on the rejected socket — frames after our close frame
+  // would reach chii's server-side WebSocket, i.e. an auth bypass. Capturing
+  // chii's listeners and re-dispatching only on auth pass closes that hole.
+  if (verifyAuth) {
+    const chiiUpgradeListeners = httpServer.listeners('upgrade') as Array<
+      (req: IncomingMessage, socket: Duplex, head: Buffer) => void
+    >;
+    httpServer.removeAllListeners('upgrade');
+    // noServer: handshake-only — never binds a port; used purely to send a
+    // spec-compliant close frame with a code the browser can read.
+    const rejectWss = new WebSocketServer({ noServer: true });
+    httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+      // Phone-target transport (issue #466): normalise a `/at/<code>/…` path
+      // prefix into the query form before verification, and strip it from the
+      // URL chii will see. No-prefix URLs pass through untouched (daemon
+      // client query transport — back-compat).
+      const rewritten = rewriteAtPathPrefix(req.url ?? '');
+      if (rewritten !== null) {
+        req.url = rewritten;
+      }
+      if (!verifyAuth(req)) {
+        // Reject: complete the handshake, then close with a NAMED code so the
+        // browser-side observer (in-app attach.ts) can distinguish "stale
+        // TOTP code" (4401) from "tunnel down" (1006). Raw-401-destroy only
+        // ever produced 1006 client-side — the env-2 silence gap (#478).
+        // We do NOT log req.url or any auth param here to avoid leaking codes;
+        // the close reason is a fixed enum string.
+        rejectWss.handleUpgrade(req, socket, head, (ws) => {
+          ws.close(RELAY_AUTH_REJECT_CLOSE_CODE, RELAY_AUTH_REJECT_REASON);
+        });
+        notifyAuthReject('ws-upgrade');
+        // Early return — chii's captured listeners are NOT called.
+        return;
+      }
+      // Auth passed: hand the upgrade to chii's own listeners (it sees the
+      // stripped URL — same observable behaviour as the pre-#478 ordering).
+      for (const listener of chiiUpgradeListeners) {
+        listener(req, socket, head);
+      }
+    });
+  }
 
   const actualPort = await new Promise<number>((resolve, reject) => {
     httpServer.once('error', reject);

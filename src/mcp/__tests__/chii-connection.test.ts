@@ -4,6 +4,8 @@
  * Coverage:
  *   - sendCommand times out when the relay never replies.
  *   - WebSocket close event rejects all pending commands.
+ *   - Close code 4401 (relay TOTP rejection, issue #478) is named as an auth
+ *     failure instead of a generic drop.
  *   - Subsequent sendCommand after disconnect fails fast (no hang).
  *   - close() rejects in-flight commands.
  *   - TOTP: client WS URL includes `&at=` when totpSecret is set.
@@ -13,6 +15,10 @@
 import http from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { WebSocketServer } from 'ws';
+import {
+  RELAY_AUTH_REJECT_CLOSE_CODE,
+  RELAY_AUTH_REJECT_REASON,
+} from '../../shared/relay-auth-close.js';
 import { ChiiCdpConnection } from '../chii-connection.js';
 import { generateTotp } from '../totp.js';
 
@@ -23,8 +29,11 @@ interface FakeRelay {
   receivedMessages: string[];
   /** Push a CDP response frame to the connected client. */
   sendToClient(msg: object): void;
-  /** Forcibly close the WebSocket to simulate a relay disconnect. */
-  dropClient(): void;
+  /**
+   * Forcibly close the WebSocket to simulate a relay disconnect. Pass a
+   * code/reason to simulate a NAMED close (e.g. 4401 TOTP rejection, #478).
+   */
+  dropClient(code?: number, reason?: string): void;
   close(): Promise<void>;
 }
 
@@ -82,8 +91,8 @@ async function createFakeRelay(): Promise<FakeRelay> {
         pendingOutbound.push(raw);
       }
     },
-    dropClient() {
-      clientSocket?.close();
+    dropClient(code?: number, reason?: string) {
+      clientSocket?.close(code, reason);
     },
     close(): Promise<void> {
       return new Promise((resolve, reject) => {
@@ -203,6 +212,29 @@ describe('ChiiCdpConnection — WebSocket close rejects pending', () => {
 
       await expect(p1).rejects.toThrow(/relay WebSocket 연결이 끊겼습니다/);
       await expect(p2).rejects.toThrow(/relay WebSocket 연결이 끊겼습니다/);
+    } finally {
+      conn.close();
+      await relay.close();
+    }
+  });
+
+  it('names a close 4401 as a TOTP auth failure instead of a generic drop (issue #478)', async () => {
+    const relay = await createFakeRelay();
+    const conn = new ChiiCdpConnection({
+      relayBaseUrl: relay.baseUrl,
+      commandTimeoutMs: 10_000,
+    });
+
+    try {
+      await conn.enableDomains();
+      await new Promise<void>((r) => setTimeout(r, 20));
+
+      const pending = conn.sendCommand('Runtime.evaluate', { expression: '1' });
+
+      relay.dropClient(RELAY_AUTH_REJECT_CLOSE_CODE, RELAY_AUTH_REJECT_REASON);
+
+      await expect(pending).rejects.toThrow(/relay 인증\(TOTP\)이 거부돼 연결이 종료됐습니다/);
+      await expect(pending).rejects.toThrow(/4401/);
     } finally {
       conn.close();
       await relay.close();

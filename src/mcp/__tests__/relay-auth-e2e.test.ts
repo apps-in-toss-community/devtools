@@ -8,10 +8,14 @@
  *
  *   - phone-target transport: `/at/<code>/target/<id>` WS upgrade with a valid
  *     code is ACCEPTED (chii registers the target after the prefix strip);
- *   - wrong/stale code → HTTP 401, socket destroyed, and the secret-free
- *     `onAuthReject` counter fires with kind 'ws-upgrade';
+ *   - wrong/stale code → accept-then-close with the NAMED code 4401 / reason
+ *     'totp-rejected' (issue #478 — a raw 401-destroy only surfaced as 1006
+ *     in browsers), the secret-free `onAuthReject` counter fires with kind
+ *     'ws-upgrade', and the rejected target never reaches chii's registry
+ *     (the upgrade dispatcher keeps chii away from rejected sockets);
  *   - script fetch: `GET /at/<code>/target.js` serves the real chii asset on a
- *     valid code and 401s (kind 'http-request') on a wrong one;
+ *     valid code and 401s (kind 'http-request') on a wrong one, with a CORS
+ *     header + JSON error body so a cross-origin fetch() probe can read it;
  *   - daemon back-compat: the query transport (`/client/<id>?…&at=<code>`)
  *     keeps working unchanged;
  *   - SECRET-HANDLING: nothing observable (console output, reject events)
@@ -25,6 +29,10 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
+import {
+  RELAY_AUTH_REJECT_CLOSE_CODE,
+  RELAY_AUTH_REJECT_REASON,
+} from '../../shared/relay-auth-close.js';
 import { type ChiiRelay, type RelayAuthRejectEvent, startChiiRelay } from '../chii-relay.js';
 import { buildRelayVerifyAuth, generateTotp } from '../totp.js';
 
@@ -56,6 +64,19 @@ function dialWs(url: string): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
     ws.on('open', () => resolve(ws));
+    ws.on('error', (err) => reject(err));
+  });
+}
+
+/**
+ * Dials a WS URL and waits for the server to close it; resolves with the
+ * close code/reason. With accept-then-close (#478) a rejected dial completes
+ * the handshake first, so 'error' never fires — the close frame is the signal.
+ */
+function dialWsAwaitClose(url: string): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() }));
     ws.on('error', (err) => reject(err));
   });
 }
@@ -113,17 +134,30 @@ describe('relay TOTP gate e2e (real chii + real sockets)', () => {
     }
   });
 
-  it('rejects a wrong path-prefix code with 401 and counts a ws-upgrade reject', async () => {
+  it('rejects a wrong path-prefix code with close 4401/totp-rejected and counts a ws-upgrade reject', async () => {
     const wsUrl = `ws://127.0.0.1:${relay.port}/at/${wrongCode()}/target/e2e-bad-id?url=u`;
 
-    await expect(dialWs(wsUrl)).rejects.toThrow(/401/);
+    await expect(dialWsAwaitClose(wsUrl)).resolves.toEqual({
+      code: RELAY_AUTH_REJECT_CLOSE_CODE,
+      reason: RELAY_AUTH_REJECT_REASON,
+    });
     expect(rejects).toEqual([{ kind: 'ws-upgrade' }]);
+
+    // Auth-bypass guard (#478): accept-then-close keeps the socket alive, so
+    // the dispatcher must keep chii away from it — the rejected target id must
+    // never appear in chii's registry.
+    const res = await fetch(`${relay.baseUrl}/targets`);
+    const body = (await res.json()) as { targets: Array<{ id: string }> };
+    expect(body.targets.some((t) => t.id === 'e2e-bad-id')).toBe(false);
   });
 
   it('rejects a prefix-less target upgrade carrying no code (stock chii dial)', async () => {
     const wsUrl = `ws://127.0.0.1:${relay.port}/target/e2e-naked-id?url=u`;
 
-    await expect(dialWs(wsUrl)).rejects.toThrow(/401/);
+    await expect(dialWsAwaitClose(wsUrl)).resolves.toEqual({
+      code: RELAY_AUTH_REJECT_CLOSE_CODE,
+      reason: RELAY_AUTH_REJECT_REASON,
+    });
     expect(rejects).toEqual([{ kind: 'ws-upgrade' }]);
   });
 
@@ -138,11 +172,14 @@ describe('relay TOTP gate e2e (real chii + real sockets)', () => {
     expect(rejects).toHaveLength(0);
   });
 
-  it('rejects a wrong path-prefix script fetch with 401 and counts an http-request reject', async () => {
+  it('rejects a wrong path-prefix script fetch with a CORS-readable 401 JSON body', async () => {
     const res = await fetch(`${relay.baseUrl}/at/${wrongCode()}/target.js`);
 
     expect(res.status).toBe(401);
-    expect(await res.text()).toBe('');
+    // Cross-origin fetch() probe contract (#478): the phone page must be able
+    // to READ this status, so the error response carries ACAO + a JSON body.
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+    expect(await res.json()).toEqual({ error: RELAY_AUTH_REJECT_REASON });
     expect(rejects).toEqual([{ kind: 'http-request' }]);
   });
 
@@ -183,14 +220,14 @@ describe('relay TOTP gate e2e — SECRET-HANDLING', () => {
 
     const bad = wrongCode();
     const validCode = generateTotp(TEST_SECRET);
-    let wsError = '';
-    try {
-      // One rejected upgrade + one rejected script fetch.
-      await dialWs(`ws://127.0.0.1:${relay.port}/at/${bad}/target/leak-probe?url=u`);
-    } catch (err) {
-      wsError = err instanceof Error ? err.message : String(err);
-    }
-    await fetch(`${relay.baseUrl}/at/${bad}/target.js`);
+    // One rejected upgrade + one rejected script fetch. With accept-then-close
+    // (#478) the WS rejection is a close frame, not an error — the close
+    // code/reason and the HTTP body are the client-observable surfaces.
+    const wsClose = await dialWsAwaitClose(
+      `ws://127.0.0.1:${relay.port}/at/${bad}/target/leak-probe?url=u`,
+    );
+    const httpRes = await fetch(`${relay.baseUrl}/at/${bad}/target.js`);
+    const httpBody = await httpRes.text();
     await relay.close();
 
     // Reject events carry ONLY the kind — the shape itself is the contract.
@@ -201,7 +238,8 @@ describe('relay TOTP gate e2e — SECRET-HANDLING', () => {
 
     // Everything observable stays free of the code, the secret, and the URL.
     const observable = [
-      wsError,
+      JSON.stringify(wsClose),
+      httpBody,
       JSON.stringify(rejects),
       ...consoleSpies.flatMap((spy) => spy.mock.calls.map((call) => call.map(String).join(' '))),
     ].join('\n');
