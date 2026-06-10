@@ -1,12 +1,15 @@
-// Unit tests for the pure letterbox-detection logic (#469). The `.vitest.ts`
-// extension keeps Playwright (testMatch '**/*.test.ts') from collecting this
-// file — see vitest.config.ts `include`.
+// Unit tests for the pure letterbox-detection logic (#469, discriminator
+// redesigned in #484). The `.vitest.ts` extension keeps Playwright
+// (testMatch '**/*.test.ts') from collecting this file — see vitest.config.ts
+// `include`.
 
 import { describe, expect, it } from 'vitest';
 import { detectLetterbox, LETTERBOX_MIN_SHORTFALL_PX, type ViewportMetrics } from './letterbox.js';
 
-// iPhone 16e-class geometry (390×844 logical, 47pt status bar, 34pt home
-// indicator) — the device class of the #469 forensics.
+// iPhone 16e-class geometry (390×844 logical, 47–59pt status bar, 34pt home
+// indicator) — the device class of the #469 forensics. Under black-translucent
+// (#484) a HEALTHY edge-to-edge window reports safeAreaTop > 0 (status bar) and
+// safeAreaBottom 34 (home indicator) with no height shortfall.
 function base(overrides: Partial<ViewportMetrics> = {}): ViewportMetrics {
   return {
     innerWidth: 390,
@@ -22,31 +25,39 @@ function base(overrides: Partial<ViewportMetrics> = {}): ViewportMetrics {
 }
 
 describe('detectLetterbox', () => {
-  it('no longer detects the #469 Simulator fixture (safeAreaTop 0 → false)', () => {
-    // Observed on the Simulator (#469): web view mis-sized to screen −
-    // statusBar(47), top-anchored, safe-area-bottom 0. safeAreaTop was NEVER
-    // measured in that state — this fixture's 0 is an assumption, not a
-    // measurement. If the Simulator does report 0 while letterboxed, the #479
-    // top-inset discriminator makes this geometry undetectable — accepted:
-    // a Simulator false-negative is preferred over the real-device
-    // false-positive that #479 fixes. If it reports 47 like the real device,
-    // this fixture is hypothetical and the real-device case below covers it.
+  it('detects a letterbox: height shortfall + zero bottom inset (#484 model)', () => {
+    // Black-translucent letterbox geometry: the OS paints a dead band BELOW the
+    // mis-sized window, so the window stops above the home indicator and the
+    // bottom inset collapses to 0. innerHeight 797 vs screen 844 (shortfall 47).
+    // safeAreaTop is non-zero (status bar) but is no longer consulted (#484).
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
         visualViewportHeight: 797,
-        safeAreaTop: 0,
+        safeAreaTop: 47,
         safeAreaBottom: 0,
       }),
     );
-    expect(verdict.detected).toBe(false);
+    expect(verdict.detected).toBe(true);
     expect(verdict.shortfallPx).toBe(47);
   });
 
-  it('detects real-device letterbox before reinstall (#479 measured values)', () => {
-    // Real-device CDP measurement (iPhone, iOS 26, 2026-06-11): letterboxed
-    // window is top-anchored — safeAreaTop reports the full 47pt status bar.
-    // innerHeight 797 vs screen 844 (shortfall 47). safeAreaBottom is phantom.
+  it('does NOT detect the healthy black-translucent edge-to-edge layout (#484)', () => {
+    // Real-device CDP measurement (iPhone, iOS 18.7, 2026-06-11): under
+    // black-translucent the healthy window extends under the status bar
+    // (safeAreaTop 47–59) AND reaches the home indicator (safeAreaBottom 34)
+    // with no height shortfall. The non-zero bottom inset is the discriminator
+    // that keeps this out of the letterbox bucket.
+    const verdict = detectLetterbox(base());
+    expect(verdict.detected).toBe(false);
+    expect(verdict.shortfallPx).toBe(0);
+  });
+
+  it('does NOT detect when a shortfall coexists with a real bottom inset (#484)', () => {
+    // Defensive: even if a healthy notch window briefly reports a small
+    // shortfall during cold-start settling, a non-zero bottom inset means it
+    // reached the home indicator → not a letterbox. The bottom inset vetoes the
+    // shortfall here (the inverse of the old #479 top-inset requirement).
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
@@ -55,42 +66,7 @@ describe('detectLetterbox', () => {
         safeAreaBottom: 34,
       }),
     );
-    expect(verdict.detected).toBe(true);
-    expect(verdict.shortfallPx).toBe(47);
-  });
-
-  it('does NOT detect after reinstall — healthy below-status-bar (#479 measured values)', () => {
-    // Real-device CDP measurement (iPhone, iOS 26, 2026-06-11): after
-    // reinstall the window starts below the status bar — safeAreaTop drops to
-    // 0 while the shortfall (47) is unchanged. The top-inset discriminator
-    // (#479) resolves the false-positive that was an accepted trade-off in
-    // #475/#476.
-    const verdict = detectLetterbox(
-      base({
-        innerHeight: 797,
-        visualViewportHeight: 797,
-        safeAreaTop: 0,
-        safeAreaBottom: 34,
-      }),
-    );
     expect(verdict.detected).toBe(false);
-    expect(verdict.shortfallPx).toBe(47);
-  });
-
-  it('detects despite the iOS 26 real-device phantom bottom inset (#475 observed values)', () => {
-    // Real-device CDP measurement: letterboxed geometry with safeAreaTop 47
-    // (window top-anchored) and a phantom safeAreaBottom 34 (window never
-    // reaches the home indicator). The top inset drives detection; the bottom
-    // inset must not veto it.
-    const verdict = detectLetterbox(
-      base({
-        innerHeight: 797,
-        visualViewportHeight: 797,
-        safeAreaTop: 47,
-        safeAreaBottom: 34,
-      }),
-    );
-    expect(verdict.detected).toBe(true);
     expect(verdict.shortfallPx).toBe(47);
   });
 
@@ -100,6 +76,7 @@ describe('detectLetterbox', () => {
       base({
         innerHeight: 664,
         visualViewportHeight: 664,
+        safeAreaTop: 0,
         safeAreaBottom: 0,
         standalone: false,
       }),
@@ -108,35 +85,10 @@ describe('detectLetterbox', () => {
     expect(verdict.shortfallPx).toBe(180);
   });
 
-  it('does NOT detect in healthy standalone, edge-to-edge layout (no shortfall)', () => {
-    // innerHeight === screen.height, full safe-area insets reported.
-    const verdict = detectLetterbox(base());
-    expect(verdict.detected).toBe(false);
-    expect(verdict.shortfallPx).toBe(0);
-  });
-
-  it('does NOT flag the healthy below-status-bar standalone layout (#479 trade-off resolved)', () => {
-    // Manifest-standalone without black-translucent: the web view starts below
-    // the status bar (shortfall ≈ 59) but still reaches the screen bottom.
-    // Pre-#479 this layout was indistinguishable from a letterbox because the
-    // bottom inset alone was unreliable (#475 phantom). The top-inset
-    // discriminator (#479) resolves this: safeAreaTop === 0 means the window
-    // is NOT top-anchored → detected: false. The accepted trade-off is gone.
-    const verdict = detectLetterbox(
-      base({
-        innerHeight: 785,
-        visualViewportHeight: 785,
-        safeAreaTop: 0,
-        safeAreaBottom: 34,
-      }),
-    );
-    expect(verdict.detected).toBe(false);
-    expect(verdict.shortfallPx).toBe(59);
-  });
-
   it('does NOT detect on home-button devices (20pt status bar stays under threshold)', () => {
     // iPhone SE class: 375×667, no home indicator → safe-area-bottom is 0 even
-    // in a healthy layout. The 20pt shortfall must stay under the threshold.
+    // in a healthy layout. The shortfall (20) must stay under the threshold so
+    // the zero bottom inset alone never false-positives this device class.
     const verdict = detectLetterbox(
       base({
         innerWidth: 375,
@@ -144,7 +96,7 @@ describe('detectLetterbox', () => {
         screenWidth: 375,
         screenHeight: 667,
         visualViewportHeight: 647,
-        safeAreaTop: 0,
+        safeAreaTop: 20,
         safeAreaBottom: 0,
       }),
     );
@@ -162,7 +114,7 @@ describe('detectLetterbox', () => {
         innerHeight: 390,
         visualViewportHeight: 390,
         safeAreaTop: 0,
-        safeAreaBottom: 21,
+        safeAreaBottom: 0,
       }),
     );
     expect(verdict.detected).toBe(false);
@@ -170,6 +122,8 @@ describe('detectLetterbox', () => {
 
   it('uses the tallest of innerHeight/visualViewport (keyboard shrink never inflates shortfall)', () => {
     // Soft keyboard open: visualViewport shrinks, layout viewport does not.
+    // safeAreaBottom 0 here would otherwise tempt detection — the no-shortfall
+    // result keeps it false.
     const keyboard = detectLetterbox(
       base({ innerHeight: 844, visualViewportHeight: 500, safeAreaBottom: 0 }),
     );
@@ -186,28 +140,28 @@ describe('detectLetterbox', () => {
 
   it('handles a missing visualViewport API (null)', () => {
     // When visualViewport is unavailable, innerHeight alone carries the
-    // shortfall. Supply safeAreaTop 47 so the real-device letterbox signature
-    // is complete and detected: true confirms the null path is handled.
+    // shortfall. Supply safeAreaBottom 0 so the letterbox signature is complete
+    // and detected: true confirms the null path is handled.
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
         visualViewportHeight: null,
         safeAreaTop: 47,
-        safeAreaBottom: 34,
+        safeAreaBottom: 0,
       }),
     );
     expect(verdict.detected).toBe(true);
     expect(verdict.shortfallPx).toBe(47);
   });
 
-  it('ignores the reported bottom inset entirely (#475 phantom inset)', () => {
-    // Pre-#475 any non-zero safe-area-bottom vetoed detection. Real iOS 26
-    // devices report a phantom inset in the letterboxed state, so the inset
-    // value no longer participates in the verdict at all.
+  it('the bottom inset gates detection: any non-zero value vetoes it (#484)', () => {
+    // The exact inverse of the pre-#484 behaviour. A letterboxed shortfall with
+    // even a 1px bottom inset is treated as "reached the home indicator" and is
+    // NOT a letterbox — the dead-band signature requires bottom === 0.
     const verdict = detectLetterbox(
       base({ innerHeight: 797, visualViewportHeight: 797, safeAreaBottom: 1 }),
     );
-    expect(verdict.detected).toBe(true);
+    expect(verdict.detected).toBe(false);
     expect(verdict.shortfallPx).toBe(47);
   });
 });
