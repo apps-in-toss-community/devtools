@@ -48,7 +48,7 @@ git config core.hooksPath .githooks
 
 - **tsdown** — 빌드 (ESM + CJS for unplugin)
 - **vitest** — 테스트 (jsdom 환경, 아래 "jsdom 제약" 섹션 주의)
-- **unplugin** — 모든 번들러 지원. runtime dependency는 unplugin 외에 `chii`·`ws`·`cloudflared`·`qrcode-terminal`·`@modelcontextprotocol/sdk` (in-app debug MCP surface가 쓴다)
+- **unplugin** — 모든 번들러 지원. runtime dependency는 unplugin 외에 `chii`·`ws`·`cloudflared`·`qrcode`·`qrcode-terminal`·`ajv`·`@modelcontextprotocol/sdk` (in-app debug MCP surface가 쓴다)
 - ESM only (`"type": "module"`)
 
 ## 배포
@@ -99,7 +99,7 @@ src/
 
 ## 코딩 컨벤션
 
-- **사용자 대면 표면은 React + ko/en i18n**: panel·qr-http-server 대시보드·e2e fixture·launcher PWA는 모두 React로 렌더하고 `navigator.language`/`Accept-Language` 기반 ko/en i18n을 지원한다. i18n core는 `src/i18n`(ko.ts가 `StringKey` 정본, en.ts는 typecheck-강제 `Record<StringKey,string>` 미러), React 반응 레이어는 `src/i18n/react.ts`(`useLocale`/`useT`, `LOCALE_CHANGE_EVENT` 위 `useSyncExternalStore`). panel은 chrome(toggle/header/badge/tab bar/body)만 React이고 13개 탭 body는 `renderXTab(): HTMLElement` 명령형 렌더러를 `<TabHost>`로 마운트하는 hybrid다(position은 React state가 아니라 ref+localStorage `__ait_btn_pos`).
+- **사용자 대면 표면은 React + ko/en i18n**: panel·qr-http-server 대시보드·e2e fixture·launcher PWA는 모두 React로 렌더하고 `navigator.language`/`Accept-Language` 기반 ko/en i18n을 지원한다. i18n core는 `src/i18n`(ko.ts가 `StringKey` 정본, en.ts는 typecheck-강제 `Record<StringKey,string>` 미러), React 반응 레이어는 `src/i18n/react.ts`(`useLocale`/`useT`, `LOCALE_CHANGE_EVENT` 위 `useSyncExternalStore`). panel은 chrome(toggle/header/badge/tab bar/body)만 React이고 12개 탭 body는 `renderXTab(): HTMLElement` 명령형 렌더러를 `<TabHost>`로 마운트하는 hybrid다(position은 React state가 아니라 ref+localStorage `__ait_btn_pos`).
 - **install-graph 불변식 — react/react-dom은 `devDependencies`만, `dependencies` 절대 금지**: MCP-only 소비자(`npx -y @ait-co/devtools devtools-mcp`)는 React를 install 그래프로 끌어오면 안 된다. 따라서 MCP 데몬 번들(`dist/mcp/cli.js`·`dist/mcp/server.js`)은 react/react-dom을 import하지 않는다 — `scripts/check-mcp-react-free.sh`(ci.yml 배선)가 강제한다. qr-http-server 대시보드는 이 불변식을 지키려 빌드타임 precompile을 쓴다: JSX 템플릿(`scripts/dashboard/*.tsx`) → `scripts/build-dashboard-html.ts`가 `renderToStaticMarkup`으로 커밋된 `src/mcp/dashboard.generated.ts` 문자열 모듈 생성 → 런타임 `qr-http-server.ts`는 그 문자열만 import(`check:dashboard-html-fresh`가 freshness 강제). 런타임에 React를 import하는 표면은 데몬 그래프 밖(panel/fixture/launcher는 소비자 빌드, 대시보드는 precompiled string)이라야 한다.
 - **모든 mock은 원본 SDK 시그니처와 호환**: `src/__typecheck.ts`의 `Assert<Mock, Original>`로 검증.
 - **권한 함수**: `withPermission(fn, permissionName)`으로 감싸 `.getPermission()`, `.openPermissionDialog()` 부착.
@@ -118,7 +118,7 @@ src/
 
 devtools는 `@apps-in-toss/web-framework` **3.0.0-beta** 프리릴리즈를 추적. devDep은 `3.0.0-beta.3051978` exact pin. published `latest` 태그의 peer range는 `>=2.6.0 <2.7.0` (2.x 소비자 보호용 유지)이고, 3.0 라인 peer는 **`beta` dist-tag로 별도 자동 publish**한다 — `release-beta` job이 main push마다 같은 커밋을 job-local 3.0 peer로 덮어써 `0.0.0-beta-<datetime>-<sha>` 스냅샷으로 올린다(메커니즘 정본은 위 §배포). 3.0-beta를 쓰는 소비자는 `@ait-co/devtools@beta`로 설치한다. (후속 PR에서 CI matrix `compat-check`로 버전 typecheck 자동화 예정.)
 
-**GA Flip 상태:** beta 채택 wave는 머지 완료, GA flip(exact pin→`^3.0.0`, `latest` peer를 3.0 라인으로, dist-tag flip)은 **미착수** — GA ETA 미정으로 대기. 트래킹 #370. GA용으로 비워뒀던 `0.1.54` 슬롯은 무관한 maintenance Version PR이 선점했고 이후 추가 maintenance로 `latest`가 더 올라갔다(현 `latest=0.1.56`, peer `>=2.6.0 <2.7.0` 불변) → flip은 그 시점 `latest` 다음 patch를 쓴다. `beta` dist-tag 자동 publish는 GA flip의 부분 선행이다(3.0 peer artifact를 미리 검증된 상태로 올려둠) — GA flip 시 그 검증된 peer를 `latest`로 승격하고 `release-beta` job은 정리 대상이 된다.
+**GA Flip 상태:** beta 채택 wave는 머지 완료, GA flip(exact pin→`^3.0.0`, `latest` peer를 3.0 라인으로, dist-tag flip)은 **미착수** — GA ETA 미정으로 대기. 트래킹 #370. GA용으로 비워뒀던 `0.1.54` 슬롯은 무관한 maintenance Version PR이 선점했고 이후 추가 maintenance로 `latest`가 더 올라갔다(현 `latest`는 `npm view @ait-co/devtools dist-tags.latest`로 확인, peer `>=2.6.0 <2.7.0` 불변) → flip은 그 시점 `latest` 다음 patch를 쓴다. `beta` dist-tag 자동 publish는 GA flip의 부분 선행이다(3.0 peer artifact를 미리 검증된 상태로 올려둠) — GA flip 시 그 검증된 peer를 `latest`로 승격하고 `release-beta` job은 정리 대상이 된다.
 
 - peer는 `peerDependenciesMeta.optional: true`. devDep은 고정.
   - **이유**: 이 패키지는 두 사용자 그룹을 함께 다룬다 — (a) mock SDK 사용자(번들러 alias로 unplugin), (b) MCP-only 사용자(`.mcp.json`의 `npx -y @ait-co/devtools devtools-mcp` 진입). (b)는 mock SDK를 절대 import하지 않으므로 peer를 required로 두면 SDK + 그 RN/Babel/Metro 트랜지티브 거대 트리(~분 단위 install)가 강제 설치되어 MCP server spawn이 timeout. (a)는 본인 프로젝트에서 SDK를 직접 import하므로 누락은 빌드 단계에서 명시적으로 깨진다 (vite/webpack resolve fail) — npm missing peer warning에 의존할 필요가 없다. optional로 두어도 (a)의 신뢰성은 손상되지 않는다.
@@ -147,7 +147,7 @@ debug-mode MCP 서버(`devtools-mcp`)는 env를 **저장하지 않고 매 요청
 
 issue #309의 dead-lock(빈 세션 첫 `tools/list`에서 Tier B `build_attach_url`이 안 보여 env 3·4 진입을 포기)은 이 모델에서 구조적으로 소멸한다 — relay-kind connection이면 attach 전에도 kind를 알아 진입 도구가 첫 `tools/list`부터 정확히 노출된다(`BOOTSTRAP_TOOL_NAMES`). `liveIntent`는 process-수명 sticky(operator 안전 stance)이고, `connection.kind`는 비-sticky(각 active connection이 자기 kind 보고) — `start_debug`는 `DualConnectionRouter.active`를 flip해 세션 안에서 family를 전환한다(예전 "env는 sticky, 전환 없음" 모델을 의도적으로 초과).
 
-도구는 RFC #277(closed — 구현 완료) Tier 분류를 따른다. 각 descriptor에 `availableIn: 'mock' | 'relay' | 'both'`(`ToolAvailability`)가 박혀 있고, `filterToolsByEnvironment`가 `tools/list`를 env에 맞춰 필터한다 — Tier B(`relay` only, 예: `build_attach_url`)는 local에서 hidden, 환경 불일치 호출은 `tierRejectionError`(한국어 "원인+다음 행동" + 영문 compat 라인을 담은 tool-result error)로 거부된다. Tier A(`mock` only, mock state dial)는 **현재 0개 노출** — webViewType/orientation 등 dial은 패널 UI 전용이고 MCP 표면엔 안 올라와 있다. Tier C(`both`, 평행 13개)에는 `AIT.*` 계열(`getMockState`/`getSdkCallHistory` 포함 — 둘 다 코드상 `'both'`), `list_*`, `get_dom_document`, `take_*`, `measure_safe_area`, `evaluate`, `call_sdk`가 든다. `measure_safe_area`는 양쪽에서 같은 `Runtime.evaluate` probe(`SAFE_AREA_PROBE_EXPRESSION`)를 돌리고 결과에 `source: 'mock' | 'relay'`를 attach해 provenance를 노출한다. mock↔relay 결과 평행은 `scripts/fidelity-qa/`가 정량 diff(`whitelist.json`이 EXPECTED_MISMATCH 등재)로 강제한다.
+도구는 RFC #277(closed — 구현 완료) Tier 분류를 따른다. 각 descriptor에 `availableIn: 'mock' | 'relay' | 'both'`(`ToolAvailability`)가 박혀 있고, `filterToolsByEnvironment`가 `tools/list`를 env에 맞춰 필터한다 — Tier B(`relay` only, 예: `build_attach_url`)는 local에서 hidden, 환경 불일치 호출은 `tierRejectionError`(한국어 "원인+다음 행동" + 영문 compat 라인을 담은 tool-result error)로 거부된다. Tier A(`mock` only, mock state dial)는 **현재 0개 노출** — webViewType/orientation 등 dial은 패널 UI 전용이고 MCP 표면엔 안 올라와 있다. Tier C(`both`, 평행 15개)에는 `list_console_messages`, `list_network_requests`, `list_pages`, `get_dom_document`, `take_snapshot`, `take_screenshot`, `measure_safe_area`, `evaluate`, `list_exceptions`, `call_sdk`, `AIT.getSdkCallHistory`, `AIT.getMockState`, `AIT.getOperationalEnvironment`, `start_debug`, `get_debug_status`가 든다. `measure_safe_area`는 양쪽에서 같은 `Runtime.evaluate` probe(`SAFE_AREA_PROBE_EXPRESSION`)를 돌리고 결과에 `source: 'mock' | 'relay-dev' | 'relay-live'`를 attach해 provenance를 노출한다. mock↔relay 결과 평행은 `scripts/fidelity-qa/`가 정량 diff(`whitelist.json`이 EXPECTED_MISMATCH 등재)로 강제한다.
 
 **MCP 도구 명명 규칙**: 동사+명사(verb-first), 군더더기 prefix 금지. 도메인 prefix(`session_`/`observe_` 등)는 한 클러스터가 도구 3개 이상에 도달할 때만 도입한다 — MCP 서버키(`ait-devtools`)가 이미 1차 네임스페이스를 제공하므로 그 전엔 prefix가 거짓 신호다.
 
