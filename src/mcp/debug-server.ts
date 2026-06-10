@@ -2334,6 +2334,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
     pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
     attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
+    // 현재 active connection에서 매 호출마다 파생한 env — /attach 카피·환경 라벨
+    // 분기(#468). start_debug family swap을 따라가도록 저장하지 않고 파생한다.
+    mode: deriveEnvironment(router.active.kind, getLiveIntent(), router.activeRelayOrigin),
   });
 
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에

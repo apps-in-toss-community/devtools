@@ -39,7 +39,12 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import { createServer } from 'node:http';
 import { parseAcceptLanguage, resolveLocaleStrings } from '../i18n/index.js';
-import { attachChromeByLocale, dashboardChromeByLocale } from './dashboard.generated.js';
+import {
+  type AttachChromeFamily,
+  attachChromeByLocale,
+  dashboardChromeByLocale,
+} from './dashboard.generated.js';
+import type { McpEnvironment } from './environment.js';
 
 /** dashboard에 노출되는 현재 상태 스냅샷. */
 export interface DashboardState {
@@ -57,6 +62,51 @@ export interface DashboardState {
   pages: Array<{ id: string; url: string }> | null;
   /** 마지막으로 생성된 attachUrl (없으면 null). TOTP at= 코드는 이 안에 캡슐화. */
   attachUrl: string | null;
+  /**
+   * 현재 세션 환경 — /attach 스캔 절차·체크리스트 카피 분기 + 상단 환경 라벨 (#468).
+   *
+   * - `'relay-mobile'` → sandbox family (환경 2: launcher PWA 절차, 토스 앱·_deploymentId 없음)
+   * - `'relay-dev'`    → intoss family (환경 3: 토스 앱 deep-link 절차)
+   * - `'relay-live'`   → intoss family + LIVE read-only 한 줄 (환경 4)
+   * - `'mock'` / 미지정 → intoss family, 환경 라벨 없음 (환경 1은 /attach 표면이
+   *   없어 사실상 도달 불가 — legacy 카피 유지 fallback)
+   *
+   * 호출처는 자기 mode를 명시적으로 전달한다: debug-server는 active connection에서
+   * `deriveEnvironment(...)`로 파생, unplugin tunnel 대시보드는 `'relay-mobile'` 고정.
+   */
+  mode?: McpEnvironment;
+}
+
+/** mode → 어느 precompiled attach chrome family를 쓰는가 (#468). */
+function attachFamilyForMode(mode: McpEnvironment | undefined): AttachChromeFamily {
+  return mode === 'relay-mobile' ? 'sandbox' : 'intoss';
+}
+
+/**
+ * mode → 페이지 상단 환경 라벨 HTML (`__MODE_LABEL__` 토큰 채움, #468).
+ * 사용자가 fidelity 사다리의 어느 겹에 있는지 즉시 알게 하는 환경 가시화 배지.
+ * mode 미지정/'mock'은 빈 문자열 — 알 수 없는 환경을 거짓으로 라벨링하지 않는다.
+ */
+function buildModeLabel(
+  mode: McpEnvironment | undefined,
+  s: ReturnType<typeof resolveLocaleStrings>,
+): string {
+  let label: string;
+  switch (mode) {
+    case 'relay-mobile':
+      label = s('attach.mode.sandbox');
+      break;
+    case 'relay-dev':
+      label = s('attach.mode.intossDev');
+      break;
+    case 'relay-live':
+      label = s('attach.mode.intossLive');
+      break;
+    case 'mock':
+    case undefined:
+      return '';
+  }
+  return `<p class="mode-label">${escapeHtml(label)}</p>`;
 }
 
 export interface QrHttpServer {
@@ -389,8 +439,14 @@ function buildSseScript(strings: SseScriptStrings): string {
  *
  * 동적 파트:
  *   - __QR_DATA_URL__     : base64 data URL (QR 이미지)
- *   - __SAFE_LABEL__      : HTML-escaped deploymentId label
+ *   - __SAFE_LABEL__      : HTML-escaped deploymentId label (intoss family에만 존재)
  *   - __SAFE_ATTACH_URL__ : HTML-escaped attach URL (TOTP at= 코드 포함 — 의도된 전달)
+ *   - __MODE_LABEL__      : 환경 배지 (`<p class="mode-label">…</p>` 또는 빈 문자열, #468)
+ *   - __LIVE_FAQ__        : 환경 4 LIVE read-only `<li>` 또는 빈 문자열 (intoss family에만 존재)
+ *
+ * mode-aware 분기 (#468): mode가 `relay-mobile`이면 sandbox family chrome(launcher
+ * PWA 절차), 그 외는 intoss family chrome(토스 앱 절차)을 선택한다. `relay-live`는
+ * intoss chrome에 LIVE read-only 라인을 추가한다.
  *
  * SSE 스크립트도 주입 — `#attach-section` hook이 있으면 `/events` push 때 QR이
  * `/qr.png?u=<fresh attachUrl>`로 자동 갱신된다. `#tunnel-status`·`#pages-list` 등
@@ -405,12 +461,19 @@ function buildAttachHtml(
   locale: 'ko' | 'en',
   path = '/attach',
   params = new URLSearchParams(),
+  mode?: McpEnvironment,
 ): string {
   const s = resolveLocaleStrings(locale);
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
-  const chrome = attachChromeByLocale[locale];
+  const family = attachFamilyForMode(mode);
+  // 환경 4 전용 LIVE read-only 라인 — i18n 문자열은 신뢰된 빌드타임 카피(strong/code
+  // 인라인 HTML 포함)라 verbatim 주입한다 (다른 FAQ 항목과 동일한 취급).
+  const liveFaq = mode === 'relay-live' ? `<li>${s('attach.intoss.faq.liveReadOnly')}</li>` : '';
+  const chrome = attachChromeByLocale[locale][family];
   const filled = chrome
     .replaceAll('__LANG_SWITCHER__', langSwitcher)
+    .replaceAll('__MODE_LABEL__', buildModeLabel(mode, s))
+    .replaceAll('__LIVE_FAQ__', liveFaq)
     .replaceAll('__QR_DATA_URL__', qrDataUrl)
     .replaceAll('__SAFE_LABEL__', safeLabel)
     .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl);
@@ -548,12 +611,24 @@ export async function startQrHttpServer(
         // best-effort
       }
 
+      // 현재 세션 mode — 카피 분기(#468). getDashboardState 미주입(legacy) 시 undefined
+      // → intoss family + 환경 라벨 없음 fallback.
+      const mode = getDashboardState?.().mode;
+
       // QR을 base64 data URL로 인라인 생성 — 외부 fetch 없이 self-contained HTML.
       QRCode.toDataURL(attachUrl, { type: 'image/png', errorCorrectionLevel: 'M' })
         .then((dataUrl: string) => {
           const safeLabel = escapeHtml(deploymentIdLabel);
           const safeAttachUrl = escapeHtml(attachUrl);
-          const html = buildAttachHtml(dataUrl, safeLabel, safeAttachUrl, locale, path, params);
+          const html = buildAttachHtml(
+            dataUrl,
+            safeLabel,
+            safeAttachUrl,
+            locale,
+            path,
+            params,
+            mode,
+          );
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-store',

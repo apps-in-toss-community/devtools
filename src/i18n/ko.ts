@@ -236,23 +236,49 @@ export const ko = {
   'dashboard.url.copied': '복사됨',
 
   // qr-http-server — attach page (server-side, Node, per-request)
+  // 카피는 세션 mode별로 sandbox(환경 2) / intoss(환경 3·4) family로 분기한다 (#468).
   'attach.title': 'AIT 디버그 세션 — QR 스캔',
   'attach.deployment': 'deployment: {label}',
   'attach.steps.section': '스캔 절차',
-  'attach.step1': '토스 앱을 실행하세요.',
-  'attach.step2': '폰 카메라 앱으로 QR 코드를 스캔하세요.',
-  'attach.step3': '팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.',
-  'attach.step4': '미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.',
   'attach.faq.section': '진단 체크리스트',
-  'attach.faq.appNotOpen':
-    '<strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)',
-  'attach.faq.prepare':
-    '<strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인',
-  'attach.faq.chii':
-    '<strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인',
-  'attach.faq.totp':
-    '<strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인',
   'attach.url.section': 'URL (fallback)',
+
+  // qr-http-server — attach page mode 라벨 (환경 가시화, #468)
+  'attach.mode.sandbox': '환경 2 — AITC Sandbox PWA',
+  'attach.mode.intossDev': '환경 3 — intoss-private relay dev',
+  'attach.mode.intossLive': '환경 4 — intoss live relay debug',
+
+  // attach page — sandbox family (환경 2: launcher PWA, 토스 앱·_deploymentId 개념 없음)
+  'attach.sandbox.step1':
+    '홈 화면의 launcher PWA 아이콘으로 실행하세요 (Safari 주소창이 보이면 standalone이 아닙니다).',
+  'attach.sandbox.step2':
+    'launcher 안의 <strong>"QR 카메라로 스캔"</strong>으로 이 QR 코드를 스캔하세요.',
+  'attach.sandbox.step3': '미니앱이 풀스크린으로 열리고 디버그 세션이 자동으로 attach됩니다.',
+  'attach.sandbox.faq.notInstalled':
+    '<strong>launcher가 설치돼 있지 않은 경우</strong> — <code>devtools.aitc.dev/launcher/</code>를 한 번 열어 홈 화면에 추가하세요',
+  'attach.sandbox.faq.cameraApp':
+    '<strong>카메라 앱으로 스캔하면 Safari 탭으로 열립니다 (하단 탭 바 노출)</strong> — launcher 아이콘으로 다시 실행해 인앱 스캔을 사용하세요',
+  'attach.sandbox.faq.totp':
+    '<strong>QR이 만료된 경우 (TOTP 30초)</strong> — 새 QR을 다시 스캔하세요',
+  'attach.sandbox.faq.chii':
+    '<strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인',
+
+  // attach page — intoss family (환경 3·4: 토스 앱 deep-link)
+  'attach.intoss.step1': '토스 앱을 실행하세요.',
+  'attach.intoss.step2': '폰 카메라 앱으로 QR 코드를 스캔하세요.',
+  'attach.intoss.step3': '팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.',
+  'attach.intoss.step4': '미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.',
+  'attach.intoss.faq.appNotOpen':
+    '<strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)',
+  'attach.intoss.faq.prepare':
+    '<strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인',
+  'attach.intoss.faq.chii':
+    '<strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인',
+  'attach.intoss.faq.totp':
+    '<strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인',
+  // 환경 4(relay-live) 전용 — intoss family에 런타임으로 한 줄 추가된다 (#468).
+  'attach.intoss.faq.liveReadOnly':
+    '<strong>LIVE 세션은 read-only입니다</strong> — <code>call_sdk</code>/<code>evaluate</code> 실행에는 명시적 <code>confirm</code>이 필요합니다',
 
   // Launcher PWA
   'launcher.title': 'AITC DevTools Launcher',
