@@ -65,13 +65,102 @@ import type { Duplex } from 'node:stream';
 // chii's tree — same principle as the ajv incident): the reject path below
 // needs `WebSocketServer.handleUpgrade` to complete a handshake we are about
 // to close with a named code.
-import { WebSocketServer } from 'ws';
+import { type WebSocket, WebSocketServer } from 'ws';
 import {
   RELAY_AUTH_REJECT_CLOSE_CODE,
   RELAY_AUTH_REJECT_REASON,
 } from '../shared/relay-auth-close.js';
 
 const require = createRequire(import.meta.url);
+
+/**
+ * WS keepalive ping interval (ms).
+ *
+ * Cloudflare proxied connections are dropped after ~100 s of no traffic.
+ * 45 s comfortably fits inside that window and lets both the phone-target leg
+ * and the daemon-client leg survive idle CDP sessions.
+ */
+const DEFAULT_KEEPALIVE_INTERVAL_MS = 45_000;
+
+/**
+ * Minimal shape of chii's internal WebSocketServer instance.
+ *
+ * `chii/server/lib/WebSocketServer` holds the real `ws.Server` in `_wss`.
+ * `_wss.clients` is the standard `Set<WebSocket>` tracking all live sockets.
+ * We access this to ping every connected socket — no chii internals beyond
+ * this single field are touched.
+ */
+interface ChiiInternalWss {
+  _wss: { clients: Set<WebSocket> };
+  start(server: import('node:http').Server): void;
+}
+
+/**
+ * Loads chii's internal WebSocketServer class and returns it together with a
+ * flag indicating whether the real class was found.
+ *
+ * Returns `null` if the internal path is not resolvable (future chii release
+ * changes the layout) — callers skip keepalive gracefully.
+ */
+function tryLoadChiiWssClass(): (new () => ChiiInternalWss) | null {
+  try {
+    const mod: unknown = require('chii/server/lib/WebSocketServer');
+    if (typeof mod === 'function') {
+      return mod as new () => ChiiInternalWss;
+    }
+  } catch {
+    // Module not found or shape changed — keepalive will be skipped.
+  }
+  return null;
+}
+
+/**
+ * Calls `chii.start()` and returns the chii `WebSocketServer` instance that
+ * was constructed during the call.
+ *
+ * How: `chii/server/index.js`'s `start()` creates `new WebSocketServer()`
+ * where `WebSocketServer` is captured from `require('./lib/WebSocketServer')`
+ * at module load time. The class reference is stable, so we can temporarily
+ * patch `ChiiWssClass.prototype.start` — which runs *on the instance* —
+ * to record `this` before the original `start` runs.
+ *
+ * The patch is installed before `chii.start()` and removed (via `finally`)
+ * immediately after, so concurrent `startChiiRelay` calls nest correctly: each
+ * call's patch overrides the previous in the prototype chain for the duration
+ * of its own `chii.start()` call, restoring the prior descriptor on exit.
+ *
+ * If `ChiiWssClass` is null (internal path changed in a future chii release),
+ * `chii.start()` runs unpatched and the function returns null — callers skip
+ * keepalive gracefully without affecting relay correctness.
+ */
+async function startChiiWithCapture(
+  chii: ChiiServerModule,
+  startOptions: Parameters<ChiiServerModule['start']>[0],
+  ChiiWssClass: (new () => ChiiInternalWss) | null,
+): Promise<ChiiInternalWss | null> {
+  if (ChiiWssClass === null) {
+    await chii.start(startOptions);
+    return null;
+  }
+
+  let captured: ChiiInternalWss | null = null;
+  const proto = ChiiWssClass.prototype as ChiiInternalWss;
+  const originalStart = proto.start;
+
+  proto.start = function (this: ChiiInternalWss, server) {
+    captured = this;
+    return originalStart.call(this, server);
+  };
+
+  try {
+    await chii.start(startOptions);
+  } finally {
+    // Always restore — even if chii.start() throws.
+    proto.start = originalStart;
+  }
+
+  return captured;
+}
 
 /** `chii/server` is CommonJS and shipped without TypeScript types. */
 interface ChiiServerModule {
@@ -189,6 +278,21 @@ export interface StartChiiRelayOptions {
    * by the callback are swallowed so observability can never break the gate.
    */
   onAuthReject?: (event: RelayAuthRejectEvent) => void;
+  /**
+   * WS protocol ping interval in milliseconds (issue #483).
+   *
+   * The relay sends a ping frame to every connected WebSocket at this interval
+   * so that Cloudflare's proxied-connection idle timer (~100 s) is reset for
+   * both the phone-target leg and the daemon-client leg. The peer responds with
+   * a pong automatically (browser / ws library behaviour) — no application
+   * code change is needed on either end.
+   *
+   * Default: 45 000 ms (45 s). Set to 0 to disable keepalive entirely.
+   *
+   * Pass a small value in tests to avoid real-time waits — pair with fake
+   * timers (`vi.useFakeTimers()`) or a short sleep.
+   */
+  keepaliveIntervalMs?: number;
 }
 
 /**
@@ -211,6 +315,10 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
   const requestedPort = options.port ?? 0;
   const host = options.host ?? '127.0.0.1';
   const { verifyAuth, onAuthReject } = options;
+  const keepaliveIntervalMs =
+    options.keepaliveIntervalMs !== undefined
+      ? options.keepaliveIntervalMs
+      : DEFAULT_KEEPALIVE_INTERVAL_MS;
 
   const httpServer = createServer();
 
@@ -267,11 +375,25 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
     });
   }
 
-  const chii = loadChiiServer();
-  // Passing an existing `server` makes chii attach its Koa handler + WS upgrade
-  // to our HTTP server rather than creating its own listener.
-  // Note: port/domain here are display-only inside chii — the TCP bind is ours.
-  await chii.start({ server: httpServer, domain: `${host}:${requestedPort}`, port: requestedPort });
+  // WS keepalive (issue #483): capture chii's WebSocketServer instance so we
+  // can read `_wss.clients` and send periodic ping frames.
+  //
+  // `chii/server/index.js`'s start() creates `new WebSocketServer()` but
+  // doesn't expose the instance. We capture it by temporarily patching
+  // `ChiiWssClass.prototype.start` — that method runs on the instance, so
+  // `this` gives us the reference we need.
+  //
+  // The patch is installed for the duration of one `chii.start()` call and
+  // removed in a `finally` block, so concurrent relays nest correctly. If the
+  // internal path changes in a future chii release (tryLoadChiiWssClass returns
+  // null), chii.start() runs unpatched and the keepalive loop is silently
+  // skipped — relay correctness is unaffected.
+  const chiiWssClass = keepaliveIntervalMs > 0 ? tryLoadChiiWssClass() : null;
+  const capturedChiiWss = await startChiiWithCapture(
+    loadChiiServer(),
+    { server: httpServer, domain: `${host}:${requestedPort}`, port: requestedPort },
+    chiiWssClass,
+  );
 
   // WS upgrade gate (issue #478, accept-then-close): take over the upgrade
   // chain AFTER chii.start() has registered chii's own upgrade listener.
@@ -330,11 +452,38 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
     });
   });
 
+  // WS keepalive interval (issue #483): send a ping frame to every connected
+  // socket on each tick. Both the phone-target leg and the daemon-client leg
+  // terminate as WebSocket connections on this relay, so pinging chii's
+  // `_wss.clients` covers both.
+  //
+  // Per-ping log output is intentionally absent — pings happen every 45 s and
+  // logging each one would flood the MCP console without adding signal.
+  //
+  // `ws` clients respond to ping frames with pong automatically (RFC 6455 §5.5)
+  // — no application code is needed on either end.
+  let keepaliveHandle: ReturnType<typeof setInterval> | null = null;
+  if (keepaliveIntervalMs > 0 && capturedChiiWss !== null) {
+    const chiiWss = capturedChiiWss;
+    keepaliveHandle = setInterval(() => {
+      for (const client of chiiWss._wss.clients) {
+        // readyState 1 = OPEN (ws library constant). Only ping live sockets.
+        if (client.readyState === 1) {
+          client.ping();
+        }
+      }
+    }, keepaliveIntervalMs);
+  }
+
   return {
     port: actualPort,
     baseUrl: `http://${host}:${actualPort}`,
     close: () =>
       new Promise<void>((resolve) => {
+        if (keepaliveHandle !== null) {
+          clearInterval(keepaliveHandle);
+          keepaliveHandle = null;
+        }
         httpServer.close(() => resolve());
       }),
   };
