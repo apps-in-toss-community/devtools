@@ -1,7 +1,8 @@
 // Pure launcher entry-routing logic — no DOM, no library imports — so it can be
 // unit-tested under vitest (jsdom) without pulling `qr-scanner` /
-// `@khmyznikov/pwa-install` (which top-level main.ts imports and which don't run
-// in jsdom). main.ts feeds the observed environment in and acts on the decision.
+// `@khmyznikov/pwa-install` (which Launcher.tsx / main.tsx import and which
+// don't run in jsdom). Launcher.tsx feeds the observed environment in and acts
+// on the decision.
 
 /** What the launcher should show on first load. */
 export type LauncherEntry =

@@ -22,15 +22,32 @@ function base(overrides: Partial<ViewportMetrics> = {}): ViewportMetrics {
 }
 
 describe('detectLetterbox', () => {
-  it('detects the iOS 26 standalone letterbox signature (#469 observed values)', () => {
+  it('detects the iOS 26 standalone letterbox signature (#469 Simulator values)', () => {
     // Observed: web view mis-sized to screen − statusBar(47), top-anchored;
-    // the page never reaches the home indicator → safe-area-bottom 0.
+    // the Simulator reports safe-area-bottom 0 in this state.
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
         visualViewportHeight: 797,
         safeAreaTop: 0,
         safeAreaBottom: 0,
+      }),
+    );
+    expect(verdict.detected).toBe(true);
+    expect(verdict.shortfallPx).toBe(47);
+  });
+
+  it('detects despite the iOS 26 real-device phantom bottom inset (#475 observed values)', () => {
+    // Real-device CDP measurement: same letterboxed geometry as above
+    // (innerHeight 797 vs screen 844 — window never reaches the screen
+    // bottom), yet env(safe-area-inset-bottom) reports 34. The inset must not
+    // veto detection.
+    const verdict = detectLetterbox(
+      base({
+        innerHeight: 797,
+        visualViewportHeight: 797,
+        safeAreaTop: 0,
+        safeAreaBottom: 34,
       }),
     );
     expect(verdict.detected).toBe(true);
@@ -58,10 +75,13 @@ describe('detectLetterbox', () => {
     expect(verdict.shortfallPx).toBe(0);
   });
 
-  it('does NOT detect in healthy standalone, below-status-bar layout (safe-area-bottom > 0)', () => {
+  it('flags the healthy below-status-bar standalone layout too (accepted trade-off, #475)', () => {
     // Manifest-standalone without black-translucent: the web view starts below
-    // the status bar (shortfall ≈ 59) but still reaches the screen bottom, so
-    // the home-indicator inset is reported.
+    // the status bar (shortfall ≈ 59) but still reaches the screen bottom.
+    // Pre-#475 the reported bottom inset (34) distinguished this layout from a
+    // letterbox; the real-device phantom inset removed that signal, so from
+    // inside the page the two are indistinguishable and this healthy layout is
+    // now flagged. Accepted: the label is diagnostic-only.
     const verdict = detectLetterbox(
       base({
         innerHeight: 785,
@@ -70,7 +90,7 @@ describe('detectLetterbox', () => {
         safeAreaBottom: 34,
       }),
     );
-    expect(verdict.detected).toBe(false);
+    expect(verdict.detected).toBe(true);
     expect(verdict.shortfallPx).toBe(59);
   });
 
@@ -137,12 +157,14 @@ describe('detectLetterbox', () => {
     expect(verdict.shortfallPx).toBe(47);
   });
 
-  it('does NOT detect when the shortfall is explained by a reported bottom inset', () => {
-    // Any non-zero safe-area-bottom means the page viewport reaches the
-    // home-indicator region — the strip below is system UI, not a letterbox.
+  it('ignores the reported bottom inset entirely (#475 phantom inset)', () => {
+    // Pre-#475 any non-zero safe-area-bottom vetoed detection. Real iOS 26
+    // devices report a phantom inset in the letterboxed state, so the inset
+    // value no longer participates in the verdict at all.
     const verdict = detectLetterbox(
       base({ innerHeight: 797, visualViewportHeight: 797, safeAreaBottom: 1 }),
     );
-    expect(verdict.detected).toBe(false);
+    expect(verdict.detected).toBe(true);
+    expect(verdict.shortfallPx).toBe(47);
   });
 });

@@ -29,7 +29,7 @@ type PwaInstallElement = HTMLElement & {
 };
 
 // ---------------------------------------------------------------------------
-// Pure helpers (same logic as the original main.ts)
+// Pure helpers
 // ---------------------------------------------------------------------------
 
 function isStandalone(): boolean {
@@ -217,10 +217,12 @@ export function Launcher(): React.JSX.Element {
 
   const [diagOpen, setDiagOpen] = useState(false);
   const [metrics, setMetrics] = useState<ViewportMetrics | null>(null);
+  const [chromeDeltaPx, setChromeDeltaPx] = useState<number | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pwaInstallRef = useRef<PwaInstallElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
+  const bottomChromeRef = useRef<HTMLDivElement | null>(null);
 
   // Keep a stable ref to pendingUrl so event handlers can read the latest
   // value without becoming stale closures.
@@ -397,6 +399,17 @@ export function Launcher(): React.JSX.Element {
   }, []);
 
   const letterbox = metrics ? detectLetterbox(metrics) : null;
+
+  // On-device ICB discriminator (#475): Δ between window.innerHeight and the
+  // bottom chrome's resolved bottom edge. A healthy fixed anchor yields
+  // Δ ≈ 12 (+ inset when applied); a dropped `bottom` declaration or a
+  // mis-resolved ICB shows up here without a tethered debugger.
+  useEffect(() => {
+    if (!diagOpen || !metrics) return;
+    const el = bottomChromeRef.current;
+    if (!el) return;
+    setChromeDeltaPx(Math.round(window.innerHeight - el.getBoundingClientRect().bottom));
+  }, [diagOpen, metrics]);
 
   // ---------------------------------------------------------------------------
   // Scanner start
@@ -734,138 +747,159 @@ export function Launcher(): React.JSX.Element {
         </div>
       )}
 
-      <button
-        type="button"
-        id="rescan"
-        data-testid="launcher-rescan-btn"
-        onClick={handleRescan}
-        style={{
-          position: 'fixed',
-          right: 'max(12px, env(safe-area-inset-right))',
-          bottom: 'max(12px, env(safe-area-inset-bottom))',
-          zIndex: 10,
-          padding: '8px 12px',
-          fontSize: '12px',
-          borderRadius: '999px',
-          background: 'rgba(20,22,26,.85)',
-          color: '#e8eaed',
-          border: '1px solid #2a2e33',
-          display: screen === 'live' ? 'block' : 'none',
-          backdropFilter: 'blur(4px)',
-        }}
-      >
-        {t('launcher.rescanBtn')}
-      </button>
-
       {/*
-        Letterbox diagnosis label (#469): when the runtime geometry matches the
-        iOS standalone letterbox signature (standalone + height shortfall +
-        safe-area-bottom 0 — see letterbox.ts), name the strip in-page. The
-        band itself is OUTSIDE the window (OS-painted manifest background_color)
-        so this label is the only way the page can explain it.
+        Bottom chrome (#475): RESCAN, diag FAB, diag panel and the letterbox
+        label live in ONE fixed container — vertical spacing comes from flex
+        flow, not per-element calc() bottom offsets, so the pieces can never
+        overlap regardless of how the engine resolves any single declaration
+        (real-device WebKit was observed dropping the calc() anchors).
+        pointerEvents none/auto keeps the full-width strip from stealing
+        touches meant for the iframe underneath.
       */}
-      {letterbox?.detected && (
-        <div
-          role="status"
-          data-testid="launcher-letterbox-label"
-          style={{
-            position: 'fixed',
-            left: '50%',
-            bottom: 'calc(max(12px, env(safe-area-inset-bottom)) + 48px)',
-            transform: 'translateX(-50%)',
-            zIndex: 30,
-            maxWidth: 'min(92vw, 420px)',
-            padding: '8px 12px',
-            fontSize: '12px',
-            lineHeight: 1.5,
-            textAlign: 'center',
-            borderRadius: '10px',
-            background: 'rgba(20,22,26,.92)',
-            border: '1px solid #fdd663',
-            color: '#fdd663',
-            backdropFilter: 'blur(4px)',
-          }}
-        >
-          {t('launcher.letterboxDetected', { pt: letterbox.shortfallPx })}
-        </div>
-      )}
-
-      {/* Viewport diagnostics FAB + panel (#469) — always available so the
-          measured values can be read on-device without a tethered debugger. */}
-      <button
-        type="button"
-        id="diag-toggle"
-        data-testid="launcher-diag-fab"
-        aria-expanded={diagOpen}
-        title={t('launcher.diagTitle')}
-        onClick={() => setDiagOpen((open) => !open)}
+      <div
+        ref={bottomChromeRef}
         style={{
           position: 'fixed',
           left: 'max(12px, env(safe-area-inset-left))',
-          bottom: 'max(12px, env(safe-area-inset-bottom))',
-          zIndex: 10,
-          padding: '8px 12px',
-          fontSize: '12px',
-          borderRadius: '999px',
-          background: 'rgba(20,22,26,.85)',
-          color: '#9aa0a6',
-          border: '1px solid #2a2e33',
-          backdropFilter: 'blur(4px)',
+          right: 'max(12px, env(safe-area-inset-right))',
+          // Letterboxed window never reaches the home indicator, yet real
+          // iOS 26 still reports a phantom bottom inset (#475) — skip it.
+          bottom: letterbox?.detected ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
+          zIndex: 30,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'stretch',
+          gap: '10px',
+          pointerEvents: 'none',
         }}
       >
-        {t('launcher.diagFab')}
-      </button>
+        {/*
+          Letterbox diagnosis label (#469): when the runtime geometry matches
+          the iOS standalone letterbox signature (standalone + height shortfall
+          — see letterbox.ts), name the strip in-page. The band itself is
+          OUTSIDE the window (OS-painted manifest background_color) so this
+          label is the only way the page can explain it.
+        */}
+        {letterbox?.detected && (
+          <div
+            role="status"
+            data-testid="launcher-letterbox-label"
+            style={{
+              alignSelf: 'center',
+              pointerEvents: 'auto',
+              maxWidth: 'min(92vw, 420px)',
+              padding: '8px 12px',
+              fontSize: '12px',
+              lineHeight: 1.5,
+              textAlign: 'center',
+              borderRadius: '10px',
+              background: 'rgba(20,22,26,.92)',
+              border: '1px solid #fdd663',
+              color: '#fdd663',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {t('launcher.letterboxDetected', { pt: letterbox.shortfallPx })}
+          </div>
+        )}
 
-      {diagOpen && metrics && (
-        <div
-          data-testid="launcher-diag-panel"
-          style={{
-            position: 'fixed',
-            left: 'max(12px, env(safe-area-inset-left))',
-            bottom: 'calc(max(12px, env(safe-area-inset-bottom)) + 44px)',
-            zIndex: 30,
-            minWidth: '220px',
-            padding: '12px 14px',
-            borderRadius: '12px',
-            background: 'rgba(20,22,26,.95)',
-            border: '1px solid #2a2e33',
-            backdropFilter: 'blur(4px)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: '11px',
-            color: '#e8eaed',
-          }}
-        >
-          <div style={{ fontWeight: 600, fontSize: '12px' }}>{t('launcher.diagTitle')}</div>
-          {(
-            [
-              ['inner', 'window.inner', `${metrics.innerWidth} × ${metrics.innerHeight}`],
-              ['screen', 'screen', `${metrics.screenWidth} × ${metrics.screenHeight}`],
+        {diagOpen && metrics && (
+          <div
+            data-testid="launcher-diag-panel"
+            style={{
+              alignSelf: 'flex-start',
+              pointerEvents: 'auto',
+              minWidth: '220px',
+              padding: '12px 14px',
+              borderRadius: '12px',
+              background: 'rgba(20,22,26,.95)',
+              border: '1px solid #2a2e33',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '6px',
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              fontSize: '11px',
+              color: '#e8eaed',
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: '12px' }}>{t('launcher.diagTitle')}</div>
+            {(
               [
-                'vvh',
-                'visualViewport.h',
-                metrics.visualViewportHeight === null
-                  ? '–'
-                  : String(Math.round(metrics.visualViewportHeight)),
-              ],
-              ['safearea', 'safe-area t/b', `${metrics.safeAreaTop} / ${metrics.safeAreaBottom}`],
-              [
-                'standalone',
-                'standalone',
-                metrics.standalone ? t('launcher.diagYes') : t('launcher.diagNo'),
-              ],
-              ['shortfall', 'shortfall', `${letterbox?.shortfallPx ?? 0}px`],
-            ] as const
-          ).map(([id, label, value]) => (
-            <div key={id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-              <span style={{ color: '#9aa0a6' }}>{label}</span>
-              <span data-testid={`launcher-diag-${id}`}>{value}</span>
-            </div>
-          ))}
+                ['inner', 'window.inner', `${metrics.innerWidth} × ${metrics.innerHeight}`],
+                ['screen', 'screen', `${metrics.screenWidth} × ${metrics.screenHeight}`],
+                [
+                  'vvh',
+                  'visualViewport.h',
+                  metrics.visualViewportHeight === null
+                    ? '–'
+                    : String(Math.round(metrics.visualViewportHeight)),
+                ],
+                ['safearea', 'safe-area t/b', `${metrics.safeAreaTop} / ${metrics.safeAreaBottom}`],
+                [
+                  'standalone',
+                  'standalone',
+                  metrics.standalone ? t('launcher.diagYes') : t('launcher.diagNo'),
+                ],
+                ['shortfall', 'shortfall', `${letterbox?.shortfallPx ?? 0}px`],
+                ['chromedelta', 'chrome Δ', chromeDeltaPx === null ? '–' : `${chromeDeltaPx}px`],
+              ] as const
+            ).map(([id, label, value]) => (
+              <div
+                key={id}
+                style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}
+              >
+                <span style={{ color: '#9aa0a6' }}>{label}</span>
+                <span data-testid={`launcher-diag-${id}`}>{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Viewport diagnostics FAB (#469) — always available so the measured
+            values can be read on-device without a tethered debugger. */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+          <button
+            type="button"
+            id="diag-toggle"
+            data-testid="launcher-diag-fab"
+            aria-expanded={diagOpen}
+            title={t('launcher.diagTitle')}
+            onClick={() => setDiagOpen((open) => !open)}
+            style={{
+              pointerEvents: 'auto',
+              padding: '8px 12px',
+              fontSize: '12px',
+              borderRadius: '999px',
+              background: 'rgba(20,22,26,.85)',
+              color: '#9aa0a6',
+              border: '1px solid #2a2e33',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {t('launcher.diagFab')}
+          </button>
+          <button
+            type="button"
+            id="rescan"
+            data-testid="launcher-rescan-btn"
+            onClick={handleRescan}
+            style={{
+              pointerEvents: 'auto',
+              padding: '8px 12px',
+              fontSize: '12px',
+              borderRadius: '999px',
+              background: 'rgba(20,22,26,.85)',
+              color: '#e8eaed',
+              border: '1px solid #2a2e33',
+              display: screen === 'live' ? 'block' : 'none',
+              backdropFilter: 'blur(4px)',
+            }}
+          >
+            {t('launcher.rescanBtn')}
+          </button>
         </div>
-      )}
+      </div>
     </div>
   );
 }
