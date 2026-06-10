@@ -3,36 +3,57 @@
  *
  * BUILD-TIME ONLY. See DashboardChrome.tsx for the rationale.
  *
+ * Mode families (#468): the scan steps + troubleshooting checklist differ per
+ * session mode, so TWO chrome variants are precompiled per locale:
+ *   - `sandbox` — env 2 (relay-mobile, AITC Sandbox PWA): launcher PWA flow.
+ *     No Toss app / `_deploymentId` concepts — the deployment label row is
+ *     omitted entirely.
+ *   - `intoss`  — env 3/4 (relay-dev / relay-live): Toss app deep-link flow.
+ *     Env 4 appends one LIVE read-only line at runtime via `__LIVE_FAQ__`.
+ *
  * Token-fill vs runtime assembly:
- *   - `attachChrome` (exported from the generated module): full static HTML
- *     rendered at build time. Contains NO per-request values.
+ *   - `attachChromeByLocale[locale][family]` (exported from the generated
+ *     module): full static HTML rendered at build time. Contains NO
+ *     per-request values.
  *   - Per-request tokens (`__QR_DATA_URL__`, `__SAFE_LABEL__`,
- *     `__SAFE_ATTACH_URL__`) are replaced by qr-http-server.ts at runtime.
- *   - The FAQ list items contain HTML tags (strong/code). They are rendered as
- *     literal HTML in the precompiled chrome. qr-http-server.ts injects them
- *     verbatim via dangerouslySetInnerHTML in the generated module.
+ *     `__SAFE_ATTACH_URL__`, `__MODE_LABEL__`, `__LIVE_FAQ__`) are replaced by
+ *     qr-http-server.ts at runtime.
+ *   - The steps/FAQ list items contain HTML tags (strong/code). They are
+ *     rendered as literal HTML in the precompiled chrome. qr-http-server.ts
+ *     injects them verbatim via dangerouslySetInnerHTML in the generated module.
  *
  * SECRET-HANDLING: TOTP at= codes ride inside __SAFE_ATTACH_URL__ (intentional
  * transport); no other per-request sensitive values appear here.
  */
 
+/** Copy family of the attach page chrome (#468). */
+export type AttachChromeFamily = 'sandbox' | 'intoss';
+
 interface AttachHtmlProps {
   /** ko or en — used in <html lang="…"> */
   lang: string;
+  /** Which copy family this chrome carries (env 2 vs env 3/4). */
+  family: AttachChromeFamily;
   /** Resolved strings for all static labels on the attach page. */
   strings: {
     title: string;
-    deploymentPrefix: string;
+    /**
+     * `deployment: ` label prefix — intoss family only. The sandbox family has
+     * no `_deploymentId` concept, so the label row is omitted (#468).
+     */
+    deploymentPrefix?: string;
     stepsSection: string;
-    step1: string;
-    step2: string;
-    step3: string;
-    step4: string;
+    /**
+     * Family-specific scan steps, in order. May contain inline HTML
+     * (strong/code) — trusted build-time copy, never user input.
+     */
+    steps: string[];
     faqSection: string;
-    faqAppNotOpen: string;
-    faqPrepare: string;
-    faqChii: string;
-    faqTotp: string;
+    /**
+     * Family-specific troubleshooting checklist items, in order. May contain
+     * inline HTML (strong/code) — trusted build-time copy, never user input.
+     */
+    faqItems: string[];
     urlSection: string;
     /** Copy button labels. */
     copy: string;
@@ -46,10 +67,12 @@ interface AttachHtmlProps {
  * Static attach page chrome. All dynamic slots are `__PLACEHOLDER__` strings
  * that qr-http-server.ts fills at runtime:
  *   - `__QR_DATA_URL__`    — base64 data URL for the QR image
- *   - `__SAFE_LABEL__`     — HTML-escaped deploymentId label
+ *   - `__SAFE_LABEL__`     — HTML-escaped deploymentId label (intoss family only)
  *   - `__SAFE_ATTACH_URL__` — HTML-escaped attach URL (TOTP at= inside, intentional)
+ *   - `__MODE_LABEL__`     — environment badge (`<p class="mode-label">…</p>`), or ''
+ *   - `__LIVE_FAQ__`       — env-4 LIVE read-only `<li>`, or '' (intoss family only)
  */
-export function AttachHtml({ lang, strings }: AttachHtmlProps) {
+export function AttachHtml({ lang, family, strings }: AttachHtmlProps) {
   return (
     <html lang={lang}>
       <head>
@@ -68,6 +91,11 @@ body {
   gap: 1.5rem;
 }
 h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
+.mode-label {
+  font-size: 0.78rem; font-weight: 600; color: #79c0ff;
+  background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+  padding: 0.25rem 0.75rem; margin: 0;
+}
 .label { font-size: 0.8rem; opacity: 0.5; font-family: monospace; margin: 0; }
 img.qr {
   width: min(90vw, 360px); height: auto;
@@ -107,10 +135,17 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
       </head>
       <body>
         <h1>{strings.title}</h1>
+        {/* __MODE_LABEL__ — environment badge filled at runtime (mode-aware, #468) */}
+        {'__MODE_LABEL__'}
         {/* __LANG_SWITCHER__ is filled at runtime by qr-http-server.ts */}
         {'__LANG_SWITCHER__'}
-        {/* __SAFE_LABEL__ filled at runtime */}
-        <p className="label">{strings.deploymentPrefix}__SAFE_LABEL__</p>
+        {/* __SAFE_LABEL__ filled at runtime — intoss family only (#468: env 2 has no deploymentId) */}
+        {family === 'intoss' ? (
+          <p className="label">
+            {strings.deploymentPrefix}
+            __SAFE_LABEL__
+          </p>
+        ) : null}
         {/* #attach-section: SSE push가 QR img src만 교체. url-box는 #url-section에 분리 관리. */}
         <div id="attach-section">
           {/* __QR_DATA_URL__ filled at runtime */}
@@ -120,10 +155,9 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
         <section>
           <h2>{strings.stepsSection}</h2>
           <ol>
-            <li>{strings.step1}</li>
-            <li>{strings.step2}</li>
-            <li dangerouslySetInnerHTML={{ __html: strings.step3 }} />
-            <li>{strings.step4}</li>
+            {strings.steps.map((step) => (
+              <li key={step} dangerouslySetInnerHTML={{ __html: step }} />
+            ))}
           </ol>
         </section>
 
@@ -132,10 +166,11 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
         <section>
           <h2>{strings.faqSection}</h2>
           <ul>
-            <li dangerouslySetInnerHTML={{ __html: strings.faqAppNotOpen }} />
-            <li dangerouslySetInnerHTML={{ __html: strings.faqPrepare }} />
-            <li dangerouslySetInnerHTML={{ __html: strings.faqChii }} />
-            <li dangerouslySetInnerHTML={{ __html: strings.faqTotp }} />
+            {strings.faqItems.map((item) => (
+              <li key={item} dangerouslySetInnerHTML={{ __html: item }} />
+            ))}
+            {/* __LIVE_FAQ__ — env-4 read-only line filled at runtime ('' on env 3) */}
+            {family === 'intoss' ? '__LIVE_FAQ__' : null}
           </ul>
         </section>
 

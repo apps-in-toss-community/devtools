@@ -22,6 +22,13 @@
  *   exports. qr-http-server.ts selects the right one per-request using
  *   parseAcceptLanguage(req.headers['accept-language']).
  *
+ * Mode-family strategy (#468):
+ *   The attach chrome is additionally precompiled per copy family — 'sandbox'
+ *   (env 2: launcher PWA flow) and 'intoss' (env 3/4: Toss app deep-link flow).
+ *   qr-http-server.ts selects `attachChromeByLocale[locale][family]` from the
+ *   session mode carried in DashboardState. Env 4 reuses the intoss chrome and
+ *   fills the `__LIVE_FAQ__` token at runtime.
+ *
  * SECRET-HANDLING:
  *   - No per-request values are baked into the generated strings.
  *   - wssUrl MUST NOT appear in any generated output. An assertion below
@@ -35,13 +42,19 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Locale } from '../src/i18n/index.js';
 import { resolveLocaleStrings } from '../src/i18n/index.js';
-import { AttachHtml } from './dashboard/AttachHtml.js';
+import { type AttachChromeFamily, AttachHtml } from './dashboard/AttachHtml.js';
 import { DashboardChrome } from './dashboard/DashboardChrome.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_FILE = resolve(__dirname, '../src/mcp/dashboard.generated.ts');
 
 const LOCALES: Locale[] = ['ko', 'en'];
+const ATTACH_FAMILIES: AttachChromeFamily[] = ['sandbox', 'intoss'];
+
+/** 'ko' → 'Ko', 'sandbox' → 'Sandbox' — for generated export identifiers. */
+function capitalize(s: string): string {
+  return `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+}
 
 /**
  * Render the dashboard chrome for one locale.
@@ -73,41 +86,63 @@ function renderDashboardChrome(locale: Locale): string {
 }
 
 /**
- * Render the attach page chrome for one locale.
- * The `deployment:` label and step 3 string include inline HTML (strong/code)
- * which renderToStaticMarkup emits verbatim from dangerouslySetInnerHTML.
- * Placeholders (`__QR_DATA_URL__`, `__SAFE_LABEL__`, `__SAFE_ATTACH_URL__`)
- * survive because they are plain text nodes, not HTML.
+ * Render the attach page chrome for one locale × copy family (#468).
+ * The `deployment:` label and several step/FAQ strings include inline HTML
+ * (strong/code) which renderToStaticMarkup emits verbatim from
+ * dangerouslySetInnerHTML. Placeholders (`__QR_DATA_URL__`, `__SAFE_LABEL__`,
+ * `__SAFE_ATTACH_URL__`, `__MODE_LABEL__`, `__LIVE_FAQ__`) survive because
+ * they are plain text nodes, not HTML.
  *
- * NOTE on step 3 / FAQ HTML:
+ * NOTE on step / FAQ HTML:
  *   ko.ts/en.ts strings contain literal HTML tags (strong, code). This is
  *   intentional — the attach page is a build-time precompile that renders
  *   trusted developer-facing copy. No user input ever reaches these strings.
  *
  * The `deploymentPrefix` extraction mirrors the updatedPrefix approach above:
  * "deployment: {label}" → we split on "__LABEL_SPLIT__" and take the prefix.
+ * It only applies to the intoss family — env 2 has no `_deploymentId` concept,
+ * so the sandbox chrome omits the label row entirely.
  */
-function renderAttachChrome(locale: Locale): string {
+function renderAttachChrome(locale: Locale, family: AttachChromeFamily): string {
   const s = resolveLocaleStrings(locale);
   const deploymentFull = s('attach.deployment', { label: '__LABEL_SPLIT__' });
   const deploymentPrefix = deploymentFull.split('__LABEL_SPLIT__')[0] ?? '';
 
+  const steps =
+    family === 'sandbox'
+      ? [s('attach.sandbox.step1'), s('attach.sandbox.step2'), s('attach.sandbox.step3')]
+      : [
+          s('attach.intoss.step1'),
+          s('attach.intoss.step2'),
+          s('attach.intoss.step3'),
+          s('attach.intoss.step4'),
+        ];
+  const faqItems =
+    family === 'sandbox'
+      ? [
+          s('attach.sandbox.faq.notInstalled'),
+          s('attach.sandbox.faq.cameraApp'),
+          s('attach.sandbox.faq.totp'),
+          s('attach.sandbox.faq.chii'),
+        ]
+      : [
+          s('attach.intoss.faq.appNotOpen'),
+          s('attach.intoss.faq.prepare'),
+          s('attach.intoss.faq.chii'),
+          s('attach.intoss.faq.totp'),
+        ];
+
   const markup = renderToStaticMarkup(
     React.createElement(AttachHtml, {
       lang: locale,
+      family,
       strings: {
         title: s('attach.title'),
-        deploymentPrefix,
+        deploymentPrefix: family === 'intoss' ? deploymentPrefix : undefined,
         stepsSection: s('attach.steps.section'),
-        step1: s('attach.step1'),
-        step2: s('attach.step2'),
-        step3: s('attach.step3'),
-        step4: s('attach.step4'),
+        steps,
         faqSection: s('attach.faq.section'),
-        faqAppNotOpen: s('attach.faq.appNotOpen'),
-        faqPrepare: s('attach.faq.prepare'),
-        faqChii: s('attach.faq.chii'),
-        faqTotp: s('attach.faq.totp'),
+        faqItems,
         urlSection: s('attach.url.section'),
         copy: s('dashboard.url.copy'),
         langKo: s('dashboard.lang.ko'),
@@ -146,10 +181,12 @@ async function main(): Promise<void> {
     ' *   __NOW__             ISO timestamp of current render',
     ' *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)',
     ' *',
-    ' * Token map (attach chrome):',
+    ' * Token map (attach chrome — precompiled per locale × copy family, #468):',
     ' *   __QR_DATA_URL__     base64 data URL for the QR image',
-    ' *   __SAFE_LABEL__      HTML-escaped deploymentId label',
+    ' *   __SAFE_LABEL__      HTML-escaped deploymentId label (intoss family only)',
     ' *   __SAFE_ATTACH_URL__ HTML-escaped attach URL',
+    ' *   __MODE_LABEL__      environment badge (<p class="mode-label">…</p>), or empty',
+    ' *   __LIVE_FAQ__        env-4 LIVE read-only <li>, or empty (intoss family only)',
     ' *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)',
     ' *',
     " * SECRET-HANDLING: wssUrl MUST NOT appear here. If it does, the build script's",
@@ -158,41 +195,53 @@ async function main(): Promise<void> {
     '',
     "import type { Locale } from '../i18n/index.js';",
     '',
+    '/** Copy family of the attach page chrome (#468) — env 2 vs env 3/4. */',
+    "export type AttachChromeFamily = 'sandbox' | 'intoss';",
+    '',
   ];
 
   for (const locale of LOCALES) {
     const dashboardHtml = renderDashboardChrome(locale);
-    const attachHtml = renderAttachChrome(locale);
+    const attachHtmlByFamily = new Map<AttachChromeFamily, string>(
+      ATTACH_FAMILIES.map((family) => [family, renderAttachChrome(locale, family)]),
+    );
 
     // Assert wssUrl sentinel never leaked into the generated strings
-    if (dashboardHtml.includes('wssUrl') || attachHtml.includes('wssUrl')) {
-      throw new Error(
-        `[build-dashboard-html] SECRET-HANDLING VIOLATION: "wssUrl" found in generated HTML for locale "${locale}". ` +
-          'Abort — do not write the generated module.',
-      );
+    for (const html of [dashboardHtml, ...attachHtmlByFamily.values()]) {
+      if (html.includes('wssUrl')) {
+        throw new Error(
+          `[build-dashboard-html] SECRET-HANDLING VIOLATION: "wssUrl" found in generated HTML for locale "${locale}". ` +
+            'Abort — do not write the generated module.',
+        );
+      }
     }
 
     sections.push(
       `// ── locale: ${locale} ──────────────────────────────────────────────────────`,
       '',
-      `export const dashboardChromeHtml${locale.charAt(0).toUpperCase()}${locale.slice(1)} =`,
+      `export const dashboardChromeHtml${capitalize(locale)} =`,
       `\`${escapeTsTemplateLiteral(dashboardHtml)}\`;`,
       '',
-      `export const attachChromeHtml${locale.charAt(0).toUpperCase()}${locale.slice(1)} =`,
-      `\`${escapeTsTemplateLiteral(attachHtml)}\`;`,
-      '',
+      ...ATTACH_FAMILIES.flatMap((family) => [
+        `export const attachChromeHtml${capitalize(locale)}${capitalize(family)} =`,
+        `\`${escapeTsTemplateLiteral(attachHtmlByFamily.get(family) ?? '')}\`;`,
+        '',
+      ]),
     );
   }
 
   sections.push(
     '/** Map from Locale to the precompiled dashboard chrome string. */',
     'export const dashboardChromeByLocale: Record<Locale, string> = {',
-    ...LOCALES.map((l) => `  ${l}: dashboardChromeHtml${l.charAt(0).toUpperCase()}${l.slice(1)},`),
+    ...LOCALES.map((l) => `  ${l}: dashboardChromeHtml${capitalize(l)},`),
     '};',
     '',
-    '/** Map from Locale to the precompiled attach page chrome string. */',
-    'export const attachChromeByLocale: Record<Locale, string> = {',
-    ...LOCALES.map((l) => `  ${l}: attachChromeHtml${l.charAt(0).toUpperCase()}${l.slice(1)},`),
+    '/** Map from Locale × copy family to the precompiled attach page chrome string (#468). */',
+    'export const attachChromeByLocale: Record<Locale, Record<AttachChromeFamily, string>> = {',
+    ...LOCALES.map(
+      (l) =>
+        `  ${l}: { ${ATTACH_FAMILIES.map((f) => `${f}: attachChromeHtml${capitalize(l)}${capitalize(f)}`).join(', ')} },`,
+    ),
     '};',
     '',
   );

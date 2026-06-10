@@ -16,10 +16,12 @@
  *   __NOW__             ISO timestamp of current render
  *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)
  *
- * Token map (attach chrome):
+ * Token map (attach chrome — precompiled per locale × copy family, #468):
  *   __QR_DATA_URL__     base64 data URL for the QR image
- *   __SAFE_LABEL__      HTML-escaped deploymentId label
+ *   __SAFE_LABEL__      HTML-escaped deploymentId label (intoss family only)
  *   __SAFE_ATTACH_URL__ HTML-escaped attach URL
+ *   __MODE_LABEL__      environment badge (<p class="mode-label">…</p>), or empty
+ *   __LIVE_FAQ__        env-4 LIVE read-only <li>, or empty (intoss family only)
  *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)
  *
  * SECRET-HANDLING: wssUrl MUST NOT appear here. If it does, the build script's
@@ -27,6 +29,9 @@
  */
 
 import type { Locale } from '../i18n/index.js';
+
+/** Copy family of the attach page chrome (#468) — env 2 vs env 3/4. */
+export type AttachChromeFamily = 'sandbox' | 'intoss';
 
 // ── locale: ko ──────────────────────────────────────────────────────
 
@@ -84,7 +89,7 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
 </style></head><body><h1>AIT 디버그 Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">마지막 갱신: __NOW__</p><section><h2>터널 상태</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
 
-export const attachChromeHtmlKo =
+export const attachChromeHtmlKoSandbox =
 `<!DOCTYPE html>
 <html lang="ko"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="preload" as="image" href="__QR_DATA_URL__"/><title>AIT 디버그 세션 — QR 스캔</title><style>
 *, *::before, *::after { box-sizing: border-box; }
@@ -96,6 +101,11 @@ body {
   gap: 1.5rem;
 }
 h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
+.mode-label {
+  font-size: 0.78rem; font-weight: 600; color: #79c0ff;
+  background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+  padding: 0.25rem 0.75rem; margin: 0;
+}
 .label { font-size: 0.8rem; opacity: 0.5; font-family: monospace; margin: 0; }
 img.qr {
   width: min(90vw, 360px); height: auto;
@@ -129,7 +139,59 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
 .lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
 .lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
-</style></head><body><h1>AIT 디버그 세션 — QR 스캔</h1>__LANG_SWITCHER__<p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>스캔 절차</h2><ol><li>토스 앱을 실행하세요.</li><li>폰 카메라 앱으로 QR 코드를 스캔하세요.</li><li>팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.</li><li>미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.</li></ol></section><hr/><section><h2>진단 체크리스트</h2><ul><li><strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)</li><li><strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인</li><li><strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인</li><li><strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인</li></ul></section><hr/><section id="url-section"><h2>URL (fallback)</h2><div class="url-row"><p class="url-box" id="url-box">__SAFE_ATTACH_URL__</p><button class="copy-btn" id="copy-btn" type="button" aria-label="복사">복사</button></div></section></body></html>`;
+</style></head><body><h1>AIT 디버그 세션 — QR 스캔</h1>__MODE_LABEL____LANG_SWITCHER__<div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>스캔 절차</h2><ol><li>홈 화면의 launcher PWA 아이콘으로 실행하세요 (Safari 주소창이 보이면 standalone이 아닙니다).</li><li>launcher 안의 <strong>"QR 카메라로 스캔"</strong>으로 이 QR 코드를 스캔하세요.</li><li>미니앱이 풀스크린으로 열리고 디버그 세션이 자동으로 attach됩니다.</li></ol></section><hr/><section><h2>진단 체크리스트</h2><ul><li><strong>launcher가 설치돼 있지 않은 경우</strong> — <code>devtools.aitc.dev/launcher/</code>를 한 번 열어 홈 화면에 추가하세요</li><li><strong>카메라 앱으로 스캔하면 Safari 탭으로 열립니다 (하단 탭 바 노출)</strong> — launcher 아이콘으로 다시 실행해 인앱 스캔을 사용하세요</li><li><strong>QR이 만료된 경우 (TOTP 30초)</strong> — 새 QR을 다시 스캔하세요</li><li><strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인</li></ul></section><hr/><section id="url-section"><h2>URL (fallback)</h2><div class="url-row"><p class="url-box" id="url-box">__SAFE_ATTACH_URL__</p><button class="copy-btn" id="copy-btn" type="button" aria-label="복사">복사</button></div></section></body></html>`;
+
+export const attachChromeHtmlKoIntoss =
+`<!DOCTYPE html>
+<html lang="ko"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="preload" as="image" href="__QR_DATA_URL__"/><title>AIT 디버그 세션 — QR 스캔</title><style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0d1117; color: #c9d1d9;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 100vh; margin: 0; padding: 2rem 1rem;
+  gap: 1.5rem;
+}
+h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
+.mode-label {
+  font-size: 0.78rem; font-weight: 600; color: #79c0ff;
+  background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+  padding: 0.25rem 0.75rem; margin: 0;
+}
+.label { font-size: 0.8rem; opacity: 0.5; font-family: monospace; margin: 0; }
+img.qr {
+  width: min(90vw, 360px); height: auto;
+  image-rendering: pixelated;
+  background: #fff; padding: 1rem; border-radius: 12px;
+  display: block; margin: 0 auto;
+}
+section { width: 100%; max-width: 480px; }
+h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
+ol, ul { margin: 0; padding-left: 1.25rem; }
+li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
+.url-row {
+  display: flex; align-items: stretch; gap: 0;
+  border-radius: 6px; border: 1px solid #30363d; overflow: hidden;
+}
+.url-box {
+  font-family: monospace; font-size: 0.72rem;
+  word-break: break-all; opacity: 0.4;
+  background: #161b22; padding: 0.75rem 1rem;
+  flex: 1; cursor: pointer; border: none; border-radius: 0;
+}
+.url-box:hover { opacity: 0.6; }
+.copy-btn {
+  flex-shrink: 0; padding: 0.5rem 0.8rem;
+  background: #21262d; border: none; border-left: 1px solid #30363d;
+  color: #58a6ff; font-size: 0.75rem; cursor: pointer; white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.copy-btn:hover { background: #30363d; }
+hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0; }
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+</style></head><body><h1>AIT 디버그 세션 — QR 스캔</h1>__MODE_LABEL____LANG_SWITCHER__<p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>스캔 절차</h2><ol><li>토스 앱을 실행하세요.</li><li>폰 카메라 앱으로 QR 코드를 스캔하세요.</li><li>팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.</li><li>미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.</li></ol></section><hr/><section><h2>진단 체크리스트</h2><ul><li><strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)</li><li><strong>미니앱이 PREPARE 상태에서 멈추는 경우</strong> — deep-link에 <code>_deploymentId</code> 파라미터가 있는지 확인</li><li><strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인</li><li><strong>TOTP gate Layer C가 비활성인 경우</strong> — relay 서버에 <code>AIT_DEBUG_TOTP_SECRET</code>이 설정돼 있는지 확인</li>__LIVE_FAQ__</ul></section><hr/><section id="url-section"><h2>URL (fallback)</h2><div class="url-row"><p class="url-box" id="url-box">__SAFE_ATTACH_URL__</p><button class="copy-btn" id="copy-btn" type="button" aria-label="복사">복사</button></div></section></body></html>`;
 
 // ── locale: en ──────────────────────────────────────────────────────
 
@@ -187,7 +249,7 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
 </style></head><body><h1>AIT Debug Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">Last updated: __NOW__</p><section><h2>Tunnel status</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
 
-export const attachChromeHtmlEn =
+export const attachChromeHtmlEnSandbox =
 `<!DOCTYPE html>
 <html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="preload" as="image" href="__QR_DATA_URL__"/><title>AIT Debug Session — QR Scan</title><style>
 *, *::before, *::after { box-sizing: border-box; }
@@ -199,6 +261,11 @@ body {
   gap: 1.5rem;
 }
 h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
+.mode-label {
+  font-size: 0.78rem; font-weight: 600; color: #79c0ff;
+  background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+  padding: 0.25rem 0.75rem; margin: 0;
+}
 .label { font-size: 0.8rem; opacity: 0.5; font-family: monospace; margin: 0; }
 img.qr {
   width: min(90vw, 360px); height: auto;
@@ -232,7 +299,59 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
 .lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
 .lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
-</style></head><body><h1>AIT Debug Session — QR Scan</h1>__LANG_SWITCHER__<p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>How to scan</h2><ol><li>Open the Toss app.</li><li>Scan the QR code with your phone camera app.</li><li>Tap <strong>"Open in Toss"</strong> when the popup appears.</li><li>The mini-app opens and the debug session attaches automatically.</li></ol></section><hr/><section><h2>Troubleshooting checklist</h2><ul><li><strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)</li><li><strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter</li><li><strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import</li><li><strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server</li></ul></section><hr/><section id="url-section"><h2>URL (fallback)</h2><div class="url-row"><p class="url-box" id="url-box">__SAFE_ATTACH_URL__</p><button class="copy-btn" id="copy-btn" type="button" aria-label="Copy">Copy</button></div></section></body></html>`;
+</style></head><body><h1>AIT Debug Session — QR Scan</h1>__MODE_LABEL____LANG_SWITCHER__<div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>How to scan</h2><ol><li>Launch the launcher PWA icon on your home screen (if the Safari address bar is visible, it is not standalone).</li><li>Scan this QR code with <strong>"Scan QR with camera"</strong> inside the launcher.</li><li>The mini-app opens fullscreen and the debug session attaches automatically.</li></ol></section><hr/><section><h2>Troubleshooting checklist</h2><ul><li><strong>Launcher is not installed</strong> — open <code>devtools.aitc.dev/launcher/</code> once and add it to your home screen</li><li><strong>Scanning with the camera app opens a Safari tab (bottom tab bar visible)</strong> — relaunch from the launcher icon and use the in-app scanner</li><li><strong>QR expired (TOTP 30 s)</strong> — scan a fresh QR code</li><li><strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import</li></ul></section><hr/><section id="url-section"><h2>URL (fallback)</h2><div class="url-row"><p class="url-box" id="url-box">__SAFE_ATTACH_URL__</p><button class="copy-btn" id="copy-btn" type="button" aria-label="Copy">Copy</button></div></section></body></html>`;
+
+export const attachChromeHtmlEnIntoss =
+`<!DOCTYPE html>
+<html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="preload" as="image" href="__QR_DATA_URL__"/><title>AIT Debug Session — QR Scan</title><style>
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0d1117; color: #c9d1d9;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 100vh; margin: 0; padding: 2rem 1rem;
+  gap: 1.5rem;
+}
+h1 { font-size: 1.25rem; font-weight: 600; color: #e6edf3; margin: 0; text-align: center; }
+.mode-label {
+  font-size: 0.78rem; font-weight: 600; color: #79c0ff;
+  background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+  padding: 0.25rem 0.75rem; margin: 0;
+}
+.label { font-size: 0.8rem; opacity: 0.5; font-family: monospace; margin: 0; }
+img.qr {
+  width: min(90vw, 360px); height: auto;
+  image-rendering: pixelated;
+  background: #fff; padding: 1rem; border-radius: 12px;
+  display: block; margin: 0 auto;
+}
+section { width: 100%; max-width: 480px; }
+h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
+ol, ul { margin: 0; padding-left: 1.25rem; }
+li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
+.url-row {
+  display: flex; align-items: stretch; gap: 0;
+  border-radius: 6px; border: 1px solid #30363d; overflow: hidden;
+}
+.url-box {
+  font-family: monospace; font-size: 0.72rem;
+  word-break: break-all; opacity: 0.4;
+  background: #161b22; padding: 0.75rem 1rem;
+  flex: 1; cursor: pointer; border: none; border-radius: 0;
+}
+.url-box:hover { opacity: 0.6; }
+.copy-btn {
+  flex-shrink: 0; padding: 0.5rem 0.8rem;
+  background: #21262d; border: none; border-left: 1px solid #30363d;
+  color: #58a6ff; font-size: 0.75rem; cursor: pointer; white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.copy-btn:hover { background: #30363d; }
+hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0; }
+.lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
+.lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
+.lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+</style></head><body><h1>AIT Debug Session — QR Scan</h1>__MODE_LABEL____LANG_SWITCHER__<p class="label">deployment: __SAFE_LABEL__</p><div id="attach-section"><img class="qr" src="__QR_DATA_URL__" alt="attach QR"/></div><section><h2>How to scan</h2><ol><li>Open the Toss app.</li><li>Scan the QR code with your phone camera app.</li><li>Tap <strong>"Open in Toss"</strong> when the popup appears.</li><li>The mini-app opens and the debug session attaches automatically.</li></ol></section><hr/><section><h2>Troubleshooting checklist</h2><ul><li><strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)</li><li><strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter</li><li><strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import</li><li><strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server</li>__LIVE_FAQ__</ul></section><hr/><section id="url-section"><h2>URL (fallback)</h2><div class="url-row"><p class="url-box" id="url-box">__SAFE_ATTACH_URL__</p><button class="copy-btn" id="copy-btn" type="button" aria-label="Copy">Copy</button></div></section></body></html>`;
 
 /** Map from Locale to the precompiled dashboard chrome string. */
 export const dashboardChromeByLocale: Record<Locale, string> = {
@@ -240,8 +359,8 @@ export const dashboardChromeByLocale: Record<Locale, string> = {
   en: dashboardChromeHtmlEn,
 };
 
-/** Map from Locale to the precompiled attach page chrome string. */
-export const attachChromeByLocale: Record<Locale, string> = {
-  ko: attachChromeHtmlKo,
-  en: attachChromeHtmlEn,
+/** Map from Locale × copy family to the precompiled attach page chrome string (#468). */
+export const attachChromeByLocale: Record<Locale, Record<AttachChromeFamily, string>> = {
+  ko: { sandbox: attachChromeHtmlKoSandbox, intoss: attachChromeHtmlKoIntoss },
+  en: { sandbox: attachChromeHtmlEnSandbox, intoss: attachChromeHtmlEnIntoss },
 };

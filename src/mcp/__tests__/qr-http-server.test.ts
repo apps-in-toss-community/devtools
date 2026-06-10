@@ -869,3 +869,154 @@ describe('startQrHttpServer — url-box click-to-copy + 복사 버튼 (#458)', (
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// /attach mode-aware chrome 분기 (#468)
+//
+// DashboardState.mode에 따라 attach 페이지가 환경별 카피를 보여준다:
+//   - relay-mobile (환경 2) → sandbox family: launcher PWA 카피,
+//     토스 앱/_deploymentId 문구 0건, "환경 2" 라벨
+//   - relay-dev   (환경 3) → intoss family: 기존 카피 그대로 + "환경 3" 라벨
+//   - relay-live  (환경 4) → intoss family + LIVE read-only 라인 + "환경 4" 라벨
+//   - mode 미설정/mock     → intoss family, 환경 라벨 없음 (기존 동작 보존)
+//
+// SECRET-HANDLING: placeholder URL만 사용 — 실제 터널/relay/TOTP 값 없음.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — /attach mode-aware chrome 분기 (#468)', () => {
+  // 환경 2: launcher PWA attach URL (토스 deep-link 아님 — _deploymentId 개념 없음)
+  const launcherAttachUrl =
+    'https://devtools.aitc.dev/launcher/?url=https%3A%2F%2Ftest.trycloudflare.com&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+  // 환경 3·4: intoss-private deep-link attach URL
+  const intossAttachUrl =
+    'intoss-private://app?_deploymentId=test-mode&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+
+  function makeState(mode: DashboardState['mode'], attachUrl: string): DashboardState {
+    return {
+      tunnel: { up: true, wssUrl: 'wss://test.trycloudflare.com' },
+      pages: [],
+      attachUrl,
+      mode,
+    };
+  }
+
+  async function fetchAttachHtml(
+    mode: DashboardState['mode'],
+    attachUrl: string,
+    lang: 'ko' | 'en',
+  ): Promise<string> {
+    const srv = await startQrHttpServer(() => makeState(mode, attachUrl));
+    try {
+      return await (
+        await fetch(srv.buildAttachPageUrl(attachUrl), {
+          headers: { 'Accept-Language': lang },
+        })
+      ).text();
+    } finally {
+      await srv.close();
+    }
+  }
+
+  // ── 환경 2 (relay-mobile → sandbox family) ────────────────────────────────
+
+  it('mode=relay-mobile (ko) — 토스 앱/_deploymentId 문구 0건 + launcher 카피', async () => {
+    const html = await fetchAttachHtml('relay-mobile', launcherAttachUrl, 'ko');
+    // 환경 3/4 전용 개념이 한 글자도 없어야 한다 (#468 핵심 acceptance).
+    expect(html).not.toContain('토스');
+    expect(html).not.toContain('_deploymentId');
+    expect(html).not.toContain('PREPARE');
+    // deployment 라벨 행도 없어야 한다 (환경 2에는 deploymentId 개념이 없음).
+    expect(html).not.toContain('deployment:');
+    // launcher PWA 스캔 절차 카피
+    expect(html).toContain('launcher PWA 아이콘');
+    expect(html).toContain('QR 카메라로 스캔');
+    // 카메라 앱 스캔 → Safari 탭 체크리스트 항목
+    expect(html).toContain('Safari 탭으로 열립니다');
+    expect(html).toContain('devtools.aitc.dev/launcher/');
+    // 환경 라벨
+    expect(html).toContain('환경 2 — AITC Sandbox PWA');
+    // 토큰 잔존 없음
+    expect(html).not.toContain('__MODE_LABEL__');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  it('mode=relay-mobile (en) — Toss 문구 0건 + launcher 카피 + Env 2 라벨', async () => {
+    const html = await fetchAttachHtml('relay-mobile', launcherAttachUrl, 'en');
+    expect(html).not.toContain('Toss');
+    expect(html).not.toContain('_deploymentId');
+    expect(html).toContain('Scan QR with camera');
+    expect(html).toContain('Env 2 — AITC Sandbox PWA');
+    expect(html).not.toContain('__MODE_LABEL__');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  // ── 환경 3 (relay-dev → intoss family, 기존 카피 유지) ───────────────────
+
+  it('mode=relay-dev (ko) — 기존 intoss 카피 유지 + 환경 3 라벨 + LIVE 라인 없음', async () => {
+    const html = await fetchAttachHtml('relay-dev', intossAttachUrl, 'ko');
+    // 기존 카피 보존 (regression guard)
+    expect(html).toContain('토스 앱을 실행하세요');
+    expect(html).toContain('토스로 열기');
+    expect(html).toContain('PREPARE');
+    expect(html).toContain('_deploymentId');
+    expect(html).toContain('deployment:');
+    // 환경 라벨
+    expect(html).toContain('환경 3 — intoss-private relay dev');
+    // 환경 4 전용 LIVE read-only 라인은 없어야 한다.
+    expect(html).not.toContain('read-only입니다');
+    // 토큰 잔존 없음
+    expect(html).not.toContain('__MODE_LABEL__');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  it('mode=relay-dev (en) — intoss 카피 + Env 3 라벨', async () => {
+    const html = await fetchAttachHtml('relay-dev', intossAttachUrl, 'en');
+    expect(html).toContain('Open the Toss app.');
+    expect(html).toContain('Env 3 — intoss-private relay dev');
+    expect(html).not.toContain('LIVE session is read-only');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  // ── 환경 4 (relay-live → intoss family + LIVE read-only 라인) ────────────
+
+  it('mode=relay-live (ko) — intoss 카피 + LIVE read-only 라인 + 환경 4 라벨', async () => {
+    const html = await fetchAttachHtml('relay-live', intossAttachUrl, 'ko');
+    expect(html).toContain('토스 앱을 실행하세요');
+    expect(html).toContain('환경 4 — intoss live relay debug');
+    // LIVE read-only 체크리스트 라인 (confirm 게이트 안내)
+    expect(html).toContain('LIVE 세션은 read-only입니다');
+    expect(html).toContain('confirm');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  it('mode=relay-live (en) — LIVE read-only 라인 + Env 4 라벨', async () => {
+    const html = await fetchAttachHtml('relay-live', intossAttachUrl, 'en');
+    expect(html).toContain('Env 4 — intoss live relay debug');
+    expect(html).toContain('LIVE session is read-only');
+    expect(html).toContain('confirm');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  // ── mode 미설정 / mock — 기존 동작 보존 (intoss 카피, 라벨 없음) ─────────
+
+  it('mode 미설정 — intoss 카피 + 환경 라벨 요소 없음 (기존 동작 보존)', async () => {
+    const html = await fetchAttachHtml(undefined, intossAttachUrl, 'ko');
+    expect(html).toContain('토스 앱을 실행하세요');
+    // 환경 라벨 요소가 렌더되지 않아야 한다 (CSS 정의는 chrome에 남아 있어도 OK).
+    expect(html).not.toContain('<p class="mode-label">');
+    expect(html).not.toContain('환경 2');
+    expect(html).not.toContain('환경 3');
+    expect(html).not.toContain('환경 4');
+    expect(html).not.toContain('read-only입니다');
+    expect(html).not.toContain('__MODE_LABEL__');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+
+  it('mode=mock — intoss 카피 + 환경 라벨 요소 없음', async () => {
+    const html = await fetchAttachHtml('mock', intossAttachUrl, 'ko');
+    expect(html).toContain('토스 앱을 실행하세요');
+    expect(html).not.toContain('<p class="mode-label">');
+    expect(html).not.toContain('__MODE_LABEL__');
+    expect(html).not.toContain('__LIVE_FAQ__');
+  });
+});

@@ -234,23 +234,49 @@ export const en: Record<StringKey, string> = {
   'dashboard.url.copied': 'Copied',
 
   // qr-http-server — attach page (server-side, Node, per-request)
+  // Copy branches per session mode into sandbox (env 2) / intoss (env 3·4) families (#468).
   'attach.title': 'AIT Debug Session — QR Scan',
   'attach.deployment': 'deployment: {label}',
   'attach.steps.section': 'How to scan',
-  'attach.step1': 'Open the Toss app.',
-  'attach.step2': 'Scan the QR code with your phone camera app.',
-  'attach.step3': 'Tap <strong>"Open in Toss"</strong> when the popup appears.',
-  'attach.step4': 'The mini-app opens and the debug session attaches automatically.',
   'attach.faq.section': 'Troubleshooting checklist',
-  'attach.faq.appNotOpen':
-    '<strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)',
-  'attach.faq.prepare':
-    '<strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter',
-  'attach.faq.chii':
-    '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
-  'attach.faq.totp':
-    '<strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server',
   'attach.url.section': 'URL (fallback)',
+
+  // qr-http-server — attach page mode label (environment visibility, #468)
+  'attach.mode.sandbox': 'Env 2 — AITC Sandbox PWA',
+  'attach.mode.intossDev': 'Env 3 — intoss-private relay dev',
+  'attach.mode.intossLive': 'Env 4 — intoss live relay debug',
+
+  // attach page — sandbox family (env 2: launcher PWA; no Toss app / _deploymentId concepts)
+  'attach.sandbox.step1':
+    'Launch the launcher PWA icon on your home screen (if the Safari address bar is visible, it is not standalone).',
+  'attach.sandbox.step2':
+    'Scan this QR code with <strong>"Scan QR with camera"</strong> inside the launcher.',
+  'attach.sandbox.step3':
+    'The mini-app opens fullscreen and the debug session attaches automatically.',
+  'attach.sandbox.faq.notInstalled':
+    '<strong>Launcher is not installed</strong> — open <code>devtools.aitc.dev/launcher/</code> once and add it to your home screen',
+  'attach.sandbox.faq.cameraApp':
+    '<strong>Scanning with the camera app opens a Safari tab (bottom tab bar visible)</strong> — relaunch from the launcher icon and use the in-app scanner',
+  'attach.sandbox.faq.totp': '<strong>QR expired (TOTP 30 s)</strong> — scan a fresh QR code',
+  'attach.sandbox.faq.chii':
+    '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
+
+  // attach page — intoss family (env 3·4: Toss app deep-link)
+  'attach.intoss.step1': 'Open the Toss app.',
+  'attach.intoss.step2': 'Scan the QR code with your phone camera app.',
+  'attach.intoss.step3': 'Tap <strong>"Open in Toss"</strong> when the popup appears.',
+  'attach.intoss.step4': 'The mini-app opens and the debug session attaches automatically.',
+  'attach.intoss.faq.appNotOpen':
+    '<strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)',
+  'attach.intoss.faq.prepare':
+    '<strong>Mini-app stuck in PREPARE state</strong> — verify the deep-link has a <code>_deploymentId</code> parameter',
+  'attach.intoss.faq.chii':
+    '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
+  'attach.intoss.faq.totp':
+    '<strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server',
+  // env 4 (relay-live) only — appended to the intoss family at runtime (#468).
+  'attach.intoss.faq.liveReadOnly':
+    '<strong>LIVE session is read-only</strong> — <code>call_sdk</code>/<code>evaluate</code> require an explicit <code>confirm</code>',
 
   // Launcher PWA
   'launcher.title': 'AITC DevTools Launcher',
