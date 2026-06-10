@@ -1699,6 +1699,16 @@ export interface BootedFamily {
    * so `relay-mobile` can be told apart from `relay-dev`.
    */
   relayOrigin?: RelayOrigin;
+  /**
+   * Local HTTP base URL of the Chii relay (e.g. `http://127.0.0.1:9100` for
+   * the intoss relay, or the external cloudflare URL for env-2). Used by
+   * {@link AutoDevtoolsOpener} to build the Chii self-hosted inspector URL
+   * (`<relayHttpUrl>/front_end/chii_app.html`). `undefined` for the local-
+   * browser family (no relay, F12 is available directly).
+   *
+   * SECRET-HANDLING: this value contains the relay host. MUST NOT be logged.
+   */
+  relayHttpUrl?: string;
 }
 
 /**
@@ -1855,6 +1865,9 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
     connection,
     // Intoss-private dogfood/live relay (env 3/4) → relay-dev / relay-live.
     relayOrigin: 'intoss-webview',
+    // Local HTTP base of the Chii relay — used by AutoDevtoolsOpener to build
+    // the self-hosted inspector URL. SECRET-HANDLING: not logged.
+    relayHttpUrl: relay.baseUrl,
     getTunnelStatus: () => tunnelStatus,
     stop() {
       tunnelProbe?.stop();
@@ -1905,6 +1918,10 @@ export async function bootExternalRelayFamily(relayBaseUrl: string): Promise<Boo
     connection,
     // External env-2 PWA relay → relay-mobile (distinct from relay-dev).
     relayOrigin: 'external-pwa',
+    // HTTP base of the external relay — used by AutoDevtoolsOpener.
+    // For env-2 this is the cloudflare tunnel URL (https://<host>.trycloudflare.com).
+    // SECRET-HANDLING: not logged.
+    relayHttpUrl: relayBaseUrl,
     getTunnelStatus: () => tunnelStatus,
     stop() {
       // The unplugin owns the relay + its tunnel — close ONLY our CDP client.
@@ -2164,18 +2181,29 @@ export class DualConnectionRouter implements ConnectionRouter {
         this.deps.diagnosticsCollector.recordAttach();
         // Notify dashboard of page attach — SSE push so the browser tab updates.
         this.deps.onPageAttach?.();
-        // Auto-open Chrome DevTools only for a relay attach (env 2/3/4). The
+        // Auto-open Chii DevTools only for a relay attach (env 2/3/4). The
         // opener no-ops for a local (mock) connection — guard on the active
         // kind so a local session never tries to open a relay devtools.
         if (activeFamily.connection.kind === 'relay') {
-          this.deps.devtoolsOpener.open(
-            this.relayTunnelStatus().wssUrl,
-            deriveEnvironment(
-              activeFamily.connection.kind,
-              getLiveIntent(),
-              activeFamily.relayOrigin,
-            ),
+          // Take the first attached target's id — we are in the onFirstAttach
+          // callback, so listTargets() is guaranteed to be non-empty.
+          const firstTarget = activeFamily.connection.listTargets()[0];
+          const env = deriveEnvironment(
+            activeFamily.connection.kind,
+            getLiveIntent(),
+            activeFamily.relayOrigin,
           );
+          this.deps.devtoolsOpener.open({
+            relayHttpBaseUrl: activeFamily.relayHttpUrl,
+            targetId: firstTarget?.id,
+            // Mint a fresh TOTP code from the daemon's secret at open time.
+            // The code is valid for the current 30-second step (±1 skew).
+            // SECRET-HANDLING: the closure captures only the getter, never logs.
+            mintTotp: process.env.AIT_DEBUG_TOTP_SECRET
+              ? () => generateTotp(process.env.AIT_DEBUG_TOTP_SECRET as string)
+              : undefined,
+            env,
+          });
         }
       },
     );
