@@ -133,11 +133,18 @@ function buildDashboardHtml(
   const tunnelStatus = state.tunnel.up ? s('dashboard.tunnel.up') : s('dashboard.tunnel.down');
   const tunnelClass = state.tunnel.up ? 'status-up' : 'status-down';
 
-  // attachSection: QR img + url-box, or hint
+  // attachSection: QR img + url-row(url-box + 복사 버튼), or hint.
+  // dashboard 표면에서 SSE 재렌더 시에도 동일 구조를 유지해 복사 버튼이 생존한다.
   let attachSection: string;
   if (qrDataUrl && state.attachUrl) {
     const safeAttachUrl = escapeHtml(state.attachUrl);
-    attachSection = `<img class="qr" src="${qrDataUrl}" alt="attach QR" /><p class="url-box">${safeAttachUrl}</p>`;
+    const copyLabel = escapeHtml(s('dashboard.url.copy'));
+    attachSection =
+      `<img class="qr" src="${qrDataUrl}" alt="attach QR" />` +
+      `<div class="url-row">` +
+      `<p class="url-box" id="url-box">${safeAttachUrl}</p>` +
+      `<button class="copy-btn" id="copy-btn" type="button" aria-label="${copyLabel}">${copyLabel}</button>` +
+      `</div>`;
   } else {
     attachSection = `<p class="hint">${escapeHtml(s('dashboard.attach.hint'))}</p>`;
   }
@@ -161,11 +168,14 @@ function buildDashboardHtml(
         }</ul></section>`;
 
   // locale-aware strings for the inline SSE client script
-  const sseStrings = {
+  const sseStrings: SseScriptStrings = {
     tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
     pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
+    copyLabel: JSON.stringify(s('dashboard.url.copy')),
+    copiedLabel: JSON.stringify(s('dashboard.url.copied')),
+    dashboardSurface: true,
   };
 
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
@@ -194,6 +204,17 @@ interface SseScriptStrings {
   tunnelDown: string;
   pagesEmpty: string;
   attachHint: string;
+  /** 복사 버튼 기본 라벨 (JSON.stringify로 이미 escape됨). */
+  copyLabel: string;
+  /** 복사 완료 피드백 라벨 (JSON.stringify로 이미 escape됨). */
+  copiedLabel: string;
+  /**
+   * true: dashboard 표면 — `#attach-section` innerHTML 전체 교체 방식 유지.
+   *        url-box 텍스트도 innerHTML 교체로 갱신됨.
+   * false: /attach 표면 — img src만 교체, url-box는 `#url-box` textContent만 갱신.
+   *        이 분기가 url-box 이중 표시 결함을 방지한다.
+   */
+  dashboardSurface: boolean;
 }
 
 /**
@@ -203,9 +224,24 @@ interface SseScriptStrings {
  * client side: attachUrl은 DOM에 렌더링, wssUrl은 절대 렌더링하지 않는다.
  * pages === null 이면 섹션을 건드리지 않는다 (#411).
  *
+ * 두 표면(dashboard / attach) 분기:
+ *   - dashboard (dashboardSurface=true): #attach-section innerHTML 전체 교체 방식 유지.
+ *     url-box도 innerHTML 재렌더 안에 포함되어 갱신됨.
+ *   - /attach (dashboardSurface=false): #attach-section의 img src만 교체하고,
+ *     url-box는 #url-box textContent만 갱신한다. (#attach-section에 url-box가 없으므로
+ *     innerHTML 교체 시 url-box가 새로 생겨 이중 표시되는 결함을 방지 — #458 결함 수정.)
+ *
+ * 복사 기능: 이벤트 위임으로 document에 단일 핸들러. innerHTML 재렌더 후에도 생존.
+ *   - .url-box 클릭 또는 .copy-btn 클릭 → 현재 #url-box textContent 복사.
+ *   - clipboard: navigator.clipboard.writeText → 실패/부재 시 textarea execCommand fallback.
+ *   - 피드백: 버튼 라벨이 COPIED_LABEL로 ~1.5초 전환 후 COPY_LABEL로 복귀.
+ *
  * 문자열 인자는 빌드타임에 ko/en 테이블에서 가져와 JSON.stringify로 이미 escape됨.
+ *
+ * SECRET-HANDLING: URL 값을 console.log 등으로 출력하지 않는다.
  */
 function buildSseScript(strings: SseScriptStrings): string {
+  const isDashboard = strings.dashboardSurface;
   return `<script>
     // SSE — /events 구독해 상태 자동 갱신. 빌드 파이프라인 없는 인라인 스크립트.
     (function () {
@@ -213,6 +249,64 @@ function buildSseScript(strings: SseScriptStrings): string {
       var TUNNEL_DOWN = ${strings.tunnelDown};
       var PAGES_EMPTY = ${strings.pagesEmpty};
       var ATTACH_HINT = ${strings.attachHint};
+      var COPY_LABEL = ${strings.copyLabel};
+      var COPIED_LABEL = ${strings.copiedLabel};
+
+      // ── 클립보드 복사 헬퍼 ────────────────────────────────────────────────
+      function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+        // fallback: textarea + execCommand
+        return new Promise(function (resolve, reject) {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          try {
+            document.execCommand('copy') ? resolve() : reject(new Error('execCommand failed'));
+          } catch (err) {
+            reject(err);
+          } finally {
+            document.body.removeChild(ta);
+          }
+        });
+      }
+
+      // ── 복사 피드백 ───────────────────────────────────────────────────────
+      var copyTimer = null;
+      function triggerCopy() {
+        var urlBox = document.getElementById('url-box');
+        if (!urlBox) return;
+        var text = urlBox.textContent || '';
+        if (!text) return;
+        copyText(text).then(function () {
+          var btn = document.getElementById('copy-btn');
+          if (btn) {
+            btn.textContent = COPIED_LABEL;
+            if (copyTimer) clearTimeout(copyTimer);
+            copyTimer = setTimeout(function () {
+              btn.textContent = COPY_LABEL;
+              copyTimer = null;
+            }, 1500);
+          }
+        }).catch(function () { /* 복사 실패 시 조용히 무시 */ });
+      }
+
+      // ── 이벤트 위임 — document 레벨에서 단일 핸들러 (innerHTML 재렌더 후에도 생존) ──
+      document.addEventListener('click', function (e) {
+        var target = e.target;
+        if (!target) return;
+        // .copy-btn 또는 .url-box 클릭 시 복사
+        if (target.closest && (target.closest('.copy-btn') || target.closest('.url-box'))) {
+          triggerCopy();
+        }
+      });
+
+      // ── SSE 구독 ──────────────────────────────────────────────────────────
       var src = new EventSource('/events');
       src.onmessage = function (e) {
         try {
@@ -240,23 +334,45 @@ function buildSseScript(strings: SseScriptStrings): string {
               }
             }
           }
-          // attachUrl QR 갱신 — attachUrl이 없으면 hint 표시.
+          // attachUrl QR + url-box 갱신
+          // SECRET-HANDLING: URL 값을 로그로 출력하지 않는다.
           var sec = document.getElementById('attach-section');
           if (sec) {
             if (s.attachUrl) {
-              // QR은 서버에서 새로 렌더한 /qr.png?u= 로 img src 교체.
-              // TOTP at= 코드는 attachUrl 안에 캡슐화 — 별도 노출 없음.
-              // wssUrl은 절대 DOM에 렌더하지 않는다 (SECRET-HANDLING).
               var encoded = encodeURIComponent(s.attachUrl);
               var safeUrl = String(s.attachUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+              ${
+                isDashboard
+                  ? `// dashboard: #attach-section innerHTML 전체 교체 (img + url-row).
+              // url-box id="url-box" 를 포함해 복사 핸들러가 계속 동작함.
               sec.innerHTML =
                 '<img class="qr" src="/qr.png?u=' + encoded + '" alt="attach QR" />' +
-                '<p class="url-box">' + safeUrl + '</p>';
+                '<div class=\\"url-row\\">' +
+                  '<p class=\\"url-box\\" id=\\"url-box\\">' + safeUrl + '</p>' +
+                  '<button class=\\"copy-btn\\" id=\\"copy-btn\\" type=\\"button\\" aria-label=\\"' + COPY_LABEL + '\\">' + COPY_LABEL + '</button>' +
+                '</div>';`
+                  : `// /attach: img src만 교체 — url-box는 별도 #url-section에서 관리해 이중 표시 방지(#458).
+              // QR img src 교체: img가 있으면 src만 갱신, 없으면 img 요소 생성.
+              var img = sec.querySelector('img.qr');
+              if (img) {
+                img.src = '/qr.png?u=' + encoded;
+              } else {
+                sec.innerHTML = '<img class=\\"qr\\" src=\\"/qr.png?u=' + encoded + '\\" alt=\\"attach QR\\" />';
+              }
+              // url-box textContent만 갱신 (innerHTML 교체하지 않아 복사 버튼/핸들러 생존).
+              var ub = document.getElementById('url-box');
+              if (ub) ub.textContent = s.attachUrl;`
+              }
             } else {
-              sec.innerHTML = '<p class="hint">' + ATTACH_HINT + '</p>';
+              ${
+                isDashboard
+                  ? `sec.innerHTML = '<p class=\\"hint\\">' + ATTACH_HINT + '</p>';`
+                  : `// /attach에서 hint가 필요한 경우는 없으나 방어 처리.
+              sec.innerHTML = '<p class=\\"hint\\">' + ATTACH_HINT + '</p>';`
+              }
             }
           }
-          // 갱신 시각
+          // 갱신 시각 (dashboard만 #updated 요소 있음)
           var upd = document.getElementById('updated');
           if (upd) upd.textContent = upd.textContent.replace(/[^ ]+$/, new Date().toISOString());
         } catch (_) { /* 파싱 오류 무시 */ }
@@ -302,11 +418,15 @@ function buildAttachHtml(
   // Inject SSE script so QR auto-refreshes on each /events push.
   // `#attach-section` is the only selector present on /attach — other selectors
   // (#tunnel-status, #pages-list, #updated) are null-guarded and are no-ops here.
-  const sseStrings = {
+  const sseStrings: SseScriptStrings = {
     tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
     pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
+    copyLabel: JSON.stringify(s('dashboard.url.copy')),
+    copiedLabel: JSON.stringify(s('dashboard.url.copied')),
+    // /attach 표면: img src만 교체, #url-box textContent만 갱신 → url-box 이중 표시 방지(#458).
+    dashboardSurface: false,
   };
   const sseScript = buildSseScript(sseStrings);
   return filled.replace('</body>', `${sseScript}\n</body>`);

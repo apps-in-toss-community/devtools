@@ -692,3 +692,180 @@ describe('startQrHttpServer — ?lang= override + lang switcher (#455)', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// url-box click-to-copy + 복사 버튼 (#458)
+//
+// 두 표면(dashboard `/`와 `/attach`) 모두:
+//   - url-row 구조(.url-row + .url-box + .copy-btn) 포함
+//   - 복사 버튼 id="copy-btn" 포함
+//   - SSE 스크립트에 이벤트 위임 핸들러(.closest('.copy-btn') 또는 .closest('.url-box')) 포함
+//   - /attach 재렌더 경로: #attach-section에 url-box가 새로 생기지 않아야 함
+//     (url-box는 #url-section에만 존재 → 이중 표시 결함 수정)
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — url-box click-to-copy + 복사 버튼 (#458)', () => {
+  const attachUrlDummy =
+    'intoss-private://aitc-sdk-example?_deploymentId=test-copy&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+
+  // ── dashboard `/` 표면 ────────────────────────────────────────────────────
+
+  it('GET / — attachUrl 있을 때 .url-row + .copy-btn 포함', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://dummy.trycloudflare.com' },
+      pages: [],
+      attachUrl: attachUrlDummy,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      expect(html).toContain('class="url-row"');
+      expect(html).toContain('class="copy-btn"');
+      expect(html).toContain('id="copy-btn"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET / — 한국어 복사 버튼 라벨 "복사"', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://dummy.trycloudflare.com' },
+      pages: [],
+      attachUrl: attachUrlDummy,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      expect(html).toContain('>복사<');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET / — 영어 복사 버튼 라벨 "Copy"', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://dummy.trycloudflare.com' },
+      pages: [],
+      attachUrl: attachUrlDummy,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/?lang=en`, {
+          headers: { 'Accept-Language': 'en' },
+        })
+      ).text();
+      expect(html).toContain('>Copy<');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET / — SSE 스크립트에 이벤트 위임 핸들러(.closest 분기) 포함', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: attachUrlDummy,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // 이벤트 위임: document.addEventListener('click') + .closest('.copy-btn')
+      expect(html).toContain("closest('.copy-btn')");
+      expect(html).toContain("closest('.url-box')");
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET / — dashboard SSE 스크립트에 COPIED_LABEL(복사됨/Copied) 포함', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const koHtml = await (await fetch(`http://127.0.0.1:${srv.port}/?lang=ko`)).text();
+      expect(koHtml).toContain('복사됨');
+
+      const enHtml = await (await fetch(`http://127.0.0.1:${srv.port}/?lang=en`)).text();
+      expect(enHtml).toContain('Copied');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  // ── /attach 표면 ─────────────────────────────────────────────────────────
+
+  it('GET /attach — .url-row + .copy-btn + id="url-box" 포함', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      expect(html).toContain('class="url-row"');
+      expect(html).toContain('class="copy-btn"');
+      expect(html).toContain('id="url-box"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET /attach — id="url-section" 섹션에 url-row 포함 (url-box는 #url-section에만)', async () => {
+    // 이중 표시 방지 (#458): url-box가 #attach-section 안에 없고
+    // #url-section 안에만 있어야 한다.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      expect(html).toContain('id="url-section"');
+      // #attach-section 마크업 확인: img 이후 </div>까지 url-box가 없어야 함.
+      // 간단 검증: #attach-section div 안에 url-box class 없음.
+      const attachSectionMatch = html.match(/<div id="attach-section">([\s\S]*?)<\/div>/);
+      expect(attachSectionMatch).not.toBeNull();
+      if (attachSectionMatch) {
+        expect(attachSectionMatch[1]).not.toContain('url-box');
+        expect(attachSectionMatch[1]).not.toContain('url-row');
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('GET /attach — SSE 스크립트가 attach 표면 분기(img src 교체 + #url-box textContent 갱신) 포함', async () => {
+    // /attach 표면: innerHTML 전체 교체가 아니라 img src 교체 + url-box textContent만 갱신해야
+    // SSE push 때 url-box가 이중으로 생기지 않는다(#458 핵심 수정).
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // attach 표면 SSE 핸들러: img src 교체 경로
+      expect(html).toContain("querySelector('img.qr')");
+      // url-box textContent 갱신 (innerHTML 전체 교체가 아님)
+      expect(html).toContain("getElementById('url-box')");
+      expect(html).toContain('.textContent = s.attachUrl');
+    } finally {
+      await srv.close();
+    }
+  });
+});

@@ -229,6 +229,10 @@ export const en: Record<StringKey, string> = {
   'dashboard.pages.section': 'Connected Pages',
   'dashboard.pages.empty': 'No attached pages',
 
+  // qr-http-server — url-box copy button
+  'dashboard.url.copy': 'Copy',
+  'dashboard.url.copied': 'Copied',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   'attach.title': 'AIT Debug Session — QR Scan',
   'attach.deployment': 'deployment: {label}',
