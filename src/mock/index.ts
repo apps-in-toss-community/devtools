@@ -5,6 +5,13 @@
  * 번들러 alias로 원본 대신 이 모듈이 resolve된다.
  */
 
+import { installSafeAreaInsetsBridge } from './safe-area-bridge.js';
+
+// env-2 safe-area inset bridge (#484): wire the launcher→framed-page postMessage
+// receiver at import time so any consumer that aliases the SDK to this mock gets
+// the real device insets forwarded automatically. No-op outside a browser.
+installSafeAreaInsetsBridge();
+
 // --- 광고 ---
 export { GoogleAdMob, loadFullScreenAd, showFullScreenAd, TossAds } from './ads/index.js';
 // --- 분석 ---
@@ -107,6 +114,13 @@ export {
   type MockPresetState,
   matchesPreset,
 } from './presets.js';
+// --- env-2 safe-area inset bridge (#484) ---
+export {
+  applyForwardedSafeAreaInsets,
+  installSafeAreaInsetsBridge,
+  parseSafeAreaInsetsMessage,
+  SAFE_AREA_INSETS_MESSAGE_TYPE,
+} from './safe-area-bridge.js';
 export type { AitDevtoolsState } from './state.js';
 // --- 상태 관리 (내부 + 외부 접근용) ---
 export { aitState } from './state.js';

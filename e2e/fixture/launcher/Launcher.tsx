@@ -102,22 +102,48 @@ function consumeDeepLinkUrl(): string | null {
   return url ? decorateIframeSrc(url, launcherSearch) : null;
 }
 
-// Read env(safe-area-inset-top/bottom) by measuring a throwaway element — CSS
-// env() is not readable from JS directly. Returns 0/0 where env() is
+interface SafeAreaInsets {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+// Read env(safe-area-inset-*) by measuring a throwaway element — CSS env() is
+// not readable from JS directly. Returns 0 for every side where env() is
 // unsupported (desktop, jsdom: getComputedStyle yields ''/'0px' → 0).
-function measureSafeAreaInsets(): { top: number; bottom: number } {
+function measureSafeAreaInsets(): SafeAreaInsets {
   const probe = document.createElement('div');
   probe.style.position = 'fixed';
   probe.style.visibility = 'hidden';
   probe.style.pointerEvents = 'none';
   probe.style.paddingTop = 'env(safe-area-inset-top)';
   probe.style.paddingBottom = 'env(safe-area-inset-bottom)';
+  probe.style.paddingLeft = 'env(safe-area-inset-left)';
+  probe.style.paddingRight = 'env(safe-area-inset-right)';
   document.body.appendChild(probe);
   const computed = getComputedStyle(probe);
   const top = Number.parseFloat(computed.paddingTop) || 0;
   const bottom = Number.parseFloat(computed.paddingBottom) || 0;
+  const left = Number.parseFloat(computed.paddingLeft) || 0;
+  const right = Number.parseFloat(computed.paddingRight) || 0;
   probe.remove();
-  return { top, bottom };
+  return { top, bottom, left, right };
+}
+
+// The postMessage envelope the framed dev app's devtools mock listens for
+// (#484, slice 2). The launcher is the top-level document, so its env() reading
+// is the real device geometry; the framed page's mock would otherwise report a
+// synthetic preset value and double-pad it.
+const SAFE_AREA_INSETS_MESSAGE_TYPE = 'ait:safe-area-insets';
+
+function postSafeAreaInsetsTo(target: Window | null): void {
+  if (!target) return;
+  const insets = measureSafeAreaInsets();
+  // targetOrigin '*': the framed tunnel page is cross-origin
+  // (*.trycloudflare.com) and the insets are non-sensitive geometry. The
+  // receiver (src/mock/safe-area-bridge.ts) validates shape + range.
+  target.postMessage({ type: SAFE_AREA_INSETS_MESSAGE_TYPE, insets }, '*');
 }
 
 // Snapshot the viewport geometry the letterbox detection (#469) needs. The
@@ -229,6 +255,7 @@ export function Launcher(): React.JSX.Element {
   const pwaInstallRef = useRef<PwaInstallElement | null>(null);
   const scannerRef = useRef<QrScanner | null>(null);
   const bottomChromeRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
 
   // Keep a stable ref to pendingUrl so event handlers can read the latest
   // value without becoming stale closures.
@@ -407,6 +434,25 @@ export function Launcher(): React.JSX.Element {
       window.visualViewport?.removeEventListener('resize', measure);
     };
   }, []);
+
+  // Forward the launcher's real env() insets to the framed dev app (#484,
+  // slice 2). The launcher is the top-level document so its env() reading is the
+  // ground truth; the framed page's mock would otherwise report a synthetic
+  // preset and double-pad it. Re-post on resize/orientationchange so a rotation
+  // propagates. The iframe `onLoad` handler covers the initial post (the frame
+  // may not be ready when this effect first runs). No-op outside live mode.
+  useEffect(() => {
+    if (screen !== 'live') return;
+    const post = () => postSafeAreaInsetsTo(frameRef.current?.contentWindow ?? null);
+    window.addEventListener('resize', post);
+    window.addEventListener('orientationchange', post);
+    window.visualViewport?.addEventListener('resize', post);
+    return () => {
+      window.removeEventListener('resize', post);
+      window.removeEventListener('orientationchange', post);
+      window.visualViewport?.removeEventListener('resize', post);
+    };
+  }, [screen]);
 
   const letterbox = metrics ? detectLetterbox(metrics) : null;
 
@@ -669,12 +715,17 @@ export function Launcher(): React.JSX.Element {
       </main>
 
       <iframe
+        ref={frameRef}
         id="frame"
         title="Dev app preview"
         data-testid="launcher-frame"
         allow="camera; microphone; geolocation; clipboard-read; clipboard-write"
         referrerPolicy="no-referrer"
         src={liveUrl ?? undefined}
+        // Initial inset forward (#484, slice 2): post once the framed page is
+        // loaded and its mock message listener is installed. resize/orientation
+        // re-posts are wired in the effect above.
+        onLoad={(e) => postSafeAreaInsetsTo(e.currentTarget.contentWindow)}
         style={{
           // dvh/dvw-free sizing (#469): 100% of a fixed element resolves
           // against the real ICB (window box), unlike 100dvh which can
@@ -777,8 +828,10 @@ export function Launcher(): React.JSX.Element {
           position: 'fixed',
           left: 'max(12px, env(safe-area-inset-left))',
           right: 'max(12px, env(safe-area-inset-right))',
-          // Letterboxed window never reaches the home indicator, yet real
-          // iOS 26 still reports a phantom bottom inset (#475) — skip it.
+          // Letterboxed window never reaches the home indicator (#484: bottom
+          // inset collapses to 0 in that state) — use a flat 12px so the chrome
+          // sits just inside the mis-sized window. Healthy edge-to-edge windows
+          // pad the real home indicator.
           bottom: letterbox?.detected ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
           zIndex: 30,
           display: 'flex',
