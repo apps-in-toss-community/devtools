@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.71
+
+### Patch Changes
+
+- 2d5fb38: 환경 2(AITC Sandbox PWA) 상단 safe-area fidelity 개선 (#484, slice 1+2).
+
+  - launcher PWA를 `apple-mobile-web-app-status-bar-style: black-translucent`로 전환 — standalone 웹뷰가 status bar 밑까지 확장돼 흰 띠 + 죽은 ~54px 공간이 사라진다(game-type 토스 표현에 근접). launcher 자체 UI는 `env(safe-area-inset-top)`을 스스로 패딩.
+  - letterbox 감지기(#469/#479)를 새 기하에 맞춰 재설계 — black-translucent에서는 healthy 창도 top inset이 0이 아니라서, 판별자를 top inset에서 bottom inset으로 역전(letterbox = 높이 부족 + bottom 0, healthy = 풀 높이 + bottom>0).
+  - launcher가 측정한 실 `env(safe-area-inset-*)` 4값을 framed page로 `postMessage({ type: 'ait:safe-area-insets', insets })` 전달(load·resize·orientationchange 시). framed page의 mock `SafeAreaInsets` 상태가 수신해 preset을 덮어쓰고 subscribe 이벤트를 발화한다. 수신 측은 type·숫자·범위(0~200) 검증, 비정상 메시지는 조용히 무시. 메시지 주도라 desktop 환경 1(launcher 없음)은 preset이 그대로 유지된다.
+
+- d6c16c9: attach 시 자동 오픈되는 DevTools inspector URL을 appspot 의존에서 chii 자가 호스팅 front_end + fresh TOTP(`at=`)로 전환. `buildChiiInspectorUrl`이 relay base 경유 `<relay>/front_end/chii_app.html?wss=<host>/client/<uuid>?target=<id>&at=<code>` 포맷을 조립하며, `AutoDevtoolsOpener.open()`은 기존 2-arg 시그니처 대신 `DevtoolsOpenOptions` 객체를 받아 relay HTTP base URL·target id·mintTotp 클로저를 받는다. relay gate(#478) 4401 거부와 appspot `@` 리비전 미검증 문제를 함께 해소.
+- 1454f0d: relay: WS keepalive ping 추가 — Cloudflare 터널 유휴 ~100s 절단 방지 (#483)
+
+  환경 2/3/4 CDP relay 세션에서 Cloudflare proxied 연결이 무트래픽 ~100초에 절단되는 문제를 수정합니다. relay가 보유한 모든 WS 소켓에 45초 간격으로 protocol ping을 전송해 양쪽 leg(폰 target + daemon client)의 edge 유휴 타이머를 리셋합니다. 클라이언트/target 코드 변경 없음 — ws 라이브러리와 브라우저는 pong을 자동으로 응답합니다.
+
+  `startChiiRelay({ keepaliveIntervalMs })` 옵션으로 간격을 조정하거나 `0`으로 비활성화할 수 있습니다.
+
 ## 0.1.70
 
 ### Patch Changes
