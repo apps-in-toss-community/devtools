@@ -109,13 +109,19 @@ test.describe('launcher PWA', () => {
     await expect(page.getByTestId('launcher-frame')).toBeHidden();
   });
 
-  test('remembers the last URL across reloads via localStorage', async ({ page }) => {
+  test('fresh open without ?url= always lands on the setup/scan screen (#459)', async ({
+    page,
+  }) => {
     const tunnel = 'https://example.com/';
     await page.goto(`/launcher/?url=${encodeURIComponent(tunnel)}`);
     await expect(page.getByTestId('launcher-frame')).toHaveAttribute('src', tunnel);
 
-    // Reload without ?url= — should auto-resume from localStorage.
+    // Reload without ?url= — last-URL auto-resume was removed (#459): tunnel
+    // hosts change every session and TOTP at= codes expire, so a saved URL is
+    // always stale. A fresh open must show setup with an empty input.
     await page.goto('/launcher/');
-    await expect(page.getByTestId('launcher-frame')).toHaveAttribute('src', tunnel);
+    await expect(page.getByTestId('launcher-setup')).toBeVisible();
+    await expect(page.getByTestId('launcher-frame')).toBeHidden();
+    await expect(page.getByTestId('launcher-url-input')).toHaveValue('');
   });
 });
