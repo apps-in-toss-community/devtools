@@ -109,6 +109,33 @@ test.describe('launcher PWA', () => {
     await expect(page.getByTestId('launcher-frame')).toBeHidden();
   });
 
+  test('viewport diagnostics FAB toggles the metrics panel (#469)', async ({ page }) => {
+    await page.goto('/launcher/');
+    const fab = page.getByTestId('launcher-diag-fab');
+    await expect(fab).toBeVisible();
+    await expect(page.getByTestId('launcher-diag-panel')).toBeHidden();
+
+    await fab.click();
+    const panel = page.getByTestId('launcher-diag-panel');
+    await expect(panel).toBeVisible();
+
+    // A desktop Chromium tab is never standalone — the row must say "no"
+    // (Playwright's default locale is en-US, so the en catalog renders).
+    await expect(page.getByTestId('launcher-diag-standalone')).toHaveText('no');
+    // The inner row reflects the live window geometry.
+    const inner = await page.evaluate(() => `${window.innerWidth} × ${window.innerHeight}`);
+    await expect(page.getByTestId('launcher-diag-inner')).toHaveText(inner);
+
+    await fab.click();
+    await expect(panel).toBeHidden();
+  });
+
+  test('letterbox label stays hidden in a normal browser tab (#469)', async ({ page }) => {
+    await page.goto('/launcher/');
+    // Not standalone → the iOS letterbox signature can never match here.
+    await expect(page.getByTestId('launcher-letterbox-label')).toBeHidden();
+  });
+
   test('fresh open without ?url= always lands on the setup/scan screen (#459)', async ({
     page,
   }) => {

@@ -14,6 +14,7 @@ import type { Locale } from '../../../src/i18n/index.js';
 import { setLocale } from '../../../src/i18n/index.js';
 import { useLocale, useT } from '../../../src/i18n/react.js';
 import { resolveLauncherEntry } from './entry.js';
+import { detectLetterbox, type ViewportMetrics } from './letterbox.js';
 
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
 
@@ -101,6 +102,40 @@ function consumeDeepLinkUrl(): string | null {
   return url ? decorateIframeSrc(url, launcherSearch) : null;
 }
 
+// Read env(safe-area-inset-top/bottom) by measuring a throwaway element — CSS
+// env() is not readable from JS directly. Returns 0/0 where env() is
+// unsupported (desktop, jsdom: getComputedStyle yields ''/'0px' → 0).
+function measureSafeAreaInsets(): { top: number; bottom: number } {
+  const probe = document.createElement('div');
+  probe.style.position = 'fixed';
+  probe.style.visibility = 'hidden';
+  probe.style.pointerEvents = 'none';
+  probe.style.paddingTop = 'env(safe-area-inset-top)';
+  probe.style.paddingBottom = 'env(safe-area-inset-bottom)';
+  document.body.appendChild(probe);
+  const computed = getComputedStyle(probe);
+  const top = Number.parseFloat(computed.paddingTop) || 0;
+  const bottom = Number.parseFloat(computed.paddingBottom) || 0;
+  probe.remove();
+  return { top, bottom };
+}
+
+// Snapshot the viewport geometry the letterbox detection (#469) needs. The
+// verdict itself is pure (letterbox.ts) — this is the DOM-reading half.
+function readViewportMetrics(): ViewportMetrics {
+  const safeArea = measureSafeAreaInsets();
+  return {
+    innerWidth: window.innerWidth,
+    innerHeight: window.innerHeight,
+    screenWidth: window.screen.width,
+    screenHeight: window.screen.height,
+    visualViewportHeight: window.visualViewport?.height ?? null,
+    safeAreaTop: safeArea.top,
+    safeAreaBottom: safeArea.bottom,
+    standalone: isStandalone(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // LanguageSwitcher
 // ---------------------------------------------------------------------------
@@ -179,6 +214,9 @@ export function Launcher(): React.JSX.Element {
   const [setupToolsVisible, setSetupToolsVisible] = useState(false);
   const [installCtaVisible, setInstallCtaVisible] = useState(false);
   const [authBlocked, setAuthBlocked] = useState(false);
+
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [metrics, setMetrics] = useState<ViewportMetrics | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pwaInstallRef = useRef<PwaInstallElement | null>(null);
@@ -339,6 +377,27 @@ export function Launcher(): React.JSX.Element {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
+  // Viewport diagnostics (#469): keep a live geometry snapshot so the letterbox
+  // verdict and the diag panel stay current across rotation / resize. iOS
+  // standalone cold start can settle the final window geometry late, so one
+  // delayed re-measure runs even when no resize event ever fires.
+  useEffect(() => {
+    const measure = () => setMetrics(readViewportMetrics());
+    measure();
+    const settle = window.setTimeout(measure, 600);
+    window.addEventListener('resize', measure);
+    window.addEventListener('orientationchange', measure);
+    window.visualViewport?.addEventListener('resize', measure);
+    return () => {
+      window.clearTimeout(settle);
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('orientationchange', measure);
+      window.visualViewport?.removeEventListener('resize', measure);
+    };
+  }, []);
+
+  const letterbox = metrics ? detectLetterbox(metrics) : null;
+
   // ---------------------------------------------------------------------------
   // Scanner start
   // ---------------------------------------------------------------------------
@@ -410,9 +469,14 @@ export function Launcher(): React.JSX.Element {
   return (
     <div
       style={{
+        // Sizing comes from inset alone (#469): an explicit width/height
+        // over-constrains the box (width/height beat right/bottom), so a
+        // mis-resolved dvh/dvw on iOS standalone cold start would mis-size the
+        // box. inset:0 tracks the real ICB on both axes. maxWidth keeps the
+        // #444 WebKit clamp for the case where the ICB resolves wider than the
+        // visual viewport.
         position: 'fixed',
         inset: 0,
-        width: '100dvw',
         maxWidth: '100dvw',
         overflowX: 'hidden',
         overflowY: 'auto',
@@ -589,12 +653,19 @@ export function Launcher(): React.JSX.Element {
         referrerPolicy="no-referrer"
         src={liveUrl ?? undefined}
         style={{
+          // dvh/dvw-free sizing (#469): 100% of a fixed element resolves
+          // against the real ICB (window box), unlike 100dvh which can
+          // mis-resolve on iOS standalone cold start. inset:0 alone is NOT
+          // enough here — iframe is a replaced element, so auto width/height
+          // falls back to the intrinsic 300×150 instead of stretching.
+          // maxWidth keeps the #444 WebKit clamp for the case where the ICB
+          // resolves wider than the visual viewport.
           position: 'fixed',
           inset: 0,
           border: 0,
-          width: '100dvw',
+          width: '100%',
           maxWidth: '100dvw',
-          height: '100dvh',
+          height: '100%',
           background: '#fff',
           display: screen === 'live' ? 'block' : 'none',
         }}
@@ -685,6 +756,116 @@ export function Launcher(): React.JSX.Element {
       >
         {t('launcher.rescanBtn')}
       </button>
+
+      {/*
+        Letterbox diagnosis label (#469): when the runtime geometry matches the
+        iOS standalone letterbox signature (standalone + height shortfall +
+        safe-area-bottom 0 — see letterbox.ts), name the strip in-page. The
+        band itself is OUTSIDE the window (OS-painted manifest background_color)
+        so this label is the only way the page can explain it.
+      */}
+      {letterbox?.detected && (
+        <div
+          role="status"
+          data-testid="launcher-letterbox-label"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 'calc(max(12px, env(safe-area-inset-bottom)) + 48px)',
+            transform: 'translateX(-50%)',
+            zIndex: 30,
+            maxWidth: 'min(92vw, 420px)',
+            padding: '8px 12px',
+            fontSize: '12px',
+            lineHeight: 1.5,
+            textAlign: 'center',
+            borderRadius: '10px',
+            background: 'rgba(20,22,26,.92)',
+            border: '1px solid #fdd663',
+            color: '#fdd663',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          {t('launcher.letterboxDetected', { pt: letterbox.shortfallPx })}
+        </div>
+      )}
+
+      {/* Viewport diagnostics FAB + panel (#469) — always available so the
+          measured values can be read on-device without a tethered debugger. */}
+      <button
+        type="button"
+        id="diag-toggle"
+        data-testid="launcher-diag-fab"
+        aria-expanded={diagOpen}
+        title={t('launcher.diagTitle')}
+        onClick={() => setDiagOpen((open) => !open)}
+        style={{
+          position: 'fixed',
+          left: 'max(12px, env(safe-area-inset-left))',
+          bottom: 'max(12px, env(safe-area-inset-bottom))',
+          zIndex: 10,
+          padding: '8px 12px',
+          fontSize: '12px',
+          borderRadius: '999px',
+          background: 'rgba(20,22,26,.85)',
+          color: '#9aa0a6',
+          border: '1px solid #2a2e33',
+          backdropFilter: 'blur(4px)',
+        }}
+      >
+        {t('launcher.diagFab')}
+      </button>
+
+      {diagOpen && metrics && (
+        <div
+          data-testid="launcher-diag-panel"
+          style={{
+            position: 'fixed',
+            left: 'max(12px, env(safe-area-inset-left))',
+            bottom: 'calc(max(12px, env(safe-area-inset-bottom)) + 44px)',
+            zIndex: 30,
+            minWidth: '220px',
+            padding: '12px 14px',
+            borderRadius: '12px',
+            background: 'rgba(20,22,26,.95)',
+            border: '1px solid #2a2e33',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: '11px',
+            color: '#e8eaed',
+          }}
+        >
+          <div style={{ fontWeight: 600, fontSize: '12px' }}>{t('launcher.diagTitle')}</div>
+          {(
+            [
+              ['inner', 'window.inner', `${metrics.innerWidth} × ${metrics.innerHeight}`],
+              ['screen', 'screen', `${metrics.screenWidth} × ${metrics.screenHeight}`],
+              [
+                'vvh',
+                'visualViewport.h',
+                metrics.visualViewportHeight === null
+                  ? '–'
+                  : String(Math.round(metrics.visualViewportHeight)),
+              ],
+              ['safearea', 'safe-area t/b', `${metrics.safeAreaTop} / ${metrics.safeAreaBottom}`],
+              [
+                'standalone',
+                'standalone',
+                metrics.standalone ? t('launcher.diagYes') : t('launcher.diagNo'),
+              ],
+              ['shortfall', 'shortfall', `${letterbox?.shortfallPx ?? 0}px`],
+            ] as const
+          ).map(([id, label, value]) => (
+            <div key={id} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
+              <span style={{ color: '#9aa0a6' }}>{label}</span>
+              <span data-testid={`launcher-diag-${id}`}>{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

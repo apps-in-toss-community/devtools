@@ -5,9 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="googlebot" content="noindex, nofollow" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
+      Standalone display is declared ONLY by the web app manifest
+      (display: standalone) + viewport-fit=cover above. The legacy
+      *-web-app-capable / apple-mobile-web-app-status-bar-style=black-translucent
+      metas were removed in #469: manifest display:standalone has been sufficient
+      on iOS since 11.3, and the legacy/manifest coexistence is the suspected
+      trigger of the iOS 26 standalone letterbox (web view mis-sized by the
+      status-bar height, bottom strip painted with manifest background_color).
+      iOS web clips snapshot meta tags at install time — changes here only take
+      effect after removing and re-adding the home-screen app.
+    -->
     <meta name="theme-color" content="#0b0d10" />
     <link rel="manifest" href="/launcher/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/launcher/icon-192.png" />
