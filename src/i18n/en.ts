@@ -267,4 +267,10 @@ export const en: Record<StringKey, string> = {
   'launcher.debugAuthFailed': 'Debug connection authentication failed',
   'launcher.debugAuthFailedHint': 'The QR code may have expired. Scan a fresh QR code.',
   'launcher.debugAuthRescanCta': 'Scan a new QR',
+  'launcher.diagFab': 'Diag',
+  'launcher.diagTitle': 'Viewport diagnostics',
+  'launcher.diagYes': 'yes',
+  'launcher.diagNo': 'no',
+  'launcher.letterboxDetected':
+    'Display area is {pt}pt short — likely an iOS standalone letterbox. Removing and re-adding the launcher to the home screen may fix it.',
 };

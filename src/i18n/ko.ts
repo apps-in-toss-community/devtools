@@ -269,6 +269,12 @@ export const ko = {
   'launcher.debugAuthFailed': '디버그 연결 인증 실패',
   'launcher.debugAuthFailedHint': 'QR 코드가 만료되었을 수 있어요. 새 QR을 다시 스캔하세요.',
   'launcher.debugAuthRescanCta': '새 QR 스캔하기',
+  'launcher.diagFab': '진단',
+  'launcher.diagTitle': '뷰포트 진단',
+  'launcher.diagYes': '예',
+  'launcher.diagNo': '아니요',
+  'launcher.letterboxDetected':
+    '표시 영역이 {pt}pt 부족합니다 — iOS standalone letterbox로 보입니다. 런처를 홈 화면에서 제거 후 다시 설치하면 해소될 수 있어요.',
 } as const;
 
 export type StringKey = keyof typeof ko;
