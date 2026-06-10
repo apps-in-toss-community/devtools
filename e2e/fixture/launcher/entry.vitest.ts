@@ -1,4 +1,4 @@
-// Pure unit tests for the launcher entry-routing decision (#411 defect 2).
+// Pure unit tests for the launcher entry-routing decision (#411 defect 2, #459).
 //
 // Collected by vitest via the `*.vitest.ts` include in vitest.config.ts — the
 // distinct extension keeps Playwright (testMatch '**/*.test.ts') from also
@@ -8,16 +8,36 @@ import { describe, expect, it } from 'vitest';
 import { resolveLauncherEntry } from './entry.js';
 
 const TUNNEL = 'https://abc-def.trycloudflare.com/';
-const SAVED = 'https://saved-host.trycloudflare.com/';
 
-describe('resolveLauncherEntry (#411 install-first gate)', () => {
+describe('resolveLauncherEntry (#411 install-first gate, #459 scan-first)', () => {
   it('no URL at all → setup, no pending', () => {
     expect(
       resolveLauncherEntry({
         deepLinkUrl: null,
-        lastUrl: null,
         isStandalone: false,
         isLocalDev: false,
+      }),
+    ).toEqual({ kind: 'setup', pendingUrl: null });
+  });
+
+  it('fresh open (no deep-link) when installed (standalone) → still setup, no pending (#459)', () => {
+    // Even a standalone launcher opens setup when there is no ?url= query — the
+    // user should scan a fresh QR, not auto-resume a stale tunnel.
+    expect(
+      resolveLauncherEntry({
+        deepLinkUrl: null,
+        isStandalone: true,
+        isLocalDev: false,
+      }),
+    ).toEqual({ kind: 'setup', pendingUrl: null });
+  });
+
+  it('fresh open in local-dev (no deep-link) → setup, no pending (#459)', () => {
+    expect(
+      resolveLauncherEntry({
+        deepLinkUrl: null,
+        isStandalone: false,
+        isLocalDev: true,
       }),
     ).toEqual({ kind: 'setup', pendingUrl: null });
   });
@@ -28,7 +48,6 @@ describe('resolveLauncherEntry (#411 install-first gate)', () => {
     expect(
       resolveLauncherEntry({
         deepLinkUrl: TUNNEL,
-        lastUrl: null,
         isStandalone: false,
         isLocalDev: false,
       }),
@@ -39,7 +58,6 @@ describe('resolveLauncherEntry (#411 install-first gate)', () => {
     expect(
       resolveLauncherEntry({
         deepLinkUrl: TUNNEL,
-        lastUrl: null,
         isStandalone: true,
         isLocalDev: false,
       }),
@@ -50,53 +68,9 @@ describe('resolveLauncherEntry (#411 install-first gate)', () => {
     expect(
       resolveLauncherEntry({
         deepLinkUrl: TUNNEL,
-        lastUrl: null,
         isStandalone: false,
         isLocalDev: true,
       }),
     ).toEqual({ kind: 'live', url: TUNNEL });
-  });
-
-  it('saved last URL follows the SAME gate — no silent auto-live in an uninstalled tab', () => {
-    // localStorage auto-load is the same problem as a deep-link: gate it too.
-    expect(
-      resolveLauncherEntry({
-        deepLinkUrl: null,
-        lastUrl: SAVED,
-        isStandalone: false,
-        isLocalDev: false,
-      }),
-    ).toEqual({ kind: 'setup', pendingUrl: SAVED });
-  });
-
-  it('saved last URL when installed → straight to live', () => {
-    expect(
-      resolveLauncherEntry({
-        deepLinkUrl: null,
-        lastUrl: SAVED,
-        isStandalone: true,
-        isLocalDev: false,
-      }),
-    ).toEqual({ kind: 'live', url: SAVED });
-  });
-
-  it('deep-link wins over saved URL when both present', () => {
-    expect(
-      resolveLauncherEntry({
-        deepLinkUrl: TUNNEL,
-        lastUrl: SAVED,
-        isStandalone: true,
-        isLocalDev: false,
-      }),
-    ).toEqual({ kind: 'live', url: TUNNEL });
-    // …and the pending URL preserved at the gate is the deep-link, not the saved one.
-    expect(
-      resolveLauncherEntry({
-        deepLinkUrl: TUNNEL,
-        lastUrl: SAVED,
-        isStandalone: false,
-        isLocalDev: false,
-      }),
-    ).toEqual({ kind: 'setup', pendingUrl: TUNNEL });
   });
 });
