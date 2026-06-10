@@ -22,12 +22,15 @@ function base(overrides: Partial<ViewportMetrics> = {}): ViewportMetrics {
 }
 
 describe('detectLetterbox', () => {
-  it('detects the iOS 26 standalone letterbox signature (#469 Simulator values)', () => {
-    // Observed: web view mis-sized to screen − statusBar(47), top-anchored;
-    // the Simulator reports safe-area-top 0 in this (letterboxed) state — a
-    // known Simulator limitation. With the #479 top-inset discriminator this
-    // Simulator geometry is no longer detectable (safeAreaTop === 0 → false).
-    // Real-device letterbox detection now relies on the #479 real-device case.
+  it('no longer detects the #469 Simulator fixture (safeAreaTop 0 → false)', () => {
+    // Observed on the Simulator (#469): web view mis-sized to screen −
+    // statusBar(47), top-anchored, safe-area-bottom 0. safeAreaTop was NEVER
+    // measured in that state — this fixture's 0 is an assumption, not a
+    // measurement. If the Simulator does report 0 while letterboxed, the #479
+    // top-inset discriminator makes this geometry undetectable — accepted:
+    // a Simulator false-negative is preferred over the real-device
+    // false-positive that #479 fixes. If it reports 47 like the real device,
+    // this fixture is hypothetical and the real-device case below covers it.
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
