@@ -15,7 +15,6 @@ import { setLocale } from '../../../src/i18n/index.js';
 import { useLocale, useT } from '../../../src/i18n/react.js';
 import { resolveLauncherEntry } from './entry.js';
 
-const STORAGE_KEY = 'aitc-launcher:last-url';
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
 
 // Extend the minimal type for <pwa-install> to include attributes and events
@@ -219,7 +218,6 @@ export function Launcher(): React.JSX.Element {
     (url: string) => {
       stopScanner();
       setPendingUrl(null);
-      localStorage.setItem(STORAGE_KEY, url);
       setLiveUrl(url);
       setScreen('live');
       setMsg('');
@@ -233,8 +231,6 @@ export function Launcher(): React.JSX.Element {
       stopScanner();
       setLiveUrl(null);
       setScreen('setup');
-      const last = localStorage.getItem(STORAGE_KEY);
-      if (last) setUrlValue(last);
     },
     [stopScanner],
   );
@@ -250,25 +246,19 @@ export function Launcher(): React.JSX.Element {
     }
 
     const deepLinked = consumeDeepLinkUrl();
-    const savedRaw = localStorage.getItem(STORAGE_KEY);
-    const savedUrl = savedRaw && normalizeUrl(savedRaw) ? savedRaw : null;
 
     const entry = resolveLauncherEntry({
       deepLinkUrl: deepLinked,
-      lastUrl: savedUrl,
       isStandalone: isStandalone(),
       isLocalDev: isLocalDev(),
     });
 
     if (entry.kind === 'live') {
-      localStorage.setItem(STORAGE_KEY, entry.url);
       setLiveUrl(entry.url);
       setScreen('live');
     } else {
       const pending = entry.pendingUrl;
       setPendingUrl(pending);
-      const last = localStorage.getItem(STORAGE_KEY);
-      if (last) setUrlValue(last);
       applyPwaGate();
     }
 

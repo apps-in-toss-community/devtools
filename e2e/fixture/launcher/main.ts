@@ -16,8 +16,6 @@ import QrScanner from 'qr-scanner';
 import '@khmyznikov/pwa-install';
 import { resolveLauncherEntry } from './entry.js';
 
-const STORAGE_KEY = 'aitc-launcher:last-url';
-
 const setup = document.getElementById('setup') as HTMLElement;
 const scannerBox = document.getElementById('scanner') as HTMLElement;
 const video = scannerBox.querySelector('video') as HTMLVideoElement;
@@ -168,7 +166,6 @@ function showLive(url: string): void {
   // (rescan) doesn't re-surface the "open once" button for a stale URL.
   pendingUrl = null;
   openOnceBtn.style.display = 'none';
-  localStorage.setItem(STORAGE_KEY, url);
   frame.src = url;
   frame.style.display = 'block';
   rescanBtn.style.display = 'block';
@@ -185,8 +182,6 @@ function showSetup(): void {
   // deep-link / saved URL was preserved (install-first gate, #411). Otherwise it
   // stays hidden — a plain setup screen has nothing to open yet.
   openOnceBtn.style.display = pendingUrl ? '' : 'none';
-  const last = localStorage.getItem(STORAGE_KEY);
-  if (last) urlInput.value = last;
 }
 
 async function startScanner(): Promise<void> {
@@ -257,18 +252,20 @@ function consumeDeepLinkUrl(): string | null {
   return url ? decorateIframeSrc(url, launcherSearch) : null;
 }
 
-// Entry routing (#411): a deep-link / saved URL no longer skips straight to live
-// in an uninstalled browser tab — that permanently hid the install CTA. When the
-// install-first gate is closed (not standalone, not local-dev) we show setup with
-// the URL preserved as `pendingUrl` (+ "open once" button). Installed / local-dev
-// contexts keep the straight-to-live behaviour.
+// Entry routing (#411, #459): a deep-link no longer skips straight to live in an
+// uninstalled browser tab — that permanently hid the install CTA. When the
+// install-first gate is closed (not standalone, not local-dev) we show setup
+// with the URL preserved as `pendingUrl` (+ "open once" button). Installed /
+// local-dev contexts keep the straight-to-live behaviour.
+//
+// Fresh open (no ?url=) always lands on setup (#459): saved last-URL auto-load
+// is removed because quick-tunnel hosts change every session and TOTP `at=`
+// codes stored in a deep-link expire in 30 seconds — the saved URL is always
+// stale by the time the launcher is reopened.
 const deepLinked = consumeDeepLinkUrl();
-const savedRaw = localStorage.getItem(STORAGE_KEY);
-const savedUrl = savedRaw && normalizeUrl(savedRaw) ? savedRaw : null;
 
 const entry = resolveLauncherEntry({
   deepLinkUrl: deepLinked,
-  lastUrl: savedUrl,
   isStandalone: isStandalone(),
   isLocalDev: isLocalDev(),
 });
