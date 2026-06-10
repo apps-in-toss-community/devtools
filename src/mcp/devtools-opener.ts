@@ -6,7 +6,11 @@
  * also self-hosts its DevTools frontend at:
  *
  *   <relay-base>/front_end/chii_app.html
- *     ?wss=<encodeURIComponent("<relay-host>/client/<uuid>?target=<targetId>&at=<totp>")>
+ *     ?ws|wss=<encodeURIComponent("<relay-host>/client/<uuid>?target=<targetId>&at=<totp>")>
+ *
+ * The param name follows the relay base scheme — `ws=` for plain HTTP
+ * (env 3/4 local relay), `wss=` for HTTPS (env 2 tunnel) — matching the
+ * scheme branch in chii/public/index.js.
  *
  * This is the same URL format that Chii's own index-page inspect-links use
  * (derived from `chii/public/index.js` — the JS that powers the target list
@@ -59,10 +63,11 @@ import type { McpEnvironment } from './environment.js';
  * and target.
  *
  * Chii serves its own DevTools frontend at
- * `<relayHttpBaseUrl>/front_end/chii_app.html`. The `wss=` query parameter is
- * a URL-encoded string of the form `<relay-host>/client/<uuid>?target=<id>`
- * (and optionally `&at=<totp>`) — the same format used by Chii's own target
- * list page (derived from `chii/public/index.js`).
+ * `<relayHttpBaseUrl>/front_end/chii_app.html`. The `ws=` (plain HTTP relay)
+ * or `wss=` (HTTPS relay) query parameter is a URL-encoded string of the form
+ * `<relay-host>/client/<uuid>?target=<id>` (and optionally `&at=<totp>`) —
+ * the same format used by Chii's own target list page (derived from
+ * `chii/public/index.js`).
  *
  * The `at=` TOTP code is minted at call time via `mintTotp()`.  It is valid
  * for the current 30-second RFC 6238 step (±1 step skew = 90 s acceptance
@@ -89,7 +94,7 @@ import type { McpEnvironment } from './environment.js';
  *   'abc123',
  *   () => generateTotp(secret),
  * )
- * // → 'http://127.0.0.1:9100/front_end/chii_app.html?wss=127.0.0.1%3A9100%2Fclient%2F<uuid>%3Ftarget%3Dabc123%26at%3D<code>'
+ * // → 'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2F<uuid>%3Ftarget%3Dabc123%26at%3D<code>'
  */
 export function buildChiiInspectorUrl(
   relayHttpBaseUrl: string,
@@ -97,21 +102,29 @@ export function buildChiiInspectorUrl(
   mintTotp?: () => string,
   panel: 'elements' | 'console' | 'sources' | 'network' = 'console',
 ): string {
-  // Extract the host (and port) from the relay HTTP base URL.
-  // We strip the scheme so the chii_app.html can prepend `ws://` or `wss://`.
+  // Extract the host (and port) from the relay HTTP base URL, and pick the
+  // query param name chii_app.html expects: `ws=` dials `ws://` (plain-HTTP
+  // relay — env 3/4 local 127.0.0.1) while `wss=` dials `wss://` (HTTPS
+  // tunnel — env 2). chii/public/index.js does the same scheme branch:
+  // `location.protocol === 'https:' ? 'wss' : 'ws'`. Always sending `wss=`
+  // would make the frontend attempt TLS against the plain-HTTP local relay.
   let relayHost: string;
+  let wsParamName: 'ws' | 'wss';
   try {
-    relayHost = new URL(relayHttpBaseUrl).host; // e.g. "127.0.0.1:9100"
+    const parsed = new URL(relayHttpBaseUrl);
+    relayHost = parsed.host; // e.g. "127.0.0.1:9100"
+    wsParamName = parsed.protocol === 'https:' ? 'wss' : 'ws';
   } catch {
     // Fallback: strip the scheme prefix manually if URL parsing fails.
     relayHost = relayHttpBaseUrl.replace(/^https?:\/\//i, '');
+    wsParamName = /^https:/i.test(relayHttpBaseUrl) ? 'wss' : 'ws';
   }
 
   // Generate a client UUID that matches the format Chii's index.js uses
   // (6 random alphanumeric characters).
   const clientId = `devtools-opener-${Date.now().toString(36)}`;
 
-  // Build the wss= value: "<relay-host>/client/<uuid>?target=<id>[&at=<code>]"
+  // Build the ws=/wss= value: "<relay-host>/client/<uuid>?target=<id>[&at=<code>]"
   // This mirrors the format from chii/public/index.js:
   //   `${domain}${basePath}client/${randomId(6)}?target=${targetId}`
   let wsPath = `${relayHost}/client/${clientId}?target=${encodeURIComponent(targetId)}`;
@@ -123,7 +136,7 @@ export function buildChiiInspectorUrl(
     wsPath += `&at=${encodeURIComponent(code)}`;
   }
 
-  const params = new URLSearchParams({ wss: wsPath, panel });
+  const params = new URLSearchParams({ [wsParamName]: wsPath, panel });
   return `${relayHttpBaseUrl.replace(/\/$/, '')}/front_end/chii_app.html?${params.toString()}`;
 }
 

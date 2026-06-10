@@ -39,37 +39,62 @@ describe('buildChiiInspectorUrl', () => {
     const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'my-target-id');
     // The wss= value is URL-encoded, so decode it to inspect the inner value.
     const parsed = new URL(url);
-    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
+    );
     expect(wssParam).toContain('target=my-target-id');
   });
 
   it('routes through /client/ path (chii relay client endpoint)', () => {
     const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
     const parsed = new URL(url);
-    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
+    );
     expect(wssParam).toContain('/client/');
   });
 
   it('includes at= TOTP code when mintTotp is provided', () => {
     const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
     const parsed = new URL(url);
-    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
+    );
     expect(wssParam).toContain('at=123456');
   });
 
   it('omits at= when mintTotp is undefined', () => {
     const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', undefined);
     const parsed = new URL(url);
-    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
+    );
     expect(wssParam).not.toContain('at=');
   });
 
-  it('uses the relay host (not scheme) in the wss= value', () => {
+  it('uses the relay host (not scheme) in the ws= value', () => {
     const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
     const parsed = new URL(url);
-    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
+    );
     // Should start with the host, not with http://
     expect(wssParam).toMatch(/^127\.0\.0\.1:9100/);
+  });
+
+  it('uses ws= (plain dial) for an http relay base — env 3/4 local relay', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
+    const parsed = new URL(url);
+    // wss= against a plain-HTTP relay would make the frontend attempt TLS and fail.
+    expect(parsed.searchParams.get('ws')).toBeTruthy();
+    expect(parsed.searchParams.get('wss')).toBeNull();
+  });
+
+  it('uses wss= (TLS dial) for an https relay base — env 2 tunnel', () => {
+    const url = buildChiiInspectorUrl('https://abc.trycloudflare.com', 'target-abc');
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get('wss')).toBeTruthy();
+    expect(parsed.searchParams.get('ws')).toBeNull();
   });
 
   it('works with an external cloudflare tunnel base URL', () => {
@@ -80,7 +105,9 @@ describe('buildChiiInspectorUrl', () => {
     );
     expect(url).toMatch(/^https:\/\/abc\.trycloudflare\.com\/front_end\/chii_app\.html\?/);
     const parsed = new URL(url);
-    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
+    );
     expect(wssParam).toContain('target=phone-target');
     expect(wssParam).toContain('at=123456');
   });
@@ -313,7 +340,9 @@ describe('AutoDevtoolsOpener', () => {
     const urlMatch = urlLine.match(/DevTools URL: (.+)$/);
     const urlStr = urlMatch?.[1] ?? '';
     const parsedUrl = new URL(urlStr);
-    const wssParam = decodeURIComponent(parsedUrl.searchParams.get('wss') ?? '');
+    const wssParam = decodeURIComponent(
+      parsedUrl.searchParams.get('ws') ?? parsedUrl.searchParams.get('wss') ?? '',
+    );
     expect(wssParam).not.toContain('at=');
   });
 
