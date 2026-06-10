@@ -152,3 +152,48 @@ test.describe('launcher PWA', () => {
     await expect(page.getByTestId('launcher-url-input')).toHaveValue('');
   });
 });
+
+// Regression for the #475 real-device pile-up: the bottom chrome (RESCAN, diag
+// FAB, diag panel, letterbox label) is one fixed flex stack, so the pieces can
+// never overlap. Desktop Chromium at the iPhone-class 390×844 viewport covers
+// the three elements reachable here; the letterbox label needs a standalone
+// display mode that a browser tab can't fake — its geometry is covered by the
+// stack layout itself and letterbox.vitest.ts.
+test.describe('launcher bottom chrome stack (#475)', () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test('rescan / diag FAB / diag panel never overlap at 390×844', async ({ page }) => {
+    await page.goto(`/launcher/?url=${encodeURIComponent('https://example.com/')}`);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    await page.getByTestId('launcher-diag-fab').click();
+    await expect(page.getByTestId('launcher-diag-panel')).toBeVisible();
+    await expect(page.getByTestId('launcher-rescan-btn')).toBeVisible();
+
+    const ids = ['launcher-rescan-btn', 'launcher-diag-fab', 'launcher-diag-panel'] as const;
+    const boxes: Record<string, { x: number; y: number; width: number; height: number }> = {};
+    for (const id of ids) {
+      const box = await page.getByTestId(id).boundingBox();
+      expect(box, `${id} must have a bounding box`).not.toBeNull();
+      if (box) boxes[id] = box;
+    }
+
+    for (let i = 0; i < ids.length; i++) {
+      for (let j = i + 1; j < ids.length; j++) {
+        const a = boxes[ids[i]];
+        const b = boxes[ids[j]];
+        const intersects =
+          a.x < b.x + b.width &&
+          b.x < a.x + a.width &&
+          a.y < b.y + b.height &&
+          b.y < a.y + a.height;
+        expect(intersects, `${ids[i]} must not overlap ${ids[j]}`).toBe(false);
+      }
+    }
+
+    // The on-device ICB discriminator row: with no safe-area inset the stack
+    // anchors at bottom: 12px, so the container's bottom edge sits 12px above
+    // window.innerHeight.
+    await expect(page.getByTestId('launcher-diag-chromedelta')).toHaveText('12px');
+  });
+});
