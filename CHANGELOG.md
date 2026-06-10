@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.67
+
+### Patch Changes
+
+- e7a400f: launcher: 신규 오픈은 항상 스캔 화면 — last-URL 자동 진입·프리필 제거(#459)
+- 6e378d5: dashboard·attach url-box에 click-to-copy + 복사 버튼 추가, SSE 재렌더 시 /attach url-box 이중 표시 결함 수정
+
 ## 0.1.66
 
 ### Patch Changes
