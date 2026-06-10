@@ -1,41 +1,109 @@
 /**
- * Tests for devtools-opener: Chrome DevTools URL assembly, opt-out guard,
- * and AutoDevtoolsOpener session-once semantics.
+ * Tests for devtools-opener: Chii self-hosted inspector URL assembly,
+ * opt-out guard, and AutoDevtoolsOpener session-once semantics.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AutoDevtoolsOpener,
-  buildChromeDevtoolsUrl,
+  buildChiiInspectorUrl,
   isAutoDevtoolsDisabled,
 } from '../devtools-opener.js';
 
 // ---------------------------------------------------------------------------
-// buildChromeDevtoolsUrl
+// Fixture TOTP secret (hex, 32 bytes) — never a real secret value.
+// ---------------------------------------------------------------------------
+const FIXTURE_SECRET = 'deadbeef'.repeat(8); // 64 hex chars = 32 bytes
+const fixtureMintTotp = () => '123456';
+
+// ---------------------------------------------------------------------------
+// buildChiiInspectorUrl
 // ---------------------------------------------------------------------------
 
-describe('buildChromeDevtoolsUrl', () => {
-  it('strips wss:// prefix and assembles inspector URL with default panel', () => {
-    const url = buildChromeDevtoolsUrl('wss://abc.trycloudflare.com');
-    expect(url).toContain('chrome-devtools-frontend.appspot.com');
-    expect(url).toContain('wss=abc.trycloudflare.com');
+describe('buildChiiInspectorUrl', () => {
+  it('returns a URL pointing at the relay front_end/chii_app.html', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:9100\/front_end\/chii_app\.html\?/);
+  });
+
+  it('includes the default console panel', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
     expect(url).toContain('panel=console');
-    expect(url).not.toContain('wss://');
   });
 
   it('accepts a custom panel', () => {
-    const url = buildChromeDevtoolsUrl('wss://abc.trycloudflare.com', 'sources');
-    expect(url).toContain('panel=sources');
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', undefined, 'elements');
+    expect(url).toContain('panel=elements');
   });
 
-  it('handles wss:// with a path segment', () => {
-    const url = buildChromeDevtoolsUrl('wss://abc.trycloudflare.com/client/x?target=y');
-    expect(url).toContain('wss=abc.trycloudflare.com');
+  it('embeds target id in the wss= path', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'my-target-id');
+    // The wss= value is URL-encoded, so decode it to inspect the inner value.
+    const parsed = new URL(url);
+    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    expect(wssParam).toContain('target=my-target-id');
   });
 
-  it('is case-insensitive on the wss:// prefix', () => {
-    const url = buildChromeDevtoolsUrl('WSS://abc.trycloudflare.com');
-    expect(url).not.toContain('WSS://');
-    expect(url).toContain('wss=abc.trycloudflare.com');
+  it('routes through /client/ path (chii relay client endpoint)', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
+    const parsed = new URL(url);
+    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    expect(wssParam).toContain('/client/');
+  });
+
+  it('includes at= TOTP code when mintTotp is provided', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
+    const parsed = new URL(url);
+    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    expect(wssParam).toContain('at=123456');
+  });
+
+  it('omits at= when mintTotp is undefined', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', undefined);
+    const parsed = new URL(url);
+    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    expect(wssParam).not.toContain('at=');
+  });
+
+  it('uses the relay host (not scheme) in the wss= value', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
+    const parsed = new URL(url);
+    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    // Should start with the host, not with http://
+    expect(wssParam).toMatch(/^127\.0\.0\.1:9100/);
+  });
+
+  it('works with an external cloudflare tunnel base URL', () => {
+    const url = buildChiiInspectorUrl(
+      'https://abc.trycloudflare.com',
+      'phone-target',
+      fixtureMintTotp,
+    );
+    expect(url).toMatch(/^https:\/\/abc\.trycloudflare\.com\/front_end\/chii_app\.html\?/);
+    const parsed = new URL(url);
+    const wssParam = decodeURIComponent(parsed.searchParams.get('wss') ?? '');
+    expect(wssParam).toContain('target=phone-target');
+    expect(wssParam).toContain('at=123456');
+  });
+
+  it('tolerates a trailing slash on the relay base URL', () => {
+    const urlWithSlash = buildChiiInspectorUrl('http://127.0.0.1:9100/', 'tgt');
+    const urlWithout = buildChiiInspectorUrl('http://127.0.0.1:9100', 'tgt');
+    // Both should produce the same structure (no double slash in the path).
+    expect(urlWithSlash).not.toContain('//front_end');
+    expect(urlWithout).not.toContain('//front_end');
+  });
+
+  it('does not embed the TOTP secret — only the code', () => {
+    const mintWithSecret = () => {
+      // Simulate a mintTotp that uses a real secret internally.
+      // The function must return only the code.
+      return fixtureMintTotp();
+    };
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'tgt', mintWithSecret);
+    // The fixture secret must never appear in the URL.
+    expect(url).not.toContain(FIXTURE_SECRET);
+    // The code (returned value) must appear.
+    expect(url).toContain('123456');
   });
 });
 
@@ -103,22 +171,34 @@ describe('AutoDevtoolsOpener', () => {
     delete process.env.AIT_AUTO_DEVTOOLS_TEST_SKIP_SPAWN;
   });
 
-  it('opens once and marks _opened=true', () => {
+  it('opens once and marks opened=true', () => {
     const opener = new AutoDevtoolsOpener();
-    // We don't actually open a browser in tests; we just verify the guard logic.
-    // Patch openUrlInBrowser to a no-op by calling open() with a relay env
-    // and checking stderr output (which is the observable side-effect in tests).
-    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-abc',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
     expect(opener.opened).toBe(true);
-    expect(stderrOutput).toContain('Chrome DevTools URL');
-    expect(stderrOutput).toContain('abc.trycloudflare.com');
+    expect(stderrOutput).toContain('DevTools URL');
+    expect(stderrOutput).toContain('127.0.0.1:9100');
   });
 
   it('is a no-op on second call (duplicate guard)', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-abc',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
     stderrOutput = '';
-    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-abc',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
     // Second call should not write to stderr.
     expect(stderrOutput).toBe('');
     expect(opener.opened).toBe(true);
@@ -126,21 +206,55 @@ describe('AutoDevtoolsOpener', () => {
 
   it('is a no-op when env is mock', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://abc.trycloudflare.com', 'mock');
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-abc',
+      env: 'mock',
+    });
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
 
-  it('is a no-op when wssRelayUrl is null', () => {
+  it('is a no-op when relayHttpBaseUrl is null', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open(null, 'relay-dev');
+    opener.open({
+      relayHttpBaseUrl: null,
+      targetId: 'target-abc',
+      env: 'relay-dev',
+    });
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
 
-  it('is a no-op when wssRelayUrl is empty string', () => {
+  it('is a no-op when relayHttpBaseUrl is empty string', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('', 'relay-dev');
+    opener.open({
+      relayHttpBaseUrl: '',
+      targetId: 'target-abc',
+      env: 'relay-dev',
+    });
+    expect(opener.opened).toBe(false);
+    expect(stderrOutput).toBe('');
+  });
+
+  it('is a no-op when targetId is null', () => {
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: null,
+      env: 'relay-dev',
+    });
+    expect(opener.opened).toBe(false);
+    expect(stderrOutput).toBe('');
+  });
+
+  it('is a no-op when targetId is empty string', () => {
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: '',
+      env: 'relay-dev',
+    });
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
@@ -148,15 +262,71 @@ describe('AutoDevtoolsOpener', () => {
   it('is a no-op when AIT_AUTO_DEVTOOLS=0', () => {
     process.env.AIT_AUTO_DEVTOOLS = '0';
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://abc.trycloudflare.com', 'relay-dev');
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-abc',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
     expect(opener.opened).toBe(false);
     expect(stderrOutput).toBe('');
   });
 
-  it('writes the DevTools URL to stderr before attempting browser open', () => {
+  it('writes the Chii inspector URL to stderr before attempting browser open', () => {
     const opener = new AutoDevtoolsOpener();
-    opener.open('wss://tunnel.trycloudflare.com', 'relay-dev');
-    expect(stderrOutput).toContain('chrome-devtools-frontend.appspot.com');
+    opener.open({
+      relayHttpBaseUrl: 'https://tunnel.trycloudflare.com',
+      targetId: 'phone-target',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    expect(stderrOutput).toContain('DevTools URL');
     expect(stderrOutput).toContain('tunnel.trycloudflare.com');
+    expect(stderrOutput).toContain('front_end/chii_app.html');
+  });
+
+  it('embeds the TOTP code (not the secret) in the stderr URL', () => {
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'tgt',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    // Code value should appear (it is in the URL, which is written to stderr).
+    expect(stderrOutput).toContain('123456');
+    // Raw secret must never appear.
+    expect(stderrOutput).not.toContain(FIXTURE_SECRET);
+  });
+
+  it('works without mintTotp (TOTP disabled) — no at= in the wss URL', () => {
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'tgt',
+      env: 'relay-dev',
+    });
+    expect(opener.opened).toBe(true);
+    expect(stderrOutput).toContain('front_end/chii_app.html');
+    // Extract the URL line from stderr to check only the URL, not the static caveat text.
+    const urlLine = stderrOutput.split('\n').find((line) => line.includes('DevTools URL:')) ?? '';
+    const urlMatch = urlLine.match(/DevTools URL: (.+)$/);
+    const urlStr = urlMatch?.[1] ?? '';
+    const parsedUrl = new URL(urlStr);
+    const wssParam = decodeURIComponent(parsedUrl.searchParams.get('wss') ?? '');
+    expect(wssParam).not.toContain('at=');
+  });
+
+  it('includes the TOTP expiry notice in stderr output', () => {
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'tgt',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    expect(stderrOutput).toContain('at=');
+    // The 30-second expiry caveat must be communicated to the developer.
+    expect(stderrOutput).toContain('30');
   });
 });

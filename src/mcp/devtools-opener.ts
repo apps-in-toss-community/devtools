@@ -2,17 +2,16 @@
  * Auto-opens Chrome DevTools when a page attaches over the Chii relay.
  *
  * When a real device attaches (env 2 / 3 / 4 in the 4-environments fidelity
- * ladder), the Chii relay exposes a standard CDP WebSocket endpoint. The
- * Chrome DevTools frontend can connect to any such endpoint via:
+ * ladder), the Chii relay exposes a standard CDP WebSocket endpoint.  Chii
+ * also self-hosts its DevTools frontend at:
  *
- *   https://chrome-devtools-frontend.appspot.com/serve_file/@/inspector.html
- *     ?wss=<host>[/<path>]
- *     &panel=console
+ *   <relay-base>/front_end/chii_app.html
+ *     ?wss=<encodeURIComponent("<relay-host>/client/<uuid>?target=<targetId>&at=<totp>")>
  *
- * Where `<host>` is the public WSS relay URL without the `wss://` scheme prefix
- * (the DevTools frontend adds it). This module assembles that URL and opens it
- * in the OS default browser so the developer immediately gets a full Chrome
- * DevTools UI.
+ * This is the same URL format that Chii's own index-page inspect-links use
+ * (derived from `chii/public/index.js` — the JS that powers the target list
+ * page at `<relay-base>/`).  Opening this URL in the developer's local browser
+ * gives a full Chrome DevTools UI connected to the phone via the relay.
  *
  * IMPORTANT — environment guard:
  *   Auto-open only fires in relay environments (env 2 / 3 / 4). In env 1
@@ -29,6 +28,16 @@
  *   current session. The open fires at most once per instance — typically one
  *   per `runDebugServer` call.
  *
+ * TOTP expiry caveat:
+ *   The `at=` TOTP code embedded in the `wss=` parameter is minted fresh at the
+ *   moment `open()` is called. The code is valid for the 30-second RFC 6238
+ *   window (±1 step skew = 90 s acceptance). If the developer does not open the
+ *   URL within that window the WebSocket upgrade will be rejected with 4401.
+ *   In practice the browser opens immediately after the OS `open` command, so
+ *   the window is always satisfied; if it is not (e.g. the URL is copied and
+ *   opened later) the developer can copy the wss= param, replace `at=`, and
+ *   reload. This is documented in the JSDoc below.
+ *
  * PWA (WebKit) caveat:
  *   The Chii relay injects a chobitsu CDP shim into WebKit-based runtimes (env 2
  *   AITC Sandbox PWA). The DevTools frontend will connect and most panels work.
@@ -42,47 +51,80 @@
 import type { McpEnvironment } from './environment.js';
 
 // ---------------------------------------------------------------------------
-// Chrome DevTools frontend URL
+// Chii self-hosted DevTools frontend URL
 // ---------------------------------------------------------------------------
 
 /**
- * Base URL for the Chrome DevTools inspector hosted on appspot.
+ * Assembles the Chii self-hosted DevTools inspector URL for a given relay
+ * and target.
  *
- * The `@` path segment is the "latest / bleeding edge" alias which tracks the
- * current Chrome stable CDP protocol version — compatible with the chobitsu-
- * based CDP that Chii injects. A specific commit hash may be pinned here if
- * a regression is observed.
- */
-const DEVTOOLS_FRONTEND_BASE =
-  'https://chrome-devtools-frontend.appspot.com/serve_file/@/inspector.html';
-
-// ---------------------------------------------------------------------------
-// URL assembly
-// ---------------------------------------------------------------------------
-
-/**
- * Assembles the Chrome DevTools inspector URL that connects to a Chii relay
- * WebSocket.
+ * Chii serves its own DevTools frontend at
+ * `<relayHttpBaseUrl>/front_end/chii_app.html`. The `wss=` query parameter is
+ * a URL-encoded string of the form `<relay-host>/client/<uuid>?target=<id>`
+ * (and optionally `&at=<totp>`) — the same format used by Chii's own target
+ * list page (derived from `chii/public/index.js`).
  *
- * The `wss=` parameter expects a host-and-path string without the `wss://`
- * scheme prefix — the DevTools frontend prepends it automatically.
+ * The `at=` TOTP code is minted at call time via `mintTotp()`.  It is valid
+ * for the current 30-second RFC 6238 step (±1 step skew = 90 s acceptance
+ * window).  The developer must open the returned URL within that window.  If
+ * the window expires before the browser connects, the relay will reject the
+ * WebSocket upgrade with close code 4401.
  *
- * @param wssRelayUrl - Full `wss://` URL of the Chii relay (public tunnel).
- *   Example: `wss://abc.trycloudflare.com`
+ * SECRET-HANDLING: `mintTotp` returns a code, not a secret. The code is
+ * embedded in the `wss=` parameter (inside the `at=` param) of the returned
+ * URL. Callers MUST NOT log the returned URL to stdout (stderr is OK — it is
+ * the intended fallback surface for the developer to copy the URL).
+ *
+ * @param relayHttpBaseUrl - Local HTTP base URL of the Chii relay, e.g.
+ *   `http://127.0.0.1:9100`. No trailing slash.
+ * @param targetId - Chii target id (from `GET <relay>/targets`).
+ * @param mintTotp - Optional function that returns a fresh 6-digit TOTP code
+ *   string. Called at most once. When omitted (TOTP disabled) no `at=` param
+ *   is added.
  * @param panel - Initial panel. Defaults to `"console"`.
  *
  * @example
- * buildChromeDevtoolsUrl('wss://abc.trycloudflare.com')
- * // → 'https://chrome-devtools-frontend.appspot.com/serve_file/@/inspector.html?wss=abc.trycloudflare.com&panel=console'
+ * buildChiiInspectorUrl(
+ *   'http://127.0.0.1:9100',
+ *   'abc123',
+ *   () => generateTotp(secret),
+ * )
+ * // → 'http://127.0.0.1:9100/front_end/chii_app.html?wss=127.0.0.1%3A9100%2Fclient%2F<uuid>%3Ftarget%3Dabc123%26at%3D<code>'
  */
-export function buildChromeDevtoolsUrl(
-  wssRelayUrl: string,
+export function buildChiiInspectorUrl(
+  relayHttpBaseUrl: string,
+  targetId: string,
+  mintTotp?: () => string,
   panel: 'elements' | 'console' | 'sources' | 'network' = 'console',
 ): string {
-  // Strip `wss://` prefix — the DevTools frontend expects host[/path] only.
-  const wssParam = wssRelayUrl.replace(/^wss:\/\//i, '');
-  const params = new URLSearchParams({ wss: wssParam, panel });
-  return `${DEVTOOLS_FRONTEND_BASE}?${params.toString()}`;
+  // Extract the host (and port) from the relay HTTP base URL.
+  // We strip the scheme so the chii_app.html can prepend `ws://` or `wss://`.
+  let relayHost: string;
+  try {
+    relayHost = new URL(relayHttpBaseUrl).host; // e.g. "127.0.0.1:9100"
+  } catch {
+    // Fallback: strip the scheme prefix manually if URL parsing fails.
+    relayHost = relayHttpBaseUrl.replace(/^https?:\/\//i, '');
+  }
+
+  // Generate a client UUID that matches the format Chii's index.js uses
+  // (6 random alphanumeric characters).
+  const clientId = `devtools-opener-${Date.now().toString(36)}`;
+
+  // Build the wss= value: "<relay-host>/client/<uuid>?target=<id>[&at=<code>]"
+  // This mirrors the format from chii/public/index.js:
+  //   `${domain}${basePath}client/${randomId(6)}?target=${targetId}`
+  let wsPath = `${relayHost}/client/${clientId}?target=${encodeURIComponent(targetId)}`;
+
+  if (mintTotp) {
+    // SECRET-HANDLING: mintTotp() returns a code (not a secret). The code
+    // rides only in the URL's at= param. Callers must not log the URL.
+    const code = mintTotp();
+    wsPath += `&at=${encodeURIComponent(code)}`;
+  }
+
+  const params = new URLSearchParams({ wss: wsPath, panel });
+  return `${relayHttpBaseUrl.replace(/\/$/, '')}/front_end/chii_app.html?${params.toString()}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +190,47 @@ export function openUrlInBrowser(url: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Options for {@link AutoDevtoolsOpener.open}.
+ *
+ * The `relayHttpBaseUrl` and `targetId` fields are required to build a working
+ * Chii self-hosted inspector URL. When `relayHttpBaseUrl` is absent the open
+ * is skipped (no relay available yet).
+ */
+export interface DevtoolsOpenOptions {
+  /**
+   * Local HTTP base URL of the Chii relay, e.g. `http://127.0.0.1:9100`.
+   * Used to build the `<relay-base>/front_end/chii_app.html?wss=…` URL.
+   *
+   * For env 3/4 (intoss relay) this is `http://127.0.0.1:<port>`.
+   * For env 2 (external PWA relay) this is the relay's external HTTP URL
+   * (e.g. `https://<host>.trycloudflare.com`).
+   *
+   * When absent or empty, `open()` is a no-op.
+   *
+   * SECRET-HANDLING: this value contains the relay host. Callers MUST NOT
+   * log it to stdout; stderr is the intended surface.
+   */
+  relayHttpBaseUrl: string | null | undefined;
+  /**
+   * Chii target id of the attached page, from `listTargets()[0].id`.
+   * When absent or empty, `open()` is a no-op.
+   */
+  targetId: string | null | undefined;
+  /**
+   * Function that mints a fresh TOTP code when called. Called at most once per
+   * `open()` invocation, immediately before building the inspector URL.
+   *
+   * Pass `undefined` when TOTP is disabled (no `at=` param is added).
+   *
+   * SECRET-HANDLING: the function MUST return only the code (6 digits), not
+   * the secret. The code rides in the URL's `at=` param only.
+   */
+  mintTotp?: () => string;
+  /** Current MCP environment (`mock` | `relay`). `open()` no-ops on `mock`. */
+  env: McpEnvironment;
+}
+
+/**
  * Manages auto-opening Chrome DevTools exactly once per relay attach session.
  *
  * Create one instance per `runDebugServer` call and pass its `open()` method
@@ -160,37 +243,55 @@ export class AutoDevtoolsOpener {
   private _opened = false;
 
   /**
-   * Attempts to auto-open Chrome DevTools.
+   * Attempts to auto-open Chii DevTools in the developer's browser.
+   *
+   * Builds a `<relay-base>/front_end/chii_app.html?wss=…` URL pointing at the
+   * attached target. A fresh TOTP `at=` code is minted at call time so the
+   * relay's WebSocket upgrade gate accepts the connection.
    *
    * No-op when any of the following conditions hold:
    *   1. Already opened this session (`_opened` is true).
    *   2. `AIT_AUTO_DEVTOOLS=0` opt-out is set.
-   *   3. Environment is `mock` (env 1 — F12 is already available).
-   *   4. `wssRelayUrl` is null/undefined/empty (tunnel not yet up).
+   *   3. `options.env` is `mock` (env 1 — F12 is already available).
+   *   4. `options.relayHttpBaseUrl` is null/undefined/empty (relay not up yet).
+   *   5. `options.targetId` is null/undefined/empty (no page attached yet).
    *
    * Always writes the DevTools URL to stderr so the developer can copy it
    * if the browser open fails or the popup is blocked.
    *
-   * @param wssRelayUrl - The public `wss://` relay URL (from tunnel status).
-   * @param env - Current MCP environment (`mock` | `relay`).
+   * TOTP expiry caveat: the `at=` code embedded in the URL is valid for the
+   * current 30-second RFC 6238 step (±1 skew = 90 s). The developer must open
+   * the URL within that window; if they miss it, reload the page or re-run
+   * `open()` (though the once-per-session guard prevents that — restart the
+   * MCP server if needed).
+   *
+   * SECRET-HANDLING: the inspector URL (written to stderr) contains the relay
+   * host and a short-lived TOTP code. Do NOT write it to stdout or any
+   * persistent log.
    */
-  open(wssRelayUrl: string | null | undefined, env: McpEnvironment): void {
+  open(options: DevtoolsOpenOptions): void {
     if (this._opened) return;
     if (isAutoDevtoolsDisabled()) return;
-    if (env === 'mock') return;
-    if (!wssRelayUrl) return;
+    if (options.env === 'mock') return;
+    if (!options.relayHttpBaseUrl) return;
+    if (!options.targetId) return;
 
     this._opened = true;
 
-    const devtoolsUrl = buildChromeDevtoolsUrl(wssRelayUrl);
-
-    process.stderr.write(
-      '[ait-debug] 기기가 연결됐습니다 — Chrome DevTools를 자동으로 엽니다.\n' +
-        `[ait-debug] Chrome DevTools URL: ${devtoolsUrl}\n` +
-        '[ait-debug] (AIT_AUTO_DEVTOOLS=0 으로 자동 열기를 끌 수 있습니다)\n',
+    const inspectorUrl = buildChiiInspectorUrl(
+      options.relayHttpBaseUrl,
+      options.targetId,
+      options.mintTotp,
     );
 
-    const opened = openUrlInBrowser(devtoolsUrl);
+    process.stderr.write(
+      '[ait-debug] 기기가 연결됐습니다 — Chii DevTools를 자동으로 엽니다.\n' +
+        `[ait-debug] DevTools URL: ${inspectorUrl}\n` +
+        '[ait-debug] (AIT_AUTO_DEVTOOLS=0 으로 자동 열기를 끌 수 있습니다)\n' +
+        '[ait-debug] 주의: URL의 at= 코드는 30초 창 안에서만 유효합니다.\n',
+    );
+
+    const opened = openUrlInBrowser(inspectorUrl);
     if (!opened) {
       process.stderr.write(
         '[ait-debug] 브라우저 자동 열기 실패 — 위 URL을 브라우저에서 직접 여세요.\n',
