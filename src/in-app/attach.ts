@@ -11,6 +11,10 @@
  */
 
 import { setScreenAwakeMode } from '@apps-in-toss/web-framework';
+import {
+  RELAY_AUTH_REJECT_CLOSE_CODE,
+  RELAY_AUTH_REJECT_REASON,
+} from '../shared/relay-auth-close.js';
 import { checkDebugGate, type GateResult } from './index.js';
 
 /**
@@ -60,6 +64,167 @@ export function deriveTargetScriptUrl(relayUrl: string, atCode?: string | null):
 
 /** Module-level guard against double-injection within a page lifecycle. */
 let attached = false;
+
+// ---------------------------------------------------------------------------
+// Relay-origin WebSocket observer (issue #478)
+//
+// After a successful attach, chii's target.js owns its own reconnect loop —
+// `maybeAttach()` never re-runs, so a much-later reconnect carrying the stale
+// `/at/<code>/` prefix is rejected by the relay with NO in-page signal. The
+// relay now names that rejection (accept-then-close, code 4401), and this
+// observer is the in-page half: it watches relay-bound WebSockets for the
+// 4401 close and tells the parent launcher shell once, then fail-fasts any
+// further relay dials so the retry loop stops generating network traffic.
+// ---------------------------------------------------------------------------
+
+/** One-shot guard for the parent notification (both observer + onerror probe). */
+let authExpiredNotified = false;
+
+/** Set once a relay-bound socket closed with 4401 — flips dials to fail-fast. */
+let relayAuthExpired = false;
+
+/** Guard against stacking multiple observer wrappers on window.WebSocket. */
+let wsObserverInstalled = false;
+
+/**
+ * Posts the `auth-expired` block signal to the parent launcher shell, once.
+ *
+ * Mirrors the existing `reason: 'auth'` postMessage in {@link maybeAttach}.
+ * SECRET-HANDLING: the payload carries ONLY the reason enum — never the code,
+ * secret, host, or relay URL.
+ */
+function notifyAuthExpired(): void {
+  if (authExpiredNotified) return;
+  if (typeof window === 'undefined' || window.parent === window) return;
+  authExpiredNotified = true;
+  window.parent.postMessage({ type: 'ait:debug-attach-blocked', reason: 'auth-expired' }, '*');
+}
+
+/**
+ * Normalises a URL into a comparable origin key, mapping the HTTP scheme pair
+ * onto the WS pair (`https:`→`wss:`, `http:`→`ws:`) so the `wss:` relay URL
+ * from the gate result matches the dials target.js derives from its
+ * `https://…/target.js` script src. Returns `null` for unparsable URLs.
+ */
+function wsOriginKey(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  const protocol =
+    parsed.protocol === 'https:' ? 'wss:' : parsed.protocol === 'http:' ? 'ws:' : parsed.protocol;
+  return `${protocol}//${parsed.host}`;
+}
+
+/**
+ * Builds a dummy WebSocket that never connects and closes immediately
+ * (asynchronously, with the 4401 code) — returned for relay-bound dials after
+ * auth expiry so chii's internal reconnect loop stops producing real network
+ * traffic. We cannot stop the loop itself (it lives inside stock target.js);
+ * we can only make each iteration free.
+ *
+ * Both `onclose`-style property handlers and `addEventListener` listeners are
+ * fired — stock target.js uses property handlers, but we cannot know every
+ * consumer. (A consumer wiring BOTH would see a double callback; acceptable
+ * for a retry scheduler and irrelevant for chii.)
+ */
+function createFailFastSocket(url: string): WebSocket {
+  const eventTarget = new EventTarget();
+  const sock = {
+    url,
+    readyState: 3, // CLOSED
+    bufferedAmount: 0,
+    extensions: '',
+    protocol: '',
+    binaryType: 'blob' as BinaryType,
+    onopen: null as ((ev: Event) => unknown) | null,
+    onmessage: null as ((ev: Event) => unknown) | null,
+    onerror: null as ((ev: Event) => unknown) | null,
+    onclose: null as ((ev: Event) => unknown) | null,
+    close(): void {},
+    send(): void {},
+    addEventListener: eventTarget.addEventListener.bind(eventTarget),
+    removeEventListener: eventTarget.removeEventListener.bind(eventTarget),
+    dispatchEvent: eventTarget.dispatchEvent.bind(eventTarget),
+    CONNECTING: 0,
+    OPEN: 1,
+    CLOSING: 2,
+    CLOSED: 3,
+  };
+  setTimeout(() => {
+    const errorEvent = new Event('error');
+    sock.onerror?.(errorEvent);
+    eventTarget.dispatchEvent(errorEvent);
+    // CloseEvent exists in every real WebView; the Object.assign fallback
+    // keeps the dummy environment-proof (consumers only read `.code`).
+    let closeEvent: Event;
+    try {
+      closeEvent = new CloseEvent('close', {
+        code: RELAY_AUTH_REJECT_CLOSE_CODE,
+        reason: RELAY_AUTH_REJECT_REASON,
+        wasClean: false,
+      });
+    } catch {
+      closeEvent = Object.assign(new Event('close'), {
+        code: RELAY_AUTH_REJECT_CLOSE_CODE,
+        reason: RELAY_AUTH_REJECT_REASON,
+        wasClean: false,
+      });
+    }
+    sock.onclose?.(closeEvent);
+    eventTarget.dispatchEvent(closeEvent);
+  }, 0);
+  return sock as unknown as WebSocket;
+}
+
+/**
+ * Wraps `window.WebSocket` with a relay-origin-scoped observer (issue #478).
+ *
+ * - Connections whose URL origin does NOT match the relay origin pass through
+ *   to the native constructor untouched — app traffic is never observed.
+ * - Relay-origin connections get a `close` listener: code 4401 (the relay's
+ *   named TOTP rejection) flips the module into the expired state and posts
+ *   `reason: 'auth-expired'` to the parent launcher shell (once).
+ * - After 4401, further relay-origin dials return a fail-fast dummy socket so
+ *   target.js's autonomous reconnect loop stops hitting the network.
+ *
+ * Installed by {@link maybeAttach} BEFORE target.js is injected so the very
+ * first dial is already observed. Idempotent per page lifecycle. Exported for
+ * unit tests.
+ */
+export function installRelayWsObserver(relayUrl: string): void {
+  if (wsObserverInstalled) return;
+  if (typeof window === 'undefined' || typeof window.WebSocket !== 'function') return;
+  const relayKey = wsOriginKey(relayUrl);
+  if (relayKey === null) return;
+  wsObserverInstalled = true;
+
+  const NativeWebSocket = window.WebSocket;
+  const observed = new Proxy(NativeWebSocket, {
+    construct(target, args: unknown[]): object {
+      const url = String(args[0]);
+      if (wsOriginKey(url) !== relayKey) {
+        // Not relay traffic — construct natively, no observation.
+        return Reflect.construct(target, args);
+      }
+      if (relayAuthExpired) {
+        // Retry-storm cutoff: the relay already named this session expired.
+        return createFailFastSocket(url);
+      }
+      const ws = Reflect.construct(target, args) as WebSocket;
+      ws.addEventListener('close', (event) => {
+        if ((event as CloseEvent).code === RELAY_AUTH_REJECT_CLOSE_CODE) {
+          relayAuthExpired = true;
+          notifyAuthExpired();
+        }
+      });
+      return ws;
+    },
+  });
+  window.WebSocket = observed as typeof WebSocket;
+}
 
 /**
  * Evaluates the 3-layer debug gate and, if the gate passes, injects the Chii
@@ -132,6 +297,12 @@ export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
 
   const src = deriveTargetScriptUrl(gateResult.relayUrl, atCode);
 
+  // Issue #478: observe relay-bound WebSockets BEFORE target.js is injected so
+  // even its very first dial — and every autonomous reconnect after a session
+  // drop — is covered. The relay names a TOTP rejection with close code 4401;
+  // the observer relays it to the launcher banner and cuts the retry storm.
+  installRelayWsObserver(gateResult.relayUrl);
+
   // Also guard against a script with the same src already in the DOM
   // (e.g. injected by a different code path or a page reload within SPA).
   const existing = document.querySelector<HTMLScriptElement>(`script[src="${src}"]`);
@@ -143,6 +314,21 @@ export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
   const script = document.createElement('script');
   script.src = src;
   script.async = true;
+  // Issue #478: a first-load stale code (QR scanned after expiry) fails the
+  // target.js GET itself — no WebSocket is ever dialled, so the observer
+  // above can't see it. Probe the same URL once with fetch(): the relay's
+  // 401 now carries CORS headers, so the status is readable cross-origin.
+  // 401 → surface auth-expired; anything else (tunnel down, transient
+  // network) stays silent — same behaviour as before #478.
+  script.onerror = () => {
+    void fetch(src)
+      .then((res) => {
+        if (res.status === 401) notifyAuthExpired();
+      })
+      .catch(() => {
+        // Network-level failure — not an auth signal; stay silent.
+      });
+  };
   (document.head ?? document.documentElement).appendChild(script);
 
   attached = true;

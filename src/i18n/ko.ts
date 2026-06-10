@@ -294,6 +294,8 @@ export const ko = {
   'launcher.invalidUrl': '올바른 http(s):// URL을 입력하세요.',
   'launcher.debugAuthFailed': '디버그 연결 인증 실패',
   'launcher.debugAuthFailedHint': 'QR 코드가 만료되었을 수 있어요. 새 QR을 다시 스캔하세요.',
+  'launcher.debugAuthExpiredHint':
+    '디버그 세션이 만료됐어요. Mac의 attach 페이지에서 새 QR을 스캔하세요.',
   'launcher.debugAuthRescanCta': '새 QR 스캔하기',
   'launcher.diagFab': '진단',
   'launcher.diagTitle': '뷰포트 진단',

@@ -292,6 +292,8 @@ export const en: Record<StringKey, string> = {
   'launcher.invalidUrl': 'Enter a valid http(s):// URL.',
   'launcher.debugAuthFailed': 'Debug connection authentication failed',
   'launcher.debugAuthFailedHint': 'The QR code may have expired. Scan a fresh QR code.',
+  'launcher.debugAuthExpiredHint':
+    'The debug session has expired. Scan a fresh QR from the attach page on your Mac.',
   'launcher.debugAuthRescanCta': 'Scan a new QR',
   'launcher.diagFab': 'Diag',
   'launcher.diagTitle': 'Viewport diagnostics',

@@ -20,6 +20,7 @@
 
 import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
+import { RELAY_AUTH_REJECT_CLOSE_CODE } from '../shared/relay-auth-close.js';
 import type {
   CdpCommandMap,
   CdpCommandName,
@@ -418,6 +419,21 @@ export class ChiiCdpConnection implements CdpConnection {
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
       ws.once('error', (err: Error) => reject(err));
+      // Issue #478: the relay rejects auth with accept-then-close (4401)
+      // instead of a raw 401 destroy, so a rejected dial no longer surfaces
+      // as an 'error' event. 'open' always precedes the close frame, making
+      // this reject a settled-promise no-op in practice — kept as a defensive
+      // boundary (and for any relay that closes before open). The post-open
+      // 4401 is recognised by the persistent close handler below.
+      ws.once('close', (code: number) => {
+        if (code === RELAY_AUTH_REJECT_CLOSE_CODE) {
+          reject(
+            new Error(
+              'relay 인증(TOTP)이 거부됐습니다 (close 4401). 코드가 만료됐을 수 있습니다 — 재연결 시 새 코드가 발급됩니다.',
+            ),
+          );
+        }
+      });
     });
 
     // Reset crash state when a new connection is established.
@@ -427,7 +443,17 @@ export class ChiiCdpConnection implements CdpConnection {
 
     this.connectionState = 'connected';
     ws.on('message', (data: WebSocket.RawData) => this.handleMessage(data.toString()));
-    ws.on('close', () => this.handleDisconnect('relay WebSocket 연결이 끊겼습니다'));
+    // Issue #478: close 4401 is the relay's named TOTP rejection
+    // (accept-then-close) — name it as an auth failure instead of a generic
+    // drop. #439's per-connect fresh code mint means this should not happen in
+    // practice; defensive alignment with the relay contract.
+    ws.on('close', (code: number) =>
+      this.handleDisconnect(
+        code === RELAY_AUTH_REJECT_CLOSE_CODE
+          ? 'relay 인증(TOTP)이 거부돼 연결이 종료됐습니다 (close 4401)'
+          : 'relay WebSocket 연결이 끊겼습니다',
+      ),
+    );
     ws.on('error', (err: Error) => this.handleDisconnect(`relay WebSocket 오류: ${err.message}`));
 
     this.sendFireAndForget('Runtime.enable');

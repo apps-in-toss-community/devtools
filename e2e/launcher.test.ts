@@ -153,6 +153,65 @@ test.describe('launcher PWA', () => {
   });
 });
 
+// Debug-auth banner (#438/#478): the framed tunnel page reports a TOTP block
+// via `ait:debug-attach-blocked` postMessage. Posting on window from the test
+// page itself exercises the exact listener (it guards on message SHAPE, not
+// origin — the only effect is a localized banner). Playwright's default locale
+// is en-US, so the en catalog renders.
+test.describe('launcher debug-auth banner (#438/#478)', () => {
+  const LIVE_URL = `/launcher/?url=${encodeURIComponent('https://example.com/')}`;
+  const post = (reason: string) => ({ type: 'ait:debug-attach-blocked', reason });
+
+  test('reason auth-expired shows the banner with the expired-session hint', async ({ page }) => {
+    await page.goto(LIVE_URL);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+    await expect(page.getByTestId('launcher-auth-error')).toBeHidden();
+
+    await page.evaluate((msg) => window.postMessage(msg, '*'), post('auth-expired'));
+
+    await expect(page.getByTestId('launcher-auth-error')).toBeVisible();
+    await expect(page.getByTestId('launcher-auth-error-hint')).toHaveText(
+      'The debug session has expired. Scan a fresh QR from the attach page on your Mac.',
+    );
+  });
+
+  test('reason auth keeps the generic wrong-code hint (#438 path unchanged)', async ({ page }) => {
+    await page.goto(LIVE_URL);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    await page.evaluate((msg) => window.postMessage(msg, '*'), post('auth'));
+
+    await expect(page.getByTestId('launcher-auth-error')).toBeVisible();
+    await expect(page.getByTestId('launcher-auth-error-hint')).toHaveText(
+      'The QR code may have expired. Scan a fresh QR code.',
+    );
+  });
+
+  test('unknown reasons are ignored (strict enum allow-list)', async ({ page }) => {
+    await page.goto(LIVE_URL);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    await page.evaluate((msg) => window.postMessage(msg, '*'), post('something-else'));
+
+    // Give the (would-be) message a beat, then assert the banner never showed.
+    await page.waitForTimeout(100);
+    await expect(page.getByTestId('launcher-auth-error')).toBeHidden();
+  });
+
+  test('rescan CTA clears the banner and returns to setup', async ({ page }) => {
+    await page.goto(LIVE_URL);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    await page.evaluate((msg) => window.postMessage(msg, '*'), post('auth-expired'));
+    await expect(page.getByTestId('launcher-auth-error')).toBeVisible();
+
+    await page.getByTestId('launcher-auth-error-rescan').click();
+
+    await expect(page.getByTestId('launcher-auth-error')).toBeHidden();
+    await expect(page.getByTestId('launcher-setup')).toBeVisible();
+  });
+});
+
 // Regression for the #475 real-device pile-up: the bottom chrome (RESCAN, diag
 // FAB, diag panel, letterbox label) is one fixed flex stack, so the pieces can
 // never overlap. Desktop Chromium at the iPhone-class 390×844 viewport covers

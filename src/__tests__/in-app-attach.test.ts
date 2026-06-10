@@ -8,6 +8,11 @@
  * - keepAwake behavior: setScreenAwakeMode called on attach, not on block,
  *   respects noKeepAwake=1 opt-out, swallows rejection, is idempotent,
  *   and restores on beforeunload.
+ * - installRelayWsObserver (issue #478): relay-origin 4401 close → one
+ *   auth-expired postMessage; non-relay origins untouched; post-4401 dials
+ *   fail fast without hitting the native constructor.
+ * - script.onerror fetch probe (issue #478): 401 → auth-expired postMessage;
+ *   anything else stays silent.
  *
  * The `maybeAttach` optional `gateResult` param is used as a testability seam
  * so tests don't need to manipulate window.location.
@@ -16,8 +21,12 @@
  * module fresh via vitest's `vi.resetModules()` in beforeEach.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GateResult } from '../in-app/index.js';
+import {
+  RELAY_AUTH_REJECT_CLOSE_CODE,
+  RELAY_AUTH_REJECT_REASON,
+} from '../shared/relay-auth-close.js';
 
 // ---------------------------------------------------------------------------
 // @apps-in-toss/web-framework mock
@@ -439,5 +448,237 @@ describe('keepAwake behavior', () => {
     // Dispatch beforeunload — the handler must call setScreenAwakeMode({ enabled: false })
     window.dispatchEvent(new Event('beforeunload'));
     await vi.waitFor(() => expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: false }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// installRelayWsObserver (issue #478)
+// ---------------------------------------------------------------------------
+
+/**
+ * Recording WebSocket stand-in. The observer wraps whatever window.WebSocket
+ * is at install time, so installing this first lets tests see exactly which
+ * dials reach the "native" constructor.
+ */
+class FakeWebSocket extends EventTarget {
+  static instances: FakeWebSocket[] = [];
+  url: string;
+  readyState = 0;
+  onclose: ((ev: Event) => unknown) | null = null;
+  onerror: ((ev: Event) => unknown) | null = null;
+  constructor(url: string | URL) {
+    super();
+    this.url = String(url);
+    FakeWebSocket.instances.push(this);
+  }
+  close(): void {}
+  send(): void {}
+}
+
+/** Builds a close event carrying `code` (CloseEvent with an Event fallback). */
+function closeEventWithCode(code: number): Event {
+  try {
+    return new CloseEvent('close', { code });
+  } catch {
+    return Object.assign(new Event('close'), { code });
+  }
+}
+
+describe('installRelayWsObserver', () => {
+  const RELAY_URL = 'wss://relay.example.com/';
+  let installRelayWsObserver: (relayUrl: string) => void;
+  let postMessageSpy: ReturnType<typeof vi.fn>;
+  let originalWebSocket: typeof WebSocket | undefined;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    FakeWebSocket.instances.length = 0;
+    // The observer PATCHES window.WebSocket and a module reset does not undo
+    // that — save/restore around every test so wrappers never leak across.
+    originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    // Framed page: postMessage requires window.parent !== window.
+    postMessageSpy = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageSpy },
+      writable: true,
+      configurable: true,
+    });
+    ({ installRelayWsObserver } = await import('../in-app/attach.js'));
+  });
+
+  afterEach(() => {
+    window.WebSocket = originalWebSocket as typeof WebSocket;
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('posts auth-expired ONCE (exact envelope) when a relay-origin socket closes 4401', () => {
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/at/123456/target/abc');
+
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+    // Dedupe: a second 4401 must not produce a second message.
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'ait:debug-attach-blocked', reason: 'auth-expired' },
+      '*',
+    );
+  });
+
+  it('matches the relay origin across the wss:/https: scheme pair (script-src derived dials)', () => {
+    // target.js derives its dial from the https:// script src — the observer
+    // must treat both schemes as the same origin key.
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('https://relay.example.com/at/123456/target/abc');
+
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves non-relay-origin sockets untouched (app traffic is never observed)', () => {
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://api.app.example.com/live');
+
+    expect(ws).toBeInstanceOf(FakeWebSocket);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    // Even a 4401-coded close on foreign traffic must not trigger the signal.
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('ignores non-4401 relay closes (tunnel drop stays silent, dials stay native)', () => {
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/target/abc');
+
+    ws.dispatchEvent(closeEventWithCode(1006));
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+    // The expired flag must not have flipped — the next dial is still native.
+    const next = new window.WebSocket('wss://relay.example.com/target/abc');
+    expect(next).toBeInstanceOf(FakeWebSocket);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+  });
+
+  it('fail-fasts relay-origin dials after a 4401 (retry-storm cutoff)', async () => {
+    installRelayWsObserver(RELAY_URL);
+    const first = new window.WebSocket('wss://relay.example.com/at/111111/target/abc');
+    first.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+
+    const retry = new window.WebSocket('wss://relay.example.com/at/111111/target/abc');
+
+    // The dummy never touches the native constructor and is born CLOSED.
+    expect(retry).not.toBeInstanceOf(FakeWebSocket);
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(retry.readyState).toBe(3);
+
+    // It still completes the close contract asynchronously so reconnect
+    // schedulers (property handler or listener) observe a terminal 4401.
+    const closes: Array<{ code: number; reason: string }> = [];
+    retry.addEventListener('close', (ev) => {
+      const close = ev as CloseEvent;
+      closes.push({ code: close.code, reason: close.reason });
+    });
+    await vi.waitFor(() =>
+      expect(closes).toEqual([
+        { code: RELAY_AUTH_REJECT_CLOSE_CODE, reason: RELAY_AUTH_REJECT_REASON },
+      ]),
+    );
+
+    // Non-relay origins keep constructing natively even in the expired state.
+    const foreign = new window.WebSocket('wss://api.app.example.com/live');
+    expect(foreign).toBeInstanceOf(FakeWebSocket);
+  });
+
+  it('is idempotent — a second install keeps the same wrapper', () => {
+    installRelayWsObserver(RELAY_URL);
+    const wrapped = window.WebSocket;
+    installRelayWsObserver(RELAY_URL);
+    expect(window.WebSocket).toBe(wrapped);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// script.onerror fetch probe (issue #478)
+// ---------------------------------------------------------------------------
+
+describe('script.onerror fetch probe', () => {
+  let maybeAttach: (gate?: GateResult) => void;
+  let postMessageSpy: ReturnType<typeof vi.fn>;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let originalWebSocket: typeof WebSocket | undefined;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    document.head.innerHTML = '';
+    // maybeAttach also installs the WS observer — save/restore the patch.
+    originalWebSocket = window.WebSocket;
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    postMessageSpy = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageSpy },
+      writable: true,
+      configurable: true,
+    });
+    ({ maybeAttach } = await import('../in-app/attach.js'));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.WebSocket = originalWebSocket as typeof WebSocket;
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  /** Injects the script via maybeAttach and fires its error event. */
+  function injectAndFailScript(): HTMLScriptElement {
+    maybeAttach(passResult('wss://relay.example.com/'));
+    const script = document.head.querySelector('script');
+    if (script === null) throw new Error('script was not injected');
+    script.dispatchEvent(new Event('error'));
+    return script;
+  }
+
+  it('posts auth-expired when the probe of the script URL returns 401', async () => {
+    fetchMock.mockResolvedValue({ status: 401 });
+
+    const script = injectAndFailScript();
+
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(1));
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'ait:debug-attach-blocked', reason: 'auth-expired' },
+      '*',
+    );
+    // The probe re-fetches exactly the injected script URL.
+    expect(fetchMock).toHaveBeenCalledWith(script.src);
+  });
+
+  it('stays silent when the probe returns a non-401 status (tunnel error page)', async () => {
+    fetchMock.mockResolvedValue({ status: 502 });
+
+    injectAndFailScript();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('stays silent when the probe itself fails (network down — pre-#478 behaviour)', async () => {
+    fetchMock.mockRejectedValue(new TypeError('network down'));
+
+    injectAndFailScript();
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(postMessageSpy).not.toHaveBeenCalled();
   });
 });
