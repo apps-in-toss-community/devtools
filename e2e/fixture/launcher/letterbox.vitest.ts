@@ -24,7 +24,10 @@ function base(overrides: Partial<ViewportMetrics> = {}): ViewportMetrics {
 describe('detectLetterbox', () => {
   it('detects the iOS 26 standalone letterbox signature (#469 Simulator values)', () => {
     // Observed: web view mis-sized to screen − statusBar(47), top-anchored;
-    // the Simulator reports safe-area-bottom 0 in this state.
+    // the Simulator reports safe-area-top 0 in this (letterboxed) state — a
+    // known Simulator limitation. With the #479 top-inset discriminator this
+    // Simulator geometry is no longer detectable (safeAreaTop === 0 → false).
+    // Real-device letterbox detection now relies on the #479 real-device case.
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
@@ -33,20 +36,54 @@ describe('detectLetterbox', () => {
         safeAreaBottom: 0,
       }),
     );
+    expect(verdict.detected).toBe(false);
+    expect(verdict.shortfallPx).toBe(47);
+  });
+
+  it('detects real-device letterbox before reinstall (#479 measured values)', () => {
+    // Real-device CDP measurement (iPhone, iOS 26, 2026-06-11): letterboxed
+    // window is top-anchored — safeAreaTop reports the full 47pt status bar.
+    // innerHeight 797 vs screen 844 (shortfall 47). safeAreaBottom is phantom.
+    const verdict = detectLetterbox(
+      base({
+        innerHeight: 797,
+        visualViewportHeight: 797,
+        safeAreaTop: 47,
+        safeAreaBottom: 34,
+      }),
+    );
     expect(verdict.detected).toBe(true);
     expect(verdict.shortfallPx).toBe(47);
   });
 
-  it('detects despite the iOS 26 real-device phantom bottom inset (#475 observed values)', () => {
-    // Real-device CDP measurement: same letterboxed geometry as above
-    // (innerHeight 797 vs screen 844 — window never reaches the screen
-    // bottom), yet env(safe-area-inset-bottom) reports 34. The inset must not
-    // veto detection.
+  it('does NOT detect after reinstall — healthy below-status-bar (#479 measured values)', () => {
+    // Real-device CDP measurement (iPhone, iOS 26, 2026-06-11): after
+    // reinstall the window starts below the status bar — safeAreaTop drops to
+    // 0 while the shortfall (47) is unchanged. The top-inset discriminator
+    // (#479) resolves the false-positive that was an accepted trade-off in
+    // #475/#476.
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
         visualViewportHeight: 797,
         safeAreaTop: 0,
+        safeAreaBottom: 34,
+      }),
+    );
+    expect(verdict.detected).toBe(false);
+    expect(verdict.shortfallPx).toBe(47);
+  });
+
+  it('detects despite the iOS 26 real-device phantom bottom inset (#475 observed values)', () => {
+    // Real-device CDP measurement: letterboxed geometry with safeAreaTop 47
+    // (window top-anchored) and a phantom safeAreaBottom 34 (window never
+    // reaches the home indicator). The top inset drives detection; the bottom
+    // inset must not veto it.
+    const verdict = detectLetterbox(
+      base({
+        innerHeight: 797,
+        visualViewportHeight: 797,
+        safeAreaTop: 47,
         safeAreaBottom: 34,
       }),
     );
@@ -75,13 +112,13 @@ describe('detectLetterbox', () => {
     expect(verdict.shortfallPx).toBe(0);
   });
 
-  it('flags the healthy below-status-bar standalone layout too (accepted trade-off, #475)', () => {
+  it('does NOT flag the healthy below-status-bar standalone layout (#479 trade-off resolved)', () => {
     // Manifest-standalone without black-translucent: the web view starts below
     // the status bar (shortfall ≈ 59) but still reaches the screen bottom.
-    // Pre-#475 the reported bottom inset (34) distinguished this layout from a
-    // letterbox; the real-device phantom inset removed that signal, so from
-    // inside the page the two are indistinguishable and this healthy layout is
-    // now flagged. Accepted: the label is diagnostic-only.
+    // Pre-#479 this layout was indistinguishable from a letterbox because the
+    // bottom inset alone was unreliable (#475 phantom). The top-inset
+    // discriminator (#479) resolves this: safeAreaTop === 0 means the window
+    // is NOT top-anchored → detected: false. The accepted trade-off is gone.
     const verdict = detectLetterbox(
       base({
         innerHeight: 785,
@@ -90,7 +127,7 @@ describe('detectLetterbox', () => {
         safeAreaBottom: 34,
       }),
     );
-    expect(verdict.detected).toBe(true);
+    expect(verdict.detected).toBe(false);
     expect(verdict.shortfallPx).toBe(59);
   });
 
@@ -145,12 +182,15 @@ describe('detectLetterbox', () => {
   });
 
   it('handles a missing visualViewport API (null)', () => {
+    // When visualViewport is unavailable, innerHeight alone carries the
+    // shortfall. Supply safeAreaTop 47 so the real-device letterbox signature
+    // is complete and detected: true confirms the null path is handled.
     const verdict = detectLetterbox(
       base({
         innerHeight: 797,
         visualViewportHeight: null,
-        safeAreaTop: 0,
-        safeAreaBottom: 0,
+        safeAreaTop: 47,
+        safeAreaBottom: 34,
       }),
     );
     expect(verdict.detected).toBe(true);
