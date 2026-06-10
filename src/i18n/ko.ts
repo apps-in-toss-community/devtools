@@ -231,6 +231,10 @@ export const ko = {
   'dashboard.pages.section': '연결된 Pages',
   'dashboard.pages.empty': 'attach된 페이지 없음',
 
+  // qr-http-server — url-box copy button
+  'dashboard.url.copy': '복사',
+  'dashboard.url.copied': '복사됨',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   'attach.title': 'AIT 디버그 세션 — QR 스캔',
   'attach.deployment': 'deployment: {label}',

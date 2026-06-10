@@ -77,12 +77,24 @@ img.qr {
   background: #fff; padding: 0.75rem; border-radius: 10px;
   display: block; margin: 0.5rem auto;
 }
+.url-row {
+  display: flex; align-items: stretch; gap: 0; margin: 0.5rem 0 0;
+  border-radius: 6px; border: 1px solid #30363d; overflow: hidden;
+}
 .url-box {
   font-family: monospace; font-size: 0.7rem;
   word-break: break-all; opacity: 0.45;
   background: #161b22; padding: 0.6rem 0.85rem;
-  border-radius: 6px; border: 1px solid #30363d; margin: 0.5rem 0 0;
+  flex: 1; cursor: pointer; border: none; border-radius: 0;
 }
+.url-box:hover { opacity: 0.65; }
+.copy-btn {
+  flex-shrink: 0; padding: 0.4rem 0.7rem;
+  background: #21262d; border: none; border-left: 1px solid #30363d;
+  color: #58a6ff; font-size: 0.7rem; cursor: pointer; white-space: nowrap;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+.copy-btn:hover { background: #30363d; }
 .hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
 ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.35rem; font-size: 0.85rem; line-height: 1.5; }

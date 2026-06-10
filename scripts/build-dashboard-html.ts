@@ -109,6 +109,7 @@ function renderAttachChrome(locale: Locale): string {
         faqChii: s('attach.faq.chii'),
         faqTotp: s('attach.faq.totp'),
         urlSection: s('attach.url.section'),
+        copy: s('dashboard.url.copy'),
         langKo: s('dashboard.lang.ko'),
         langEn: s('dashboard.lang.en'),
       },
