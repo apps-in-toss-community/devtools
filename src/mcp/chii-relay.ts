@@ -10,11 +10,26 @@
  * entries.
  *
  * TOTP auth (relay-side, authoritative gate):
- *   When `verifyAuth` is provided, this module registers an HTTP upgrade
- *   listener on the server BEFORE calling `chii.start({server})`. Node's
- *   `http.Server` allows multiple 'upgrade' listeners; the first to call
- *   `socket.destroy()` wins. Invalid auth → 401 + destroy (chii never sees
- *   the connection). Valid auth → return without side-effect (chii handles it).
+ *   When `verifyAuth` is provided, this module registers HTTP 'upgrade' and
+ *   'request' listeners on the server BEFORE calling `chii.start({server})`.
+ *   Node's `http.Server` calls listeners in registration order; the first to
+ *   call `socket.destroy()` (upgrade) or `res.end()` (request) wins. Invalid
+ *   auth → 401 + destroy (chii never sees the connection). Valid auth →
+ *   return without side-effect (chii handles it).
+ *
+ * TOTP code transports (issue #466) — two equivalent ways to carry the code:
+ *   1. Query param `at=<code>` — used by the daemon-side `/client` connection
+ *      (`chii-connection.ts` appends it; it holds the secret).
+ *   2. Path prefix `/at/<code>/…` — used by the phone-side target. Chii's
+ *      stock `target.js` derives its WS endpoint from the script `src`
+ *      (`scriptEl.src.replace('target.js','')`), so the only way for the
+ *      phone to carry a code is to embed it in the script URL path. The
+ *      in-app attach injects `https://<host>/at/<code>/target.js`; both the
+ *      script fetch and the derived `wss://<host>/at/<code>/target/<id>` WS
+ *      dial then carry the prefix. The listeners below rewrite the prefix
+ *      into the query form (`rewriteAtPathPrefix`) and MUTATE `req.url`
+ *      before chii's own handlers (registered later) parse it — chii only
+ *      ever sees the stripped URL.
  *
  * Threat model: "URL leak" — someone obtains the tunnel URL (Slack paste, QR
  *   screenshot, shoulder-surfing) but does not have the shared TOTP secret.
@@ -66,6 +81,47 @@ export interface ChiiRelay {
   close(): Promise<void>;
 }
 
+/**
+ * Secret-free metadata about a single auth rejection (issue #467).
+ *
+ * SECRET-HANDLING: this event carries ONLY the surface kind. It must never
+ * grow fields for `req.url`, query strings, codes, or secrets — observers
+ * (diagnostics counters, console hints) only need "a rejection happened".
+ */
+export interface RelayAuthRejectEvent {
+  /** Which inbound surface was rejected. */
+  kind: 'ws-upgrade' | 'http-request';
+}
+
+/**
+ * Rewrites a `/at/<code>/…` path-prefixed request URL into the equivalent
+ * query-based form, e.g.:
+ *
+ *   `/at/123456/target.js`        → `/target.js?at=123456`
+ *   `/at/123456/target/x?url=u`   → `/target/x?url=u&at=123456`
+ *   `/at/123456/`                 → `/?at=123456`
+ *
+ * Returns `null` when the URL does not carry the prefix (including an empty
+ * code segment) — callers fall back to the unmodified URL and the existing
+ * query-based auth path.
+ *
+ * Pure string surgery — this function knows nothing about secrets or code
+ * validity; verification stays inside the caller-provided `verifyAuth`
+ * predicate (which parses the query). The raw path segment is appended
+ * verbatim to the query: both path segments and query values are
+ * percent-decoded exactly once by their consumers, so no re-encoding is
+ * needed (TOTP codes are 6 digits and never percent-encoded in practice).
+ */
+export function rewriteAtPathPrefix(rawUrl: string): string | null {
+  const match = /^\/at\/([^/?]+)(\/[^?]*)?(\?.*)?$/.exec(rawUrl);
+  if (match === null) return null;
+  const code = match[1];
+  const path = match[2] === undefined || match[2] === '' ? '/' : match[2];
+  const query = match[3] ?? '';
+  const separator = query === '' ? '?' : '&';
+  return `${path}${query}${separator}at=${code}`;
+}
+
 export interface StartChiiRelayOptions {
   /**
    * Local port for the relay. Default 0 (OS-assigned ephemeral port).
@@ -92,10 +148,23 @@ export interface StartChiiRelayOptions {
    * from this module's perspective.
    *
    * @param req - The raw HTTP `IncomingMessage` from the upgrade handshake.
-   *   Inspect `req.url` for query parameters (e.g. `at=<code>`).
+   *   Inspect `req.url` for query parameters (e.g. `at=<code>`). Path-prefixed
+   *   URLs (`/at/<code>/…`, the phone-target transport — issue #466) are
+   *   rewritten into the query form BEFORE this predicate runs, so a
+   *   query-only predicate covers both transports.
    * @returns `true` if the upgrade is authorised, `false` to reject.
    */
   verifyAuth?: (req: IncomingMessage) => boolean;
+  /**
+   * Secret-free observability callback fired on every auth rejection
+   * (issue #467). Only meaningful together with `verifyAuth`.
+   *
+   * SECRET-HANDLING: the event carries ONLY the rejection kind — never
+   * `req.url`, query strings, TOTP codes, or the secret. Implementations must
+   * keep it that way (e.g. increment a counter + timestamp). Exceptions thrown
+   * by the callback are swallowed so observability can never break the gate.
+   */
+  onAuthReject?: (event: RelayAuthRejectEvent) => void;
 }
 
 /**
@@ -117,29 +186,76 @@ export interface StartChiiRelayOptions {
 export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promise<ChiiRelay> {
   const requestedPort = options.port ?? 0;
   const host = options.host ?? '127.0.0.1';
-  const { verifyAuth } = options;
+  const { verifyAuth, onAuthReject } = options;
 
   const httpServer = createServer();
 
-  // Register our auth listener BEFORE chii.start() so it fires first.
-  // Node's http.Server emits 'upgrade' to all listeners in registration order;
-  // the first to destroy() the socket wins. Valid requests return without
-  // side-effect so chii's own upgrade handler takes over normally.
+  // Secret-free observability hook (issue #467). Swallow callback exceptions —
+  // a broken observer must never turn into an open gate or a crashed relay.
+  const notifyAuthReject = (kind: RelayAuthRejectEvent['kind']): void => {
+    if (onAuthReject === undefined) return;
+    try {
+      onAuthReject({ kind });
+    } catch {
+      // Ignore — observability is best-effort.
+    }
+  };
+
+  // Register our auth listeners BEFORE chii.start() so they fire first.
+  // Node's http.Server emits 'upgrade'/'request' to all listeners in
+  // registration order; the first to destroy() the socket (upgrade) or end()
+  // the response (request) wins. Valid requests return without side-effect so
+  // chii's own handlers take over normally — and because listeners run
+  // synchronously in order, mutating `req.url` here (path-prefix strip,
+  // issue #466) means chii's later-registered handlers only ever see the
+  // stripped URL.
   //
   // We only register when verifyAuth is provided so the no-auth path is
-  // zero-overhead for tests and local-only dev sessions.
+  // zero-overhead for tests and local-only dev sessions. (The phone-side
+  // `/at/<code>/` prefix only ever appears when TOTP is armed — the launcher
+  // QR carries the `at` code — so the no-auth path never needs the strip.)
   if (verifyAuth) {
     httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex) => {
+      // Phone-target transport (issue #466): normalise a `/at/<code>/…` path
+      // prefix into the query form before verification, and strip it from the
+      // URL chii will see. No-prefix URLs pass through untouched (daemon
+      // client query transport — back-compat).
+      const rewritten = rewriteAtPathPrefix(req.url ?? '');
+      if (rewritten !== null) {
+        req.url = rewritten;
+      }
       if (!verifyAuth(req)) {
         // Reject: send a minimal HTTP 401 response and close the socket.
         // We do NOT log req.url or any auth param here to avoid leaking codes.
         socket.write('HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n');
         socket.destroy();
+        notifyAuthReject('ws-upgrade');
         // Early return — chii's handler is NOT called for this socket.
         return;
       }
       // Auth passed: no-op. Chii's upgrade listener (registered below by
       // chii.start) will handle the rest.
+    });
+
+    // Plain HTTP requests: only the path-prefixed form is ours — the phone
+    // fetches `target.js` via `https://<host>/at/<code>/target.js` (issue
+    // #466), which must be verified + stripped so chii's Koa static handler
+    // serves `/target.js`. Non-prefixed requests keep today's behaviour
+    // (ungated pass-through to chii).
+    httpServer.on('request', (req, res) => {
+      const rewritten = rewriteAtPathPrefix(req.url ?? '');
+      if (rewritten === null) return;
+      req.url = rewritten;
+      if (!verifyAuth(req)) {
+        // We do NOT log req.url or any auth param here to avoid leaking codes.
+        res.statusCode = 401;
+        res.end();
+        notifyAuthReject('http-request');
+      }
+      // Auth passed: no-op — chii's Koa 'request' listener (registered below
+      // by chii.start) serves the rewritten URL. (Koa skips writing when an
+      // earlier listener already ended the response, so the 401 path is safe
+      // even though Koa still runs.)
     });
   }
 

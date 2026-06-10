@@ -91,6 +91,10 @@ class NoopCollector implements DiagnosticsCollector {
   getLastDetachAt(): string | null {
     return null;
   }
+  recordAuthReject(): void {}
+  getAuthRejects(): import('../tools.js').AuthRejectsSnapshot {
+    return { count: 0, lastAt: null };
+  }
 }
 
 async function makeClient(opts: {
@@ -217,6 +221,29 @@ describe('InMemoryDiagnosticsCollector', () => {
     expect(c.getLastAttachAt()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     c.recordDetach();
     expect(c.getLastDetachAt()).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  // ---- auth-reject counter (#467) -------------------------------------------
+
+  it('starts with an empty auth-reject snapshot', () => {
+    const c = new InMemoryDiagnosticsCollector();
+    expect(c.getAuthRejects()).toEqual({ count: 0, lastAt: null });
+  });
+
+  it('counts auth rejections and tracks the last timestamp', () => {
+    const c = new InMemoryDiagnosticsCollector();
+    c.recordAuthReject();
+    c.recordAuthReject();
+    c.recordAuthReject();
+    const snapshot = c.getAuthRejects();
+    expect(snapshot.count).toBe(3);
+    expect(snapshot.lastAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('auth rejections do NOT enter the error ring buffer (counter only)', () => {
+    const c = new InMemoryDiagnosticsCollector();
+    c.recordAuthReject();
+    expect(c.getRecentErrors(10)).toHaveLength(0);
   });
 });
 
@@ -363,6 +390,65 @@ describe('getDiagnostics helper', () => {
     expect(typeof result.process.pid).toBe('number');
     expect(typeof result.process.ppid).toBe('number');
     expect(result.process.parentAlive).toBe(true);
+  });
+
+  // ---- authRejects exposure (#467) ------------------------------------------
+
+  it('exposes an empty authRejects snapshot and NO synthetic error when no reject occurred', async () => {
+    const result = await getDiagnostics({
+      tunnel: tunnelDown,
+      env: 'mock',
+      envReason: 'default-mock',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+    expect(result.authRejects).toEqual({ count: 0, lastAt: null });
+    expect(result.recentErrors).toHaveLength(0);
+  });
+
+  it('exposes authRejects and appends ONE synthetic summary entry to recentErrors', async () => {
+    const collector = new InMemoryDiagnosticsCollector();
+    collector.recordAuthReject();
+    collector.recordAuthReject();
+    collector.recordAuthReject();
+    const result = await getDiagnostics({
+      tunnel: tunnelUp,
+      env: 'relay-dev',
+      envReason: 'test',
+      collector,
+      readLock: () => null,
+    });
+
+    expect(result.authRejects.count).toBe(3);
+    expect(result.authRejects.lastAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // Exactly one synthetic summary entry — not one per rejection.
+    const authEntries = result.recentErrors.filter((e) => e.category === 'auth');
+    expect(authEntries).toHaveLength(1);
+    expect(authEntries[0]!.message).toMatch(/^WS upgrade auth-rejected \(3 times, last /);
+  });
+
+  it('auth-reject summary is secret-free — no at= query, code, or URL in the snapshot', async () => {
+    const collector = new InMemoryDiagnosticsCollector();
+    collector.recordAuthReject();
+    const result = await getDiagnostics({
+      tunnel: tunnelDown,
+      env: 'relay-dev',
+      envReason: 'test',
+      collector,
+      readLock: () => null,
+    });
+
+    const serialized = JSON.stringify({
+      recentErrors: result.recentErrors,
+      authRejects: result.authRejects,
+      nextRecommendedAction: result.nextRecommendedAction,
+    });
+    // The rejected request in the wild carries `/at/<code>/…` + `at=` + the
+    // tunnel host. None of those may surface in the diagnostics snapshot.
+    expect(serialized).not.toContain('at=');
+    expect(serialized).not.toContain('/at/');
+    expect(serialized).not.toContain('trycloudflare');
+    expect(serialized).not.toMatch(/\b\d{6}\b/);
   });
 
   it('process.parentAlive reflects the injected checkParentAlive result', async () => {
@@ -640,6 +726,62 @@ describe('computeNextRecommendedAction', () => {
     const healthyPages = makePages([{ id: 'p1', title: 'App', url: 'intoss-private://app' }]);
     const action = computeNextRecommendedAction(tunnelInfoUp, healthyPages, 'relay-dev');
     expect(action).toBeNull();
+  });
+
+  // ---- Rule 2a: relay auth rejections (#467) ---------------------------------
+
+  const someRejects = { count: 2, lastAt: '2026-06-10T00:00:00.000Z' };
+
+  it('Rule 2a: authRejects > 0 + pages empty → TOTP rescan guidance (beats generic Rule 2)', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay-dev', someRejects);
+    expect(action).not.toBeNull();
+    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.reason).toContain('TOTP');
+    expect(action!.reason).toContain('2건');
+    expect(action!.reason).toContain('QR');
+    // Distinct from the generic Rule 2 reason.
+    expect(action!.reason).not.toContain('no pages attached');
+  });
+
+  it('Rule 2a: reason is secret-free (count + timestamp only)', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay-dev', someRejects);
+    expect(action!.reason).not.toContain('at=');
+    expect(action!.reason).not.toContain('/at/');
+    expect(action!.reason).not.toContain('trycloudflare');
+  });
+
+  it('Rule 2a: does NOT trigger when a page is attached (auth noise from the past)', () => {
+    const healthyPages = makePages([{ id: 'p1', title: 'App', url: 'intoss-private://app' }]);
+    const action = computeNextRecommendedAction(
+      tunnelInfoUp,
+      healthyPages,
+      'relay-dev',
+      someRejects,
+    );
+    expect(action).toBeNull();
+  });
+
+  it('Rule 2a: does NOT trigger when authRejects.count is 0 (falls through to Rule 2)', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay-dev', {
+      count: 0,
+      lastAt: null,
+    });
+    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.reason).toContain('no pages');
+  });
+
+  it('Rule 2a: tunnel-down restart (Rule 1) still wins over auth rejects', () => {
+    const emptyPages = makePages([]);
+    const action = computeNextRecommendedAction(
+      tunnelInfoDown,
+      emptyPages,
+      'relay-dev',
+      someRejects,
+    );
+    expect(action!.tool).toBe('restart');
   });
 });
 

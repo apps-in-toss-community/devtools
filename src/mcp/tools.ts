@@ -463,6 +463,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'devtoolsVersion (@ait-co/devtools package version), tunnel (up/wssUrl/pid/startedAt), ' +
       'pages (list_pages result + lastSeenAt stats), lastAttachAt, lastDetachAt, ' +
       'recentErrors (last N server-side errors, PII/secret redacted), ' +
+      'authRejects ({count, lastAt} — relay TOTP 401 rejections, secret-free; count > 0 with empty pages ' +
+      'means the phone reached the relay but its code was rejected), ' +
       'environment (kind: mock|relay-dev|relay-live|relay-mobile, env: mock|relay backward-compat, reason, ' +
       'liveGuardActive: true when relay-live LIVE guard is active), ' +
       'serverLockHolder (pid + startedAt from the lock file, or null), ' +
@@ -1696,6 +1698,21 @@ export interface DiagnosticsLockHolder {
 }
 
 /**
+ * Secret-free snapshot of relay auth rejections (issue #467).
+ *
+ * Counts WS-upgrade / HTTP 401 rejections from the relay's TOTP gate so an
+ * empty `pages` list can be distinguished from "the phone never reached the
+ * relay". SECRET-HANDLING: count + timestamp ONLY — never the URL, query,
+ * code, or secret.
+ */
+export interface AuthRejectsSnapshot {
+  /** Total auth-rejected relay requests since server start. */
+  count: number;
+  /** ISO timestamp of the most recent rejection, or `null` when none. */
+  lastAt: string | null;
+}
+
+/**
  * The next recommended tool for the agent to call, based on the current server
  * state snapshot. `null` means the session looks healthy — no specific action needed.
  */
@@ -1733,8 +1750,16 @@ export interface DiagnosticsResult {
   /**
    * Recent server-side errors (up to `recent_errors_limit`, default 10).
    * Redacted: `at=<redacted>`, cookie headers stripped, AITCC_API_KEY masked.
+   * When auth rejections occurred, ONE synthetic summary entry
+   * (`category: 'auth'`) is appended so an empty array can be read as
+   * "no attach attempts" without missing silent 401s (issue #467).
    */
   recentErrors: DiagnosticsError[];
+  /**
+   * Relay TOTP auth-reject counter (issue #467). `count` is 0 when no
+   * rejection occurred. Secret-free: count + last timestamp only.
+   */
+  authRejects: AuthRejectsSnapshot;
   /**
    * Resolved environment and the reason string.
    *
@@ -1777,6 +1802,7 @@ export interface DiagnosticsResult {
    *   0. tunnel.droppedAt non-null                   → restart (permanent tunnel drop)
    *   1. tunnel.up === false AND relay env            → restart
    *   1b. tunnel.up === false AND mock env, no pages  → wait_for_page (local target is tunnel-less)
+   *   2a. authRejects.count > 0 AND pages empty       → build_attach_url (TOTP 거부 — QR 재스캔 안내)
    *   2. tunnel.up, pages empty, env === relay        → build_attach_url
    *   3. pages[0] exists + crashDetectedAt non-null   → build_attach_url (re-attach)
    *   4. otherwise                                    → null
@@ -1801,6 +1827,13 @@ export interface DiagnosticsCollector {
   getLastAttachAt(): string | null;
   /** Returns the ISO timestamp of the last detach, or `null`. */
   getLastDetachAt(): string | null;
+  /**
+   * Records one relay auth rejection (issue #467). Secret-free by contract —
+   * implementations store only a counter + timestamp, never request data.
+   */
+  recordAuthReject(): void;
+  /** Returns the auth-reject counter snapshot ({count: 0, lastAt: null} when none). */
+  getAuthRejects(): AuthRejectsSnapshot;
 }
 
 /** Secret-redaction patterns applied before error messages enter the buffer. */
@@ -1843,6 +1876,8 @@ export class InMemoryDiagnosticsCollector implements DiagnosticsCollector {
   private readonly maxSize: number;
   private lastAttachAt: string | null = null;
   private lastDetachAt: string | null = null;
+  private authRejectCount = 0;
+  private lastAuthRejectAt: string | null = null;
 
   constructor(maxSize = DEFAULT_ERROR_BUFFER_SIZE) {
     this.maxSize = maxSize;
@@ -1882,6 +1917,15 @@ export class InMemoryDiagnosticsCollector implements DiagnosticsCollector {
 
   getLastDetachAt(): string | null {
     return this.lastDetachAt;
+  }
+
+  recordAuthReject(): void {
+    this.authRejectCount += 1;
+    this.lastAuthRejectAt = new Date().toISOString();
+  }
+
+  getAuthRejects(): AuthRejectsSnapshot {
+    return { count: this.authRejectCount, lastAt: this.lastAuthRejectAt };
   }
 }
 
@@ -1950,16 +1994,22 @@ export function readDevtoolsVersion(): string | null {
  *   0. tunnel.droppedAt non-null                  → restart (permanent tunnel drop — highest priority)
  *   1. tunnel.up === false AND env is relay       → restart (relay needs a live tunnel)
  *   1b. tunnel.up === false AND env is mock       → wait_for_page (local target: tunnel-less is normal)
+ *   2a. authRejects.count > 0 AND pages empty     → build_attach_url (relay TOTP 거부 관측 — QR 재스캔
+ *       또는 target-side `at` 전달 확인. 일반 rule 2보다 구체적이므로 먼저 평가 — issue #467)
  *   2. tunnel.up, pages empty, env === relay      → build_attach_url (start attach)
  *   3. pages has entry + crashDetectedAt non-null → build_attach_url (re-attach after crash)
  *   4. otherwise                                  → null (session looks healthy)
  *
  * Pure — does not throw; receives the final assembled snapshot fields.
+ *
+ * SECRET-HANDLING: the auth-reject reason string carries only the count and
+ * timestamp from {@link AuthRejectsSnapshot} — never a URL, code, or secret.
  */
 export function computeNextRecommendedAction(
   tunnel: DiagnosticsTunnelInfo,
   pages: ListPagesResult | null,
   env: McpEnvironment,
+  authRejects: AuthRejectsSnapshot | null = null,
 ): NextRecommendedAction | null {
   // Rule 0: permanent tunnel drop — highest priority, beats crash / empty-pages rules.
   // droppedAt is set by the health probe after exhausting all reissue attempts.
@@ -1996,6 +2046,20 @@ export function computeNextRecommendedAction(
         reason: 'tunnel not up — run `npx @ait-co/devtools devtools-mcp` to restart',
       };
     }
+  }
+
+  // Rule 2a (issue #467): auth rejections observed while no page is attached —
+  // the phone DID reach the relay but its TOTP verification failed. Without
+  // this rule the generic rule 2 ("call build_attach_url") hides the rejection
+  // and the diagnosis runs the wrong way ("the phone never arrived").
+  if (authRejects !== null && authRejects.count > 0 && pages !== null && pages.pages.length === 0) {
+    return {
+      tool: 'build_attach_url',
+      reason:
+        `relay 인증(TOTP) 거부 ${authRejects.count}건 발생 (last ${authRejects.lastAt ?? 'unknown'}) — ` +
+        'QR을 다시 스캔해 새 코드로 attach하세요(코드는 30초 주기로 만료). 반복되면 폰 페이지 URL에 ' +
+        'at 파라미터가 전달되는지(target-side TOTP 전달 경로)를 확인하세요',
+    };
   }
 
   // Rule 2: tunnel up but no pages attached in relay env → start attach.
@@ -2105,7 +2169,20 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
   const limit = Math.min(Math.max(1, recentErrorsLimit), 50);
   const recentErrors = collector.getRecentErrors(limit);
 
-  const nextRecommendedAction = computeNextRecommendedAction(tunnelInfo, pages, env);
+  // Issue #467: surface relay auth rejections. One synthetic summary entry
+  // (not N entries — rejections can be frequent) so "recentErrors: []" can be
+  // read as "no attach attempts" without hiding silent 401s.
+  // SECRET-HANDLING: message carries only count + timestamp.
+  const authRejects = collector.getAuthRejects();
+  if (authRejects.count > 0) {
+    recentErrors.push({
+      timestamp: authRejects.lastAt ?? new Date().toISOString(),
+      message: `WS upgrade auth-rejected (${authRejects.count} times, last ${authRejects.lastAt ?? 'unknown'})`,
+      category: 'auth',
+    });
+  }
+
+  const nextRecommendedAction = computeNextRecommendedAction(tunnelInfo, pages, env, authRejects);
 
   return {
     mcpVersion,
@@ -2115,6 +2192,7 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     lastAttachAt: collector.getLastAttachAt(),
     lastDetachAt: collector.getLastDetachAt(),
     recentErrors,
+    authRejects,
     environment: {
       kind: env,
       env: toLegacyEnv(env),
