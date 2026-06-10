@@ -331,7 +331,23 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                     assertRelayAuthConfigured();
                     const verifyAuth = buildRelayVerifyAuth();
                     const { startChiiRelay } = await import('../mcp/chii-relay.js');
-                    const r = await startChiiRelay({ port: 0, verifyAuth });
+                    // Issue #467: this relay lives in the vite process, so the
+                    // MCP daemon's get_debug_status counter cannot see its 401s.
+                    // Surface a throttled hint in the vite terminal instead.
+                    // SECRET-HANDLING: fixed message only — no URL, code, host.
+                    let lastAuthRejectWarnAt = 0;
+                    const r = await startChiiRelay({
+                      port: 0,
+                      verifyAuth,
+                      onAuthReject: () => {
+                        const nowMs = Date.now();
+                        if (nowMs - lastAuthRejectWarnAt < 10_000) return;
+                        lastAuthRejectWarnAt = nowMs;
+                        console.warn(
+                          '[@ait-co/devtools] tunnel: relay 인증(TOTP) 거부 감지 — 폰에서 QR을 다시 스캔하세요 (코드는 30초 주기로 만료)',
+                        );
+                      },
+                    });
                     relay = r;
                     const rt = await startQuickTunnel(r.port);
                     relayTunnel = rt;

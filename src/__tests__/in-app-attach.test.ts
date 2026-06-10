@@ -51,7 +51,7 @@ function blockResult(
 
 describe('deriveTargetScriptUrl', () => {
   // Import once — this function is pure and stateless, no need to reset.
-  let deriveTargetScriptUrl: (url: string) => string;
+  let deriveTargetScriptUrl: (url: string, atCode?: string | null) => string;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -91,6 +91,47 @@ describe('deriveTargetScriptUrl', () => {
   it('handles relay URL without path segment', () => {
     expect(deriveTargetScriptUrl('wss://relay.example.com')).toBe(
       'https://relay.example.com/target.js',
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // TOTP path-prefix transport (issue #466)
+  // -------------------------------------------------------------------------
+
+  it('embeds the at code as an /at/<code>/ path prefix', () => {
+    expect(deriveTargetScriptUrl('wss://abc.trycloudflare.com/', '123456')).toBe(
+      'https://abc.trycloudflare.com/at/123456/target.js',
+    );
+  });
+
+  it('embeds the at code with explicit port and deep relay path', () => {
+    expect(deriveTargetScriptUrl('wss://h.example.com:9100/some/deep/path', '654321')).toBe(
+      'https://h.example.com:9100/at/654321/target.js',
+    );
+  });
+
+  it('percent-encodes unexpected characters in the at code', () => {
+    // TOTP codes are always 6 digits; this pins defense-in-depth behaviour.
+    expect(deriveTargetScriptUrl('wss://abc.trycloudflare.com/', 'a/b')).toBe(
+      'https://abc.trycloudflare.com/at/a%2Fb/target.js',
+    );
+  });
+
+  it('falls back to the legacy un-prefixed URL when atCode is undefined', () => {
+    expect(deriveTargetScriptUrl('wss://abc.trycloudflare.com/')).toBe(
+      'https://abc.trycloudflare.com/target.js',
+    );
+  });
+
+  it('falls back to the legacy un-prefixed URL when atCode is null', () => {
+    expect(deriveTargetScriptUrl('wss://abc.trycloudflare.com/', null)).toBe(
+      'https://abc.trycloudflare.com/target.js',
+    );
+  });
+
+  it('falls back to the legacy un-prefixed URL when atCode is empty', () => {
+    expect(deriveTargetScriptUrl('wss://abc.trycloudflare.com/', '')).toBe(
+      'https://abc.trycloudflare.com/target.js',
     );
   });
 });
@@ -171,6 +212,32 @@ describe('maybeAttach', () => {
     maybeAttach(passResult('wss://relay.example.com:9100/ws'));
     const script = document.head.querySelector('script');
     expect(script?.src).toBe('https://relay.example.com:9100/target.js');
+  });
+
+  // ---------------------------------------------------------------------------
+  // TOTP path-prefix transport — page URL `at` param → script src (issue #466)
+  // ---------------------------------------------------------------------------
+
+  it('forwards the page URL at param into the script src as /at/<code>/ prefix', () => {
+    history.replaceState(null, '', '/?at=123456&debug=1');
+    try {
+      maybeAttach(passResult('wss://abc.trycloudflare.com/'));
+      const script = document.head.querySelector('script');
+      expect(script?.src).toBe('https://abc.trycloudflare.com/at/123456/target.js');
+    } finally {
+      history.replaceState(null, '', '/');
+    }
+  });
+
+  it('injects the legacy un-prefixed target.js when the page URL has no at param', () => {
+    history.replaceState(null, '', '/?debug=1');
+    try {
+      maybeAttach(passResult('wss://abc.trycloudflare.com/'));
+      const script = document.head.querySelector('script');
+      expect(script?.src).toBe('https://abc.trycloudflare.com/target.js');
+    } finally {
+      history.replaceState(null, '', '/');
+    }
   });
 
   // ---------------------------------------------------------------------------

@@ -1742,6 +1742,14 @@ export interface BootRelayFamilyOptions {
    * carries the relay host — callers MUST NOT log it directly.
    */
   onWssUrl?: (wssUrl: string) => void;
+  /**
+   * Secret-free observability callback for relay auth rejections (issue #467) —
+   * forwarded to {@link startChiiRelay}'s `onAuthReject`. Receives only the
+   * rejection kind; never the URL, query, code, or secret. Boot sites wire it
+   * to `DiagnosticsCollector.recordAuthReject()` so `get_debug_status` can
+   * surface silent 401s.
+   */
+  onAuthReject?: (event: import('./chii-relay.js').RelayAuthRejectEvent) => void;
 }
 
 /**
@@ -1778,7 +1786,11 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
   const relayPort = options.relayPort ?? 0;
   const totpEnabled = options.verifyAuth !== undefined;
 
-  const relay = await startChiiRelay({ port: relayPort, verifyAuth: options.verifyAuth });
+  const relay = await startChiiRelay({
+    port: relayPort,
+    verifyAuth: options.verifyAuth,
+    onAuthReject: options.onAuthReject,
+  });
   // relay.port is the actual OS-assigned port (may differ from relayPort when 0).
   logInfo('server.start', { port: relay.port, totpEnabled });
 
@@ -2307,6 +2319,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
               },
+              // Issue #467: count relay TOTP 401s (secret-free) so
+              // get_debug_status can distinguish "phone never arrived" from
+              // "phone arrived but was rejected".
+              onAuthReject: () => diagnosticsCollector.recordAuthReject(),
             }),
     diagnosticsCollector,
     devtoolsOpener,
@@ -2596,6 +2612,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
               },
+              // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
+              onAuthReject: () => diagnosticsCollector.recordAuthReject(),
             }),
     diagnosticsCollector,
     devtoolsOpener,
@@ -2845,6 +2863,8 @@ export async function runMobileDebugServer(
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
               },
+              // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
+              onAuthReject: () => diagnosticsCollector.recordAuthReject(),
             }),
     diagnosticsCollector,
     devtoolsOpener,

@@ -17,21 +17,42 @@ import { checkDebugGate, type GateResult } from './index.js';
  * Converts a validated `wss:` relay URL into the Chii `target.js` script URL.
  *
  * Scheme is mapped `wss:` → `https:`. Host and port are preserved.
- * Pathname is set to `/target.js` regardless of the relay path.
- * Query params and hash from the relay URL are dropped — the target script
- * URL is a static asset path on the same host.
+ * Pathname is set to `/target.js` (or `/at/<code>/target.js` when a TOTP code
+ * is given) regardless of the relay path. Query params and hash from the
+ * relay URL are dropped — the target script URL is a static asset path on the
+ * same host.
+ *
+ * TOTP path-prefix transport (issue #466): chii's stock `target.js` derives
+ * its WS endpoint from the script `src` (`scriptEl.src.replace('target.js',
+ * '')`), so embedding the current TOTP code in the script URL *path* is the
+ * only way the phone-side WS upgrade can carry it — both the script fetch and
+ * the derived `wss://<host>/at/<code>/target/<id>` dial inherit the prefix,
+ * and the relay verifies + strips it before chii parses the URL. The
+ * `window.ChiiServerUrl` + query alternative does NOT work: chii appends
+ * `target/<id>` to the serverUrl string, which would land after a `?`.
+ *
+ * SECRET-HANDLING: `atCode` rides only inside the returned URL (the intended
+ * transport — same exposure grade as the daemon client's `at=` query). It is
+ * never logged here.
  *
  * @example
  * deriveTargetScriptUrl('wss://abc.trycloudflare.com/relay')
  * // → 'https://abc.trycloudflare.com/target.js'
  *
- * deriveTargetScriptUrl('wss://h.example.com:9100/')
- * // → 'https://h.example.com:9100/target.js'
+ * deriveTargetScriptUrl('wss://h.example.com:9100/', '123456')
+ * // → 'https://h.example.com:9100/at/123456/target.js'
+ *
+ * @param relayUrl - Validated `wss:` relay URL from the gate result.
+ * @param atCode - Current TOTP code from the page URL's `at` query param, or
+ *   `null`/`undefined`/`''` to keep the legacy un-prefixed URL.
  */
-export function deriveTargetScriptUrl(relayUrl: string): string {
+export function deriveTargetScriptUrl(relayUrl: string, atCode?: string | null): string {
   const u = new URL(relayUrl);
   u.protocol = 'https:';
-  u.pathname = '/target.js';
+  u.pathname =
+    atCode !== undefined && atCode !== null && atCode !== ''
+      ? `/at/${encodeURIComponent(atCode)}/target.js`
+      : '/target.js';
   u.search = '';
   u.hash = '';
   return u.toString();
@@ -93,7 +114,23 @@ export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
     return;
   }
 
-  const src = deriveTargetScriptUrl(gateResult.relayUrl);
+  // TOTP path-prefix transport (issue #466): forward the page URL's `at` code
+  // (delivered by the dashboard QR → launcher deep-link) into the target
+  // script URL so the WS upgrade derived from it passes the relay's TOTP
+  // gate. Absent `at` → legacy un-prefixed URL (relay without TOTP, tests).
+  // Read window.location.search directly, consistent with other guards in
+  // this file. SECRET-HANDLING: the code is never logged; it rides only in
+  // the script src (the intended transport).
+  //
+  // TTL note: the code is verified within the relay's ±1-step window (90 s),
+  // so the initial attach always fits. A much-later automatic reconnect by
+  // target.js reuses the stale prefix and is rejected (401) — by design under
+  // the URL-leak threat model; recover by rescanning the QR (the relay-side
+  // auth-reject counter from issue #467 makes this visible).
+  const atCode =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('at') : null;
+
+  const src = deriveTargetScriptUrl(gateResult.relayUrl, atCode);
 
   // Also guard against a script with the same src already in the DOM
   // (e.g. injected by a different code path or a page reload within SPA).
