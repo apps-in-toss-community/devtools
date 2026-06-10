@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.70
+
+### Patch Changes
+
+- 17f7a0f: launcher letterbox 감지에 `safeAreaTop > 0` 판별자 추가 — 재설치로 치유된 healthy below-status-bar 레이아웃의 false-positive 해소 (#479)
+- ed017e3: relay의 TOTP 거부를 close 4401(`totp-rejected`)로 이름 붙이고 in-app 관찰자가 launcher 배너로 중계 — 만료된 디버그 세션이 폰에서 더 이상 조용히 실패하지 않습니다 (#478)
+
 ## 0.1.69
 
 ### Patch Changes
