@@ -12,36 +12,49 @@
 //
 //   window.innerHeight ≈ screen.height − statusBar   (shortfall)
 //   display-mode: standalone
-//   env(safe-area-inset-top) > 0
 //
-// env(safe-area-inset-top) discriminator (#479): real-device CDP measurements
-// confirm that the top inset is reliable:
-//   - letterboxed (top-anchored, bottom strip dead): safeAreaTop = 47
-//   - healthy below-status-bar standalone:           safeAreaTop = 0
-// This single bit resolves the false-positive accepted in #475/#476 — a
-// healthy reinstalled device now correctly gets detected: false.
+// Discriminator redesign (#484): the launcher now ships black-translucent
+// (apple-mobile-web-app-status-bar-style) so a HEALTHY standalone window is
+// edge-to-edge — it extends UNDER the status bar (top-anchored) and reaches the
+// screen bottom. That inverts the #479 top-inset discriminator: black-translucent
+// makes BOTH the letterbox and the healthy window report safeAreaTop > 0, so the
+// top inset can no longer tell them apart.
 //
-// Limits of the heuristic: a hypothetical "middle-floating" window that touches
-// neither the top nor the bottom of the screen would also report safeAreaTop 0
-// and would be missed. No such geometry has been observed in the wild; phantom
-// behaviour has only been seen on the bottom inset (#475).
+// New geometry (real-device CDP, iOS 18.7 / iOS 26, #484/#475):
 //
-// env(safe-area-inset-bottom) is NOT part of the signature (#475): the
-// Simulator reports 0 in the letterboxed state (the viewport never reaches the
-// home-indicator area), but a real iOS 26 device reports a PHANTOM 34 in the
-// exact same letterboxed geometry (innerHeight 797 vs screen.height 844). The
-// inset value is therefore untrustworthy as a discriminator and is ignored
-// here — it stays in ViewportMetrics only for the diagnostics panel.
+//   | state                       | shortfall      | safeAreaBottom |
+//   |-----------------------------|----------------|----------------|
+//   | letterboxed (bottom strip   | ~47 (dead band | 0 (window never|
+//   |   OUTSIDE the window)        |   below window)|   reaches HI)  |
+//   | healthy black-translucent   | ~0 (reaches    | 34 (real home  |
+//   |   edge-to-edge              |   the bottom)  |   indicator)   |
+//
+// So the discriminator is now the BOTTOM edge: a letterboxed window has a height
+// shortfall AND a zero bottom inset (it stops short of the home indicator); a
+// healthy edge-to-edge window has no shortfall and a non-zero bottom inset on
+// notch devices. The shortfall alone carries detection; safeAreaBottom === 0
+// confirms the window failed to reach the home-indicator area.
+//
+// Why the bottom inset is trustworthy again: the #475 "phantom bottom 34"
+// reading came from a window that was top-anchored but mis-sized — innerHeight
+// 797 while reporting bottom 34. With black-translucent that same window is the
+// HEALTHY state (it genuinely reaches the home indicator → bottom 34 is real),
+// not a letterbox. The letterbox under black-translucent is the case where the
+// OS paints a dead band BELOW the window, so the window stops above the home
+// indicator and safeAreaBottom collapses to 0.
+//
+// env(safe-area-inset-top) is NOT consulted anymore (#484): under
+// black-translucent it is non-zero in both states, so it carries no signal.
+// It stays in ViewportMetrics only for the diagnostics panel.
 //
 // Configurations that still do NOT match:
 //   - normal browser tab           → not standalone (Safari chrome eats height
 //                                    legitimately).
-//   - standalone, edge-to-edge     → innerHeight === screen.height (no shortfall).
+//   - standalone, edge-to-edge     → innerHeight === screen.height (no shortfall)
+//                                    and safeAreaBottom > 0 on notch devices.
 //   - home-button devices (20pt status bar) → shortfall stays under the
-//                                    threshold below (the threshold, not the
-//                                    inset, carries this guard).
-//   - healthy below-status-bar     → safeAreaTop === 0, so detected: false
-//                                    (trade-off from #475/#476 resolved by #479).
+//                                    threshold below (the threshold carries this
+//                                    guard); they also have no bottom inset.
 
 /** A snapshot of the page-visible viewport geometry. */
 export interface ViewportMetrics {
@@ -51,11 +64,17 @@ export interface ViewportMetrics {
   screenHeight: number;
   /** `visualViewport.height`, or null when the API is unavailable. */
   visualViewportHeight: number | null;
-  /** `env(safe-area-inset-top)` in CSS px (0 when unsupported). */
+  /**
+   * `env(safe-area-inset-top)` in CSS px (0 when unsupported).
+   * Diagnostics-display only — not consulted by detectLetterbox() (#484): under
+   * black-translucent it is non-zero in both the healthy and letterboxed states.
+   */
   safeAreaTop: number;
   /**
    * `env(safe-area-inset-bottom)` in CSS px (0 when unsupported).
-   * Diagnostics-display only — not consulted by detectLetterbox() (#475).
+   * Consulted by detectLetterbox() (#484): under black-translucent a letterboxed
+   * window stops above the home indicator (bottom 0), while a healthy
+   * edge-to-edge window reaches it (bottom > 0 on notch devices).
    */
   safeAreaBottom: number;
   /** `(display-mode: standalone)` media query or `navigator.standalone`. */
@@ -69,15 +88,16 @@ export interface LetterboxVerdict {
 }
 
 // Strictly above the classic 20pt status bar so home-button devices (iPhone
-// SE class: shortfall exactly 20 in the healthy below-status-bar layout) never
+// SE class: shortfall exactly 20 in the healthy edge-to-edge layout) never
 // false-positive. Notch/Dynamic-Island status bars are 44–59pt, comfortably
-// above. With the inset condition dropped (#475) this threshold is the only
-// SE-class guard.
+// above. With the top-inset condition dropped (#484) the shortfall threshold and
+// the zero-bottom-inset condition together carry the SE-class and healthy guards.
 export const LETTERBOX_MIN_SHORTFALL_PX = 24;
 
 /**
  * Decide whether the current geometry matches the iOS standalone letterbox
- * signature (#469). Pure — call with a fresh ViewportMetrics snapshot.
+ * signature (#469, discriminator redesigned in #484). Pure — call with a fresh
+ * ViewportMetrics snapshot.
  */
 export function detectLetterbox(metrics: ViewportMetrics): LetterboxVerdict {
   // The keyboard shrinks visualViewport but not innerHeight; some engines lag
@@ -92,21 +112,22 @@ export function detectLetterbox(metrics: ViewportMetrics): LetterboxVerdict {
   // observed iOS 26 defect is portrait-specific.)
   const portrait = metrics.innerWidth <= metrics.screenWidth;
 
-  // safeAreaBottom is deliberately NOT consulted (#475 phantom inset — see the
-  // header comment): real iOS 26 devices report a non-zero bottom inset even
-  // when the window never reaches the home indicator.
+  // safeAreaTop is deliberately NOT consulted (#484): under black-translucent it
+  // is non-zero in BOTH the healthy and letterboxed states, so it carries no
+  // discriminating signal (the inversion of the #479 reasoning).
   //
-  // safeAreaTop IS consulted (#479): the top inset proved reliable as a
-  // discriminator. A letterboxed window is anchored at the screen top, so iOS
-  // reports the full status-bar height as safeAreaTop (e.g. 47). A healthy
-  // below-status-bar standalone window starts below the status bar, so
-  // safeAreaTop === 0. Requiring safeAreaTop > 0 eliminates the false-positive
-  // for healthy reinstalled devices (the trade-off accepted in #475/#476).
+  // safeAreaBottom IS consulted (#484): under black-translucent a healthy
+  // edge-to-edge window reaches the home indicator (bottom > 0 on notch
+  // devices), while a letterboxed window stops above it because the OS paints a
+  // dead band below the window (bottom collapses to 0). Requiring a height
+  // shortfall AND a zero bottom inset distinguishes the two — a healthy
+  // edge-to-edge window has no shortfall, and a healthy notch window that
+  // somehow shows a small shortfall still reports bottom > 0.
   const detected =
     metrics.standalone &&
     portrait &&
     shortfallPx >= LETTERBOX_MIN_SHORTFALL_PX &&
-    metrics.safeAreaTop > 0;
+    metrics.safeAreaBottom === 0;
 
   return { detected, shortfallPx };
 }

@@ -6,16 +6,26 @@
     <meta name="robots" content="noindex, nofollow" />
     <meta name="googlebot" content="noindex, nofollow" />
     <!--
-      Standalone display is declared ONLY by the web app manifest
-      (display: standalone) + viewport-fit=cover above. The legacy
-      *-web-app-capable / apple-mobile-web-app-status-bar-style=black-translucent
-      metas were removed in #469: manifest display:standalone has been sufficient
-      on iOS since 11.3, and the legacy/manifest coexistence is the suspected
-      trigger of the iOS 26 standalone letterbox (web view mis-sized by the
-      status-bar height, bottom strip painted with manifest background_color).
+      black-translucent (#484): the standalone web view extends UNDER the status
+      bar (top-anchored, edge-to-edge) instead of starting below it. This is the
+      "game-type" Toss representation — the page owns the top inset and paints
+      its own dark background behind the (now translucent) status bar, killing
+      the white band + dead ~54px strip observed in env-2 (#484 mechanism). The
+      framed dev app then receives the real top inset (0) forwarded by the
+      launcher (see Launcher.tsx postMessage), so it no longer double-pads.
+
+      Trade-off vs #469: black-translucent makes a HEALTHY standalone window
+      report env(safe-area-inset-top) > 0 (the status-bar height), which the
+      old letterbox heuristic used as its discriminator. letterbox.ts was
+      redesigned for this geometry (#484) — healthy black-translucent is now
+      distinguished from a letterbox by reaching the screen bottom (no
+      shortfall), not by a zero top inset.
+
       iOS web clips snapshot meta tags at install time — changes here only take
       effect after removing and re-adding the home-screen app.
     -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#0b0d10" />
     <link rel="manifest" href="/launcher/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/launcher/icon-192.png" />
