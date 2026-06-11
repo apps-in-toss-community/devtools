@@ -14,7 +14,12 @@ import type { Locale } from '../../../src/i18n/index.js';
 import { setLocale } from '../../../src/i18n/index.js';
 import { useLocale, useT } from '../../../src/i18n/react.js';
 import { resolveLauncherEntry } from './entry.js';
-import { detectLetterbox, type ViewportMetrics } from './letterbox.js';
+import {
+  computeBridgeInsets,
+  detectLetterbox,
+  type SafeAreaInsets,
+  type ViewportMetrics,
+} from './letterbox.js';
 
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
 
@@ -102,13 +107,6 @@ function consumeDeepLinkUrl(): string | null {
   return url ? decorateIframeSrc(url, launcherSearch) : null;
 }
 
-interface SafeAreaInsets {
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-}
-
 // Read env(safe-area-inset-*) by measuring a throwaway element — CSS env() is
 // not readable from JS directly. Returns 0 for every side where env() is
 // unsupported (desktop, jsdom: getComputedStyle yields ''/'0px' → 0).
@@ -137,9 +135,10 @@ function measureSafeAreaInsets(): SafeAreaInsets {
 // synthetic preset value and double-pad it.
 const SAFE_AREA_INSETS_MESSAGE_TYPE = 'ait:safe-area-insets';
 
-function postSafeAreaInsetsTo(target: Window | null): void {
+function postSafeAreaInsetsTo(target: Window | null, letterboxDetected: boolean): void {
   if (!target) return;
-  const insets = measureSafeAreaInsets();
+  const raw = measureSafeAreaInsets();
+  const insets = computeBridgeInsets(raw, letterboxDetected);
   // targetOrigin '*': the framed tunnel page is cross-origin
   // (*.trycloudflare.com) and the insets are non-sensitive geometry. The
   // receiver (src/mock/safe-area-bridge.ts) validates shape + range.
@@ -435,15 +434,23 @@ export function Launcher(): React.JSX.Element {
     };
   }, []);
 
+  const letterbox = metrics ? detectLetterbox(metrics) : null;
+
   // Forward the launcher's real env() insets to the framed dev app (#484,
   // slice 2). The launcher is the top-level document so its env() reading is the
   // ground truth; the framed page's mock would otherwise report a synthetic
   // preset and double-pad it. Re-post on resize/orientationchange so a rotation
   // propagates. The iframe `onLoad` handler covers the initial post (the frame
   // may not be ready when this effect first runs). No-op outside live mode.
+  //
+  // letterboxDetected is passed so computeBridgeInsets() can zero the phantom
+  // bottom inset when the window is letterboxed (#491): the window stops above
+  // the home indicator so the app must not pad for an inset it cannot reach.
   useEffect(() => {
     if (screen !== 'live') return;
-    const post = () => postSafeAreaInsetsTo(frameRef.current?.contentWindow ?? null);
+    const letterboxDetected = letterbox?.detected ?? false;
+    const post = () =>
+      postSafeAreaInsetsTo(frameRef.current?.contentWindow ?? null, letterboxDetected);
     window.addEventListener('resize', post);
     window.addEventListener('orientationchange', post);
     window.visualViewport?.addEventListener('resize', post);
@@ -452,9 +459,7 @@ export function Launcher(): React.JSX.Element {
       window.removeEventListener('orientationchange', post);
       window.visualViewport?.removeEventListener('resize', post);
     };
-  }, [screen]);
-
-  const letterbox = metrics ? detectLetterbox(metrics) : null;
+  }, [screen, letterbox?.detected]);
 
   // On-device ICB discriminator (#475): Δ between window.innerHeight and the
   // bottom chrome's resolved bottom edge. A healthy fixed anchor yields
@@ -724,8 +729,12 @@ export function Launcher(): React.JSX.Element {
         src={liveUrl ?? undefined}
         // Initial inset forward (#484, slice 2): post once the framed page is
         // loaded and its mock message listener is installed. resize/orientation
-        // re-posts are wired in the effect above.
-        onLoad={(e) => postSafeAreaInsetsTo(e.currentTarget.contentWindow)}
+        // re-posts are wired in the effect above. Pass the current letterbox
+        // verdict so the bottom inset is zeroed when the window is letterboxed
+        // (#491 bridge bottom correction).
+        onLoad={(e) =>
+          postSafeAreaInsetsTo(e.currentTarget.contentWindow, letterbox?.detected ?? false)
+        }
         style={{
           // dvh/dvw-free sizing (#469): 100% of a fixed element resolves
           // against the real ICB (window box), unlike 100dvh which can
@@ -828,10 +837,10 @@ export function Launcher(): React.JSX.Element {
           position: 'fixed',
           left: 'max(12px, env(safe-area-inset-left))',
           right: 'max(12px, env(safe-area-inset-right))',
-          // Letterboxed window never reaches the home indicator (#484: bottom
-          // inset collapses to 0 in that state) — use a flat 12px so the chrome
-          // sits just inside the mis-sized window. Healthy edge-to-edge windows
-          // pad the real home indicator.
+          // Letterboxed window never reaches the home indicator — use a flat
+          // 12px so the chrome sits just inside the mis-sized window (#491:
+          // bottom inset is phantom in letterbox state and must not be used).
+          // Healthy edge-to-edge windows pad the real home indicator.
           bottom: letterbox?.detected ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
           zIndex: 30,
           display: 'flex',
