@@ -36,6 +36,25 @@ import {
  */
 export const AIT_NAV_BAR_HEIGHT_PARTNER = 54;
 
+// ---------------------------------------------------------------------------
+// Navbar spacing constants — kept in sync with src/panel/styles.ts by the
+// parity guard tests in navbar.vitest.ts. Any change here must be reflected
+// in both files and vice versa (#510).
+// ---------------------------------------------------------------------------
+
+/** Icon size (px). Matches `.ait-navbar-icon { width: 22px; height: 22px; }`. */
+export const LAUNCHER_NAVBAR_ICON_SIZE_PX = 22;
+/** Title-group gap (px). Matches `.ait-navbar-title { gap: 6px; }`. */
+export const LAUNCHER_NAVBAR_TITLE_GAP_PX = 6;
+/** Title-group margin-left (px). Matches `.ait-navbar-title { margin-left: 4px; }`. */
+export const LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX = 4;
+/** Back button font-size (px). Matches `.ait-navbar-back { font-size: 24px; }`. */
+export const LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX = 24;
+/** Back button padding. Matches `.ait-navbar-back { padding: 0 8px; }`. */
+export const LAUNCHER_NAVBAR_BACK_PADDING = '0 8px';
+/** Back glyph. Matches the `‹` character in viewport.ts / Launcher.tsx. */
+export const LAUNCHER_NAVBAR_BACK_GLYPH = '‹';
+
 export type NavBarType = 'partner' | 'game';
 
 /**

@@ -19,6 +19,12 @@ import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
   extractLauncherSearch,
+  LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX,
+  LAUNCHER_NAVBAR_BACK_GLYPH,
+  LAUNCHER_NAVBAR_BACK_PADDING,
+  LAUNCHER_NAVBAR_ICON_SIZE_PX,
+  LAUNCHER_NAVBAR_TITLE_GAP_PX,
+  LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX,
   type NavBarType,
   parseNavBarType,
   resolveAppIcon,
@@ -300,6 +306,9 @@ function NavBarCapsule({
   );
 }
 
+// The navigate-back postMessage type the framed dev app's mock bridge (#510) listens for.
+const NAVIGATE_BACK_MESSAGE_TYPE = 'ait:navigate-back';
+
 // The `···` dropdown: diagnostics toggle, Rescan, and the language row. These
 // rehome the controls that used to float at the bottom of the screen (#495).
 function MoreMenu({
@@ -415,12 +424,16 @@ function MoreMenu({
 }
 
 // The live-screen host chrome. Partner: a 54px dark bar below the launcher's own
-// status-bar inset, with the app title and the right capsule. Game: no full bar,
-// only the floating capsule top-right over the full-bleed iframe. The `···` menu
-// (rehomed diagnostics/rescan/language) hangs off the capsule in both variants.
+// status-bar inset, with the back button (left), app icon + title (centre-left),
+// and the right capsule. Game: no full bar, only the floating capsule top-right
+// over the full-bleed iframe. The `···` menu (rehomed diagnostics/rescan/language)
+// hangs off the capsule in both variants.
 //
-// `←` (back) is intentionally NOT rendered: the framed page is cross-origin so
-// there is no trustworthy way to drive its history (v1 follow-up).
+// Back button (#510): the framed page is cross-origin (*.trycloudflare.com) so
+// the launcher cannot directly call history.back() on it. Instead the `←` click
+// posts `{ type: 'ait:navigate-back' }` to the framed window; the mock's
+// installNavigateBackBridge() listener calls history.back() there. The game
+// variant has no back button (full-bleed canvas, same as the real toss host).
 function NavBar({
   navBarType,
   title,
@@ -433,6 +446,7 @@ function NavBar({
   onToggleDiag,
   onRescan,
   onClose,
+  frameRef,
 }: {
   navBarType: NavBarType;
   title: string;
@@ -447,7 +461,10 @@ function NavBar({
   onToggleDiag: () => void;
   onRescan: () => void;
   onClose: () => void;
+  /** Ref to the framed <iframe> — used to post ait:navigate-back (#510). */
+  frameRef: React.RefObject<HTMLIFrameElement | null>;
 }): React.JSX.Element {
+  const t = useT();
   const capsule = (
     <div style={{ position: 'relative' }}>
       <NavBarCapsule onToggleMenu={onToggleMenu} onClose={onClose} menuOpen={menuOpen} />
@@ -458,7 +475,7 @@ function NavBar({
   if (navBarType === 'game') {
     // Game: no full bar — only the floating capsule top-right, overlaying the
     // full-bleed iframe (the real toss game host renders the capsule as a
-    // transparent overlay inside the WebView).
+    // transparent overlay inside the WebView). No back button (game variant).
     return (
       <div
         data-testid="launcher-navbar"
@@ -479,6 +496,10 @@ function NavBar({
   // Partner: a full dark bar pinned below the launcher's own status-bar inset.
   // height is AIT_NAV_BAR_HEIGHT_PARTNER; the status-bar strip above it is the
   // env(safe-area-inset-top) padding so the bar clears the OS status bar.
+  //
+  // Back button (#510): clicking `←` posts ait:navigate-back to the framed
+  // window via the cross-origin postMessage bridge. The framed app's mock
+  // installNavigateBackBridge() listener calls history.back() there.
   return (
     <div
       data-testid="launcher-navbar"
@@ -504,44 +525,91 @@ function NavBar({
           gap: '8px',
         }}
       >
-        {/* Left: icon (optional) + title */}
+        {/* Left side: back button + icon (optional) + title */}
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '8px',
             minWidth: 0,
             flex: 1,
           }}
         >
-          {iconSrc !== null && iconVisible && (
-            <img
-              data-testid="launcher-navbar-icon"
-              src={iconSrc}
-              alt=""
-              onError={onIconError}
-              style={{
-                width: '24px',
-                height: '24px',
-                borderRadius: '6px',
-                flexShrink: 0,
-                objectFit: 'cover',
-              }}
-            />
-          )}
-          <span
-            data-testid="launcher-navbar-title"
+          {/* Back button: posts ait:navigate-back to the cross-origin iframe (#510).
+              Real partner bar always shows this button on the left. */}
+          <button
+            type="button"
+            data-testid="launcher-navbar-back"
+            aria-label={t('launcher.navbar.back')}
+            title={t('launcher.navbar.back')}
+            onClick={() => {
+              frameRef.current?.contentWindow?.postMessage(
+                { type: NAVIGATE_BACK_MESSAGE_TYPE },
+                '*',
+              );
+            }}
             style={{
+              background: 'none',
+              border: 'none',
               color: '#e8eaed',
-              fontSize: '15px',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
+              cursor: 'pointer',
+              // Match panel env1 back-btn metrics: LAUNCHER_NAVBAR_BACK_PADDING / FONT_SIZE_PX
+              // (src/panel/styles.ts .ait-navbar-back — parity guard: navbar.vitest.ts).
+              padding: LAUNCHER_NAVBAR_BACK_PADDING,
+              fontSize: `${LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX}px`,
+              lineHeight: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
             }}
           >
-            {title}
-          </span>
+            {LAUNCHER_NAVBAR_BACK_GLYPH}
+          </button>
+          {/* Icon + title group: gap/margin align with panel env1 measurements
+              (src/panel/styles.ts .ait-navbar-title — parity guard: navbar.vitest.ts). */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              // gap/marginLeft driven by LAUNCHER_NAVBAR_TITLE_* constants
+              // (parity-guarded against panel styles.ts in navbar.vitest.ts).
+              gap: `${LAUNCHER_NAVBAR_TITLE_GAP_PX}px`,
+              marginLeft: `${LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX}px`,
+              minWidth: 0,
+              overflow: 'hidden',
+            }}
+          >
+            {iconSrc !== null && iconVisible && (
+              <img
+                data-testid="launcher-navbar-icon"
+                src={iconSrc}
+                alt=""
+                onError={onIconError}
+                style={{
+                  // LAUNCHER_NAVBAR_ICON_SIZE_PX matches .ait-navbar-icon in panel styles.ts
+                  // (parity-guarded in navbar.vitest.ts).
+                  width: `${LAUNCHER_NAVBAR_ICON_SIZE_PX}px`,
+                  height: `${LAUNCHER_NAVBAR_ICON_SIZE_PX}px`,
+                  borderRadius: '6px',
+                  flexShrink: 0,
+                  objectFit: 'cover',
+                }}
+              />
+            )}
+            <span
+              data-testid="launcher-navbar-title"
+              style={{
+                color: '#e8eaed',
+                fontSize: '15px',
+                fontWeight: 600,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {title}
+            </span>
+          </div>
         </div>
         {capsule}
       </div>
@@ -1122,6 +1190,7 @@ export function Launcher(): React.JSX.Element {
           }}
           onRescan={handleRescan}
           onClose={handleRescan}
+          frameRef={frameRef}
         />
       )}
 

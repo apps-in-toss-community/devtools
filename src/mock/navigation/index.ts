@@ -142,6 +142,15 @@ interface GraniteEventMap {
   homeEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: undefined };
 }
 
+/**
+ * 현재 backEvent 구독자 수. graniteEvent.addEventListener('backEvent', …)가
+ * 증가시키고, 반환된 cleanup이 감소시킨다. 호스트 back 메시지 처리 시 인터셉트
+ * 여부를 판단하는 데 쓰인다.
+ *
+ * @internal 테스트 및 safe-area-bridge에서만 사용.
+ */
+let _backEventSubscriberCount = 0;
+
 export const graniteEvent = {
   addEventListener<K extends keyof GraniteEventMap>(
     event: K,
@@ -162,9 +171,41 @@ export const graniteEvent = {
       }
     };
     window.addEventListener(`__ait:${event}`, handler);
-    return () => window.removeEventListener(`__ait:${event}`, handler);
+
+    // backEvent 구독자 카운터 관리
+    if (event === 'backEvent') {
+      _backEventSubscriberCount++;
+    }
+
+    let cleaned = false;
+    return () => {
+      if (cleaned) return; // 이중 호출 방지
+      cleaned = true;
+      window.removeEventListener(`__ait:${event}`, handler);
+      if (event === 'backEvent') {
+        _backEventSubscriberCount--;
+      }
+    };
   },
 };
+
+/**
+ * 호스트 back 내비게이션을 처리한다.
+ *
+ * backEvent 구독자가 1명 이상이면 `window.dispatchEvent(new CustomEvent('__ait:backEvent'))`만
+ * 발사한다 — 미니앱이 back을 가로채는(intercept) 채널이고 실제 토스 호스트와 동일한 시맨틱.
+ * 구독자가 없으면 `history.back()`을 호출해 기본 브라우저 뒤로가기를 수행한다.
+ *
+ * env 1 패널의 back 버튼(`src/panel/viewport.ts` `aitState.trigger('backEvent')`)과
+ * 동일한 경로를 거쳐 back 시맨틱의 단일 소유처를 navigation 모듈에 유지한다.
+ */
+export function dispatchHostBackNavigation(): void {
+  if (_backEventSubscriberCount > 0) {
+    window.dispatchEvent(new CustomEvent('__ait:backEvent'));
+  } else {
+    history.back();
+  }
+}
 
 export const appsInTossEvent = {
   addEventListener<K extends string>(

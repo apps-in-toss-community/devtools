@@ -23,6 +23,7 @@ import type {
 } from '../mock/types.js';
 import { revertDeviceEmulation, syncDeviceEmulation } from './device-emulation.js';
 import { h } from './helpers.js';
+import { PANEL_NAVBAR_BACK_GLYPH } from './styles.js';
 
 export const VIEWPORT_STORAGE_KEY = '__ait_viewport';
 
@@ -493,7 +494,7 @@ function renderNavBar(displayName: string, type: AitNavBarType): void {
       type: 'button',
       'aria-label': 'Back',
     });
-    backBtn.textContent = '‹';
+    backBtn.textContent = PANEL_NAVBAR_BACK_GLYPH;
     backBtn.addEventListener('click', () => {
       aitState.trigger('backEvent');
     });

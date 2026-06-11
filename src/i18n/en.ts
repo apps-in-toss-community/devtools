@@ -304,8 +304,9 @@ export const en: Record<StringKey, string> = {
   'launcher.diagNo': 'no',
   'launcher.letterboxDetected':
     'Display area is {pt}pt short — likely an iOS standalone letterbox. Removing and re-adding the launcher to the home screen may fix it.',
-  // Nav-bar emulation (#495)
+  // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': 'Mini App',
+  'launcher.navbar.back': 'Back',
   'launcher.navbar.menu': 'Menu',
   'launcher.navbar.close': 'Close',
   'launcher.navbar.menuRescan': 'Rescan',

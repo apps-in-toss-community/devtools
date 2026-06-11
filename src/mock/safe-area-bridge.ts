@@ -1,5 +1,5 @@
 /**
- * env-2 safe-area inset bridge (#484, slice 2).
+ * env-2 postMessage bridges (#484, #510).
  *
  * In the AITC Sandbox PWA (env 2) the dev app runs inside the launcher's
  * full-viewport `<iframe>`. The launcher is the top-level document, so its
@@ -8,29 +8,50 @@
  * value (e.g. top=54), which sdk-example then double-pads on top of a viewport
  * that already starts below the status bar — the env-2 "dead band" defect.
  *
- * The launcher forwards its measured insets to the framed page with
- * `postMessage({ type: 'ait:safe-area-insets', insets })` (on iframe load and on
- * resize/orientationchange). This module installs the receive half: it validates
- * the envelope and writes the real insets into the mock `SafeAreaInsets` state,
- * which fires the existing subscribe path (see navigation/index.ts) so apps that
- * subscribe re-read the corrected values.
+ * This module installs receive-half listeners for two message types:
  *
- * Origin: the inset values are non-sensitive geometry (four small numbers), so
- * we do NOT restrict by origin — the launcher posts cross-origin from a
- * *.trycloudflare.com tunnel with targetOrigin '*'. Shape + range validation is
- * still mandatory: a malformed or out-of-range message is silently ignored so a
- * stray postMessage from any frame can never corrupt the mock state.
+ * 1. `ait:safe-area-insets` (#484): the launcher forwards its real env() insets
+ *    to the framed page on iframe load and resize/orientationchange. Validates the
+ *    envelope and writes real insets into the mock SafeAreaInsets state, firing the
+ *    subscribe path (see navigation/index.ts) so apps that subscribe re-read the
+ *    corrected values.
+ *
+ * 2. `ait:navigate-back` (#510): the launcher partner bar's `←` button posts this
+ *    command to the framed page. The receive half calls `dispatchHostBackNavigation()`
+ *    (navigation/index.ts): if backEvent subscribers are present, a `__ait:backEvent`
+ *    CustomEvent is dispatched (the mini-app intercept channel, matching the env-1
+ *    panel path); otherwise `history.back()` is called. No data other than `type` is
+ *    read from or written to the message — shape validation rejects anything that
+ *    carries extra fields with the wrong type. Apps that do not install this mock
+ *    (older builds) silently ignore the message (natural no-op).
+ *
+ * Origin policy: neither message type carries sensitive data, so we do NOT
+ * restrict by origin — the launcher posts cross-origin from a *.trycloudflare.com
+ * tunnel with targetOrigin '*'. Shape validation is still mandatory: a malformed
+ * or out-of-range message is silently ignored so a stray postMessage can never
+ * corrupt the mock state or trigger spurious navigation.
  *
  * Message-driven by design: env 1 (desktop browser, no launcher) never receives
- * this message, so the panel preset stays authoritative there with zero special
+ * these messages, so the panel preset stays authoritative there with zero special
  * casing here.
  */
 
+import { dispatchHostBackNavigation } from './navigation/index.js';
 import { aitState } from './state.js';
 import type { SafeAreaInsets } from './types.js';
 
-/** The postMessage envelope the launcher posts to the framed dev app. */
+/** The postMessage envelope the launcher posts to the framed dev app (inset forward). */
 export const SAFE_AREA_INSETS_MESSAGE_TYPE = 'ait:safe-area-insets' as const;
+
+/**
+ * The postMessage command the launcher partner bar's `←` button sends to the
+ * framed dev app (#510). The framed page calls `history.back()` in response.
+ *
+ * Protocol: only `{ type: 'ait:navigate-back' }` is valid. No other fields are
+ * read or acted on — extra fields are silently ignored by the shape guard.
+ * Game variant never sends this message (back button is partner-bar-only).
+ */
+export const NAVIGATE_BACK_MESSAGE_TYPE = 'ait:navigate-back' as const;
 
 // Insets are CSS px; a real device tops out well under this. The bound rejects
 // nonsense (NaN/Infinity/negative/absurd) without being so tight it clips a
@@ -93,4 +114,62 @@ export function installSafeAreaInsetsBridge(): void {
     const insets = parseSafeAreaInsetsMessage(event.data);
     if (insets) applyForwardedSafeAreaInsets(insets);
   });
+}
+
+/**
+ * Parse a raw postMessage payload as an `ait:navigate-back` command.
+ *
+ * Returns true when the payload is a well-formed navigate-back command
+ * (`{ type: 'ait:navigate-back' }`), false otherwise. Pure — unit tested
+ * without a real MessageEvent.
+ *
+ * Shape guard: only the `type` field is inspected; any extra fields are
+ * ignored so future extensions do not break older receivers. The function
+ * does NOT read any data field beyond `type` — no sensitive values, no host
+ * disclosure (same principle as the insets bridge).
+ */
+export function isNavigateBackMessage(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null) return false;
+  return (data as { type?: unknown }).type === NAVIGATE_BACK_MESSAGE_TYPE;
+}
+
+let navigateBackInstalled = false;
+
+/**
+ * Install the window `message` listener that handles `ait:navigate-back`
+ * commands (#510). When the launcher partner bar's `←` button is clicked it
+ * posts `{ type: 'ait:navigate-back' }` to the framed dev app; this listener
+ * calls `dispatchHostBackNavigation()` from the navigation module.
+ *
+ * Dispatch semantics: if there are any `graniteEvent.addEventListener('backEvent', …)`
+ * subscribers the CustomEvent `__ait:backEvent` is fired (same path as the env-1
+ * panel back button — the mini-app intercept channel). When there are no
+ * subscribers `history.back()` is called as the fallback. Back semantics are
+ * owned entirely by the navigation module; this bridge only delegates.
+ *
+ * Safe to call multiple times (idempotent) and a no-op outside a browser.
+ * Installed together with the inset bridge by `installBridges()` so any consumer
+ * of the mock barrel gets both wired automatically.
+ *
+ * No-op on apps that predate this bridge — the launcher posts the message but
+ * older mocks simply have no listener (harmless).
+ */
+export function installNavigateBackBridge(): void {
+  if (navigateBackInstalled || typeof window === 'undefined') return;
+  navigateBackInstalled = true;
+  window.addEventListener('message', (event: MessageEvent) => {
+    if (isNavigateBackMessage(event.data)) {
+      dispatchHostBackNavigation();
+    }
+  });
+}
+
+/**
+ * Install both env-2 postMessage bridges in one call (#484 insets + #510
+ * navigate-back). The mock barrel calls this at import time so consumers get
+ * all bridges wired without any explicit setup.
+ */
+export function installBridges(): void {
+  installSafeAreaInsetsBridge();
+  installNavigateBackBridge();
 }
