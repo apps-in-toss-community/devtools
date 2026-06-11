@@ -1,4 +1,4 @@
-// Unit tests for the pure nav-bar emulation logic (#495). The `.vitest.ts`
+// Unit tests for the pure nav-bar emulation logic (#495/#507). The `.vitest.ts`
 // extension keeps Playwright (testMatch '**/*.test.ts') from collecting this
 // file — see vitest.config.ts `include`.
 
@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
+  extractLauncherSearch,
   parseNavBarType,
   resolveAppIcon,
   resolveAppTitle,
@@ -117,6 +118,66 @@ describe('resolveAppIcon', () => {
 
   it('icon= absent + url= that is not a valid URL → null', () => {
     expect(resolveAppIcon('?url=not-a-url')).toBeNull();
+  });
+});
+
+describe('extractLauncherSearch (#507)', () => {
+  // Launcher-style URLs carry a `url=` param pointing at the tunnel.
+  // Nav-bar params (name=/icon=/navBarType=) live on the outer launcher URL.
+
+  it('launcher URL with name + icon + navBarType → returns its search string', () => {
+    const launcherUrl =
+      'https://devtools.aitc.dev/launcher/?url=https%3A%2F%2Fexample.com%2F&name=My%20App&icon=https%3A%2F%2Fexample.com%2Ficon.png&navBarType=game';
+    const result = extractLauncherSearch(launcherUrl);
+    expect(result).not.toBeNull();
+    const params = new URLSearchParams(result ?? '');
+    expect(params.get('name')).toBe('My App');
+    expect(params.get('icon')).toBe('https://example.com/icon.png');
+    expect(params.get('navBarType')).toBe('game');
+    expect(params.get('url')).toBe('https://example.com/');
+  });
+
+  it('launcher URL with url= but no name/icon → returns search (resolveAppTitle will return null)', () => {
+    const launcherUrl = 'https://devtools.aitc.dev/launcher/?url=https%3A%2F%2Fexample.com%2F';
+    const result = extractLauncherSearch(launcherUrl);
+    expect(result).not.toBeNull();
+    // The returned search can be fed to resolveAppTitle — should yield null (no name=).
+    expect(resolveAppTitle(result ?? '')).toBeNull();
+  });
+
+  it('direct tunnel URL (no url= param) → null', () => {
+    expect(extractLauncherSearch('https://example.trycloudflare.com/')).toBeNull();
+    expect(
+      extractLauncherSearch(
+        'https://example.trycloudflare.com/?debug=1&relay=wss%3A%2F%2Fexample.com',
+      ),
+    ).toBeNull();
+  });
+
+  it('non-URL string → null', () => {
+    expect(extractLauncherSearch('not-a-url')).toBeNull();
+    expect(extractLauncherSearch('hello world')).toBeNull();
+  });
+
+  it('empty string → null', () => {
+    expect(extractLauncherSearch('')).toBeNull();
+  });
+
+  it('launcher URL with url= and name= → resolveAppTitle returns the name', () => {
+    const launcherUrl =
+      'https://devtools.aitc.dev/launcher/?url=https%3A%2F%2Fexample.com%2F&name=SDK%20Example';
+    const search = extractLauncherSearch(launcherUrl);
+    expect(search).not.toBeNull();
+    expect(resolveAppTitle(search ?? '')).toBe('SDK Example');
+  });
+
+  it('launcher URL search can be re-parsed by parseNavBarType and resolveAppIcon', () => {
+    const launcherUrl =
+      'https://devtools.aitc.dev/launcher/?url=https%3A%2F%2Fexample.com%2F&navBarType=game&icon=https%3A%2F%2Fexample.com%2Flogo.png';
+    const search = extractLauncherSearch(launcherUrl);
+    expect(search).not.toBeNull();
+    expect(parseNavBarType(search ?? '')).toBe('game');
+    expect(resolveAppIcon(search ?? '')).toBe('https://example.com/logo.png');
   });
 });
 

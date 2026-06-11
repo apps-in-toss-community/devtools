@@ -114,6 +114,32 @@ export function resolveAppIcon(search: string): string | null {
 }
 
 /**
+ * Extract the search string from a launcher-style URL for nav-bar param parsing.
+ *
+ * A "launcher-style URL" is a launcher deep-link or QR payload that carries a
+ * `url=` query param pointing to the tunnel. Nav-bar params (`name=`, `icon=`,
+ * `navBarType=`) live on the outer launcher URL, not on the tunnel URL itself.
+ *
+ * Returns the `search` string (e.g. `"?name=My%20App&url=https%3A%2F%2F..."`)
+ * of the outer URL when the input is a valid launcher-style URL, or null when
+ * the input is a direct tunnel URL (no `url=`), an unparseable string, or empty.
+ *
+ * Pure function — no DOM, no side-effects — so it can be unit-tested under
+ * vitest without the launcher's heavy top-level imports.
+ */
+export function extractLauncherSearch(raw: string): string | null {
+  if (!raw) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  // Only launcher-style URLs have a `url=` param. Direct tunnel URLs don't.
+  return parsed.searchParams.has('url') ? parsed.search : null;
+}
+
+/**
  * Compute the safe-area insets the launcher forwards to the framed dev app
  * (`ait:safe-area-insets`), now that #495 makes the partner nav bar part of the
  * launcher chrome.
