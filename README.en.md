@@ -126,7 +126,7 @@ When `call_sdk` returns `ok: false, error: "window.__sdkCall is not available"`,
 
 **"QR scanned but auth rejected" — TOTP code expired**
 
-When `AIT_DEBUG_TOTP_SECRET` is set, `build_attach_url` automatically splices the current one-time TOTP code (`at=`) into the returned `attachUrl`. The code is valid for a 30-second step. Scanning after `totp.expiresAt` causes the relay to reject the request. Fix: call `build_attach_url` again to get a fresh URL and QR, then scan within 30 seconds.
+When `AIT_DEBUG_TOTP_SECRET` is set, `build_attach_url` automatically splices the current one-time TOTP code (`at=`) into the returned `attachUrl`. Each code covers a 30-second step, and the relay accepts ±6 steps (~3 min) of backwards skew. Scanning more than ~3 minutes after `totp.expiresAt` causes the relay to reject the request. Fix: call `build_attach_url` again to get a fresh URL and QR.
 
 ---
 
@@ -541,7 +541,7 @@ Each preset includes:
 - **CSS viewport** (portrait `width × height`)
 - **DPR** (devicePixelRatio: 2, 3, 3.5, etc.)
 - **Notch** type (`none` / `notch` / `dynamic-island` / `punch-hole-center`)
-- **Notch inset** — the OS notch / Dynamic Island offset. Device-specific. In portrait this does *not* reach the miniapp's top inset (it's only used for the landscape side inset and to position the visual notch overlay).
+- **Notch inset** — the OS notch / Dynamic Island offset. Device-specific. In portrait this does *not* reach the mini-app's top inset (it's only used for the landscape side inset and to position the visual notch overlay).
 - **Nav bar height** — the Toss host's top nav bar. Device-independent (`54px` for a `partner` WebView). For a `partner` app this height *is* `SafeAreaInsets.get().top`.
 - **Home-indicator inset** — the bottom safe-area inset (home indicator), device-specific.
 

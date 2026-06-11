@@ -247,9 +247,9 @@ export const en: Record<StringKey, string> = {
   'attach.url.section': 'URL (fallback)',
 
   // qr-http-server — attach page mode label (environment visibility, #468)
-  'attach.mode.sandbox': 'Env 2 — AITC Sandbox PWA',
-  'attach.mode.intossDev': 'Env 3 — intoss-private relay dev',
-  'attach.mode.intossLive': 'Env 4 — intoss live relay debug',
+  'attach.mode.sandbox': 'env 2 — AITC Sandbox App (PWA)',
+  'attach.mode.intossDev': 'env 3 — intoss-private relay dev',
+  'attach.mode.intossLive': 'env 4 — intoss live relay debug',
 
   // attach page — sandbox family (env 2: launcher PWA; no Toss app / _deploymentId concepts)
   'attach.sandbox.step1':
@@ -262,7 +262,8 @@ export const en: Record<StringKey, string> = {
     '<strong>Launcher is not installed</strong> — open <code>devtools.aitc.dev/launcher/</code> once and add it to your home screen',
   'attach.sandbox.faq.cameraApp':
     '<strong>Scanning with the camera app opens a Safari tab (bottom tab bar visible)</strong> — relaunch from the launcher icon and use the in-app scanner',
-  'attach.sandbox.faq.totp': '<strong>QR expired (TOTP ~3 min)</strong> — scan a fresh QR code',
+  'attach.sandbox.faq.totp':
+    '<strong>QR expired (TOTP — 30-second step, ±6 steps (~3 min) accepted)</strong> — scan a fresh QR code',
   'attach.sandbox.faq.chii':
     '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
 

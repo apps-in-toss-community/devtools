@@ -90,10 +90,10 @@ export function buildLauncherAttachUrl(
 }
 
 /**
- * Build a self-attaching dogfood deep link.
+ * Build a self-attaching dog-food deep-link.
  *
  * `ait deploy --scheme-only` prints an `intoss-private://…?_deploymentId=<uuid>`
- * URL that opens a dogfood bundle on a phone. The in-app debug gate
+ * URL that opens a dog-food bundle on a phone. The in-app debug gate
  * (`src/in-app/gate.ts`) auto-attaches when the entry URL also carries
  * `debug=1` and `relay=<wss-url>`. This helper splices those params (plus
  * `at=<code>` when TOTP is enabled) into the scheme URL; rendering the result

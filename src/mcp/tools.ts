@@ -129,7 +129,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
     name: 'build_attach_url',
     description:
       "The tool result already shows the QR to the user directly (Claude Code renders MCP tool output to the user's screen; they press Ctrl+O to expand if it's collapsed). Do NOT re-print or re-render the QR in your reply — that just wastes output tokens. Simply tell the user to scan the QR shown in this tool's output with their phone camera. " +
-      'Builds a self-attaching deep link for the active relay environment and returns a QR code. ' +
+      'Builds a self-attaching deep-link for the active relay environment and returns a QR code. ' +
       'Scan the QR with the phone camera to open the mini-app and attach it to this debug session ' +
       '(QR is the single entry path — no USB cable or platform CLI needed). ' +
       'Call list_pages first to confirm the relay/tunnel is up. If the tunnel is not up, restart: ' +
@@ -137,7 +137,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Environment-specific behaviour:\n' +
       '  • env 3 / relay-staging (start_debug mode="relay-staging"): requires scheme_url — the ' +
       'intoss-private://…?_deploymentId=<uuid> URL from `ait deploy --scheme-only`. Splices ' +
-      'debug=1 + relay URL into the scheme URL to produce a self-attach deep link.\n' +
+      'debug=1 + relay URL into the scheme URL to produce a self-attach deep-link.\n' +
       '  • env 2 / relay-sandbox (start_debug mode="relay-sandbox"): scheme_url is NOT used. Instead, reads ' +
       'AIT_TUNNEL_BASE_URL (the https://*.trycloudflare.com app tunnel from `tunnel:{cdp:true}`) ' +
       'and builds a launcher PWA deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). ' +
@@ -232,8 +232,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Read-only — does not modify page state. ' +
       'Tier C per RFC #277: the same Runtime.evaluate probe runs in both `mock` (devtools panel ' +
       'page with window.__ait state) and `relay` (real-device WebView with window.__sdk). ' +
-      'The result includes a `source: "mock" | "relay-dev" | "relay-live"` field so consumers can identify ' +
+      'The result includes a `source: "mock" | "relay-dev" | "relay-live" | "relay-mobile"` field so consumers can identify ' +
       'provenance without inspecting payload values. ' +
+      '(`relay-mobile` = env 2 real-device PWA over an external relay; ' +
+      '`relay-dev` = env 3 dog-food WebView; `relay-live` = env 4 production WebView.) ' +
       'Use in a relay session (phone attached) to get ground-truth values for upgrading a ' +
       'viewport preset from extrapolated/placeholder to measured. ' +
       'Requires a page to be attached — call list_pages first.',
@@ -298,7 +300,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
   {
     name: 'call_sdk',
     description:
-      'Calls a dogfood SDK method via the window.__sdkCall bridge ' +
+      'Calls a dog-food SDK method via the window.__sdkCall bridge ' +
       '(exported by @apps-in-toss/web-framework only in __DEBUG_BUILD__ bundles). ' +
       'NOT read-only — SDK calls have side effects (navigation, payments, permissions, etc.). ' +
       'On env 3/4 (real device relay) this hits the real SDK; on env 1 (local mock) and ' +
@@ -308,7 +310,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'If a Runtime.exceptionThrown event was observed within [callStart-50ms, callEnd+200ms], ' +
       'the result also includes `recentException` for crash triage. ' +
       'Returns a clear error if window.__sdkCall is not available — on relay (env 3/4) ' +
-      'that means a non-dogfood bundle (redeploy via `ait build && aitcc app deploy`); ' +
+      'that means a non-dog-food bundle (redeploy via `ait build && aitcc app deploy`); ' +
       'on local (--target=local, env 1) it means the dev bridge is not installed ' +
       '(start the dev server with `pnpm dev`).\n\n' +
       'SECURITY: method name, args, and result value are not redacted — never include secrets.\n\n' +
@@ -391,11 +393,11 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'attach survives the switch. After switching it emits notifications/tools/list_changed — ' +
       'call tools/list again to see the updated tool surface for the new environment.\n\n' +
       'modes:\n' +
-      '  local-browser — env 1: desktop Chromium with the MOCK SDK and a local CDP attach. ' +
+      '  local-browser — env 1: desktop Chromium with the mock SDK and a local CDP attach. ' +
       'Side-effect tools (call_sdk/evaluate) run unguarded against the mock; nothing touches a ' +
       'real device or real users. No prerequisites — the default, always-available environment ' +
       'for state/contract and visual-layout work.\n' +
-      '  relay-sandbox — env 2: a real-device PWA (real WebKit engine, MOCK SDK) over an external ' +
+      '  relay-sandbox — env 2: a real-device PWA (real WebKit engine, mock SDK) over an external ' +
       'Chii relay. CDP covers real-device WebKit DOM, console, exceptions, and safe-area ' +
       'observation; call_sdk still hits the mock (SDK fidelity needs relay-staging). liveIntent ' +
       'off — dev-intent, LIVE guard inactive, side-effect tools run unguarded against the mock. ' +
@@ -407,10 +409,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'tunnel host, required by build_attach_url to render the launcher QR) must be set before ' +
       'the MCP server starts — the unplugin does not auto-forward either; set them explicitly. ' +
       'Both carry relay/tunnel hosts (secret-class) — keep them out of logs.\n' +
-      '  relay-staging — env 3: a real-device Toss WebView dogfood build with the REAL SDK over the ' +
+      '  relay-staging — env 3: a real-device Toss WebView dog-food build with the REAL SDK over the ' +
       'intoss-private relay. The first environment where call_sdk exercises the genuine native ' +
-      'bridge. Side-effect tools run unguarded (dogfood, not released to real users). ' +
-      'Prerequisite: a dogfood candidate bundle built with `RELEASE_CHANNEL=dogfood ait build`, ' +
+      'bridge. Side-effect tools run unguarded (dog-food, not released to real users). ' +
+      'Prerequisite: a dog-food candidate bundle built with `RELEASE_CHANNEL=dogfood ait build`, ' +
       'then uploaded with `ait deploy` (add `--scheme-only` to print the resulting ' +
       'intoss-private://…?_deploymentId=… deep-link); open that deep-link/QR on the device to ' +
       'cold-load the bundle with the relay injected. Unlike env 2, env 3 is NOT a dev-server ' +
@@ -468,7 +470,9 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'authRejects ({count, lastAt} — relay TOTP 401 rejections, secret-free; count > 0 with empty pages ' +
       'means the phone reached the relay but its code was rejected), ' +
       'environment (kind: mock|relay-dev|relay-live|relay-mobile, env: mock|relay backward-compat, reason, ' +
-      'liveGuardActive: true when relay-live LIVE guard is active), ' +
+      'liveGuardActive: true when relay-live LIVE guard is active; ' +
+      'start_debug mode→kind mapping: relay-sandbox→relay-mobile, relay-staging→relay-dev, ' +
+      'relay-live→relay-live, local-browser→mock), ' +
       'serverLockHolder (pid + startedAt from the lock file, or null), ' +
       'nextRecommendedAction ({tool, reason} or null — the single next tool to call; ' +
       'in local-target mode tunnel.up=false is normal so "restart" is never recommended). ' +
@@ -784,7 +788,7 @@ export function listPages(connection: CdpConnection, tunnel: TunnelStatus): List
   return { pages, tunnel, crashDetectedAt, crashWarning, singleAttachModel: true };
 }
 
-/** A `build_attach_url` result: the spliced deep link the phone should open. */
+/** A `build_attach_url` result: the spliced deep-link the phone should open. */
 export interface BuildAttachUrlResult {
   /** The scheme URL with `debug=1&relay=<wss>[&at=<totp-code>]` spliced in. */
   attachUrl: string;
@@ -814,7 +818,7 @@ export interface BuildAttachUrlResult {
 }
 
 /**
- * Builds a self-attaching dogfood deep link from an `ait deploy --scheme-only`
+ * Builds a self-attaching dog-food deep-link from an `ait deploy --scheme-only`
  * URL plus this session's live relay. Throws if the tunnel is not up yet (no
  * relay URL to splice in) — the caller surfaces that as a tool error.
  *
@@ -1092,8 +1096,8 @@ export async function takeScreenshot(connection: CdpConnection): Promise<Screens
  *      those CSS env vars, then `getComputedStyle`.
  *   2. SDK insets via a priority chain so the SAME probe works on both relay
  *      (real device) and mock (devtools panel page):
- *        a. `window.__sdk.SafeAreaInsets.get()`  — dogfood bundle on real device.
- *        b. `window.__sdk.getSafeAreaInsets()`   — dogfood bundle (deprecated).
+ *        a. `window.__sdk.SafeAreaInsets.get()`  — dog-food bundle on real device.
+ *        b. `window.__sdk.getSafeAreaInsets()`   — dog-food bundle (deprecated).
  *        c. `window.__ait.state.safeAreaInsets`  — devtools mock state (mock env).
  *      The probe records `sdkInsetsSource` = `'window.__sdk'` | `'window.__ait'`
  *      | `null`. If all paths fail the result carries `sdkInsetsError`.
@@ -1187,7 +1191,7 @@ export const SAFE_AREA_PROBE_EXPRESSION = `
  * Where the SDK insets came from. `null` when the lookup failed (in which case
  * `sdkInsetsError` is populated).
  *
- *   - `'window.__sdk'`  — real-device dogfood bundle (relay env).
+ *   - `'window.__sdk'`  — real-device dog-food bundle (relay env).
  *   - `'window.__ait'`  — devtools mock state (mock env).
  *   - `null`            — both paths absent or threw.
  */
@@ -1204,7 +1208,7 @@ export interface SafeAreaMeasurement {
   /**
    * MCP environment this measurement was taken in:
    *   - `'mock'`         — dev browser panel
-   *   - `'relay-dev'`    — real-device WebView, dogfood build
+   *   - `'relay-dev'`    — real-device WebView, dog-food build
    *   - `'relay-live'`   — real-device WebView, live/production build
    *   - `'relay-mobile'` — real-device PWA (env 2) over an external relay
    *
@@ -1220,7 +1224,7 @@ export interface SafeAreaMeasurement {
   cssEnv: { top: number; right: number; bottom: number; left: number };
   /**
    * SDK insets from one of three paths (in priority order):
-   *   - `window.__sdk.SafeAreaInsets.get()`  (relay, dogfood bundle)
+   *   - `window.__sdk.SafeAreaInsets.get()`  (relay, dog-food bundle)
    *   - `window.__sdk.getSafeAreaInsets()`   (relay, deprecated)
    *   - `window.__ait.state.safeAreaInsets`  (mock, devtools panel state)
    *
@@ -1455,7 +1459,7 @@ export type CallSdkResult =
  *
  * Name and args are embedded via `JSON.stringify` so they are safely escaped.
  * The expression checks for `window.__sdkCall` and returns a clear error if
- * it is absent (non-dogfood bundle).
+ * it is absent (non-dog-food bundle).
  *
  * SECRET-HANDLING: the expression is built here and MUST NOT be written to
  * any log or stderr by the caller.
@@ -1466,7 +1470,7 @@ export function buildCallSdkExpression(name: string, args: unknown[]): string {
   return (
     `(async () => {` +
     ` if (typeof window.__sdkCall !== 'function') {` +
-    `  return JSON.stringify({ok:false,error:'sdk-absent: window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다). dogfood 채널로 재배포하세요.'});` +
+    `  return JSON.stringify({ok:false,error:'sdk-absent: window.__sdkCall이 주입되지 않았습니다 (dog-food 빌드가 아닙니다). dog-food 채널로 재배포하세요.'});` +
     ` }` +
     ` try {` +
     `  const r = await window.__sdkCall(${safeName}, ...${safeArgs});` +
@@ -1538,7 +1542,7 @@ function findRecentException(
 }
 
 /**
- * Calls a dogfood SDK method via `window.__sdkCall` on the attached page.
+ * Calls a dog-food SDK method via `window.__sdkCall` on the attached page.
  * NOT read-only — SDK calls may have side effects.
  *
  * On env 3/4 (toss WebView relay) this hits the real SDK. On env 1 (local

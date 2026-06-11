@@ -184,9 +184,9 @@ export interface ModeSwitchReport {
  *                 set to the unplugin's relay base URL. The MCP only attaches a
  *                 CDP client; it does NOT start (or stop) that relay.
  *
- *   - `relay-staging` → env 3: real-device Toss WebView dogfood build with the
+ *   - `relay-staging` → env 3: real-device Toss WebView dog-food build with the
  *                 REAL SDK over the intoss-private relay. liveIntent off.
- *                 Prerequisite: deployed dogfood bundle + device cold-loaded via
+ *                 Prerequisite: deployed dog-food bundle + device cold-loaded via
  *                 intoss-private deep-link/QR relay injection.
  *
  *   - `relay-live`    → env 4: REVIEW-PASSED production runtime with the REAL SDK
@@ -1387,7 +1387,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             typeof sdkResult.error === 'string' &&
             sdkResult.error.startsWith('sdk-absent:')
           ) {
-            // issue #360: local(`--target=local`) 세션은 dogfood 재배포가 아니라
+            // issue #360: local(`--target=local`) 세션은 dog-food 재배포가 아니라
             // dev 서버/unplugin alias 확인이 맞는 안내다 — connection.kind로 분기.
             return sdkAbsentError('call_sdk', conn.kind === 'local');
           }
@@ -1919,7 +1919,7 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
 
   return {
     connection,
-    // Intoss-private dogfood/live relay (env 3/4) → relay-dev / relay-live.
+    // Intoss-private dog-food/live relay (env 3/4) → relay-dev / relay-live.
     relayOrigin: 'intoss-webview',
     // Local HTTP base of the Chii relay — used by AutoDevtoolsOpener to build
     // the self-hosted inspector URL. SECRET-HANDLING: not logged.

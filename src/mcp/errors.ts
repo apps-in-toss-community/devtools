@@ -8,7 +8,7 @@
  *   - tunnel-down  : cloudflared 터널 미가동 — 서버 재시작 필요
  *   - page-missing : 페이지가 attach 안 됨 — build_attach_url → QR 스캔
  *   - page-crash   : 페이지 crash 감지 — 앱 재실행 후 재attach
- *   - sdk-absent   : window.__sdkCall 미주입 — dogfood 채널로 재배포
+ *   - sdk-absent   : window.__sdkCall 미주입 — dog-food 채널로 재배포
  */
 
 /** MCP tool-result 에러 응답 형식. */
@@ -87,7 +87,7 @@ export function pageMissingError(toolName?: string): McpErrorResult {
   const prefix = toolName ? `${toolName}: ` : '';
   return mcpError(
     `${prefix}페이지가 attach 안 됨. ` +
-      'dogfood 번들 배포 후 build_attach_url을 호출해 QR을 생성하세요: ' +
+      'dog-food 번들 배포 후 build_attach_url을 호출해 QR을 생성하세요: ' +
       '`ait deploy --scheme-only` → `build_attach_url(scheme_url)` → QR 스캔.',
   );
 }
@@ -111,7 +111,7 @@ export function pageCrashError(toolName?: string): McpErrorResult {
  *
  * call_sdk 호출 시 브리지가 없을 때. 같은 "브리지 부재"라도 다음 행동은
  * connection 종류에 따라 정반대다 (issue #360):
- *   - relay(`--target` 없는 intoss / env-2): dogfood 빌드가 아니다 → dogfood
+ *   - relay(`--target` 없는 intoss / env-2): dog-food 빌드가 아니다 → dog-food
  *     채널로 재배포 후 QR 재스캔.
  *   - local(`--target=local`, env 1 로컬 브라우저): 재배포가 아니라 dev 서버를
  *     `pnpm dev`로 띄웠는지 + unplugin alias가 `@apps-in-toss/web-framework`를
@@ -131,8 +131,8 @@ export function sdkAbsentError(toolName?: string, isLocal = false): McpErrorResu
     );
   }
   return mcpError(
-    `${prefix}window.__sdkCall이 주입되지 않았습니다 (dogfood 빌드가 아닙니다). ` +
-      'dogfood 채널(intoss-private)로 재배포 후 QR을 다시 스캔하세요: ' +
+    `${prefix}window.__sdkCall이 주입되지 않았습니다 (dog-food 빌드가 아닙니다). ` +
+      'dog-food 채널(intoss-private)로 재배포 후 QR을 다시 스캔하세요: ' +
       '`ait build && aitcc app deploy`.',
   );
 }
@@ -156,7 +156,7 @@ export function liveGuardError(toolName: string): McpErrorResult {
     '다음 중 하나를 선택하세요:\n' +
     `  1. \`confirm: true\` 인자를 추가해 재호출: ${toolName}(…, confirm: true)\n` +
     '  2. 읽기 전용 도구(list_pages, list_console_messages, take_screenshot 등)를 사용하세요.\n' +
-    '  3. dogfood 빌드(relay-dev 환경)에서 먼저 검증 후 live에 적용하세요.\n\n' +
+    '  3. dog-food 빌드(relay-dev 환경)에서 먼저 검증 후 live에 적용하세요.\n\n' +
     'live-guard: MCP_ENV=relay-live + confirm: true missing';
   return mcpError(text);
 }
@@ -198,7 +198,7 @@ export function classifyToolError(err: unknown, toolName: string, isLocal = fals
 
   // 상태 4: SDK 부재. page-side probe가 던지는 메시지는 relay 가정으로 쓰여
   // 있으나, 안내는 connection 종류로 재구성한다 (issue #360) — local 세션이면
-  // dogfood 재배포가 아니라 dev 서버/unplugin alias 확인이 맞다.
+  // dog-food 재배포가 아니라 dev 서버/unplugin alias 확인이 맞다.
   if (
     message.startsWith('sdk-absent:') ||
     message.includes('__sdkCall이 주입되지 않았습니다') ||

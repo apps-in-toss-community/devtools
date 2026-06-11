@@ -13,7 +13,7 @@
  *   code = (MAC[offset..offset+4] & 0x7fffffff) % 10^6  — 6 digits
  *
  * Security note (keep this comment accurate):
- *   The baked-in secret in a dogfood build is extractable from the bundle by a
+ *   The baked-in secret in a dog-food build is extractable from the bundle by a
  *   determined reverse engineer. This mechanism raises the bar from
  *   "anyone with the URL" to "URL + bundle extraction + live TOTP calculation".
  *   Casual URL leaks (Slack paste, QR screenshot, shoulder-surfing) are
@@ -168,7 +168,7 @@ export function isValidRelayAuthSecret(secret: string | undefined): secret is st
  *
  * Relay-auth (the §4 Layer C TOTP gate) is the only fail-fast layer that closes
  * the real gap: a leaked `wss://…trycloudflare.com` URL otherwise lets a third
- * party attach a debugger to a dogfood/live mini-app. Without a secret the relay
+ * party attach a debugger to a dog-food/live mini-app. Without a secret the relay
  * comes up unauthenticated, so this guard is called at every relay-boot site —
  * `bootRelayFamily` (intoss env 3/4) and `bootExternalRelayFamily` (env-2 PWA),
  * both eager and lazy. Local-only sessions never boot a relay and so never reach
