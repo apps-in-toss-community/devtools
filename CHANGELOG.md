@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.73
+
+### Patch Changes
+
+- a5200d2: build_attach_url·터널 대시보드가 launcher deep-link에 앱 이름을 싣고, 파트너 상단바에 아이콘 슬롯 추가 (#498)
+
 ## 0.1.72
 
 ### Patch Changes
