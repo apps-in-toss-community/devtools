@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.77
+
+### Patch Changes
+
+- eeb2a46: `in-app/auto`: DEV 판정에 `process.env.NODE_ENV` 병행 추가 — 소비자 Vite dev(node_modules) 활성 복구 (#520)
+
 ## 0.1.76
 
 ### Patch Changes
