@@ -20,25 +20,48 @@ const fixtureMintTotp = () => '123456';
 // ---------------------------------------------------------------------------
 
 describe('buildChiiInspectorUrl', () => {
+  // ── fail-closed: mintTotp 없으면 null 반환 (issue #509) ─────────────────
+  it('returns null when mintTotp is undefined (fail-closed)', () => {
+    // relay WS 게이트는 at= 없는 모든 업그레이드를 거부하므로, mintTotp 없이
+    // URL을 만들면 항상 WS 4401이 된다 — null을 반환해 caller가 waiting hint를 표시하게 한다.
+    expect(buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', undefined)).toBeNull();
+  });
+
+  it('returns null when mintTotp is omitted (fail-closed)', () => {
+    expect(buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc')).toBeNull();
+  });
+
+  it('returns null for HTTPS tunnel relay when mintTotp is omitted (env 2, fail-closed)', () => {
+    // relay-mobile(env 2) HTTPS tunnel URL에서도 mintTotp 없으면 null.
+    expect(buildChiiInspectorUrl('https://abc.trycloudflare.com', 'target-abc')).toBeNull();
+  });
+
+  // ── URL 생성: mintTotp 있을 때만 string 반환 ──────────────────────────
   it('returns a URL pointing at the relay front_end/chii_app.html', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:9100\/front_end\/chii_app\.html\?/);
   });
 
   it('includes the default console panel', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
     expect(url).toContain('panel=console');
   });
 
   it('accepts a custom panel', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', undefined, 'elements');
+    const url = buildChiiInspectorUrl(
+      'http://127.0.0.1:9100',
+      'target-abc',
+      fixtureMintTotp,
+      'elements',
+    );
     expect(url).toContain('panel=elements');
   });
 
-  it('embeds target id in the wss= path', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'my-target-id');
-    // The wss= value is URL-encoded, so decode it to inspect the inner value.
-    const parsed = new URL(url);
+  it('embeds target id in the ws= path', () => {
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'my-target-id', fixtureMintTotp);
+    expect(url).not.toBeNull();
+    // The ws= value is URL-encoded, so decode it to inspect the inner value.
+    const parsed = new URL(url as string);
     const wssParam = decodeURIComponent(
       parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
     );
@@ -46,8 +69,9 @@ describe('buildChiiInspectorUrl', () => {
   });
 
   it('routes through /client/ path (chii relay client endpoint)', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
-    const parsed = new URL(url);
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
+    expect(url).not.toBeNull();
+    const parsed = new URL(url as string);
     const wssParam = decodeURIComponent(
       parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
     );
@@ -56,25 +80,18 @@ describe('buildChiiInspectorUrl', () => {
 
   it('includes at= TOTP code when mintTotp is provided', () => {
     const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
-    const parsed = new URL(url);
+    expect(url).not.toBeNull();
+    const parsed = new URL(url as string);
     const wssParam = decodeURIComponent(
       parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
     );
     expect(wssParam).toContain('at=123456');
   });
 
-  it('omits at= when mintTotp is undefined', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', undefined);
-    const parsed = new URL(url);
-    const wssParam = decodeURIComponent(
-      parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
-    );
-    expect(wssParam).not.toContain('at=');
-  });
-
   it('uses the relay host (not scheme) in the ws= value', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
-    const parsed = new URL(url);
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
+    expect(url).not.toBeNull();
+    const parsed = new URL(url as string);
     const wssParam = decodeURIComponent(
       parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
     );
@@ -83,16 +100,22 @@ describe('buildChiiInspectorUrl', () => {
   });
 
   it('uses ws= (plain dial) for an http relay base — env 3/4 local relay', () => {
-    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc');
-    const parsed = new URL(url);
+    const url = buildChiiInspectorUrl('http://127.0.0.1:9100', 'target-abc', fixtureMintTotp);
+    expect(url).not.toBeNull();
+    const parsed = new URL(url as string);
     // wss= against a plain-HTTP relay would make the frontend attempt TLS and fail.
     expect(parsed.searchParams.get('ws')).toBeTruthy();
     expect(parsed.searchParams.get('wss')).toBeNull();
   });
 
   it('uses wss= (TLS dial) for an https relay base — env 2 tunnel', () => {
-    const url = buildChiiInspectorUrl('https://abc.trycloudflare.com', 'target-abc');
-    const parsed = new URL(url);
+    const url = buildChiiInspectorUrl(
+      'https://abc.trycloudflare.com',
+      'target-abc',
+      fixtureMintTotp,
+    );
+    expect(url).not.toBeNull();
+    const parsed = new URL(url as string);
     expect(parsed.searchParams.get('wss')).toBeTruthy();
     expect(parsed.searchParams.get('ws')).toBeNull();
   });
@@ -104,7 +127,7 @@ describe('buildChiiInspectorUrl', () => {
       fixtureMintTotp,
     );
     expect(url).toMatch(/^https:\/\/abc\.trycloudflare\.com\/front_end\/chii_app\.html\?/);
-    const parsed = new URL(url);
+    const parsed = new URL(url as string);
     const wssParam = decodeURIComponent(
       parsed.searchParams.get('ws') ?? parsed.searchParams.get('wss') ?? '',
     );
@@ -113,8 +136,8 @@ describe('buildChiiInspectorUrl', () => {
   });
 
   it('tolerates a trailing slash on the relay base URL', () => {
-    const urlWithSlash = buildChiiInspectorUrl('http://127.0.0.1:9100/', 'tgt');
-    const urlWithout = buildChiiInspectorUrl('http://127.0.0.1:9100', 'tgt');
+    const urlWithSlash = buildChiiInspectorUrl('http://127.0.0.1:9100/', 'tgt', fixtureMintTotp);
+    const urlWithout = buildChiiInspectorUrl('http://127.0.0.1:9100', 'tgt', fixtureMintTotp);
     // Both should produce the same structure (no double slash in the path).
     expect(urlWithSlash).not.toContain('//front_end');
     expect(urlWithout).not.toContain('//front_end');
@@ -326,7 +349,9 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).not.toContain(FIXTURE_SECRET);
   });
 
-  it('works without mintTotp (TOTP disabled) — no at= in the wss URL', () => {
+  it('fail-closed when mintTotp is absent — marks opened but skips browser open (issue #509)', () => {
+    // relay 게이트는 at= 없는 WS를 4401로 거부하므로 URL을 만들지 않는다.
+    // _opened=true를 유지해 once-per-session 가드가 동작하고, TOTP 미설정 안내를 stderr에 출력.
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -334,16 +359,11 @@ describe('AutoDevtoolsOpener', () => {
       env: 'relay-dev',
     });
     expect(opener.opened).toBe(true);
-    expect(stderrOutput).toContain('front_end/chii_app.html');
-    // Extract the URL line from stderr to check only the URL, not the static caveat text.
-    const urlLine = stderrOutput.split('\n').find((line) => line.includes('DevTools URL:')) ?? '';
-    const urlMatch = urlLine.match(/DevTools URL: (.+)$/);
-    const urlStr = urlMatch?.[1] ?? '';
-    const parsedUrl = new URL(urlStr);
-    const wssParam = decodeURIComponent(
-      parsedUrl.searchParams.get('ws') ?? parsedUrl.searchParams.get('wss') ?? '',
-    );
-    expect(wssParam).not.toContain('at=');
+    // URL이 없으므로 DevTools URL 줄이 없어야 한다.
+    expect(stderrOutput).not.toContain('DevTools URL');
+    expect(stderrOutput).not.toContain('front_end/chii_app.html');
+    // TOTP 미설정 안내 메시지가 있어야 한다.
+    expect(stderrOutput).toContain('TOTP');
   });
 
   it('includes the TOTP expiry notice in stderr output', () => {
