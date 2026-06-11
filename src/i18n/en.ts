@@ -257,7 +257,7 @@ export const en: Record<StringKey, string> = {
     '<strong>Launcher is not installed</strong> — open <code>devtools.aitc.dev/launcher/</code> once and add it to your home screen',
   'attach.sandbox.faq.cameraApp':
     '<strong>Scanning with the camera app opens a Safari tab (bottom tab bar visible)</strong> — relaunch from the launcher icon and use the in-app scanner',
-  'attach.sandbox.faq.totp': '<strong>QR expired (TOTP 30 s)</strong> — scan a fresh QR code',
+  'attach.sandbox.faq.totp': '<strong>QR expired (TOTP ~3 min)</strong> — scan a fresh QR code',
   'attach.sandbox.faq.chii':
     '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
 

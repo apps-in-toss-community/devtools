@@ -192,11 +192,37 @@ export function assertRelayAuthConfigured(env: NodeJS.ProcessEnv = process.env):
 }
 
 /**
+ * Gate-specific skew for the relay WebSocket upgrade TOTP check.
+ *
+ * Rationale (why 6, not the RFC default of 1):
+ *   - Each step is 30 s, so ±6 steps = past 6 steps accepted = 180–210 s of
+ *     backwards acceptance. This means a code generated at issuance time is
+ *     guaranteed valid for at least 3 minutes (180 s) after it was minted.
+ *   - The real-world attach flow (QR issued on desktop → developer picks up
+ *     phone → camera scan → launcher PWA loads → attach) routinely exceeds
+ *     the 90 s window of the RFC default (skew=1), especially when the launcher
+ *     PWA needs to reinstall or when the phone is not immediately at hand.
+ *   - Expanding to ~3.5 min reachability is acceptable under the §4 threat
+ *     model: the adversary we guard against is "someone who got the URL but
+ *     does NOT have the secret". Without the secret they cannot compute a TOTP
+ *     code regardless of the window size — security theater is explicitly
+ *     forbidden by the project principle. An attacker WITH the secret (bundle
+ *     extractor) is out of scope per CLAUDE.md §4.
+ *
+ * `verifyTotp`'s own default (skew=1) is deliberately left unchanged — it is
+ * the RFC primitive. Only this relay-gate call site is widened.
+ */
+export const RELAY_VERIFY_SKEW_STEPS = 6;
+
+/**
  * Reads `AIT_DEBUG_TOTP_SECRET` from `process.env` at runtime and builds a
  * `verifyAuth` predicate for the Chii relay's WebSocket upgrade gate.
  *
  * The predicate checks the `at` query parameter against the current and
- * adjacent TOTP time steps (±1 skew) using {@link verifyTotp}.
+ * adjacent TOTP time steps (±{@link RELAY_VERIFY_SKEW_STEPS} skew) using
+ * {@link verifyTotp}. This gives the issued code a minimum validity of ~3
+ * minutes, which is enough to cover the QR-scan → launcher-attach flow even
+ * when the launcher PWA needs to load or reinstall (#490).
  *
  * Returns `undefined` when the env var is not set — callers treat that as
  * "auth disabled" (no predicate registered on the relay). Note that since
@@ -228,6 +254,8 @@ export function buildRelayVerifyAuth(
     const code = params.get('at') ?? '';
 
     // Do NOT log `code`, `secret`, or any derived value here.
-    return verifyTotp(secret, code);
+    // Use RELAY_VERIFY_SKEW_STEPS (±6) for a ~3-minute acceptance window (#490).
+    // verifyTotp's own default (skew=1) is unchanged — only this call site is widened.
+    return verifyTotp(secret, code, undefined, RELAY_VERIFY_SKEW_STEPS);
   };
 }

@@ -34,13 +34,12 @@
  *
  * TOTP expiry caveat:
  *   The `at=` TOTP code embedded in the `wss=` parameter is minted fresh at the
- *   moment `open()` is called. The code is valid for the 30-second RFC 6238
- *   window (±1 step skew = 90 s acceptance). If the developer does not open the
- *   URL within that window the WebSocket upgrade will be rejected with 4401.
- *   In practice the browser opens immediately after the OS `open` command, so
- *   the window is always satisfied; if it is not (e.g. the URL is copied and
- *   opened later) the developer can copy the wss= param, replace `at=`, and
- *   reload. This is documented in the JSDoc below.
+ *   moment `open()` is called. The code is valid for ~3 minutes (the relay gate
+ *   accepts ±RELAY_VERIFY_SKEW_STEPS=6 steps = 180–210 s). If the developer
+ *   does not open the URL within that window the WebSocket upgrade will be
+ *   rejected with 4401. In practice the browser opens immediately after the OS
+ *   `open` command; if needed the developer can copy the wss= param, replace
+ *   `at=`, and reload. This is documented in the JSDoc below.
  *
  * PWA (WebKit) caveat:
  *   The Chii relay injects a chobitsu CDP shim into WebKit-based runtimes (env 2
@@ -70,9 +69,9 @@ import type { McpEnvironment } from './environment.js';
  * `chii/public/index.js`).
  *
  * The `at=` TOTP code is minted at call time via `mintTotp()`.  It is valid
- * for the current 30-second RFC 6238 step (±1 step skew = 90 s acceptance
- * window).  The developer must open the returned URL within that window.  If
- * the window expires before the browser connects, the relay will reject the
+ * for ~3 minutes (relay gate accepts ±RELAY_VERIFY_SKEW_STEPS=6 steps =
+ * 180–210 s).  The developer must open the returned URL within that window.
+ * If the window expires before the browser connects, the relay will reject the
  * WebSocket upgrade with close code 4401.
  *
  * SECRET-HANDLING: `mintTotp` returns a code, not a secret. The code is
@@ -272,11 +271,11 @@ export class AutoDevtoolsOpener {
    * Always writes the DevTools URL to stderr so the developer can copy it
    * if the browser open fails or the popup is blocked.
    *
-   * TOTP expiry caveat: the `at=` code embedded in the URL is valid for the
-   * current 30-second RFC 6238 step (±1 skew = 90 s). The developer must open
-   * the URL within that window; if they miss it, reload the page or re-run
-   * `open()` (though the once-per-session guard prevents that — restart the
-   * MCP server if needed).
+   * TOTP expiry caveat: the `at=` code embedded in the URL is valid for ~3
+   * minutes (relay gate ±RELAY_VERIFY_SKEW_STEPS=6 steps = 180–210 s). The
+   * developer must open the URL within that window; if they miss it, reload
+   * the page or re-run `open()` (though the once-per-session guard prevents
+   * that — restart the MCP server if needed).
    *
    * SECRET-HANDLING: the inspector URL (written to stderr) contains the relay
    * host and a short-lived TOTP code. Do NOT write it to stdout or any
@@ -301,7 +300,7 @@ export class AutoDevtoolsOpener {
       '[ait-debug] 기기가 연결됐습니다 — Chii DevTools를 자동으로 엽니다.\n' +
         `[ait-debug] DevTools URL: ${inspectorUrl}\n` +
         '[ait-debug] (AIT_AUTO_DEVTOOLS=0 으로 자동 열기를 끌 수 있습니다)\n' +
-        '[ait-debug] 주의: URL의 at= 코드는 30초 창 안에서만 유효합니다.\n',
+        '[ait-debug] 주의: URL의 at= 코드는 ~3분 안에서만 유효합니다.\n',
     );
 
     const opened = openUrlInBrowser(inspectorUrl);
