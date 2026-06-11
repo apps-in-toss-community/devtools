@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Probe HACK</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      /* The variant under test: stretch the root element past the 797px ICB by the
+         status-bar inset, so document content paints into the bottom OS band that
+         standalone WebKit otherwise fills with the manifest background_color.
+         (window.innerHeight is expected to stay at 797 — this is a visual cover,
+         not a geometry change.) */
+      html {
+        height: calc(100% + env(safe-area-inset-top, 0px));
+        background: #0b0d10;
+      }
+
+      body {
+        position: relative;
+        min-height: 100%;
+        background: #0b0d10;
+        color: #e2e8f0;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+
+      /* Safe-area probe: lives off-screen, reads env() values via getComputedStyle */
+      #sa-probe {
+        position: fixed;
+        top: -9999px;
+        left: -9999px;
+        width: 1px;
+        height: 1px;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /* Red band: top 47px — status-bar zone (viewport-anchored) */
+      #band-top {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        height: 47px;
+        background: rgba(255, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #fff;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      /* Green band: bottom 34px — home indicator zone (viewport-anchored).
+         In the letterboxed state this sits 47px ABOVE the physical screen
+         bottom, because position:fixed anchors to the 797px viewport. */
+      #band-bottom {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        height: 34px;
+        background: rgba(0, 255, 0, 0.5);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #000;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      /* Blue band: bottom 47px of the DOCUMENT (absolute, document-anchored).
+         The discriminator for this variant: if the stretched root works, this
+         band paints into the region the OS otherwise letterboxes — i.e. it
+         appears BELOW the green fixed band, reaching the physical screen
+         bottom. If it does NOT extend past green, the hack is refuted. */
+      #band-doc-bottom {
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 47px;
+        background: rgba(59, 130, 246, 0.6);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #fff;
+        pointer-events: none;
+        z-index: 99;
+      }
+
+      #readout {
+        position: relative;
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 16px 48px;
+      }
+
+      table {
+        border-collapse: collapse;
+        font-size: 13px;
+        line-height: 1.7;
+        width: 100%;
+        max-width: 360px;
+      }
+
+      td:first-child {
+        color: #94a3b8;
+        padding-right: 12px;
+        white-space: nowrap;
+      }
+
+      td:last-child {
+        color: #f8fafc;
+        word-break: break-all;
+      }
+
+      .shortfall-row td:last-child {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .shortfall-zero td:last-child {
+        color: #4ade80;
+      }
+
+      .shortfall-nonzero td:last-child {
+        color: #f87171;
+      }
+
+      .variant-badge {
+        position: fixed;
+        top: 52px;
+        right: 10px;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(192, 132, 252, 0.2);
+        color: #c084fc;
+        pointer-events: none;
+        z-index: 101;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Safe-area env() probe element -->
+    <div id="sa-probe"></div>
+
+    <!-- Variant label (visible below status bar) -->
+    <div class="variant-badge">min-height hack</div>
+
+    <!-- Position bands -->
+    <div id="band-top">RED = 창 최상단 47px (status bar 영역)</div>
+    <div id="band-bottom">GREEN = viewport 최하단 34px (fixed)</div>
+    <div id="band-doc-bottom">BLUE = 문서 최하단 47px (absolute) — GREEN보다 아래로 내려오면 hack 성립</div>
+
+    <!-- Live readout -->
+    <div id="readout">
+      <table id="metrics">
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var tbody = document.querySelector('#metrics tbody');
+        var saProbe = document.getElementById('sa-probe');
+
+        function safeArea() {
+          var cs = getComputedStyle(saProbe);
+          return {
+            top:    cs.paddingTop,
+            right:  cs.paddingRight,
+            bottom: cs.paddingBottom,
+            left:   cs.paddingLeft,
+          };
+        }
+
+        function uaSummary() {
+          var ua = navigator.userAgent;
+          var m = ua.match(/OS (\d+[_\d]*)/);
+          return m ? 'iOS ' + m[1].replace(/_/g, '.') : ua.slice(0, 60);
+        }
+
+        function update() {
+          var sa = safeArea();
+          var iw = window.innerWidth;
+          var ih = window.innerHeight;
+          var sw = screen.width;
+          var sh = screen.height;
+          var shortfall = sh - ih;
+          var vvh = window.visualViewport ? window.visualViewport.height.toFixed(1) : 'n/a';
+          var standalone = window.matchMedia('(display-mode: standalone)').matches;
+          var navStandalone = typeof navigator.standalone !== 'undefined' ? String(navigator.standalone) : 'n/a';
+          var htmlH = document.documentElement.getBoundingClientRect().height.toFixed(1);
+          var scrollH = document.documentElement.scrollHeight;
+
+          var rows = [
+            ['innerW × H', iw + ' × ' + ih],
+            ['screen W × H', sw + ' × ' + sh],
+            ['shortfall (screen.H − inner.H)', shortfall],
+            ['visualViewport.height', vvh],
+            ['html rect height (stretched?)', htmlH],
+            ['doc scrollHeight', scrollH],
+            ['scrollY', window.scrollY],
+            ['safe-area top', sa.top],
+            ['safe-area right', sa.right],
+            ['safe-area bottom', sa.bottom],
+            ['safe-area left', sa.left],
+            ['display-mode: standalone', String(standalone)],
+            ['navigator.standalone', navStandalone],
+            ['UA', uaSummary()],
+          ];
+
+          var html = '';
+          rows.forEach(function (row, i) {
+            var isShortfall = i === 2;
+            var cls = '';
+            if (isShortfall) {
+              cls = 'shortfall-row ' + (shortfall === 0 ? 'shortfall-zero' : 'shortfall-nonzero');
+            }
+            html += '<tr class="' + cls + '"><td>' + row[0] + '</td><td>' + row[1] + '</td></tr>';
+          });
+          tbody.innerHTML = html;
+        }
+
+        update();
+
+        window.addEventListener('resize', update);
+        window.addEventListener('scroll', update, { passive: true });
+        window.addEventListener('orientationchange', function () {
+          // orientationchange fires before innerHeight settles; wait a frame
+          setTimeout(update, 50);
+        });
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', update);
+        }
+      })();
+    </script>
+  </body>
+</html>
