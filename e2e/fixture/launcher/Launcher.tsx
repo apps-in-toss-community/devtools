@@ -20,6 +20,7 @@ import {
   computeNavBarBridgeInsets,
   type NavBarType,
   parseNavBarType,
+  resolveAppIcon,
   resolveAppTitle,
 } from './navbar.js';
 
@@ -422,6 +423,9 @@ function MoreMenu({
 function NavBar({
   navBarType,
   title,
+  iconSrc,
+  iconVisible,
+  onIconError,
   menuOpen,
   diagOpen,
   onToggleMenu,
@@ -431,6 +435,11 @@ function NavBar({
 }: {
   navBarType: NavBarType;
   title: string;
+  /** Resolved icon URL (https: only). null = no icon slot. */
+  iconSrc: string | null;
+  /** false when onError fired — collapses the icon slot. */
+  iconVisible: boolean;
+  onIconError: () => void;
   menuOpen: boolean;
   diagOpen: boolean;
   onToggleMenu: () => void;
@@ -494,19 +503,45 @@ function NavBar({
           gap: '8px',
         }}
       >
-        <span
-          data-testid="launcher-navbar-title"
+        {/* Left: icon (optional) + title */}
+        <div
           style={{
-            color: '#e8eaed',
-            fontSize: '15px',
-            fontWeight: 600,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            minWidth: 0,
+            flex: 1,
           }}
         >
-          {title}
-        </span>
+          {iconSrc !== null && iconVisible && (
+            <img
+              data-testid="launcher-navbar-icon"
+              src={iconSrc}
+              alt=""
+              onError={onIconError}
+              style={{
+                width: '24px',
+                height: '24px',
+                borderRadius: '6px',
+                flexShrink: 0,
+                objectFit: 'cover',
+              }}
+            />
+          )}
+          <span
+            data-testid="launcher-navbar-title"
+            style={{
+              color: '#e8eaed',
+              fontSize: '15px',
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {title}
+          </span>
+        </div>
         {capsule}
       </div>
     </div>
@@ -551,6 +586,11 @@ export function Launcher(): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false);
   const [navBarType] = useState<NavBarType>(() => parseNavBarType(location.search));
   const [appTitle] = useState<string | null>(() => resolveAppTitle(location.search));
+  // Icon slot (#498): resolved once at mount (same reason as appTitle — the query
+  // is stripped by consumeDeepLinkUrl). iconVisible tracks onError dismissal so a
+  // 404 favicon.ico cleanly collapses the slot without layout jank.
+  const [appIconSrc] = useState<string | null>(() => resolveAppIcon(location.search));
+  const [iconVisible, setIconVisible] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const pwaInstallRef = useRef<PwaInstallElement | null>(null);
@@ -1035,6 +1075,9 @@ export function Launcher(): React.JSX.Element {
         <NavBar
           navBarType={navBarType}
           title={navBarTitle}
+          iconSrc={appIconSrc}
+          iconVisible={iconVisible}
+          onIconError={() => setIconVisible(false)}
           menuOpen={menuOpen}
           diagOpen={diagOpen}
           onToggleMenu={() => setMenuOpen((open) => !open)}

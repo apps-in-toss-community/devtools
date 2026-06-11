@@ -364,7 +364,28 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                   }
                 }
 
-                await printTunnelBanner(t.url, { qr: tunnelConfig.qr, relayWssUrl });
+                // Read the app name from the project's package.json to add to
+                // the launcher deep-link (#498). Failure is silently ignored.
+                let tunnelAppName: string | undefined;
+                try {
+                  const { readFileSync } = await import('node:fs');
+                  const pkgPath = `${server.config.root}/package.json`;
+                  const pkgRaw = readFileSync(pkgPath, 'utf8');
+                  const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
+                  const rawName = typeof pkg.name === 'string' ? pkg.name : '';
+                  const stripped = rawName.includes('/')
+                    ? rawName.slice(rawName.indexOf('/') + 1)
+                    : rawName;
+                  tunnelAppName = stripped.trim() || undefined;
+                } catch {
+                  // Silently ignore — fail-open.
+                }
+
+                await printTunnelBanner(t.url, {
+                  qr: tunnelConfig.qr,
+                  relayWssUrl,
+                  name: tunnelAppName,
+                });
 
                 // env-2 URL file-based discovery (#424): write .ait_urls so the
                 // MCP daemon can discover the relay/tunnel URLs without manual env
@@ -392,6 +413,7 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                       tunnelUrl: t.url,
                       relayWssUrl,
                       qr: tunnelConfig.qr,
+                      name: tunnelAppName,
                     })) ?? null;
                 }
 

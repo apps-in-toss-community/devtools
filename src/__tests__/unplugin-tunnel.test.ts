@@ -66,6 +66,42 @@ describe('buildLauncherDeepLink', () => {
     expect(parsed.searchParams.get('debug')).toBe('1');
     expect(parsed.searchParams.get('relay')).toBe(relay);
   });
+
+  it('back-compat: string second arg (relay URL) still works as before', () => {
+    const relay = 'wss://relay-abc.trycloudflare.com';
+    // Plain string arg (legacy form) must behave identically to { relayWssUrl: relay }.
+    const legacy = buildLauncherDeepLink('https://abc-def.trycloudflare.com', relay);
+    const modern = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      relayWssUrl: relay,
+    });
+    expect(legacy).toBe(modern);
+  });
+
+  it('opts.name adds &name= to the deep-link (#498)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      name: 'my-miniapp',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('name')).toBe('my-miniapp');
+    // No relay params when relayWssUrl is absent.
+    expect(parsed.searchParams.has('debug')).toBe(false);
+  });
+
+  it('opts.name blank → no name= param', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', { name: '  ' });
+    expect(new URL(deepLink).searchParams.has('name')).toBe(false);
+  });
+
+  it('name + relayWssUrl together in opts object (#498)', () => {
+    const relay = 'wss://relay-abc.trycloudflare.com';
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      relayWssUrl: relay,
+      name: 'sdk-example',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('relay')).toBe(relay);
+    expect(parsed.searchParams.get('name')).toBe('sdk-example');
+  });
 });
 
 describe('printTunnelBanner', () => {

@@ -224,7 +224,7 @@ export function isRelayMode(mode: StartDebugMode): boolean {
  * and rides inside the assembled URL's `at=` param only.
  */
 export type AttachUrlParts =
-  | { kind: 'launcher'; tunnelHttpUrl: string; wssUrl: string }
+  | { kind: 'launcher'; tunnelHttpUrl: string; wssUrl: string; appName?: string }
   | { kind: 'scheme'; schemeUrl: string; wssUrl: string };
 
 /**
@@ -701,13 +701,39 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
+        // Read the app name from projectRoot/package.json to add to the launcher
+        // deep-link (#498). Failure to read is silently ignored (fail-open).
+        let launcherAppName: string | undefined;
+        if (buildProjectRoot !== undefined) {
+          try {
+            const { readFileSync } = await import('node:fs');
+            const pkgRaw = readFileSync(`${buildProjectRoot}/package.json`, 'utf8');
+            const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
+            const rawName = typeof pkg.name === 'string' ? pkg.name : '';
+            // Strip npm scope prefix (@scope/foo → foo).
+            const stripped = rawName.includes('/')
+              ? rawName.slice(rawName.indexOf('/') + 1)
+              : rawName;
+            launcherAppName = stripped.trim() || undefined;
+          } catch {
+            // Silently ignore — fail-open (existing behavior unchanged).
+          }
+        }
+
         // SECRET-HANDLING: attachUrl encodes tunnelHttpUrl and wssUrl inside
         // the QR payload only — not logged or returned as standalone fields.
-        const attachUrl = buildLauncherAttachUrl(tunnelHttpUrl, tunnelStatus.wssUrl, totpCode);
+        const attachUrl = buildLauncherAttachUrl(tunnelHttpUrl, tunnelStatus.wssUrl, totpCode, {
+          name: launcherAppName,
+        });
         // Notify dashboard with components (not a finished URL) so getDashboardState
         // re-mints a fresh TOTP code on every SSE push/reload (Defect 1).
         // SECRET-HANDLING: components contain tunnel host — never logged.
-        onAttachUrlBuilt?.({ kind: 'launcher', tunnelHttpUrl, wssUrl: tunnelStatus.wssUrl });
+        onAttachUrlBuilt?.({
+          kind: 'launcher',
+          tunnelHttpUrl,
+          wssUrl: tunnelStatus.wssUrl,
+          appName: launcherAppName,
+        });
         const relayUrl = tunnelStatus.wssUrl;
         const authorityWarning: string | undefined = undefined; // no scheme authority for launcher
         const totp = totpMeta;
@@ -1489,7 +1515,9 @@ function rebuildAttachUrl(parts: AttachUrlParts): string {
   const secret = process.env.AIT_DEBUG_TOTP_SECRET;
   const code = secret ? generateTotp(secret) : undefined;
   return parts.kind === 'launcher'
-    ? buildLauncherAttachUrl(parts.tunnelHttpUrl, parts.wssUrl, code)
+    ? buildLauncherAttachUrl(parts.tunnelHttpUrl, parts.wssUrl, code, {
+        name: parts.appName,
+      })
     : buildDeepLinkAttachUrl(parts.schemeUrl, parts.wssUrl, code);
 }
 

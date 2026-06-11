@@ -91,6 +91,44 @@ test.describe('launcher PWA', () => {
     await expect(page.getByTestId('launcher-navbar-title')).toHaveText('Mini App');
   });
 
+  test('icon= (https) renders the icon slot in the partner bar (#498)', async ({ page }) => {
+    const tunnel = 'https://example.com/';
+    const icon = 'https://example.com/icon.png';
+    await page.goto(
+      `/launcher/?url=${encodeURIComponent(tunnel)}&icon=${encodeURIComponent(icon)}`,
+    );
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    const img = page.getByTestId('launcher-navbar-icon');
+    await expect(img).toHaveCount(1);
+    await expect(img).toHaveAttribute('src', icon);
+  });
+
+  test('icon= absent + url= present → favicon fallback src in partner bar (#498)', async ({
+    page,
+  }) => {
+    const tunnel = 'https://example.com/';
+    await page.goto(`/launcher/?url=${encodeURIComponent(tunnel)}`);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    // Favicon fallback: origin of the framed URL + /favicon.ico
+    const img = page.getByTestId('launcher-navbar-icon');
+    await expect(img).toHaveCount(1);
+    await expect(img).toHaveAttribute('src', 'https://example.com/favicon.ico');
+  });
+
+  test('game variant has no icon slot even when icon= is present (#498)', async ({ page }) => {
+    const tunnel = 'https://example.com/';
+    const icon = 'https://example.com/icon.png';
+    await page.goto(
+      `/launcher/?url=${encodeURIComponent(tunnel)}&navBarType=game&icon=${encodeURIComponent(icon)}`,
+    );
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+    await expect(page.getByTestId('launcher-navbar')).toHaveAttribute('data-navbar-type', 'game');
+    // Game variant: no icon slot (no title either, which is the existing assertion).
+    await expect(page.getByTestId('launcher-navbar-icon')).toHaveCount(0);
+  });
+
   // The install-first gate (#411) — a deep-link / saved URL in an UNINSTALLED,
   // non-local-dev browser tab must show setup (install CTA) FIRST with the URL
   // preserved behind an "open once" button, instead of skipping straight to live

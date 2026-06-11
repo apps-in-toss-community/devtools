@@ -141,6 +141,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       '  • env 2 / relay-sandbox (start_debug mode="relay-sandbox"): scheme_url is NOT used. Instead, reads ' +
       'AIT_TUNNEL_BASE_URL (the https://*.trycloudflare.com app tunnel from `tunnel:{cdp:true}`) ' +
       'and builds a launcher PWA deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). ' +
+      'When projectRoot is given, the app name from <projectRoot>/package.json is automatically added as name= so the launcher partner bar shows it. ' +
       'Scan the QR with the phone to open the launcher, which frames the tunnel URL and attaches CDP.\n\n' +
       'Set wait_for_attach=true to block until a page attaches (polls up to 30 s). ' +
       'On timeout, call build_attach_url again to resume polling. ' +
