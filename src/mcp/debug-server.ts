@@ -52,7 +52,7 @@ import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import { buildDeepLinkAttachUrl, buildLauncherAttachUrl } from './deeplink.js';
-import { AutoDevtoolsOpener } from './devtools-opener.js';
+import { AutoDevtoolsOpener, buildChiiInspectorUrl } from './devtools-opener.js';
 import { wrapEnvelope } from './envelope.js';
 import {
   deriveEnvironment,
@@ -2163,6 +2163,16 @@ export class DualConnectionRouter implements ConnectionRouter {
     return this.activeFamily?.relayOrigin;
   }
 
+  /**
+   * Local HTTP base URL of the Chii relay for the currently-active family (#503).
+   * Used by `getDashboardState` to build the inspector URL via `buildChiiInspectorUrl`.
+   * Returns `undefined` when no relay family is active (local/mock mode).
+   * SECRET-HANDLING: not logged — callers must not write this to stdout/logs.
+   */
+  get activeRelayHttpUrl(): string | undefined {
+    return this.activeFamily?.relayHttpUrl;
+  }
+
   /** Every booted family (for unified shutdown). All families are lazy (#396). */
   bootedFamilies(): BootedFamily[] {
     return [...this.lazyFamilies.values()];
@@ -2408,15 +2418,32 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   // getDashboardState 클로저 — qr-http-server dashboard에 현재 상태 전달.
   // rebuildAttachUrl()로 매 호출마다 최신 TOTP 코드를 mint한 URL을 생성한다 (Defect 1).
-  // SECRET-HANDLING: tunnel wssUrl은 up/down 상태 표시에만 사용; host 값은 HTML에 노출 안 함.
-  const getDashboardState = (): DashboardState => ({
-    tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
-    pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
-    attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
-    // 현재 active connection에서 매 호출마다 파생한 env — /attach 카피·환경 라벨
-    // 분기(#468). start_debug family swap을 따라가도록 저장하지 않고 파생한다.
-    mode: deriveEnvironment(router.active.kind, getLiveIntent(), router.activeRelayOrigin),
-  });
+  // SECRET-HANDLING: tunnel wssUrl + relay host는 up/down 상태 표시 또는 HTML 링크(의도된 transport)에만 사용.
+  const getDashboardState = (): DashboardState => {
+    const targets = router.active.listTargets();
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    // inspectorUrl — relay up + 첫 번째 target attached 시 buildChiiInspectorUrl로 조립 (#503).
+    // TOTP 코드는 호출마다 fresh mint. relay 미활성 또는 미attached 시 null.
+    // SECRET-HANDLING: 로그/stdout 출력 금지 — 대시보드 HTML anchor href만 의도된 transport.
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    const inspectorUrl =
+      relayHttpUrl && targets.length > 0
+        ? buildChiiInspectorUrl(
+            relayHttpUrl,
+            targets[0].id,
+            totpSecret ? () => generateTotp(totpSecret, Date.now()) : undefined,
+          )
+        : null;
+    return {
+      tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
+      pages: targets.map((t) => ({ id: t.id, url: t.url })),
+      attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
+      inspectorUrl,
+      // 현재 active connection에서 매 호출마다 파생한 env — /attach 카피·환경 라벨
+      // 분기(#468). start_debug family swap을 따라가도록 저장하지 않고 파생한다.
+      mode: deriveEnvironment(router.active.kind, getLiveIntent(), router.activeRelayOrigin),
+    };
+  };
 
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
   // 도달하는 race를 없애기 위해 cloudflared(fire-and-forget)와 달리 동기 await 사용.
@@ -2700,11 +2727,26 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
   let lastAttachParts: AttachUrlParts | null = null;
 
-  const getDashboardState = (): DashboardState => ({
-    tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
-    pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
-    attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
-  });
+  const getDashboardState = (): DashboardState => {
+    const targets = router.active.listTargets();
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    // SECRET-HANDLING: inspectorUrl(relay host + at=)은 로그/stdout 출력 금지.
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    const inspectorUrl =
+      relayHttpUrl && targets.length > 0
+        ? buildChiiInspectorUrl(
+            relayHttpUrl,
+            targets[0].id,
+            totpSecret ? () => generateTotp(totpSecret, Date.now()) : undefined,
+          )
+        : null;
+    return {
+      tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
+      pages: targets.map((t) => ({ id: t.id, url: t.url })),
+      attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
+      inspectorUrl,
+    };
+  };
 
   // Local QR HTTP server — awaited so the first build_attach_url call (after a
   // relay switch) doesn't race its startup. Failure falls back to text QR.
@@ -2952,11 +2994,26 @@ export async function runMobileDebugServer(
   // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
   let lastAttachParts: AttachUrlParts | null = null;
 
-  const getDashboardState = (): DashboardState => ({
-    tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
-    pages: router.active.listTargets().map((t) => ({ id: t.id, url: t.url })),
-    attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
-  });
+  const getDashboardState = (): DashboardState => {
+    const targets = router.active.listTargets();
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    // SECRET-HANDLING: inspectorUrl(relay host + at=)은 로그/stdout 출력 금지.
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    const inspectorUrl =
+      relayHttpUrl && targets.length > 0
+        ? buildChiiInspectorUrl(
+            relayHttpUrl,
+            targets[0].id,
+            totpSecret ? () => generateTotp(totpSecret, Date.now()) : undefined,
+          )
+        : null;
+    return {
+      tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
+      pages: targets.map((t) => ({ id: t.id, url: t.url })),
+      attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
+      inspectorUrl,
+    };
+  };
 
   // Local QR HTTP server — awaited so the first build_attach_url call doesn't
   // race its startup. Failure falls back to text QR.

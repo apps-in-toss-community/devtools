@@ -63,6 +63,18 @@ export interface DashboardState {
   /** 마지막으로 생성된 attachUrl (없으면 null). TOTP at= 코드는 이 안에 캡슐화. */
   attachUrl: string | null;
   /**
+   * 현재 세션의 Chii 인스펙터 URL — 살아있는 세션 기준 DevTools 진입점 (#503).
+   *
+   * - `string` — relay up + 페이지 attached → `buildChiiInspectorUrl`로 조립된 URL.
+   *   TOTP at= 코드는 이 URL 안에 캡슐화. 대시보드 HTML 내 렌더는 의도된 transport.
+   * - `null` — relay up이지만 페이지 미첨부, 또는 relay down, 또는 env 1(mock).
+   *
+   * SECRET-HANDLING: 이 URL은 relay host + TOTP at= 코드를 담을 수 있다.
+   * 대시보드 HTML 본문에 렌더되는 건 의도된 transport(attachUrl과 동일 취급)이지만,
+   * stdout/stderr/로그/에러 메시지에는 절대 출력하지 않는다.
+   */
+  inspectorUrl?: string | null;
+  /**
    * 현재 세션 환경 — /attach 스캔 절차·체크리스트 카피 분기 + 상단 환경 라벨 (#468).
    *
    * - `'relay-mobile'` → sandbox family (환경 2: launcher PWA 절차, 토스 앱·_deploymentId 없음)
@@ -160,13 +172,15 @@ function buildLangSwitcher(
  *
  * 동적 파트 분류:
  *   - "token-fill": 단일 값 교체 (__NOW__, __TUNNEL_CLASS__, __TUNNEL_STATUS__,
- *     __ATTACH_SECTION__)
+ *     __ATTACH_SECTION__, __INSPECTOR_SECTION__)
  *   - "runtime builder": 가변 길이 구조 (__PAGES_SECTION__ — 조건부 렌더 + 가변 rows)
  *   - "suffix": inline SSE <script> (빌드 파이프라인 없는 클라이언트 스크립트, locale
  *     aware 문자열 포함)
  *
  * SECRET-HANDLING:
  *   - attachUrl은 url-box 안에서만 노출 (TOTP at= 코드 캡슐 그대로).
+ *   - inspectorUrl은 anchor href 안에서만 노출 (TOTP at= 코드 캡슐 그대로).
+ *     relay host + TOTP 코드가 담길 수 있으나 대시보드 HTML은 의도된 transport.
  *   - tunnel wssUrl은 "터널 연결됨" 상태 표시에서 UP/DOWN만 노출.
  *     wssUrl 값 자체는 dashboard HTML에 넣지 않는다.
  */
@@ -199,6 +213,21 @@ function buildDashboardHtml(
     attachSection = `<p class="hint">${escapeHtml(s('dashboard.attach.hint'))}</p>`;
   }
 
+  // inspectorSection — 인스펙터 열기 링크 (#503).
+  // relay up + 페이지 attached(inspectorUrl 있음) 시에만 살아있는 링크를 표시.
+  // 미첨부(inspectorUrl null)이면 비활성 안내 힌트를 보여준다.
+  // SECRET-HANDLING: inspectorUrl에 relay host + TOTP at= 코드가 담길 수 있으나
+  // 대시보드 HTML 본문 렌더는 의도된 transport — 단 stdout/로그로 출력 금지.
+  let inspectorSection: string;
+  if (state.inspectorUrl) {
+    const safeUrl = escapeHtml(state.inspectorUrl);
+    const label = escapeHtml(s('dashboard.inspector.open'));
+    inspectorSection = `<a class="inspector-link" id="inspector-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  } else {
+    const hint = escapeHtml(s('dashboard.inspector.waiting'));
+    inspectorSection = `<span class="inspector-hint" id="inspector-link">${hint}</span>`;
+  }
+
   // pagesSection — "연결된 Pages" 섹션: env 3/4(pages: Array)에서만 렌더한다.
   // env 2(pages: null)는 라이브 page 목록을 알 수 없어 섹션 자체를 숨긴다(#411).
   // runtime builder: 조건부 블록 + 가변 row 목록이라 token-fill로는 불충분.
@@ -225,6 +254,8 @@ function buildDashboardHtml(
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
+    inspectorOpenLabel: JSON.stringify(s('dashboard.inspector.open')),
+    inspectorWaitingLabel: JSON.stringify(s('dashboard.inspector.waiting')),
     dashboardSurface: true,
   };
 
@@ -240,6 +271,7 @@ function buildDashboardHtml(
     .replaceAll('__TUNNEL_CLASS__', tunnelClass)
     .replaceAll('__TUNNEL_STATUS__', escapeHtml(tunnelStatus))
     .replaceAll('__ATTACH_SECTION__', attachSection)
+    .replaceAll('__INSPECTOR_SECTION__', inspectorSection)
     .replaceAll('__PAGES_SECTION__', pagesSection);
 
   // Append the inline SSE <script> suffix directly before </body>.
@@ -258,6 +290,10 @@ interface SseScriptStrings {
   copyLabel: string;
   /** 복사 완료 피드백 라벨 (JSON.stringify로 이미 escape됨). */
   copiedLabel: string;
+  /** "인스펙터 열기" 링크 라벨 (JSON.stringify로 이미 escape됨, #503). */
+  inspectorOpenLabel: string;
+  /** 인스펙터 URL 대기 힌트 (JSON.stringify로 이미 escape됨, #503). */
+  inspectorWaitingLabel: string;
   /**
    * true: dashboard 표면 — `#attach-section` innerHTML 전체 교체 방식 유지.
    *        url-box 텍스트도 innerHTML 교체로 갱신됨.
@@ -301,6 +337,8 @@ function buildSseScript(strings: SseScriptStrings): string {
       var ATTACH_HINT = ${strings.attachHint};
       var COPY_LABEL = ${strings.copyLabel};
       var COPIED_LABEL = ${strings.copiedLabel};
+      var INSPECTOR_OPEN_LABEL = ${strings.inspectorOpenLabel};
+      var INSPECTOR_WAITING_LABEL = ${strings.inspectorWaitingLabel};
 
       // ── 클립보드 복사 헬퍼 ────────────────────────────────────────────────
       function copyText(text) {
@@ -422,6 +460,17 @@ function buildSseScript(strings: SseScriptStrings): string {
               }
             }
           }
+          // 인스펙터 링크 갱신 — #inspector-link (#503).
+          // SECRET-HANDLING: inspectorUrl을 console.log 등으로 출력하지 않는다.
+          var insp = document.getElementById('inspector-link');
+          if (insp) {
+            if (s.inspectorUrl) {
+              var safeInspUrl = String(s.inspectorUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
+              insp.outerHTML = '<a class=\\"inspector-link\\" id=\\"inspector-link\\" href=\\"' + safeInspUrl + '\\" target=\\"_blank\\" rel=\\"noopener noreferrer\\">' + INSPECTOR_OPEN_LABEL + '</a>';
+            } else {
+              insp.outerHTML = '<span class=\\"inspector-hint\\" id=\\"inspector-link\\">' + INSPECTOR_WAITING_LABEL + '</span>';
+            }
+          }
           // 갱신 시각 (dashboard만 #updated 요소 있음)
           var upd = document.getElementById('updated');
           if (upd) upd.textContent = upd.textContent.replace(/[^ ]+$/, new Date().toISOString());
@@ -488,6 +537,10 @@ function buildAttachHtml(
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
+    // /attach 페이지에는 #inspector-link 가 없어 inspector 갱신은 no-op이지만
+    // SseScriptStrings 타입 충족을 위해 필드를 제공한다 (#503).
+    inspectorOpenLabel: JSON.stringify(s('dashboard.inspector.open')),
+    inspectorWaitingLabel: JSON.stringify(s('dashboard.inspector.waiting')),
     // /attach 표면: img src만 교체, #url-box textContent만 갱신 → url-box 이중 표시 방지(#458).
     dashboardSurface: false,
   };
@@ -517,6 +570,10 @@ export async function startQrHttpServer(
       pages: state.pages,
       // attachUrl은 캡슐 그대로 전달 — TOTP at= 코드 분리 없음 (의도된 설계).
       attachUrl: state.attachUrl,
+      // inspectorUrl: relay + 페이지 attached 시 살아있는 인스펙터 URL (#503).
+      // SECRET-HANDLING: URL(relay host + TOTP at=)은 SSE payload 전달이 의도된 transport.
+      // 단 stdout/로그/에러에는 절대 출력하지 않는다.
+      inspectorUrl: state.inspectorUrl ?? null,
     });
     // SSE frame: "data: <json>\n\n"
     res.write(`data: ${payload}\n\n`);
