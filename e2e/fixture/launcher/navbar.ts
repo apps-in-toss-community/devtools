@@ -66,6 +66,54 @@ export function resolveAppTitle(search: string): string | null {
 }
 
 /**
+ * Resolve the icon URL shown in the partner nav bar.
+ *
+ * Priority:
+ *   1. `icon=` param — accepted only when it is an absolute `https://` URL.
+ *      Non-https, relative paths, `javascript:`, `data:`, etc. are rejected.
+ *   2. Fallback (when `icon=` is absent): `<framed-origin>/favicon.ico` derived
+ *      from `url=` — the `url=` param's https origin + `/favicon.ico`. The framed
+ *      origin is already loaded in the iframe, so this is not a new host exposure.
+ *      If `url=` is absent, not https, or not parseable → null.
+ *
+ * Returns null when no safe icon can be derived (caller omits the icon slot).
+ *
+ * SECURITY: `<img src>` paints no text on-screen, and the framed origin of the
+ * favicon fallback is already the iframe host — not a new host disclosure. The
+ * tunnel host is still never rendered as visible text (that principle applies to
+ * the title slot, not this img src slot).
+ */
+export function resolveAppIcon(search: string): string | null {
+  const params = new URLSearchParams(search);
+
+  // 1. Explicit icon= param — must be absolute https:// URL.
+  const iconParam = params.get('icon');
+  if (iconParam !== null) {
+    let parsed: URL;
+    try {
+      parsed = new URL(iconParam);
+    } catch {
+      return null;
+    }
+    // Accept only absolute https:// URLs. Reject data:, javascript:, relative, etc.
+    return parsed.protocol === 'https:' ? iconParam : null;
+  }
+
+  // 2. Fallback: derive favicon.ico from the framed url= origin.
+  const urlParam = params.get('url');
+  if (urlParam === null) return null;
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(urlParam);
+  } catch {
+    return null;
+  }
+  // Only allow https: origins (same guard as normalizeUrl in Launcher.tsx).
+  if (parsedUrl.protocol !== 'https:') return null;
+  return `${parsedUrl.origin}/favicon.ico`;
+}
+
+/**
  * Compute the safe-area insets the launcher forwards to the framed dev app
  * (`ait:safe-area-insets`), now that #495 makes the partner nav bar part of the
  * launcher chrome.

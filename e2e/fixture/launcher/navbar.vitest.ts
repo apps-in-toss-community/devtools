@@ -7,6 +7,7 @@ import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
   parseNavBarType,
+  resolveAppIcon,
   resolveAppTitle,
 } from './navbar.js';
 
@@ -59,6 +60,63 @@ describe('resolveAppTitle', () => {
     // returns exactly what name= holds, and null otherwise. The host is never
     // sourced here.
     expect(resolveAppTitle('?url=https%3A%2F%2Fabc.trycloudflare.com')).toBeNull();
+  });
+});
+
+describe('resolveAppIcon', () => {
+  // -------------------------------------------------------------------------
+  // icon= param — explicit icon URL
+  // -------------------------------------------------------------------------
+
+  it('icon= with absolute https:// URL → returns it as-is', () => {
+    expect(resolveAppIcon('?icon=https%3A%2F%2Fexample.com%2Ficon.png')).toBe(
+      'https://example.com/icon.png',
+    );
+  });
+
+  it('icon= with http:// URL → null (rejected)', () => {
+    expect(resolveAppIcon('?icon=http%3A%2F%2Fexample.com%2Ficon.png')).toBeNull();
+  });
+
+  it('icon= with javascript: → null (rejected)', () => {
+    expect(resolveAppIcon('?icon=javascript%3Aalert(1)')).toBeNull();
+  });
+
+  it('icon= with data: URL → null (rejected)', () => {
+    expect(resolveAppIcon('?icon=data%3Aimage%2Fpng%3Bbase64%2Cabc')).toBeNull();
+  });
+
+  it('icon= with a relative path → null (not a valid URL)', () => {
+    expect(resolveAppIcon('?icon=%2Ficon.png')).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Fallback: url= origin + /favicon.ico
+  // -------------------------------------------------------------------------
+
+  it('icon= absent + url= https → derives <origin>/favicon.ico', () => {
+    expect(resolveAppIcon('?url=https%3A%2F%2Fexample.trycloudflare.com%2Fsome%2Fpath')).toBe(
+      'https://example.trycloudflare.com/favicon.ico',
+    );
+  });
+
+  it('icon= absent + url= https with port → preserves port in origin', () => {
+    expect(resolveAppIcon('?url=https%3A%2F%2Fexample.com%3A8443%2F')).toBe(
+      'https://example.com:8443/favicon.ico',
+    );
+  });
+
+  it('icon= absent + url= http → null (http framed origins not allowed in prod)', () => {
+    expect(resolveAppIcon('?url=http%3A%2F%2Fexample.com%2F')).toBeNull();
+  });
+
+  it('icon= absent + no url= → null', () => {
+    expect(resolveAppIcon('')).toBeNull();
+    expect(resolveAppIcon('?name=My%20App')).toBeNull();
+  });
+
+  it('icon= absent + url= that is not a valid URL → null', () => {
+    expect(resolveAppIcon('?url=not-a-url')).toBeNull();
   });
 });
 

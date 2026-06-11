@@ -198,6 +198,86 @@ describe('buildLauncherAttachUrl', () => {
     expect(new URL(out1).searchParams.get('url')).toBe(TUNNEL);
     expect(new URL(out2).searchParams.get('url')).toBe('https://other.trycloudflare.com');
   });
+
+  // ---------------------------------------------------------------------------
+  // opts.name — app name param (#498)
+  // ---------------------------------------------------------------------------
+
+  it('opts.name is added as &name= when non-blank', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { name: 'my-app' });
+    const parsed = new URL(out);
+    expect(parsed.searchParams.get('name')).toBe('my-app');
+  });
+
+  it('opts.name is percent-encoded', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { name: 'My Mini App' });
+    expect(out).toContain('name=My%20Mini%20App');
+    expect(new URL(out).searchParams.get('name')).toBe('My Mini App');
+  });
+
+  it('opts.name with scope-stripped app name', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { name: 'sdk-example' });
+    const parsed = new URL(out);
+    expect(parsed.searchParams.get('name')).toBe('sdk-example');
+  });
+
+  it('opts.name blank / whitespace-only → no name= added', () => {
+    expect(
+      new URL(buildLauncherAttachUrl(TUNNEL, WSS, undefined, { name: '' })).searchParams.has(
+        'name',
+      ),
+    ).toBe(false);
+    expect(
+      new URL(buildLauncherAttachUrl(TUNNEL, WSS, undefined, { name: '   ' })).searchParams.has(
+        'name',
+      ),
+    ).toBe(false);
+  });
+
+  it('opts undefined → no name= and no icon= added', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS);
+    const parsed = new URL(out);
+    expect(parsed.searchParams.has('name')).toBe(false);
+    expect(parsed.searchParams.has('icon')).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // opts.icon — icon URL param (#498)
+  // ---------------------------------------------------------------------------
+
+  it('opts.icon with https URL → added as &icon=', () => {
+    const icon = 'https://example.com/icon.png';
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { icon });
+    expect(new URL(out).searchParams.get('icon')).toBe(icon);
+  });
+
+  it('opts.icon with non-https URL → not added', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, {
+      icon: 'http://example.com/icon.png',
+    });
+    expect(new URL(out).searchParams.has('icon')).toBe(false);
+  });
+
+  it('opts.icon with data: URL → not added', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, {
+      icon: 'data:image/png;base64,abc',
+    });
+    expect(new URL(out).searchParams.has('icon')).toBe(false);
+  });
+
+  it('opts.icon with invalid URL → not added', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { icon: 'not-a-url' });
+    expect(new URL(out).searchParams.has('icon')).toBe(false);
+  });
+
+  it('name and icon can be combined with totpCode', () => {
+    const icon = 'https://example.com/icon.png';
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, '123456', { name: 'my-app', icon });
+    const parsed = new URL(out);
+    expect(parsed.searchParams.get('at')).toBe('123456');
+    expect(parsed.searchParams.get('name')).toBe('my-app');
+    expect(parsed.searchParams.get('icon')).toBe(icon);
+  });
 });
 
 // ---------------------------------------------------------------------------

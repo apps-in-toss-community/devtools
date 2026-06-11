@@ -8,6 +8,26 @@
 const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
 
 /**
+ * Optional metadata that enriches the launcher deep-link (#498).
+ *
+ * These fields are added as query params so the launcher PWA can display
+ * a recognizable identity (name, icon) without the user having to configure
+ * anything extra.
+ */
+export interface LauncherAttachUrlOpts {
+  /**
+   * Human-readable app name shown in the partner nav bar (`name=` param).
+   * Blank / whitespace-only values are not added.
+   */
+  name?: string;
+  /**
+   * Absolute `https://` icon URL for the partner nav bar icon slot (`icon=`
+   * param). Non-https or falsy values are not added.
+   */
+  icon?: string;
+}
+
+/**
  * Builds a launcher PWA deep-link for env-2 MCP-attach (issue #378).
  *
  * The launcher at {@link LAUNCHER_URL} renders tunnelUrl in a full-viewport
@@ -15,6 +35,11 @@ const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
  * framed page's in-app debug gate (Layer C) is satisfied and a Chii target.js
  * is injected. `&at=<totpCode>` is added only when a code is provided (same
  * conditional as {@link buildDeepLinkAttachUrl}).
+ *
+ * When `opts.name` is given (non-blank), it is added as `&name=` so the
+ * launcher partner bar shows the app name instead of the generic default (#498).
+ * When `opts.icon` is an absolute https:// URL, it is added as `&icon=` so the
+ * launcher can render an icon next to the title (#498).
  *
  * Unlike `buildDeepLinkAttachUrl` (which splices onto a non-special scheme URL
  * via raw string manipulation), this function uses WHATWG `encodeURIComponent`
@@ -30,19 +55,36 @@ const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
  * @param totpCode - Optional current TOTP code (6 digits). When provided, it
  *   is appended as `at=<totpCode>`. Must be computed at call time — it rotates
  *   every 30 s. Omit when TOTP is disabled.
+ * @param opts - Optional app identity hints: `name` and `icon` (#498).
  * @returns The launcher deep-link URL with `?url=<enc>&debug=1&relay=<enc>
- *   [&at=<code>]` params.
+ *   [&at=<code>][&name=<enc>][&icon=<enc>]` params.
  */
 export function buildLauncherAttachUrl(
   tunnelUrl: string,
   wssUrl: string,
   totpCode?: string,
+  opts?: LauncherAttachUrlOpts,
 ): string {
   let url =
     `${LAUNCHER_URL}?url=${encodeURIComponent(tunnelUrl)}` +
     `&debug=1&relay=${encodeURIComponent(wssUrl)}`;
   if (totpCode !== undefined && totpCode !== '') {
     url += `&at=${encodeURIComponent(totpCode)}`;
+  }
+  // App identity hints (#498): add non-blank name and valid https icon.
+  if (opts?.name !== undefined && opts.name.trim() !== '') {
+    url += `&name=${encodeURIComponent(opts.name.trim())}`;
+  }
+  if (opts?.icon !== undefined) {
+    let iconParsed: URL;
+    try {
+      iconParsed = new URL(opts.icon);
+    } catch {
+      iconParsed = null as unknown as URL;
+    }
+    if (iconParsed?.protocol === 'https:') {
+      url += `&icon=${encodeURIComponent(opts.icon)}`;
+    }
   }
   return url;
 }

@@ -39,9 +39,31 @@ export interface PrintTunnelBannerOptions {
    * same single scan opens screen preview *and* CDP debugging.
    */
   relayWssUrl?: string;
+  /**
+   * Human-readable app name to embed as `name=` in the launcher deep-link (#498).
+   * When provided (non-blank), the launcher partner bar shows this name instead of
+   * the generic default.
+   */
+  name?: string;
 }
 
 const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
+
+/**
+ * Options for {@link buildLauncherDeepLink}.
+ */
+export interface BuildLauncherDeepLinkOptions {
+  /**
+   * `wss://` relay URL for env-2 CDP wiring. When present the deep-link carries
+   * `&debug=1&relay=<wss>`.
+   */
+  relayWssUrl?: string;
+  /**
+   * Human-readable app name shown in the partner nav bar (`name=` param, #498).
+   * Blank / whitespace-only values are not added.
+   */
+  name?: string;
+}
 
 /**
  * Build the deep-link URL that QR codes encode: when the launcher PWA is
@@ -51,15 +73,34 @@ const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
  * the installed PWA, so a raw tunnel URL opened in a normal browser tab would
  * land on a "please install" screen.
  *
- * When `relayWssUrl` is given (env-2 CDP wiring), the deep-link also carries
+ * When `opts.relayWssUrl` is given (env-2 CDP wiring), the deep-link also carries
  * `&debug=1&relay=<wss>`; the launcher folds those onto the framed tunnel URL so
  * the in-app debug gate's Layer C (`debug=1` opt-in + `relay=<wss>`) is met and
  * a Chii target.js is injected into the live view.
+ *
+ * When `opts.name` is given (non-blank), it is added as `&name=` so the launcher
+ * partner bar shows the app name instead of the generic default (#498).
+ *
+ * Back-compat: the second argument may also be a plain string (`relayWssUrl`)
+ * for callers that haven't migrated to the options object yet.
  */
-export function buildLauncherDeepLink(tunnelUrl: string, relayWssUrl?: string): string {
+export function buildLauncherDeepLink(
+  tunnelUrl: string,
+  optsOrRelay?: string | BuildLauncherDeepLinkOptions,
+): string {
+  // Normalise the overloaded second argument.
+  const opts: BuildLauncherDeepLinkOptions =
+    typeof optsOrRelay === 'string' ? { relayWssUrl: optsOrRelay } : (optsOrRelay ?? {});
+
   const base = `${LAUNCHER_URL}?url=${encodeURIComponent(tunnelUrl)}`;
-  if (!relayWssUrl) return base;
-  return `${base}&debug=1&relay=${encodeURIComponent(relayWssUrl)}`;
+  let url = base;
+  if (opts.relayWssUrl) {
+    url += `&debug=1&relay=${encodeURIComponent(opts.relayWssUrl)}`;
+  }
+  if (opts.name !== undefined && opts.name.trim() !== '') {
+    url += `&name=${encodeURIComponent(opts.name.trim())}`;
+  }
+  return url;
 }
 
 /**
@@ -73,7 +114,7 @@ export async function printTunnelBanner(
   opts: PrintTunnelBannerOptions = {},
 ): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const deepLink = buildLauncherDeepLink(url, opts.relayWssUrl);
+  const deepLink = buildLauncherDeepLink(url, { relayWssUrl: opts.relayWssUrl, name: opts.name });
   const lines: string[] = [
     '',
     '  ┌─ @ait-co/devtools · live tunnel ────────────────────────────',
@@ -150,6 +191,12 @@ export interface StartTunnelDashboardOptions {
   shouldOpen?: () => boolean;
   /** Sink for the one-line "opened in browser" note (default: `console.log`). Injected for testing. */
   log?: (msg: string) => void;
+  /**
+   * Human-readable app name to embed as `name=` in the launcher deep-link (#498).
+   * When provided (non-blank), the launcher partner bar shows this name instead of
+   * the generic default.
+   */
+  name?: string;
 }
 
 /**
@@ -208,7 +255,9 @@ export async function startTunnelDashboard(
   const getDashboardState = () => {
     const secret = process.env.AIT_DEBUG_TOTP_SECRET;
     const totpCode = secret ? generateTotp(secret, Date.now()) : undefined;
-    const attachUrl = buildLauncherAttachUrl(opts.tunnelUrl, opts.relayWssUrl, totpCode);
+    const attachUrl = buildLauncherAttachUrl(opts.tunnelUrl, opts.relayWssUrl, totpCode, {
+      name: opts.name,
+    });
     // pages: null — env 2(unplugin)는 데몬이 아니라 vite 플러그인 안이라
     // startChiiRelay 핸들이 connected target을 노출하지 않는다. 라이브 page 목록을
     // 알 수 없으므로 거짓 빈 목록 대신 "연결된 Pages" 섹션 자체를 숨긴다(#411).
