@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.76
+
+### Patch Changes
+
+- ebc9d9b: `in-app/auto` self-gating entry 추가 — `import '@ait-co/devtools/in-app/auto'` 한 줄로 on-device attach + SDK 브리지 설치 (#514)
+
 ## 0.1.75
 
 ### Patch Changes
