@@ -12,7 +12,7 @@
  * i18n: 대부분의 테스트는 `Accept-Language: ko` 헤더를 명시해 한국어 응답을
  * 얻는다. Accept-Language 없이 fetch하면 기본값 'en'이 적용된다.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { type DashboardState, startQrHttpServer } from '../qr-http-server.js';
 
 // ---------------------------------------------------------------------------
