@@ -454,6 +454,11 @@ export function Launcher(): React.JSX.Element {
     window.addEventListener('resize', post);
     window.addEventListener('orientationchange', post);
     window.visualViewport?.addEventListener('resize', post);
+    // Post once per (re-)run: the resize event that flips the letterbox verdict
+    // runs the OLD closure (stale letterboxDetected) — when the verdict change
+    // re-runs this effect, this post delivers the corrected insets. No-op
+    // before the frame loads; the receiving bridge dedupes identical values.
+    post();
     return () => {
       window.removeEventListener('resize', post);
       window.removeEventListener('orientationchange', post);
