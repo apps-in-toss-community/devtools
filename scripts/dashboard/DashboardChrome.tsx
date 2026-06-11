@@ -34,6 +34,7 @@ interface DashboardChromeProps {
     title: string;
     tunnelSection: string;
     attachSection: string;
+    inspectorSection: string;
     updatedPrefix: string;
     /** Lang switcher labels — "한국어" / "English". */
     langKo: string;
@@ -96,6 +97,14 @@ img.qr {
 }
 .copy-btn:hover { background: #30363d; }
 .hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
+.inspector-link {
+  display: inline-block; margin-top: 0.5rem;
+  padding: 0.45rem 1rem; border-radius: 6px;
+  background: #1f6feb; color: #fff; font-size: 0.85rem; font-weight: 600;
+  text-decoration: none; text-align: center;
+}
+.inspector-link:hover { background: #388bfd; }
+.inspector-hint { display: inline-block; margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.45; }
 ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.35rem; font-size: 0.85rem; line-height: 1.5; }
 li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
@@ -132,6 +141,14 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
           <h2>{strings.attachSection}</h2>
           {/* __ATTACH_SECTION__ filled at runtime (img+url-box or hint) */}
           <div id="attach-section">__ATTACH_SECTION__</div>
+        </section>
+
+        <hr />
+
+        <section id="inspector-section">
+          <h2>{strings.inspectorSection}</h2>
+          {/* __INSPECTOR_SECTION__ filled at runtime (link or waiting hint, #503) */}
+          {'__INSPECTOR_SECTION__'}
         </section>
 
         {/* __PAGES_SECTION__ filled at runtime — empty string when pages===null */}

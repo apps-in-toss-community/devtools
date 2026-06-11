@@ -9,12 +9,13 @@
  * string replacement of __PLACEHOLDER__ tokens.
  *
  * Token map (dashboard chrome):
- *   __TUNNEL_CLASS__    CSS class: "status-up" | "status-down"
- *   __TUNNEL_STATUS__   localised tunnel status label
- *   __ATTACH_SECTION__  QR img+url-box HTML, or hint text
- *   __PAGES_SECTION__   pages <section> block, or empty string
- *   __NOW__             ISO timestamp of current render
- *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)
+ *   __TUNNEL_CLASS__       CSS class: "status-up" | "status-down"
+ *   __TUNNEL_STATUS__      localised tunnel status label
+ *   __ATTACH_SECTION__     QR img+url-box HTML, or hint text
+ *   __INSPECTOR_SECTION__  inspector link <a> or waiting hint <span> (#503)
+ *   __PAGES_SECTION__      pages <section> block, or empty string
+ *   __NOW__                ISO timestamp of current render
+ *   __LANG_SWITCHER__      ko/en toggle links (href preserves existing query params)
  *
  * Token map (attach chrome — precompiled per locale × copy family, #468):
  *   __QR_DATA_URL__     base64 data URL for the QR image
@@ -78,6 +79,14 @@ img.qr {
 }
 .copy-btn:hover { background: #30363d; }
 .hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
+.inspector-link {
+  display: inline-block; margin-top: 0.5rem;
+  padding: 0.45rem 1rem; border-radius: 6px;
+  background: #1f6feb; color: #fff; font-size: 0.85rem; font-weight: 600;
+  text-decoration: none; text-align: center;
+}
+.inspector-link:hover { background: #388bfd; }
+.inspector-hint { display: inline-block; margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.45; }
 ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.35rem; font-size: 0.85rem; line-height: 1.5; }
 li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
@@ -87,7 +96,7 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
 .lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
 .lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
-</style></head><body><h1>AIT 디버그 Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">마지막 갱신: __NOW__</p><section><h2>터널 상태</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
+</style></head><body><h1>AIT 디버그 Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">마지막 갱신: __NOW__</p><section><h2>터널 상태</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section><hr/><section id="inspector-section"><h2>인스펙터</h2>__INSPECTOR_SECTION__</section>__PAGES_SECTION__</body></html>`;
 
 export const attachChromeHtmlKoSandbox =
 `<!DOCTYPE html>
@@ -238,6 +247,14 @@ img.qr {
 }
 .copy-btn:hover { background: #30363d; }
 .hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
+.inspector-link {
+  display: inline-block; margin-top: 0.5rem;
+  padding: 0.45rem 1rem; border-radius: 6px;
+  background: #1f6feb; color: #fff; font-size: 0.85rem; font-weight: 600;
+  text-decoration: none; text-align: center;
+}
+.inspector-link:hover { background: #388bfd; }
+.inspector-hint { display: inline-block; margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.45; }
 ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.35rem; font-size: 0.85rem; line-height: 1.5; }
 li.empty { opacity: 0.4; list-style: none; padding-left: 0; }
@@ -247,7 +264,7 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0; }
 .lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
 .lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
-</style></head><body><h1>AIT Debug Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">Last updated: __NOW__</p><section><h2>Tunnel status</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section>__PAGES_SECTION__</body></html>`;
+</style></head><body><h1>AIT Debug Dashboard</h1>__LANG_SWITCHER__<p class="updated" id="updated">Last updated: __NOW__</p><section><h2>Tunnel status</h2><span class="status __TUNNEL_CLASS__" id="tunnel-status">__TUNNEL_STATUS__</span></section><hr/><section><h2>Attach QR</h2><div id="attach-section">__ATTACH_SECTION__</div></section><hr/><section id="inspector-section"><h2>Inspector</h2>__INSPECTOR_SECTION__</section>__PAGES_SECTION__</body></html>`;
 
 export const attachChromeHtmlEnSandbox =
 `<!DOCTYPE html>

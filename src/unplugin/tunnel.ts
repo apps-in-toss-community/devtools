@@ -264,10 +264,14 @@ export async function startTunnelDashboard(
     // env 3/4(debug-server.ts)는 router.active.listTargets()로 실제 목록을 채운다.
     // mode: 'relay-mobile' — 이 대시보드는 항상 환경 2(AITC Sandbox PWA) 전용이므로
     // /attach 카피가 launcher PWA 절차(sandbox family)로 분기된다(#468).
+    // inspectorUrl: null — env 2에서는 unplugin relay가 connected target ID를 노출하지
+    // 않아 buildChiiInspectorUrl에 필요한 targetId를 알 수 없다. target attach 후
+    // target ID가 필요하므로 env 3/4에서만 non-null이 된다(#503).
     return {
       tunnel: { up: true, wssUrl: opts.relayWssUrl },
       pages: null,
       attachUrl,
+      inspectorUrl: null,
       mode: 'relay-mobile' as const,
     };
   };

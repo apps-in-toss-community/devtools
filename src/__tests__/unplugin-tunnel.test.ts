@@ -289,6 +289,28 @@ describe('startTunnelDashboard', () => {
     }
   });
 
+  it('env 2 dashboard: 인스펙터 URL은 null — target ID 불가 → 대기 hint 표시 (#503)', async () => {
+    // env 2(unplugin tunnel)에서 getDashboardState는 pages: null 이고
+    // inspectorUrl: null 이다 — unplugin relay는 connected target ID를 노출하지 않아
+    // buildChiiInspectorUrl에 필요한 targetId를 알 수 없다. 대시보드는 링크 없이
+    // 대기 hint를 표시해야 한다.
+    const handle = await startTunnelDashboard({
+      tunnelUrl: TUNNEL_URL,
+      relayWssUrl: RELAY_WSS,
+      shouldOpen: () => true,
+      log: () => {},
+    });
+    if (!handle) throw new Error('dashboard did not start');
+    try {
+      const html = await (await fetch(handle.url, { headers: { 'Accept-Language': 'ko' } })).text();
+      // 링크 없이 대기 힌트 노출
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('mints a FRESH 6-digit TOTP folded into at= on each getDashboardState call (no stale bake-in)', async () => {
     // Capture the dashboard state by reading the served SSE/HTML attachUrl across
     // two different time windows. Easiest deterministic probe: hit /qr.png twice

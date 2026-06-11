@@ -204,6 +204,150 @@ describe('startQrHttpServer — GET / dashboard HTML', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 인스펙터 링크 — inspectorUrl 있으면 <a>, 없으면 hint (#503)
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
+  it('inspectorUrl 있으면 "인스펙터 열기" 링크(ko)가 target="_blank"로 렌더된다', async () => {
+    const INSPECTOR_URL =
+      'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1%26at%3D123456&panel=console';
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
+      pages: [{ id: 'page-1', url: 'https://example.com/app' }],
+      attachUrl: null,
+      inspectorUrl: INSPECTOR_URL,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // "인스펙터 열기" 링크 존재 확인
+      expect(html).toContain('인스펙터 열기');
+      // inspector-link anchor로 렌더됨
+      expect(html).toContain('class="inspector-link"');
+      expect(html).toContain('target="_blank"');
+      // URL이 href에 포함됨 (HTML-escaped)
+      expect(html).toContain('chii_app.html');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('inspectorUrl 있으면 "Open inspector" 링크(en)가 렌더된다', async () => {
+    const INSPECTOR_URL =
+      'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1&panel=console';
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
+      pages: [{ id: 'page-1', url: 'https://example.com/app' }],
+      attachUrl: null,
+      inspectorUrl: INSPECTOR_URL,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'en' } })
+      ).text();
+      expect(html).toContain('Open inspector');
+      expect(html).toContain('class="inspector-link"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('inspectorUrl null 이면 대기 hint가 표시된다 (미첨부 상태)', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
+      pages: [],
+      attachUrl: null,
+      inspectorUrl: null,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // 링크 없이 대기 힌트가 표시돼야 함
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+      expect(html).toContain('attach 후 표시');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('inspectorUrl 미전달(undefined) 이면 대기 hint가 표시된다', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+      // inspectorUrl 생략 → undefined → null 처리
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SSE payload에 inspectorUrl 필드가 포함된다', async () => {
+    const INSPECTOR_URL = 'http://127.0.0.1:9100/front_end/chii_app.html?ws=fake&panel=console';
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
+      pages: [{ id: 'p1', url: 'https://app.example.com' }],
+      attachUrl: null,
+      inspectorUrl: INSPECTOR_URL,
+    }));
+    try {
+      const frame = await readFirstSseFrame(`http://127.0.0.1:${srv.port}/events`);
+      expect(frame).toHaveProperty('inspectorUrl', INSPECTOR_URL);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SSE payload: inspectorUrl null 이면 null로 전달된다', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+      inspectorUrl: null,
+    }));
+    try {
+      const frame = await readFirstSseFrame(`http://127.0.0.1:${srv.port}/events`);
+      expect(frame).toHaveProperty('inspectorUrl', null);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SECRET: inspectorUrl의 host 값이 SSE script 바깥 별도 로그 경로에 노출되지 않는다', async () => {
+    // 인스펙터 URL에는 relay host + TOTP at= 코드가 담길 수 있다.
+    // 대시보드 HTML anchor href에 노출되는 건 의도된 transport이지만,
+    // tunnel wssUrl host처럼 별도 평문 출력은 없어야 한다 (#503 SECRET-HANDLING).
+    const SECRET_HOST = 'relay-secret-host.trycloudflare.com';
+    const INSPECTOR_URL = `https://${SECRET_HOST}/front_end/chii_app.html?wss=fake`;
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: `wss://${SECRET_HOST}` },
+      pages: [{ id: 'p1', url: 'https://app.example.com' }],
+      attachUrl: null,
+      inspectorUrl: INSPECTOR_URL,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // inspectorUrl은 anchor href 안에만 있어야 한다 — tunnel wssUrl처럼
+      // 별도 평문 텍스트 노드로 드러나면 안 된다.
+      // (href 안의 노출은 의도된 transport이므로 SECRET_HOST 포함 자체를 검증하지 않음)
+      // 대신 wssUrl host는 HTML에 없어야 한다 (기존 invariant 유지).
+      expect(html).not.toContain('wss://relay-secret-host.trycloudflare.com');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // "연결된 Pages" 섹션 — pages: null 이면 숨김 (#411 결함 1)
 //
 // env 3/4(debug-server)는 pages: Array 라이브 목록을 채워 섹션을 보여주고,

@@ -235,6 +235,11 @@ export const ko = {
   'dashboard.url.copy': '복사',
   'dashboard.url.copied': '복사됨',
 
+  // qr-http-server — inspector open link (#503)
+  'dashboard.inspector.section': '인스펙터',
+  'dashboard.inspector.open': '인스펙터 열기',
+  'dashboard.inspector.waiting': '인스펙터 URL 대기 중 (페이지 attach 후 표시됩니다)',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // 카피는 세션 mode별로 sandbox(환경 2) / intoss(환경 3·4) family로 분기한다 (#468).
   'attach.title': 'AIT 디버그 세션 — QR 스캔',
