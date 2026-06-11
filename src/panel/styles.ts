@@ -22,21 +22,22 @@ export const VIEWPORT_STATUS_BAR_HEIGHT = 50;
 
 // ---------------------------------------------------------------------------
 // Navbar metrics — env-1 panel ground truth (#510 parity guard).
-// Consumed by viewport.ts (panel rendering) and tested against the launcher
-// (env-2) constants in e2e/fixture/launcher/navbar.vitest.ts.
+// Interpolated into PANEL_STYLES below (single source — the CSS rules cannot
+// drift from these values) and consumed by viewport.ts (back glyph). Tested
+// against the launcher (env-2) constants in e2e/fixture/launcher/navbar.vitest.ts.
 // ---------------------------------------------------------------------------
 
-/** `.ait-navbar-icon { width: 22px; height: 22px; }` */
+/** `.ait-navbar-icon` width/height (px). */
 export const PANEL_NAVBAR_ICON_SIZE_PX = 22;
-/** `.ait-navbar-title { gap: 6px; }` */
+/** `.ait-navbar-title` gap (px). */
 export const PANEL_NAVBAR_TITLE_GAP_PX = 6;
-/** `.ait-navbar-title { margin-left: 4px; }` */
+/** `.ait-navbar-title` margin-left (px). */
 export const PANEL_NAVBAR_TITLE_MARGIN_LEFT_PX = 4;
-/** `.ait-navbar-back { font-size: 24px; }` */
+/** `.ait-navbar-back` font-size (px). */
 export const PANEL_NAVBAR_BACK_FONT_SIZE_PX = 24;
-/** `.ait-navbar-back { padding: 0 8px; }` */
+/** `.ait-navbar-back` padding. */
 export const PANEL_NAVBAR_BACK_PADDING = '0 8px';
-/** Back glyph used in `.ait-navbar-back` button (env-1 panel, viewport.ts). */
+/** Back glyph rendered in the `.ait-navbar-back` button (viewport.ts). */
 export const PANEL_NAVBAR_BACK_GLYPH = '‹';
 
 export const PANEL_STYLES = /* css */ `
@@ -536,14 +537,14 @@ export const PANEL_STYLES = /* css */ `
   .ait-navbar-title {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: ${PANEL_NAVBAR_TITLE_GAP_PX}px;
     flex: 1;
-    margin-left: 4px;
+    margin-left: ${PANEL_NAVBAR_TITLE_MARGIN_LEFT_PX}px;
     overflow: hidden;
   }
   .ait-navbar-icon {
-    width: 22px;
-    height: 22px;
+    width: ${PANEL_NAVBAR_ICON_SIZE_PX}px;
+    height: ${PANEL_NAVBAR_ICON_SIZE_PX}px;
     border-radius: 6px;
     background: linear-gradient(135deg, #3182f6, #7c3aed);
     flex-shrink: 0;
@@ -574,7 +575,7 @@ export const PANEL_STYLES = /* css */ `
     cursor: pointer;
   }
   .ait-navbar-btn:hover { color: #3182f6; }
-  .ait-navbar-back { padding: 0 8px; font-size: 24px; }
+  .ait-navbar-back { padding: ${PANEL_NAVBAR_BACK_PADDING}; font-size: ${PANEL_NAVBAR_BACK_FONT_SIZE_PX}px; }
   .ait-navbar-divider { width: 1px; height: 16px; background: rgba(0, 0, 0, 0.15); }
 
   /* Game variant: 투명 배경, 우측 actions만 — 풀스크린 게임 캔버스를 가리지 않는다 */
