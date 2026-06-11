@@ -33,13 +33,23 @@
  * time, before any React tree mounts). Consumers who already manage their own
  * `__DEBUG_BUILD__` guard can keep using `@ait-co/devtools/in-app` directly.
  *
- * DEV detection: `import.meta.env.DEV` is resolved by the consumer's bundler
- * at their build time (Vite/Webpack/Rspack inject the value), not at this
- * package's publish time — same pattern used by the polyfill's `auto` entry.
- * When the consumer is NOT running a bundler that injects `import.meta.env`
- * (e.g. bare Node or a test runner that leaves the raw identifiers in place),
- * the `typeof` guard makes it safe: a missing `import.meta.env.DEV` resolves
- * to `undefined`, which is falsy — the DEV path is simply skipped.
+ * DEV detection uses two complementary signals:
+ *  1. `import.meta.env.DEV` — resolved by the consumer's bundler at their
+ *     build time (Vite/Webpack/Rspack inject the value via top-level source
+ *     transforms). Works when the consumer's source code (not node_modules)
+ *     is processed — same pattern used by the polyfill's `auto` entry.
+ *  2. `process.env.NODE_ENV === 'development'` — resolved by the consumer's
+ *     bundler via esbuild `define` (Vite dep-prebundle) or DefinePlugin
+ *     (webpack/Rspack). This token IS substituted in dep code inside
+ *     node_modules (how React's own dev/prod branching works), fixing the
+ *     env-1 regression where signal (1) was never injected into dep code
+ *     (sdk-example#180 / issue #520).
+ *     IMPORTANT: the `process.env.NODE_ENV` token must be written verbatim
+ *     — bundler define substitution is a textual token match. A `typeof
+ *     process` guard would survive substitution as-is and always evaluate to
+ *     `false` in a browser, killing the comparison. Instead we rely on
+ *     try/catch: if `process` is not defined (raw ESM in a browser without
+ *     bundler substitution) a ReferenceError is caught → fail-closed (dormant).
  */
 
 import { maybeAttach } from './attach.js';
@@ -91,23 +101,63 @@ declare global {
 // ---------------------------------------------------------------------------
 
 /**
+ * Detects whether the current build is a DEV build by consulting two signals.
+ *
+ * Signal A — `import.meta.env.DEV`:
+ *   Substituted by Vite/Webpack/Rspack in the consumer's own source files.
+ *   NOT substituted in node_modules dep code (esbuild prebundle does not
+ *   apply Vite's define pass to deps) — this was the root cause of #520.
+ *
+ * Signal B — `process.env.NODE_ENV === 'development'`:
+ *   Substituted by esbuild's dep-prebundle define pass (Vite) and by
+ *   DefinePlugin (webpack/Rspack) even inside node_modules. This is how
+ *   React itself gates its dev-only code paths. Writing the token verbatim
+ *   ensures textual substitution works; a `typeof process` guard would not
+ *   be substituted and would evaluate to `'undefined'` in the browser,
+ *   killing the comparison. A try/catch catches the ReferenceError when
+ *   `process` is genuinely absent (raw ESM without bundler, e.g. direct
+ *   browser import or test runners that leave identifiers in place) →
+ *   fail-closed (dormant).
+ *
+ * Exported for unit tests — pass an explicit `isDev` override to bypass
+ * the environment detection in controlled test scenarios.
+ */
+export function detectDevSignal(): boolean {
+  // Signal A: import.meta.env.DEV (consumer source / bundler top-level pass)
+  try {
+    const metaEnv = (import.meta as unknown as { env?: { DEV?: unknown } }).env;
+    if (metaEnv?.DEV === true) return true;
+  } catch {
+    // Swallow — some environments throw on import.meta access.
+  }
+  // Signal B: process.env.NODE_ENV (dep-prebundle define / DefinePlugin)
+  // Token written verbatim — bundler define substitution is a textual match.
+  // A typeof guard must NOT be added: it would survive substitution unchanged
+  // and evaluate to false in a browser, killing the comparison.
+  try {
+    if (process.env.NODE_ENV === 'development') return true;
+  } catch {
+    // ReferenceError: process is not defined — raw ESM without bundler
+    // substitution → fail-closed (dormant). Do not surface the error.
+  }
+  return false;
+}
+
+/**
  * Pure predicate for the self-gate. Exported for unit tests.
  *
- * @param isDev - Whether the consumer's bundler folded `import.meta.env.DEV`
- *   to `true`. Default: reads from `import.meta.env.DEV` at call time, which
- *   is what the consumer's bundler replaces with a literal at build time.
+ * @param isDev - Whether the consumer's bundler signals a DEV build.
+ *   Default: calls `detectDevSignal()` which consults both
+ *   `import.meta.env.DEV` (consumer source pass) and
+ *   `process.env.NODE_ENV === 'development'` (dep prebundle pass, fixing
+ *   the env-1 regression in issue #520).
  *   Pass an explicit value in tests to control the DEV signal without
  *   depending on the Vite/vitest build environment.
  * @param searchStr - URL search string to inspect. Defaults to
  *   `window.location.search` when called in a browser context.
  */
 export function shouldActivate(
-  isDev: boolean = ((): boolean => {
-    const metaEnv = (import.meta as unknown as Record<string, unknown>)?.env as
-      | Record<string, unknown>
-      | undefined;
-    return metaEnv?.DEV === true;
-  })(),
+  isDev: boolean = detectDevSignal(),
   searchStr: string = typeof window !== 'undefined' ? window.location.search : '',
 ): boolean {
   if (isDev) return true;
