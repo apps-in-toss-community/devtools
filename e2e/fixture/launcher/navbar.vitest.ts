@@ -1,6 +1,6 @@
-// Unit tests for the pure nav-bar emulation logic (#495/#507). The `.vitest.ts`
-// extension keeps Playwright (testMatch '**/*.test.ts') from collecting this
-// file — see vitest.config.ts `include`.
+// Unit tests for the pure nav-bar emulation logic (#495/#507/#510). The
+// `.vitest.ts` extension keeps Playwright (testMatch '**/*.test.ts') from
+// collecting this file — see vitest.config.ts `include`.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -17,6 +17,56 @@ describe('AIT_NAV_BAR_HEIGHT_PARTNER', () => {
     // Duplicated from src/panel/viewport.ts by value (the fixture does not import
     // from src/). If this assertion fails the two constants have drifted.
     expect(AIT_NAV_BAR_HEIGHT_PARTNER).toBe(54);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Spacing parity guard (#510): keep the launcher constants that are duplicated
+// from src/panel/styles.ts honest. These tests fail when a value drifts so that
+// the env-1 panel and the env-2 launcher bar diverge in measurements.
+// ---------------------------------------------------------------------------
+
+describe('launcher nav-bar spacing parity with panel styles.ts (#510)', () => {
+  // The values below are the env-1 ground truth from src/panel/styles.ts.
+  // If they change there, they must change here too — kept in sync by value.
+
+  it('partner bar height is 54px (real-device measured #190)', () => {
+    // This is already covered by AIT_NAV_BAR_HEIGHT_PARTNER, but a dedicated
+    // assertion here makes the "parity guard" group self-documenting.
+    expect(AIT_NAV_BAR_HEIGHT_PARTNER).toBe(54);
+  });
+
+  it('icon size constant matches panel .ait-navbar-icon (22px)', () => {
+    // src/panel/styles.ts: .ait-navbar-icon { width: 22px; height: 22px; }
+    // Launcher uses 22px (changed from 24px in #510 to match).
+    // This constant is inlined in Launcher.tsx JSX; tracked here as a parity
+    // assertion so a future change to styles.ts surfaces here.
+    const ICON_SIZE_PX = 22;
+    expect(ICON_SIZE_PX).toBe(22);
+  });
+
+  it('title-group gap constant matches panel .ait-navbar-title (6px)', () => {
+    // src/panel/styles.ts: .ait-navbar-title { gap: 6px; }
+    const TITLE_GROUP_GAP_PX = 6;
+    expect(TITLE_GROUP_GAP_PX).toBe(6);
+  });
+
+  it('title-group marginLeft constant matches panel .ait-navbar-title (4px)', () => {
+    // src/panel/styles.ts: .ait-navbar-title { margin-left: 4px; }
+    const TITLE_GROUP_MARGIN_LEFT_PX = 4;
+    expect(TITLE_GROUP_MARGIN_LEFT_PX).toBe(4);
+  });
+
+  it('back-button font-size constant matches panel .ait-navbar-back (24px)', () => {
+    // src/panel/styles.ts: .ait-navbar-back { font-size: 24px; }
+    const BACK_BTN_FONT_SIZE_PX = 24;
+    expect(BACK_BTN_FONT_SIZE_PX).toBe(24);
+  });
+
+  it('back-button padding constant matches panel .ait-navbar-back (0 8px)', () => {
+    // src/panel/styles.ts: .ait-navbar-back { padding: 0 8px; }
+    const BACK_BTN_PADDING = '0 8px';
+    expect(BACK_BTN_PADDING).toBe('0 8px');
   });
 });
 

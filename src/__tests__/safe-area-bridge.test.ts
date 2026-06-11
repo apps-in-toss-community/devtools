@@ -2,17 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SafeAreaInsets } from '../mock/navigation/index.js';
 import {
   applyForwardedSafeAreaInsets,
+  installNavigateBackBridge,
   installSafeAreaInsetsBridge,
+  isNavigateBackMessage,
+  NAVIGATE_BACK_MESSAGE_TYPE,
   parseSafeAreaInsetsMessage,
   SAFE_AREA_INSETS_MESSAGE_TYPE,
 } from '../mock/safe-area-bridge.js';
 import { aitState } from '../mock/state.js';
 
-// env-2 safe-area inset bridge (#484, slice 2). The launcher forwards its real
-// env() insets to the framed dev app via postMessage; this module is the receive
-// half. Tests cover (a) shape/range validation, (b) the apply path firing the
-// existing subscribe channel, and (c) the message-driven no-op guard that keeps
-// the panel preset authoritative in env 1 (desktop, no launcher → no message).
+// env-2 postMessage bridges (#484 safe-area-insets, #510 navigate-back).
+// The launcher posts to the framed dev app; this module is the receive half.
+// Tests cover (a) shape/range validation for insets, (b) the apply path firing
+// the existing subscribe channel, (c) the message-driven no-op guard that keeps
+// the panel preset authoritative in env 1 (desktop, no launcher → no message),
+// and (d) navigate-back message validation + history.back() dispatch.
 
 describe('safe-area-bridge', () => {
   beforeEach(() => {
@@ -167,6 +171,89 @@ describe('safe-area-bridge', () => {
       installSafeAreaInsetsBridge();
       const addSpy = vi.spyOn(window, 'addEventListener');
       installSafeAreaInsetsBridge();
+      expect(addSpy).not.toHaveBeenCalledWith('message', expect.anything());
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// navigate-back bridge (#510)
+// ---------------------------------------------------------------------------
+
+describe('navigate-back bridge (#510)', () => {
+  describe('isNavigateBackMessage', () => {
+    it('returns true for a well-formed ait:navigate-back message', () => {
+      expect(isNavigateBackMessage({ type: NAVIGATE_BACK_MESSAGE_TYPE })).toBe(true);
+    });
+
+    it('returns true even when extra (unknown) fields are present — forward compat', () => {
+      // Extra fields must be silently ignored; the type field alone gates behaviour.
+      expect(isNavigateBackMessage({ type: NAVIGATE_BACK_MESSAGE_TYPE, _extra: 42 })).toBe(true);
+    });
+
+    it('returns false for a different message type', () => {
+      expect(isNavigateBackMessage({ type: 'ait:safe-area-insets', insets: {} })).toBe(false);
+      expect(isNavigateBackMessage({ type: 'something-else' })).toBe(false);
+    });
+
+    it('returns false for non-object / null payloads', () => {
+      expect(isNavigateBackMessage(null)).toBe(false);
+      expect(isNavigateBackMessage(undefined)).toBe(false);
+      expect(isNavigateBackMessage('ait:navigate-back')).toBe(false);
+      expect(isNavigateBackMessage(42)).toBe(false);
+    });
+
+    it('returns false when type field is missing', () => {
+      expect(isNavigateBackMessage({})).toBe(false);
+      expect(isNavigateBackMessage({ data: NAVIGATE_BACK_MESSAGE_TYPE })).toBe(false);
+    });
+  });
+
+  describe('installNavigateBackBridge (window message listener)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('calls history.back() when a well-formed ait:navigate-back message arrives', () => {
+      const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+      installNavigateBackBridge();
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: NAVIGATE_BACK_MESSAGE_TYPE },
+        }),
+      );
+      expect(backSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT call history.back() for unrelated message types', () => {
+      const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+      installNavigateBackBridge();
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'ait:safe-area-insets', insets: { top: 0, bottom: 34, left: 0, right: 0 } },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: { type: 'random-event' },
+        }),
+      );
+      expect(backSpy).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call history.back() for a malformed payload (null, string, missing type)', () => {
+      const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+      installNavigateBackBridge();
+      for (const bad of [null, 'ait:navigate-back', 42, { data: NAVIGATE_BACK_MESSAGE_TYPE }]) {
+        window.dispatchEvent(new MessageEvent('message', { data: bad }));
+      }
+      expect(backSpy).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent — repeated install does not add duplicate listeners', () => {
+      installNavigateBackBridge();
+      const addSpy = vi.spyOn(window, 'addEventListener');
+      installNavigateBackBridge();
       expect(addSpy).not.toHaveBeenCalledWith('message', expect.anything());
     });
   });

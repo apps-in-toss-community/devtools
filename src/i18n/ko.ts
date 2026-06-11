@@ -306,8 +306,9 @@ export const ko = {
   'launcher.diagNo': '아니요',
   'launcher.letterboxDetected':
     '표시 영역이 {pt}pt 부족합니다 — iOS standalone letterbox로 보입니다. 런처를 홈 화면에서 제거 후 다시 설치하면 해소될 수 있어요.',
-  // Nav-bar emulation (#495)
+  // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': '미니앱',
+  'launcher.navbar.back': '뒤로가기',
   'launcher.navbar.menu': '메뉴',
   'launcher.navbar.close': '닫기',
   'launcher.navbar.menuRescan': '다시 스캔',

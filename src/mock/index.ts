@@ -5,12 +5,13 @@
  * 번들러 alias로 원본 대신 이 모듈이 resolve된다.
  */
 
-import { installSafeAreaInsetsBridge } from './safe-area-bridge.js';
+import { installBridges } from './safe-area-bridge.js';
 
-// env-2 safe-area inset bridge (#484): wire the launcher→framed-page postMessage
-// receiver at import time so any consumer that aliases the SDK to this mock gets
-// the real device insets forwarded automatically. No-op outside a browser.
-installSafeAreaInsetsBridge();
+// env-2 postMessage bridges (#484 safe-area-insets, #510 navigate-back): wire
+// both receiver halves at import time so any consumer that aliases the SDK to
+// this mock gets real device geometry and back-navigation bridged automatically.
+// No-op outside a browser.
+installBridges();
 
 // --- 광고 ---
 export { GoogleAdMob, loadFullScreenAd, showFullScreenAd, TossAds } from './ads/index.js';
@@ -114,10 +115,14 @@ export {
   type MockPresetState,
   matchesPreset,
 } from './presets.js';
-// --- env-2 safe-area inset bridge (#484) ---
+// --- env-2 postMessage bridges (#484 safe-area-insets, #510 navigate-back) ---
 export {
   applyForwardedSafeAreaInsets,
+  installBridges,
+  installNavigateBackBridge,
   installSafeAreaInsetsBridge,
+  isNavigateBackMessage,
+  NAVIGATE_BACK_MESSAGE_TYPE,
   parseSafeAreaInsetsMessage,
   SAFE_AREA_INSETS_MESSAGE_TYPE,
 } from './safe-area-bridge.js';
