@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SafeAreaInsets } from '../mock/navigation/index.js';
+import {
+  dispatchHostBackNavigation,
+  graniteEvent,
+  SafeAreaInsets,
+} from '../mock/navigation/index.js';
 import {
   applyForwardedSafeAreaInsets,
   installNavigateBackBridge,
@@ -214,7 +218,7 @@ describe('navigate-back bridge (#510)', () => {
       vi.restoreAllMocks();
     });
 
-    it('calls history.back() when a well-formed ait:navigate-back message arrives', () => {
+    it('backEvent 구독자가 없을 때: history.back() 호출됨', () => {
       const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
       installNavigateBackBridge();
       window.dispatchEvent(
@@ -256,5 +260,103 @@ describe('navigate-back bridge (#510)', () => {
       installNavigateBackBridge();
       expect(addSpy).not.toHaveBeenCalledWith('message', expect.anything());
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dispatchHostBackNavigation — backEvent 구독자 인지 (#510)
+// ---------------------------------------------------------------------------
+
+describe('dispatchHostBackNavigation (backEvent 구독자 인지)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('(a) backEvent 구독 후 navigate-back → onEvent 호출됨 + history.back 미호출', () => {
+    const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+    const onEvent = vi.fn();
+
+    const cleanup = graniteEvent.addEventListener('backEvent', { onEvent });
+
+    installNavigateBackBridge();
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { type: NAVIGATE_BACK_MESSAGE_TYPE } }),
+    );
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(backSpy).not.toHaveBeenCalled();
+
+    cleanup();
+  });
+
+  it('(b) cleanup 후 같은 메시지 → history.back 호출됨', () => {
+    const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+    const onEvent = vi.fn();
+
+    const cleanup = graniteEvent.addEventListener('backEvent', { onEvent });
+
+    // cleanup 전: intercept
+    installNavigateBackBridge();
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { type: NAVIGATE_BACK_MESSAGE_TYPE } }),
+    );
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(backSpy).not.toHaveBeenCalled();
+
+    // cleanup 후: fallback to history.back()
+    cleanup();
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { type: NAVIGATE_BACK_MESSAGE_TYPE } }),
+    );
+    expect(backSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('(c) cleanup 이중 호출해도 카운터 안 깨짐 — 남은 구독자가 여전히 intercept', () => {
+    const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+    const onEventA = vi.fn();
+    const onEventB = vi.fn();
+
+    const cleanupA = graniteEvent.addEventListener('backEvent', { onEvent: onEventA });
+    const cleanupB = graniteEvent.addEventListener('backEvent', { onEvent: onEventB });
+
+    // A를 두 번 cleanup — 이중 감소 방지로 카운터는 1(B만 남음)
+    cleanupA();
+    cleanupA(); // 이중 호출
+
+    installNavigateBackBridge();
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { type: NAVIGATE_BACK_MESSAGE_TYPE } }),
+    );
+
+    // B가 남아 있으므로 여전히 intercept
+    expect(onEventB).toHaveBeenCalledTimes(1);
+    expect(backSpy).not.toHaveBeenCalled();
+
+    cleanupB();
+
+    // B도 정리됐으므로 이제 history.back() fallback
+    window.dispatchEvent(
+      new MessageEvent('message', { data: { type: NAVIGATE_BACK_MESSAGE_TYPE } }),
+    );
+    expect(backSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatchHostBackNavigation — 구독자 없으면 history.back()', () => {
+    const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+    dispatchHostBackNavigation();
+    expect(backSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('dispatchHostBackNavigation — 구독자 있으면 __ait:backEvent 발사 + history.back 미호출', () => {
+    const backSpy = vi.spyOn(history, 'back').mockReturnValue(undefined);
+    const onEvent = vi.fn();
+    const cleanup = graniteEvent.addEventListener('backEvent', { onEvent });
+
+    dispatchHostBackNavigation();
+
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(backSpy).not.toHaveBeenCalled();
+
+    cleanup();
   });
 });

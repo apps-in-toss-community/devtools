@@ -19,6 +19,12 @@ import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
   extractLauncherSearch,
+  LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX,
+  LAUNCHER_NAVBAR_BACK_GLYPH,
+  LAUNCHER_NAVBAR_BACK_PADDING,
+  LAUNCHER_NAVBAR_ICON_SIZE_PX,
+  LAUNCHER_NAVBAR_TITLE_GAP_PX,
+  LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX,
   type NavBarType,
   parseNavBarType,
   resolveAppIcon,
@@ -546,10 +552,10 @@ function NavBar({
               border: 'none',
               color: '#e8eaed',
               cursor: 'pointer',
-              // Match panel env1 back-btn metrics: padding 0 8px, font-size 24px
-              // (src/panel/styles.ts .ait-navbar-back — kept in sync by value).
-              padding: '0 8px',
-              fontSize: '24px',
+              // Match panel env1 back-btn metrics: LAUNCHER_NAVBAR_BACK_PADDING / FONT_SIZE_PX
+              // (src/panel/styles.ts .ait-navbar-back — parity guard: navbar.vitest.ts).
+              padding: LAUNCHER_NAVBAR_BACK_PADDING,
+              fontSize: `${LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX}px`,
               lineHeight: 1,
               display: 'flex',
               alignItems: 'center',
@@ -557,18 +563,18 @@ function NavBar({
               flexShrink: 0,
             }}
           >
-            ‹
+            {LAUNCHER_NAVBAR_BACK_GLYPH}
           </button>
           {/* Icon + title group: gap/margin align with panel env1 measurements
-              (src/panel/styles.ts .ait-navbar-title — kept in sync by value). */}
+              (src/panel/styles.ts .ait-navbar-title — parity guard: navbar.vitest.ts). */}
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              // gap: 6px matches .ait-navbar-title gap in panel styles.ts
-              gap: '6px',
-              // margin-left: 4px matches .ait-navbar-title margin-left in styles.ts
-              marginLeft: '4px',
+              // gap/marginLeft driven by LAUNCHER_NAVBAR_TITLE_* constants
+              // (parity-guarded against panel styles.ts in navbar.vitest.ts).
+              gap: `${LAUNCHER_NAVBAR_TITLE_GAP_PX}px`,
+              marginLeft: `${LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX}px`,
               minWidth: 0,
               overflow: 'hidden',
             }}
@@ -580,9 +586,10 @@ function NavBar({
                 alt=""
                 onError={onIconError}
                 style={{
-                  // 22px matches .ait-navbar-icon width/height in panel styles.ts
-                  width: '22px',
-                  height: '22px',
+                  // LAUNCHER_NAVBAR_ICON_SIZE_PX matches .ait-navbar-icon in panel styles.ts
+                  // (parity-guarded in navbar.vitest.ts).
+                  width: `${LAUNCHER_NAVBAR_ICON_SIZE_PX}px`,
+                  height: `${LAUNCHER_NAVBAR_ICON_SIZE_PX}px`,
                   borderRadius: '6px',
                   flexShrink: 0,
                   objectFit: 'cover',

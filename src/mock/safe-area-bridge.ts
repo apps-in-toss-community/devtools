@@ -17,12 +17,13 @@
  *    corrected values.
  *
  * 2. `ait:navigate-back` (#510): the launcher partner bar's `←` button posts this
- *    command to the framed page. The receive half calls `history.back()` so the
- *    cross-origin back action is bridged without the launcher ever touching the
- *    framed page's history object directly. No data other than `type` is read from
- *    or written to the message — shape validation rejects anything that carries
- *    extra fields with the wrong type. Apps that do not install this mock (older
- *    builds) silently ignore the message (natural no-op).
+ *    command to the framed page. The receive half calls `dispatchHostBackNavigation()`
+ *    (navigation/index.ts): if backEvent subscribers are present, a `__ait:backEvent`
+ *    CustomEvent is dispatched (the mini-app intercept channel, matching the env-1
+ *    panel path); otherwise `history.back()` is called. No data other than `type` is
+ *    read from or written to the message — shape validation rejects anything that
+ *    carries extra fields with the wrong type. Apps that do not install this mock
+ *    (older builds) silently ignore the message (natural no-op).
  *
  * Origin policy: neither message type carries sensitive data, so we do NOT
  * restrict by origin — the launcher posts cross-origin from a *.trycloudflare.com
@@ -35,6 +36,7 @@
  * casing here.
  */
 
+import { dispatchHostBackNavigation } from './navigation/index.js';
 import { aitState } from './state.js';
 import type { SafeAreaInsets } from './types.js';
 
@@ -137,8 +139,13 @@ let navigateBackInstalled = false;
  * Install the window `message` listener that handles `ait:navigate-back`
  * commands (#510). When the launcher partner bar's `←` button is clicked it
  * posts `{ type: 'ait:navigate-back' }` to the framed dev app; this listener
- * calls `history.back()` so the cross-origin back action is bridged without the
- * launcher touching the framed page's history directly.
+ * calls `dispatchHostBackNavigation()` from the navigation module.
+ *
+ * Dispatch semantics: if there are any `graniteEvent.addEventListener('backEvent', …)`
+ * subscribers the CustomEvent `__ait:backEvent` is fired (same path as the env-1
+ * panel back button — the mini-app intercept channel). When there are no
+ * subscribers `history.back()` is called as the fallback. Back semantics are
+ * owned entirely by the navigation module; this bridge only delegates.
  *
  * Safe to call multiple times (idempotent) and a no-op outside a browser.
  * Installed together with the inset bridge by `installBridges()` so any consumer
@@ -152,7 +159,7 @@ export function installNavigateBackBridge(): void {
   navigateBackInstalled = true;
   window.addEventListener('message', (event: MessageEvent) => {
     if (isNavigateBackMessage(event.data)) {
-      history.back();
+      dispatchHostBackNavigation();
     }
   });
 }

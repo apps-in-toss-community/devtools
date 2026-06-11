@@ -3,10 +3,27 @@
 // collecting this file — see vitest.config.ts `include`.
 
 import { describe, expect, it } from 'vitest';
+// Ground truth: panel env-1 CSS constants exported from src/panel/styles.ts.
+// Any drift between the launcher constants (below) and the panel CSS values
+// (here) will be caught by the parity assertions in this file.
+import {
+  PANEL_NAVBAR_BACK_FONT_SIZE_PX,
+  PANEL_NAVBAR_BACK_GLYPH,
+  PANEL_NAVBAR_BACK_PADDING,
+  PANEL_NAVBAR_ICON_SIZE_PX,
+  PANEL_NAVBAR_TITLE_GAP_PX,
+  PANEL_NAVBAR_TITLE_MARGIN_LEFT_PX,
+} from '../../../src/panel/styles.js';
 import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
   extractLauncherSearch,
+  LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX,
+  LAUNCHER_NAVBAR_BACK_GLYPH,
+  LAUNCHER_NAVBAR_BACK_PADDING,
+  LAUNCHER_NAVBAR_ICON_SIZE_PX,
+  LAUNCHER_NAVBAR_TITLE_GAP_PX,
+  LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX,
   parseNavBarType,
   resolveAppIcon,
   resolveAppTitle,
@@ -21,52 +38,33 @@ describe('AIT_NAV_BAR_HEIGHT_PARTNER', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Spacing parity guard (#510): keep the launcher constants that are duplicated
-// from src/panel/styles.ts honest. These tests fail when a value drifts so that
-// the env-1 panel and the env-2 launcher bar diverge in measurements.
+// Spacing parity guard (#510): bidirectional — both sides import real constants,
+// so a change to either src/panel/styles.ts OR navbar.ts will break these tests.
 // ---------------------------------------------------------------------------
 
 describe('launcher nav-bar spacing parity with panel styles.ts (#510)', () => {
-  // The values below are the env-1 ground truth from src/panel/styles.ts.
-  // If they change there, they must change here too — kept in sync by value.
-
-  it('partner bar height is 54px (real-device measured #190)', () => {
-    // This is already covered by AIT_NAV_BAR_HEIGHT_PARTNER, but a dedicated
-    // assertion here makes the "parity guard" group self-documenting.
-    expect(AIT_NAV_BAR_HEIGHT_PARTNER).toBe(54);
+  it('icon size: launcher constant matches panel .ait-navbar-icon (width/height)', () => {
+    expect(LAUNCHER_NAVBAR_ICON_SIZE_PX).toBe(PANEL_NAVBAR_ICON_SIZE_PX);
   });
 
-  it('icon size constant matches panel .ait-navbar-icon (22px)', () => {
-    // src/panel/styles.ts: .ait-navbar-icon { width: 22px; height: 22px; }
-    // Launcher uses 22px (changed from 24px in #510 to match).
-    // This constant is inlined in Launcher.tsx JSX; tracked here as a parity
-    // assertion so a future change to styles.ts surfaces here.
-    const ICON_SIZE_PX = 22;
-    expect(ICON_SIZE_PX).toBe(22);
+  it('title-group gap: launcher constant matches panel .ait-navbar-title gap', () => {
+    expect(LAUNCHER_NAVBAR_TITLE_GAP_PX).toBe(PANEL_NAVBAR_TITLE_GAP_PX);
   });
 
-  it('title-group gap constant matches panel .ait-navbar-title (6px)', () => {
-    // src/panel/styles.ts: .ait-navbar-title { gap: 6px; }
-    const TITLE_GROUP_GAP_PX = 6;
-    expect(TITLE_GROUP_GAP_PX).toBe(6);
+  it('title-group marginLeft: launcher constant matches panel .ait-navbar-title margin-left', () => {
+    expect(LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX).toBe(PANEL_NAVBAR_TITLE_MARGIN_LEFT_PX);
   });
 
-  it('title-group marginLeft constant matches panel .ait-navbar-title (4px)', () => {
-    // src/panel/styles.ts: .ait-navbar-title { margin-left: 4px; }
-    const TITLE_GROUP_MARGIN_LEFT_PX = 4;
-    expect(TITLE_GROUP_MARGIN_LEFT_PX).toBe(4);
+  it('back-button font-size: launcher constant matches panel .ait-navbar-back font-size', () => {
+    expect(LAUNCHER_NAVBAR_BACK_FONT_SIZE_PX).toBe(PANEL_NAVBAR_BACK_FONT_SIZE_PX);
   });
 
-  it('back-button font-size constant matches panel .ait-navbar-back (24px)', () => {
-    // src/panel/styles.ts: .ait-navbar-back { font-size: 24px; }
-    const BACK_BTN_FONT_SIZE_PX = 24;
-    expect(BACK_BTN_FONT_SIZE_PX).toBe(24);
+  it('back-button padding: launcher constant matches panel .ait-navbar-back padding', () => {
+    expect(LAUNCHER_NAVBAR_BACK_PADDING).toBe(PANEL_NAVBAR_BACK_PADDING);
   });
 
-  it('back-button padding constant matches panel .ait-navbar-back (0 8px)', () => {
-    // src/panel/styles.ts: .ait-navbar-back { padding: 0 8px; }
-    const BACK_BTN_PADDING = '0 8px';
-    expect(BACK_BTN_PADDING).toBe('0 8px');
+  it('back glyph: launcher constant matches panel viewport.ts glyph', () => {
+    expect(LAUNCHER_NAVBAR_BACK_GLYPH).toBe(PANEL_NAVBAR_BACK_GLYPH);
   });
 });
 

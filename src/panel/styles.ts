@@ -20,6 +20,25 @@ export const VIEWPORT_BODY_MARGIN = 24;
 // nav bar, not the notch. Tall enough to seat a Dynamic Island (37px) with margin.
 export const VIEWPORT_STATUS_BAR_HEIGHT = 50;
 
+// ---------------------------------------------------------------------------
+// Navbar metrics — env-1 panel ground truth (#510 parity guard).
+// Consumed by viewport.ts (panel rendering) and tested against the launcher
+// (env-2) constants in e2e/fixture/launcher/navbar.vitest.ts.
+// ---------------------------------------------------------------------------
+
+/** `.ait-navbar-icon { width: 22px; height: 22px; }` */
+export const PANEL_NAVBAR_ICON_SIZE_PX = 22;
+/** `.ait-navbar-title { gap: 6px; }` */
+export const PANEL_NAVBAR_TITLE_GAP_PX = 6;
+/** `.ait-navbar-title { margin-left: 4px; }` */
+export const PANEL_NAVBAR_TITLE_MARGIN_LEFT_PX = 4;
+/** `.ait-navbar-back { font-size: 24px; }` */
+export const PANEL_NAVBAR_BACK_FONT_SIZE_PX = 24;
+/** `.ait-navbar-back { padding: 0 8px; }` */
+export const PANEL_NAVBAR_BACK_PADDING = '0 8px';
+/** Back glyph used in `.ait-navbar-back` button (env-1 panel, viewport.ts). */
+export const PANEL_NAVBAR_BACK_GLYPH = '‹';
+
 export const PANEL_STYLES = /* css */ `
   .ait-panel-toggle {
     position: fixed;
