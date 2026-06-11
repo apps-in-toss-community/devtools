@@ -133,7 +133,7 @@
     </div>
 
     <script>
-      (() => {
+      (function () {
         'use strict';
 
         var tbody = document.querySelector('#metrics tbody');
@@ -181,7 +181,7 @@
           ];
 
           var html = '';
-          rows.forEach((row, i) => {
+          rows.forEach(function (row, i) {
             var isShortfall = i === 2;
             var cls = '';
             if (isShortfall) {
@@ -195,7 +195,7 @@
         update();
 
         window.addEventListener('resize', update);
-        window.addEventListener('orientationchange', () => {
+        window.addEventListener('orientationchange', function () {
           // orientationchange fires before innerHeight settles; wait a frame
           setTimeout(update, 50);
         });

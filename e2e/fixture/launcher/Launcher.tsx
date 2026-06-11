@@ -655,10 +655,16 @@ export function Launcher(): React.JSX.Element {
     setIconVisible(true);
   }, []);
 
+  // launcherSearch is tri-state: a string applies the scanned launcher URL's
+  // nav-bar params; null explicitly resets to defaults (direct tunnel URL —
+  // no stale carry-over across RESCAN); undefined (pendingUrl paths) leaves
+  // the mount-time captured values untouched — the deep-link query that fed
+  // them was already stripped by consumeDeepLinkUrl, so a reset would lose
+  // the name=/icon= the user arrived with (#507).
   const showLive = useCallback(
-    (url: string, launcherSearch: string | null = null) => {
+    (url: string, launcherSearch?: string | null) => {
       stopScanner();
-      applyNavBarParams(launcherSearch);
+      if (launcherSearch !== undefined) applyNavBarParams(launcherSearch);
       setPendingUrl(null);
       setLiveUrl(url);
       setScreen('live');
