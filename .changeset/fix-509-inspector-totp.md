@@ -8,4 +8,4 @@
 
 ② **idle 탭 TOTP 만료 방지** — `startQrHttpServer`가 `sseRefreshIntervalMs`(기본 90,000ms) 주기로 SSE 구독자에게 상태를 push한다. `getDashboardState()` 호출 시점에 `at=` TOTP 코드가 재발급되므로, push 자체가 열린 탭의 인스펙터 링크를 신선하게 유지한다. 90s 주기 < relay gate 허용창 ~3분(±6 steps)이므로 탭이 열려 있는 한 링크가 항상 유효하다.
 
-③ **inspector URL fail-closed (defense-in-depth 유지)** — `buildChiiInspectorUrl`이 `mintTotp` getter 없으면 `null`을 반환하는 기존 결함 A 대책은 그대로 유지된다. 살아있는 세션에서 relay 링크를 클릭했을 때 죽은 링크 대신 대기 안내를 보여주는 방어 계층이다.
+③ **inspector URL fail-closed (defense-in-depth)** — `buildChiiInspectorUrl`이 `mintTotp` getter 없으면 `null`을 반환한다. TOTP 시크릿이 없는 비정상 상태에서 relay gate에 절대 통과할 수 없는 죽은 링크를 노출하는 대신, 대시보드가 대기 안내를 보여주는 방어 계층이다.
