@@ -1164,7 +1164,8 @@ describe('build_attach_url — TOTP auto-splice', () => {
     const text = getContent(result)[0]!.text!;
     // The totp block must be in the JSON output.
     expect(text).toContain('"enabled": true');
-    expect(text).toContain('"ttlSeconds": 30');
+    // ttlSeconds reflects the relay gate's RELAY_VERIFY_SKEW_STEPS=6 window (#490): 6×30=180 s
+    expect(text).toContain('"ttlSeconds": 180');
     expect(text).toContain('"expiresAt"');
   });
 

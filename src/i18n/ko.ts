@@ -259,7 +259,7 @@ export const ko = {
   'attach.sandbox.faq.cameraApp':
     '<strong>카메라 앱으로 스캔하면 Safari 탭으로 열립니다 (하단 탭 바 노출)</strong> — launcher 아이콘으로 다시 실행해 인앱 스캔을 사용하세요',
   'attach.sandbox.faq.totp':
-    '<strong>QR이 만료된 경우 (TOTP 30초)</strong> — 새 QR을 다시 스캔하세요',
+    '<strong>QR이 만료된 경우 (TOTP ~3분)</strong> — 새 QR을 다시 스캔하세요',
   'attach.sandbox.faq.chii':
     '<strong>Chii 주입 실패 / 콘솔이 비어 있는 경우</strong> — 미니앱 번들에 <code>in-app</code> debug import가 있는지 확인',
 

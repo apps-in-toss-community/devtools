@@ -106,7 +106,12 @@ import {
   takeScreenshot,
   takeSnapshot,
 } from './tools.js';
-import { assertRelayAuthConfigured, buildRelayVerifyAuth, generateTotp } from './totp.js';
+import {
+  assertRelayAuthConfigured,
+  buildRelayVerifyAuth,
+  generateTotp,
+  RELAY_VERIFY_SKEW_STEPS,
+} from './totp.js';
 
 export { startParentWatcher } from '../shared/parent-watcher.js';
 
@@ -358,7 +363,7 @@ export interface DebugServerDeps {
    *
    * 완성된 URL 문자열이 아니라 컴포넌트를 전달하는 이유: `getDashboardState`가
    * 호출될 때마다 최신 TOTP 코드를 freshly mint해 QR을 갱신하기 위함이다.
-   * 정적 URL에 구워진 코드는 30-90초 후 만료 → relay 401 reason:'auth' (Defect 1).
+   * 정적 URL에 구워진 코드는 ~3분 후 만료(RELAY_VERIFY_SKEW_STEPS=6 기준) → relay 401 reason:'auth' (Defect 1).
    * rebuildAttachUrl()이 매 호출 시 generateTotp(secret)를 새로 계산한다.
    *
    * SECRET-HANDLING: 컴포넌트 안의 tunnel/scheme host와 wssUrl은 NEVER 로그 출력.
@@ -686,11 +691,13 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           const now = Date.now();
           totpCode = generateTotp(secret, now);
           const STEP_SECONDS = 30;
-          const currentStep = Math.floor(now / 1000 / STEP_SECONDS);
+          // expiresAt reflects the relay gate's RELAY_VERIFY_SKEW_STEPS=6 window (#490):
+          // the code is valid for ~3 min (180 s) from issuance.
+          const expiresAtMs = now + RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS * 1000;
           totpMeta = {
             enabled: true,
-            ttlSeconds: STEP_SECONDS,
-            expiresAt: new Date((currentStep + 1) * STEP_SECONDS * 1000).toISOString(),
+            ttlSeconds: RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS,
+            expiresAt: new Date(expiresAtMs).toISOString(),
           };
         }
 
@@ -2197,7 +2204,7 @@ export class DualConnectionRouter implements ConnectionRouter {
             relayHttpBaseUrl: activeFamily.relayHttpUrl,
             targetId: firstTarget?.id,
             // Mint a fresh TOTP code from the daemon's secret at open time.
-            // The code is valid for the current 30-second step (±1 skew).
+            // The relay gate accepts ±RELAY_VERIFY_SKEW_STEPS=6 steps (~3 min).
             // SECRET-HANDLING: the closure captures only the getter, never logs.
             mintTotp: process.env.AIT_DEBUG_TOTP_SECRET
               ? () => generateTotp(process.env.AIT_DEBUG_TOTP_SECRET as string)

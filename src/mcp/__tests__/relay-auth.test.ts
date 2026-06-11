@@ -125,11 +125,22 @@ describe('buildRelayVerifyAuth — with secret', () => {
     expect(verifyAuth(req)).toBe(true);
   });
 
-  it('rejects a code two steps old (outside skew=1 window)', () => {
+  it('accepts a code two steps old (within RELAY_VERIFY_SKEW_STEPS=6 window, #490)', () => {
+    // The gate now uses skew=6, so a 2-step old code is still within the
+    // acceptance window (~3-minute validity).
     const verifyAuth = buildRelayVerifyAuth()!;
     const now = Date.now();
     const twoStepsAgoCode = generateTotp(TEST_SECRET, now - 60_000);
     const req = fakeReq(`/target?at=${twoStepsAgoCode}`);
+    expect(verifyAuth(req)).toBe(true);
+  });
+
+  it('rejects a code eight steps old (outside RELAY_VERIFY_SKEW_STEPS=6 window, #490)', () => {
+    // 8 steps = 240 s > 6 steps acceptance limit → rejected.
+    const verifyAuth = buildRelayVerifyAuth()!;
+    const now = Date.now();
+    const eightStepsAgoCode = generateTotp(TEST_SECRET, now - 240_000);
+    const req = fakeReq(`/target?at=${eightStepsAgoCode}`);
     expect(verifyAuth(req)).toBe(false);
   });
 });
@@ -301,9 +312,14 @@ describe('verifyAuth — path-prefix transport matrix', () => {
     }
   });
 
-  it('rejects an expired code (two steps old) in the path prefix', () => {
+  it('accepts a two-steps-old code in the path prefix (within RELAY_VERIFY_SKEW_STEPS=6, #490)', () => {
     const twoStepsAgoCode = generateTotp(TEST_SECRET, Date.now() - 60_000);
-    expect(verifyWithRewrite(`/at/${twoStepsAgoCode}/target/abc`).pass).toBe(false);
+    expect(verifyWithRewrite(`/at/${twoStepsAgoCode}/target/abc`).pass).toBe(true);
+  });
+
+  it('rejects an eight-steps-old code in the path prefix (outside RELAY_VERIFY_SKEW_STEPS=6, #490)', () => {
+    const eightStepsAgoCode = generateTotp(TEST_SECRET, Date.now() - 240_000);
+    expect(verifyWithRewrite(`/at/${eightStepsAgoCode}/target/abc`).pass).toBe(false);
   });
 
   it('rejects a prefix-less target upgrade with no query code (stock chii dial)', () => {

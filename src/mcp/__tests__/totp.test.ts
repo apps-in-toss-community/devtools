@@ -6,13 +6,19 @@
  *  - ±1 time-step skew acceptance
  *  - timingSafeEqual path (verified indirectly: valid code passes, invalid fails)
  *  - Edge cases: short/long/non-digit codes, empty secret
+ *  - buildRelayVerifyAuth: RELAY_VERIFY_SKEW_STEPS=6 acceptance (~3 min window)
  *
  * NOTE: This test does NOT produce or assert on any secret value or TOTP code
  * beyond what is necessary to verify the algorithm — no code values are logged.
  */
 
 import { describe, expect, it } from 'vitest';
-import { generateTotp, verifyTotp } from '../totp.js';
+import {
+  buildRelayVerifyAuth,
+  generateTotp,
+  RELAY_VERIFY_SKEW_STEPS,
+  verifyTotp,
+} from '../totp.js';
 
 // ---------------------------------------------------------------------------
 // RFC 6238 test vectors (SHA-1, T0=0, step=30 s)
@@ -179,5 +185,91 @@ describe('verifyTotp — constant-time comparison (timingSafeEqual path)', () =>
     if (wrong !== code) {
       expect(verifyTotp(RFC_SECRET, wrong, now, 0)).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RELAY_VERIFY_SKEW_STEPS constant
+// ---------------------------------------------------------------------------
+
+describe('RELAY_VERIFY_SKEW_STEPS', () => {
+  it('equals 6', () => {
+    expect(RELAY_VERIFY_SKEW_STEPS).toBe(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildRelayVerifyAuth — ±6 step relay gate (#490)
+//
+// SECRET-HANDLING: test fixture secret is an obvious dummy (hex-encoded
+// constant with no operational significance). No code values are logged.
+// ---------------------------------------------------------------------------
+
+/**
+ * Dummy hex secret for relay-gate tests.
+ * 64 hex chars = 32 bytes, satisfying MIN_SECRET_HEX_CHARS=32.
+ * Value is a recognisable test fixture with no operational significance.
+ */
+const RELAY_TEST_SECRET = 'deadbeef'.repeat(8); // 64 hex chars
+
+/** Build a minimal IncomingMessage stub for the upgrade-gate predicate. */
+function makeReq(atCode: string): import('node:http').IncomingMessage {
+  return {
+    url: `/client/id?target=t1&at=${encodeURIComponent(atCode)}`,
+  } as import('node:http').IncomingMessage;
+}
+
+describe('buildRelayVerifyAuth — RELAY_VERIFY_SKEW_STEPS window (#490)', () => {
+  it('returns undefined when env var is not set', () => {
+    const predicate = buildRelayVerifyAuth({});
+    expect(predicate).toBeUndefined();
+  });
+
+  it('accepts a code issued at the current time step', () => {
+    const now = Date.now();
+    const code = generateTotp(RELAY_TEST_SECRET, now);
+    const predicate = buildRelayVerifyAuth({ AIT_DEBUG_TOTP_SECRET: RELAY_TEST_SECRET });
+    expect(predicate).toBeDefined();
+    // Use a fake req; the predicate reads `at=` from req.url.
+    expect(predicate!(makeReq(code))).toBe(true);
+  });
+
+  it('accepts a code issued ~3 minutes ago (170 s — within 6-step window)', () => {
+    const issuanceTime = Date.now() - 170_000; // 170 s ago ≈ ~5.7 steps back
+    const code = generateTotp(RELAY_TEST_SECRET, issuanceTime);
+    const predicate = buildRelayVerifyAuth({ AIT_DEBUG_TOTP_SECRET: RELAY_TEST_SECRET });
+    expect(predicate).toBeDefined();
+    expect(predicate!(makeReq(code))).toBe(true);
+  });
+
+  it('rejects a code issued ~4 minutes ago (240 s — outside 6-step window)', () => {
+    const issuanceTime = Date.now() - 240_000; // 240 s ago = 8 steps back
+    const code = generateTotp(RELAY_TEST_SECRET, issuanceTime);
+    const predicate = buildRelayVerifyAuth({ AIT_DEBUG_TOTP_SECRET: RELAY_TEST_SECRET });
+    expect(predicate).toBeDefined();
+    expect(predicate!(makeReq(code))).toBe(false);
+  });
+
+  it('rejects a missing at= code', () => {
+    const predicate = buildRelayVerifyAuth({ AIT_DEBUG_TOTP_SECRET: RELAY_TEST_SECRET });
+    expect(predicate).toBeDefined();
+    const reqNoAt = { url: '/client/id?target=t1' } as import('node:http').IncomingMessage;
+    expect(predicate!(reqNoAt)).toBe(false);
+  });
+});
+
+describe('verifyTotp — default skew=1 unchanged after #490', () => {
+  it('still rejects a code 2 steps old with default skew=1', () => {
+    const now = Date.now();
+    const twoStepsAgo = now - 60_000; // 2 × 30 s
+    const oldCode = generateTotp(RFC_SECRET, twoStepsAgo);
+    expect(verifyTotp(RFC_SECRET, oldCode, now)).toBe(false);
+  });
+
+  it('still accepts a code 1 step old with default skew=1', () => {
+    const now = Date.now();
+    const oneStepAgo = now - 30_000; // 1 × 30 s
+    const code = generateTotp(RFC_SECRET, oneStepAgo);
+    expect(verifyTotp(RFC_SECRET, code, now)).toBe(true);
   });
 });

@@ -355,7 +355,7 @@ describe('AutoDevtoolsOpener', () => {
       env: 'relay-dev',
     });
     expect(stderrOutput).toContain('at=');
-    // The 30-second expiry caveat must be communicated to the developer.
-    expect(stderrOutput).toContain('30');
+    // The expiry caveat must be communicated to the developer (#490: updated to ~3분).
+    expect(stderrOutput).toContain('3분');
   });
 });

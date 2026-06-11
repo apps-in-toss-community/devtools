@@ -44,7 +44,7 @@ import type { McpEnvironment } from './environment.js';
 import { isLiveRelayEnv, isRelayEnv, toLegacyEnv } from './environment.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
 import { isPidAlive } from './server-lock.js';
-import { generateTotp } from './totp.js';
+import { generateTotp, RELAY_VERIFY_SKEW_STEPS } from './totp.js';
 
 /** Tunnel state surfaced by `list_pages`. */
 export interface TunnelStatus {
@@ -147,10 +147,11 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'When open_in_browser=true (default), saves the QR as a PNG and opens it in the OS default ' +
       'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers). ' +
       '\n\nTOTP auth: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the returned attachUrl ' +
-      'automatically includes the current one-time code (at=<code>) — the URL is single-use for ' +
-      'that 30-second step. The response includes a `totp` field with `expiresAt` (ISO timestamp). ' +
+      'automatically includes the current one-time code (at=<code>). The code is valid for ~3 minutes ' +
+      '(the relay gate accepts ±6 TOTP steps = 180–210 s of backwards acceptance). ' +
+      'The response includes a `totp` field with `expiresAt` (ISO timestamp, ~3 min from issuance). ' +
       'If the phone scan happens after expiresAt, the relay will reject the code — just call ' +
-      'build_attach_url again to get a fresh one-time URL. ' +
+      'build_attach_url again to get a fresh URL. ' +
       'Without AIT_DEBUG_TOTP_SECRET, the attachUrl has no expiry.',
     inputSchema: {
       type: 'object',
@@ -817,10 +818,10 @@ export interface BuildAttachUrlResult {
  * relay URL to splice in) — the caller surfaces that as a tool error.
  *
  * When `AIT_DEBUG_TOTP_SECRET` is set, generates the current TOTP code and
- * splices it as `at=<code>` into the attach URL. The code is valid for one
- * 30-second time step (±1 skew accepted by the relay, so the effective window
- * is up to 90 s). If the scan happens after `totp.expiresAt`, call
- * `build_attach_url` again to get a fresh code.
+ * splices it as `at=<code>` into the attach URL. The code is valid for ~3
+ * minutes (the relay gate uses {@link RELAY_VERIFY_SKEW_STEPS}=6, accepting
+ * past 6 steps = 180–210 s backwards from issuance). If the scan happens after
+ * `totp.expiresAt`, call `build_attach_url` again to get a fresh code (#490).
  *
  * Also validates the scheme URL's authority. A suspicious authority (empty,
  * "web", "localhost", etc.) is surfaced as a non-fatal `authorityWarning` on
@@ -860,12 +861,17 @@ export function buildAttachUrl(
     const now = Date.now();
     totpCode = generateTotp(totpSecret, now);
     const STEP_SECONDS = 30;
-    // Current step number (floor). The step expires at the start of the NEXT step.
-    const currentStep = Math.floor(now / 1000 / STEP_SECONDS);
-    const expiresAtMs = (currentStep + 1) * STEP_SECONDS * 1000;
+    // expiresAt reflects the relay gate's actual acceptance window (#490):
+    // the gate uses RELAY_VERIFY_SKEW_STEPS=6, so past 6 steps (180 s) are
+    // accepted. The code issued NOW is valid until step (currentStep + 7)
+    // starts — i.e. the earliest time it can be rejected is 180 s after
+    // the NEXT step boundary, which is (currentStep+1)*30 + 6*30 = now-aligned
+    // ~180–210 s from issuance. We report issuanceTime + 180 s as a conservative
+    // lower bound so callers know the code is safe for at least ~3 minutes.
+    const expiresAtMs = now + RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS * 1000;
     totpMeta = {
       enabled: true,
-      ttlSeconds: STEP_SECONDS,
+      ttlSeconds: RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS,
       expiresAt: new Date(expiresAtMs).toISOString(),
     };
   }
@@ -2057,7 +2063,7 @@ export function computeNextRecommendedAction(
       tool: 'build_attach_url',
       reason:
         `relay 인증(TOTP) 거부 ${authRejects.count}건 발생 (last ${authRejects.lastAt ?? 'unknown'}) — ` +
-        'QR을 다시 스캔해 새 코드로 attach하세요(코드는 30초 주기로 만료). 반복되면 폰 페이지 URL에 ' +
+        'QR을 다시 스캔해 새 코드로 attach하세요(코드는 ~3분마다 만료). 반복되면 폰 페이지 URL에 ' +
         'at 파라미터가 전달되는지(target-side TOTP 전달 경로)를 확인하세요',
     };
   }
