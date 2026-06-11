@@ -14,8 +14,14 @@ import { expect, test } from '@playwright/test';
 // Chromium tab — those observations require physical device QA.
 
 const VARIANTS = [
-  { path: '/letterbox-probe/translucent/', title: 'Probe BT', badge: 'black-translucent' },
-  { path: '/letterbox-probe/default/', title: 'Probe DEF', badge: 'default' },
+  {
+    path: '/letterbox-probe/translucent/',
+    title: 'Probe BT',
+    badge: 'black-translucent',
+    docBand: false,
+  },
+  { path: '/letterbox-probe/default/', title: 'Probe DEF', badge: 'default', docBand: false },
+  { path: '/letterbox-probe/hack/', title: 'Probe HACK', badge: 'min-height hack', docBand: true },
 ] as const;
 
 for (const variant of VARIANTS) {
@@ -26,13 +32,13 @@ for (const variant of VARIANTS) {
       // Title must match the variant so iOS home-screen icon names are distinct.
       await expect(page).toHaveTitle(variant.title);
 
-      // Readout table must have rows — at minimum innerW × H and shortfall.
-      const rows = page.locator('#metrics tbody tr');
-      await expect(rows).toHaveCountGreaterThan(5);
-
-      // The shortfall row (screen.H − inner.H) must be present.
+      // The shortfall row (screen.H − inner.H) must be present (auto-waits for render).
       const shortfallCell = page.locator('#metrics tbody tr td').filter({ hasText: 'shortfall' });
       await expect(shortfallCell).toHaveCount(1);
+
+      // Readout table must have rows — at minimum innerW × H and shortfall.
+      const rowCount = await page.locator('#metrics tbody tr').count();
+      expect(rowCount).toBeGreaterThan(5);
     });
 
     test('position bands are rendered', async ({ page }) => {
@@ -47,6 +53,16 @@ for (const variant of VARIANTS) {
       // Text labels are present so the tester knows what they are looking at.
       await expect(bandTop).toContainText('RED');
       await expect(bandBottom).toContainText('GREEN');
+
+      // The hack variant adds a document-anchored band (the discriminator for
+      // whether stretched root content paints into the OS letterbox region).
+      const docBand = page.locator('#band-doc-bottom');
+      if (variant.docBand) {
+        await expect(docBand).toBeVisible();
+        await expect(docBand).toContainText('BLUE');
+      } else {
+        await expect(docBand).toHaveCount(0);
+      }
     });
 
     test('variant badge identifies the status-bar-style', async ({ page }) => {
