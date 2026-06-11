@@ -285,7 +285,6 @@ export const en: Record<StringKey, string> = {
   'launcher.urlPlaceholder': 'https://example.trycloudflare.com',
   'launcher.openBtn': 'Open',
   'launcher.scanBtn': 'Scan QR with camera',
-  'launcher.rescanBtn': 'Rescan',
   'launcher.noCamera': 'No camera available — paste the URL instead.',
   'launcher.cameraError': 'Could not access the camera — paste the URL instead.',
   'launcher.invalidUrlHttps': 'Enter a valid https:// URL (the tunnel URL from your terminal).',
@@ -295,10 +294,16 @@ export const en: Record<StringKey, string> = {
   'launcher.debugAuthExpiredHint':
     'The debug session has expired. Scan a fresh QR from the attach page on your Mac.',
   'launcher.debugAuthRescanCta': 'Scan a new QR',
-  'launcher.diagFab': 'Diag',
   'launcher.diagTitle': 'Viewport diagnostics',
   'launcher.diagYes': 'yes',
   'launcher.diagNo': 'no',
   'launcher.letterboxDetected':
     'Display area is {pt}pt short — likely an iOS standalone letterbox. Removing and re-adding the launcher to the home screen may fix it.',
+  // Nav-bar emulation (#495)
+  'launcher.navbar.defaultTitle': 'Mini App',
+  'launcher.navbar.menu': 'Menu',
+  'launcher.navbar.close': 'Close',
+  'launcher.navbar.menuRescan': 'Rescan',
+  'launcher.navbar.menuDiag': 'Viewport diagnostics',
+  'launcher.navbar.menuLanguage': 'Language',
 };

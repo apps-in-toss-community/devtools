@@ -52,8 +52,43 @@ test.describe('launcher PWA', () => {
     // Query is consumed so a reload falls back to localStorage / setup.
     await expect(page).toHaveURL(/\/launcher\/$/);
 
-    // Rescan button surfaced so users can pick a different URL.
-    await expect(page.getByTestId('launcher-rescan-btn')).toBeVisible();
+    // Nav-bar emulation surfaced (#495): the partner bar with title + the
+    // right capsule (`···` menu · `✕`). The `···` menu rehomes Rescan.
+    await expect(page.getByTestId('launcher-navbar')).toBeVisible();
+    await expect(page.getByTestId('launcher-navbar')).toHaveAttribute(
+      'data-navbar-type',
+      'partner',
+    );
+    await expect(page.getByTestId('launcher-navbar-more')).toBeVisible();
+    await expect(page.getByTestId('launcher-navbar-close')).toBeVisible();
+  });
+
+  test('navBarType=game renders the floating capsule only (no full bar title)', async ({
+    page,
+  }) => {
+    const tunnel = 'https://example.com/';
+    await page.goto(`/launcher/?url=${encodeURIComponent(tunnel)}&navBarType=game`);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    const navbar = page.getByTestId('launcher-navbar');
+    await expect(navbar).toBeVisible();
+    await expect(navbar).toHaveAttribute('data-navbar-type', 'game');
+    // Game variant: capsule present, no title (full bar absent).
+    await expect(page.getByTestId('launcher-navbar-more')).toBeVisible();
+    await expect(page.getByTestId('launcher-navbar-title')).toHaveCount(0);
+  });
+
+  test('name= sets the partner bar title; absent name falls back to a generic label', async ({
+    page,
+  }) => {
+    const tunnel = 'https://example.com/';
+    await page.goto(`/launcher/?url=${encodeURIComponent(tunnel)}&name=My%20Mini%20App`);
+    await expect(page.getByTestId('launcher-navbar-title')).toHaveText('My Mini App');
+
+    // No name= → a generic localized default (never the tunnel host).
+    await page.goto(`/launcher/?url=${encodeURIComponent(tunnel)}`);
+    // Playwright default locale en-US → "Mini App".
+    await expect(page.getByTestId('launcher-navbar-title')).toHaveText('Mini App');
   });
 
   // The install-first gate (#411) — a deep-link / saved URL in an UNINSTALLED,
@@ -109,13 +144,20 @@ test.describe('launcher PWA', () => {
     await expect(page.getByTestId('launcher-frame')).toBeHidden();
   });
 
-  test('viewport diagnostics FAB toggles the metrics panel (#469)', async ({ page }) => {
-    await page.goto('/launcher/');
-    const fab = page.getByTestId('launcher-diag-fab');
-    await expect(fab).toBeVisible();
+  test('viewport diagnostics is reachable from the nav-bar menu (#469, rehomed #495)', async ({
+    page,
+  }) => {
+    // The diag control moved into the live-screen nav-bar `···` menu (#495), so
+    // enter live first.
+    await page.goto(`/launcher/?url=${encodeURIComponent('https://example.com/')}`);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
     await expect(page.getByTestId('launcher-diag-panel')).toBeHidden();
 
-    await fab.click();
+    // Open the `···` menu and toggle diagnostics.
+    await page.getByTestId('launcher-navbar-more').click();
+    await expect(page.getByTestId('launcher-navbar-menu')).toBeVisible();
+    await page.getByTestId('launcher-menu-diag').click();
+
     const panel = page.getByTestId('launcher-diag-panel');
     await expect(panel).toBeVisible();
 
@@ -126,8 +168,32 @@ test.describe('launcher PWA', () => {
     const inner = await page.evaluate(() => `${window.innerWidth} × ${window.innerHeight}`);
     await expect(page.getByTestId('launcher-diag-inner')).toHaveText(inner);
 
-    await fab.click();
+    // Toggle off via the menu again.
+    await page.getByTestId('launcher-navbar-more').click();
+    await page.getByTestId('launcher-menu-diag').click();
     await expect(panel).toBeHidden();
+  });
+
+  test('nav-bar `✕` ends the session and returns to the scan screen (#495)', async ({ page }) => {
+    await page.goto(`/launcher/?url=${encodeURIComponent('https://example.com/')}`);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    await page.getByTestId('launcher-navbar-close').click();
+
+    await expect(page.getByTestId('launcher-setup')).toBeVisible();
+    await expect(page.getByTestId('launcher-frame')).toBeHidden();
+    await expect(page.getByTestId('launcher-navbar')).toBeHidden();
+  });
+
+  test('nav-bar menu Rescan returns to the scan screen (#495)', async ({ page }) => {
+    await page.goto(`/launcher/?url=${encodeURIComponent('https://example.com/')}`);
+    await expect(page.getByTestId('launcher-frame')).toBeVisible();
+
+    await page.getByTestId('launcher-navbar-more').click();
+    await page.getByTestId('launcher-menu-rescan').click();
+
+    await expect(page.getByTestId('launcher-setup')).toBeVisible();
+    await expect(page.getByTestId('launcher-frame')).toBeHidden();
   });
 
   test('letterbox label stays hidden in a normal browser tab (#469)', async ({ page }) => {
@@ -212,43 +278,23 @@ test.describe('launcher debug-auth banner (#438/#478)', () => {
   });
 });
 
-// Regression for the #475 real-device pile-up: the bottom chrome (RESCAN, diag
-// FAB, diag panel, letterbox label) is one fixed flex stack, so the pieces can
-// never overlap. Desktop Chromium at the iPhone-class 390×844 viewport covers
-// the three elements reachable here; the letterbox label needs a standalone
-// display mode that a browser tab can't fake — its geometry is covered by the
-// stack layout itself and letterbox.vitest.ts.
-test.describe('launcher bottom chrome stack (#475)', () => {
+// Regression for the #475 real-device pile-up: the bottom chrome (now just the
+// diag panel + letterbox label after #495 rehomed the RESCAN/diag FAB into the
+// nav-bar menu) is one fixed flex stack anchored at bottom:12px (no safe-area
+// inset in a desktop tab). The chrome-Δ discriminator must read 12px so the ICB
+// is correctly resolved. The letterbox label needs a standalone display mode a
+// browser tab can't fake — its geometry is covered by letterbox.vitest.ts.
+test.describe('launcher bottom chrome stack (#475, rehomed #495)', () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test('rescan / diag FAB / diag panel never overlap at 390×844', async ({ page }) => {
+  test('diag panel anchors at the ICB-correct bottom offset at 390×844', async ({ page }) => {
     await page.goto(`/launcher/?url=${encodeURIComponent('https://example.com/')}`);
     await expect(page.getByTestId('launcher-frame')).toBeVisible();
 
-    await page.getByTestId('launcher-diag-fab').click();
+    // Open the diag panel from the nav-bar `···` menu.
+    await page.getByTestId('launcher-navbar-more').click();
+    await page.getByTestId('launcher-menu-diag').click();
     await expect(page.getByTestId('launcher-diag-panel')).toBeVisible();
-    await expect(page.getByTestId('launcher-rescan-btn')).toBeVisible();
-
-    const ids = ['launcher-rescan-btn', 'launcher-diag-fab', 'launcher-diag-panel'] as const;
-    const boxes: Record<string, { x: number; y: number; width: number; height: number }> = {};
-    for (const id of ids) {
-      const box = await page.getByTestId(id).boundingBox();
-      expect(box, `${id} must have a bounding box`).not.toBeNull();
-      if (box) boxes[id] = box;
-    }
-
-    for (let i = 0; i < ids.length; i++) {
-      for (let j = i + 1; j < ids.length; j++) {
-        const a = boxes[ids[i]];
-        const b = boxes[ids[j]];
-        const intersects =
-          a.x < b.x + b.width &&
-          b.x < a.x + a.width &&
-          a.y < b.y + b.height &&
-          b.y < a.y + a.height;
-        expect(intersects, `${ids[i]} must not overlap ${ids[j]}`).toBe(false);
-      }
-    }
 
     // The on-device ICB discriminator row: with no safe-area inset the stack
     // anchors at bottom: 12px, so the container's bottom edge sits 12px above

@@ -287,7 +287,6 @@ export const ko = {
   'launcher.urlPlaceholder': 'https://example.trycloudflare.com',
   'launcher.openBtn': 'Open',
   'launcher.scanBtn': 'QR 카메라로 스캔',
-  'launcher.rescanBtn': 'Rescan',
   'launcher.noCamera': '카메라를 사용할 수 없습니다 — URL을 직접 붙여넣으세요.',
   'launcher.cameraError': '카메라에 접근할 수 없습니다 — URL을 직접 붙여넣으세요.',
   'launcher.invalidUrlHttps': '올바른 https:// URL을 입력하세요 (터미널의 터널 URL).',
@@ -297,12 +296,18 @@ export const ko = {
   'launcher.debugAuthExpiredHint':
     '디버그 세션이 만료됐어요. Mac의 attach 페이지에서 새 QR을 스캔하세요.',
   'launcher.debugAuthRescanCta': '새 QR 스캔하기',
-  'launcher.diagFab': '진단',
   'launcher.diagTitle': '뷰포트 진단',
   'launcher.diagYes': '예',
   'launcher.diagNo': '아니요',
   'launcher.letterboxDetected':
     '표시 영역이 {pt}pt 부족합니다 — iOS standalone letterbox로 보입니다. 런처를 홈 화면에서 제거 후 다시 설치하면 해소될 수 있어요.',
+  // Nav-bar emulation (#495)
+  'launcher.navbar.defaultTitle': '미니앱',
+  'launcher.navbar.menu': '메뉴',
+  'launcher.navbar.close': '닫기',
+  'launcher.navbar.menuRescan': '다시 스캔',
+  'launcher.navbar.menuDiag': '뷰포트 진단',
+  'launcher.navbar.menuLanguage': '언어',
 } as const;
 
 export type StringKey = keyof typeof ko;
