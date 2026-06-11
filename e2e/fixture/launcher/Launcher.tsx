@@ -18,6 +18,7 @@ import { detectLetterbox, type SafeAreaInsets, type ViewportMetrics } from './le
 import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
+  extractLauncherSearch,
   type NavBarType,
   parseNavBarType,
   resolveAppIcon,
@@ -579,17 +580,22 @@ export function Launcher(): React.JSX.Element {
   const [metrics, setMetrics] = useState<ViewportMetrics | null>(null);
   const [chromeDeltaPx, setChromeDeltaPx] = useState<number | null>(null);
 
-  // Nav-bar emulation (#495). navBarType + title are read from the launcher
+  // Nav-bar emulation (#495/#507). navBarType + title are read from the launcher
   // query ONCE at mount — consumeDeepLinkUrl() strips the query via
-  // replaceState, so capturing later would miss them. menuOpen drives the `···`
-  // dropdown that rehomes diagnostics/rescan/language.
+  // replaceState, so the initializer captures them before they are gone.
+  // Setters are kept so the scan/manual-input paths (#507) can update the bar
+  // when a launcher-style QR URL carries name=/icon=/navBarType= params.
+  // menuOpen drives the `···` dropdown that rehomes diagnostics/rescan/language.
   const [menuOpen, setMenuOpen] = useState(false);
-  const [navBarType] = useState<NavBarType>(() => parseNavBarType(location.search));
-  const [appTitle] = useState<string | null>(() => resolveAppTitle(location.search));
-  // Icon slot (#498): resolved once at mount (same reason as appTitle — the query
-  // is stripped by consumeDeepLinkUrl). iconVisible tracks onError dismissal so a
-  // 404 favicon.ico cleanly collapses the slot without layout jank.
-  const [appIconSrc] = useState<string | null>(() => resolveAppIcon(location.search));
+  const [navBarType, setNavBarType] = useState<NavBarType>(() => parseNavBarType(location.search));
+  const [appTitle, setAppTitle] = useState<string | null>(() => resolveAppTitle(location.search));
+  // Icon slot (#498/#507): resolved at mount from the query string; also updated
+  // by showLive when a scanned/entered launcher-style URL carries icon= params.
+  // iconVisible tracks onError dismissal — a 404 favicon collapses the slot
+  // without layout jank. Reset to true when a new icon src is applied (#507).
+  const [appIconSrc, setAppIconSrc] = useState<string | null>(() =>
+    resolveAppIcon(location.search),
+  );
   const [iconVisible, setIconVisible] = useState(true);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -632,16 +638,34 @@ export function Launcher(): React.JSX.Element {
   // Screen transitions
   // ---------------------------------------------------------------------------
 
+  // Apply nav-bar params from a launcher search string (#507).
+  // Called both from showLive (scan/manual-input) and implicitly by mount-time
+  // useState initializers (deep-link path). When search is null (direct tunnel
+  // URL, no `url=` param), we reset to defaults so a new RESCAN doesn't carry
+  // stale values from the previous session.
+  const applyNavBarParams = useCallback((search: string | null) => {
+    const s = search ?? '';
+    setNavBarType(parseNavBarType(s));
+    setAppTitle(resolveAppTitle(s));
+    const newIcon = resolveAppIcon(s);
+    setAppIconSrc(newIcon);
+    // Reset iconVisible so a previously-collapsed slot becomes visible again
+    // when a fresh icon src arrives (#507). If newIcon is null the slot will
+    // render null/hidden anyway, so resetting here is always safe.
+    setIconVisible(true);
+  }, []);
+
   const showLive = useCallback(
-    (url: string) => {
+    (url: string, launcherSearch: string | null = null) => {
       stopScanner();
+      applyNavBarParams(launcherSearch);
       setPendingUrl(null);
       setLiveUrl(url);
       setScreen('live');
       setMsg('');
       setAuthBlockReason(null);
     },
-    [stopScanner],
+    [stopScanner, applyNavBarParams],
   );
 
   const showSetup = useCallback(
@@ -842,7 +866,10 @@ export function Launcher(): React.JSX.Element {
       video,
       (result) => {
         const url = resolveScannedUrl(result.data);
-        if (url) showLive(url);
+        // Extract launcher-style search (name=/icon=/navBarType=) from the raw
+        // QR payload (#507). extractLauncherSearch returns null for direct
+        // tunnel URLs — applyNavBarParams resets to defaults in that case.
+        if (url) showLive(url, extractLauncherSearch(result.data));
       },
       { highlightScanRegion: true, highlightCodeOutline: true },
     );
@@ -867,7 +894,9 @@ export function Launcher(): React.JSX.Element {
       );
       return;
     }
-    showLive(url);
+    // Extract launcher-style search (name=/icon=/navBarType=) from the entered
+    // URL (#507). extractLauncherSearch returns null for direct tunnel URLs.
+    showLive(url, extractLauncherSearch(urlValue));
   }, [urlValue, t, showLive]);
 
   const handleKeyDown = useCallback(
