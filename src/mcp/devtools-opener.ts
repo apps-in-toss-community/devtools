@@ -64,15 +64,23 @@ import type { McpEnvironment } from './environment.js';
  * Chii serves its own DevTools frontend at
  * `<relayHttpBaseUrl>/front_end/chii_app.html`. The `ws=` (plain HTTP relay)
  * or `wss=` (HTTPS relay) query parameter is a URL-encoded string of the form
- * `<relay-host>/client/<uuid>?target=<id>` (and optionally `&at=<totp>`) —
- * the same format used by Chii's own target list page (derived from
- * `chii/public/index.js`).
+ * `<relay-host>/client/<uuid>?target=<id>&at=<totp>` — the same format used
+ * by Chii's own target list page (derived from `chii/public/index.js`).
  *
  * The `at=` TOTP code is minted at call time via `mintTotp()`.  It is valid
  * for ~3 minutes (relay gate accepts ±RELAY_VERIFY_SKEW_STEPS=6 steps =
  * 180–210 s).  The developer must open the returned URL within that window.
  * If the window expires before the browser connects, the relay will reject the
  * WebSocket upgrade with close code 4401.
+ *
+ * FAIL-CLOSED (issue #509): `mintTotp` is REQUIRED.  When omitted (i.e.
+ * `undefined`), this function returns `null` — the caller must treat `null` as
+ * "inspector not yet available" and show a waiting hint instead of a broken
+ * link. Relay sessions gate every WS upgrade with TOTP (#452), so a URL built
+ * without `at=` would be rejected with WS 4401 immediately — there is no
+ * non-TOTP relay path in production. Returning `null` surfaces this cleanly as
+ * a "TOTP not yet configured" state rather than silently producing a URL that
+ * will always fail at the WS handshake.
  *
  * SECRET-HANDLING: `mintTotp` returns a code, not a secret. The code is
  * embedded in the `wss=` parameter (inside the `at=` param) of the returned
@@ -82,10 +90,13 @@ import type { McpEnvironment } from './environment.js';
  * @param relayHttpBaseUrl - Local HTTP base URL of the Chii relay, e.g.
  *   `http://127.0.0.1:9100`. No trailing slash.
  * @param targetId - Chii target id (from `GET <relay>/targets`).
- * @param mintTotp - Optional function that returns a fresh 6-digit TOTP code
- *   string. Called at most once. When omitted (TOTP disabled) no `at=` param
- *   is added.
+ * @param mintTotp - Function that returns a fresh 6-digit TOTP code string.
+ *   Called at most once. **Required** — when `undefined`, the function returns
+ *   `null` (fail-closed: no `at=` param means the relay WS gate rejects the
+ *   handshake, so a null result is safer than a URL that always 404s).
  * @param panel - Initial panel. Defaults to `"console"`.
+ *
+ * @returns The inspector URL string, or `null` when `mintTotp` is absent.
  *
  * @example
  * buildChiiInspectorUrl(
@@ -100,7 +111,15 @@ export function buildChiiInspectorUrl(
   targetId: string,
   mintTotp?: () => string,
   panel: 'elements' | 'console' | 'sources' | 'network' = 'console',
-): string {
+): string | null {
+  // FAIL-CLOSED (#509): relay sessions require TOTP for every WS upgrade.
+  // Without a mintTotp function we cannot produce a valid at= code, so we
+  // return null rather than a URL that will always be rejected by the relay gate
+  // with WS 4401 / HTTP 404. Callers show a "waiting" hint when they get null.
+  if (!mintTotp) {
+    return null;
+  }
+
   // Extract the host (and port) from the relay HTTP base URL, and pick the
   // query param name chii_app.html expects: `ws=` dials `ws://` (plain-HTTP
   // relay — env 3/4 local 127.0.0.1) while `wss=` dials `wss://` (HTTPS
@@ -123,17 +142,13 @@ export function buildChiiInspectorUrl(
   // (6 random alphanumeric characters).
   const clientId = `devtools-opener-${Date.now().toString(36)}`;
 
-  // Build the ws=/wss= value: "<relay-host>/client/<uuid>?target=<id>[&at=<code>]"
+  // Build the ws=/wss= value: "<relay-host>/client/<uuid>?target=<id>&at=<code>"
   // This mirrors the format from chii/public/index.js:
   //   `${domain}${basePath}client/${randomId(6)}?target=${targetId}`
-  let wsPath = `${relayHost}/client/${clientId}?target=${encodeURIComponent(targetId)}`;
-
-  if (mintTotp) {
-    // SECRET-HANDLING: mintTotp() returns a code (not a secret). The code
-    // rides only in the URL's at= param. Callers must not log the URL.
-    const code = mintTotp();
-    wsPath += `&at=${encodeURIComponent(code)}`;
-  }
+  // SECRET-HANDLING: mintTotp() returns a code (not a secret). The code
+  // rides only in the URL's at= param. Callers must not log the URL.
+  const code = mintTotp();
+  const wsPath = `${relayHost}/client/${clientId}?target=${encodeURIComponent(targetId)}&at=${encodeURIComponent(code)}`;
 
   const params = new URLSearchParams({ [wsParamName]: wsPath, panel });
   return `${relayHttpBaseUrl.replace(/\/$/, '')}/front_end/chii_app.html?${params.toString()}`;
@@ -295,6 +310,18 @@ export class AutoDevtoolsOpener {
       options.targetId,
       options.mintTotp,
     );
+
+    // FAIL-CLOSED (#509): buildChiiInspectorUrl returns null when mintTotp is
+    // absent (no valid at= code → relay WS gate would reject the connection).
+    // Mark _opened so this once-per-session guard fires, but skip the browser
+    // open and stderr URL line — there is nothing useful to open.
+    if (inspectorUrl === null) {
+      process.stderr.write(
+        '[ait-debug] 기기가 연결됐습니다 — TOTP secret 미설정으로 인스펙터 URL을 생성할 수 없습니다.\n' +
+          '[ait-debug] relay 세션은 AIT_DEBUG_TOTP_SECRET 설정이 필요합니다.\n',
+      );
+      return;
+    }
 
     process.stderr.write(
       '[ait-debug] 기기가 연결됐습니다 — Chii DevTools를 자동으로 엽니다.\n' +

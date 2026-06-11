@@ -1587,18 +1587,28 @@ function errorResult(err: unknown, name: string, isLocal = false) {
 }
 
 /**
- * Starts a polling watcher that detects the first 0→N target transition on
+ * Starts a polling watcher that detects target-set changes on
  * `connection.listTargets()` and sends a `notifications/tools/list_changed`
  * notification on the given server.
  *
  * The watcher polls every `intervalMs` (default 1 000 ms). It fires
- * `server.sendToolListChanged()` exactly once — on the first transition — then
- * clears itself. Shutdown calls `stop()` to clear the interval.
+ * `server.sendToolListChanged()` + `onAttach()` whenever the sorted target-id
+ * signature changes AND the new target set is non-empty. This covers:
+ *   - 0→N first attach
+ *   - 1→1 target replacement (same count, different id — e.g. rescan)
+ *   - N→M any change where the result is still non-empty
  *
- * `onFirstAttach` is called once on the 0→N transition (or immediately when
- * already attached). Use this to trigger side-effects such as auto-opening
- * Chrome DevTools (issue #282). The callback is optional; omitting it preserves
- * the previous behaviour exactly.
+ * Full detach (→ empty) updates the stored signature but does NOT fire the
+ * callback — `onAttach` semantics are about a live target being present.
+ *
+ * The interval is **never cleared automatically** — it keeps running until
+ * `stop()` is called during shutdown. This ensures that a target replacement
+ * after the first attach is always detected.
+ *
+ * `onAttach` is called on every non-empty signature change (or immediately when
+ * already attached). Use this to trigger side-effects such as pushing a fresh
+ * SSE state to open dashboard tabs (issue #509). The callback is optional;
+ * omitting it preserves the previous behaviour exactly.
  *
  * SECRET-HANDLING: target `id`/`title`/`url` are not written to any log here.
  * Only an attach-detected stderr line is emitted (no target details).
@@ -1609,23 +1619,34 @@ export function startAttachWatcher(
   connection: CdpConnection,
   server: Server,
   intervalMs = 1_000,
-  onFirstAttach?: () => void,
+  onAttach?: () => void,
 ): { stop(): void } {
-  let wasAttached = connection.listTargets().length > 0;
+  /** Sorted, comma-joined target-id string — '' means no targets attached. */
+  function signature(): string {
+    return connection
+      .listTargets()
+      .map((t) => t.id)
+      .sort()
+      .join(',');
+  }
+
+  let lastSignature = signature();
   // If already attached when the watcher starts, send once immediately.
-  if (wasAttached) {
+  if (lastSignature !== '') {
     void server.sendToolListChanged();
-    onFirstAttach?.();
+    onAttach?.();
   }
 
   const handle = setInterval(() => {
-    const isAttached = connection.listTargets().length > 0;
-    if (!wasAttached && isAttached) {
-      wasAttached = true;
-      // Emit once on 0→N transition so the MCP client refreshes its tool list.
-      void server.sendToolListChanged();
-      onFirstAttach?.();
-      clearInterval(handle);
+    const current = signature();
+    if (current !== lastSignature) {
+      lastSignature = current;
+      if (current !== '') {
+        // Non-empty signature change — new or replaced target(s).
+        void server.sendToolListChanged();
+        onAttach?.();
+      }
+      // Empty signature (full detach): signature updated above, callback skipped.
     }
   }, intervalMs);
 
@@ -2074,9 +2095,10 @@ export interface DualRouterDeps {
   /** Attach-watcher poll interval (ms). Default 1 000. */
   attachWatcherIntervalMs?: number;
   /**
-   * Called on every first-attach transition (0→N pages). Used by run functions
-   * to push a dashboard SSE notification when a page attaches or the watcher
-   * re-arms after a mode switch.
+   * Called on every non-empty target-signature change (first attach, target
+   * replacement, or re-attach after detach). Used by run functions to push a
+   * dashboard SSE notification so open browser tabs receive fresh target id
+   * and TOTP links (issue #509).
    */
   onPageAttach?: () => void;
 }
@@ -2229,8 +2251,10 @@ export class DualConnectionRouter implements ConnectionRouter {
         // Auto-open Chii DevTools only for a relay attach (env 2/3/4). The
         // opener no-ops for a local (mock) connection — guard on the active
         // kind so a local session never tries to open a relay devtools.
+        // AutoDevtoolsOpener._opened is a once-per-session guard, so repeat
+        // fires (target replacement) do not open an extra browser window.
         if (activeFamily.connection.kind === 'relay') {
-          // Take the first attached target's id — we are in the onFirstAttach
+          // Take the first attached target's id — we are in the onAttach
           // callback, so listTargets() is guaranteed to be non-empty.
           const firstTarget = activeFamily.connection.listTargets()[0];
           const env = deriveEnvironment(

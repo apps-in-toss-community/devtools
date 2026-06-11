@@ -580,7 +580,7 @@ describe('createDebugServer — two-tier tools/list', () => {
 });
 
 describe('startAttachWatcher', () => {
-  it('emits sendToolListChanged exactly once on 0→N transition', async () => {
+  it('emits sendToolListChanged on 0→N transition', async () => {
     vi.useFakeTimers();
     try {
       const connection = new FakeCdpConnection([]); // starts with no targets
@@ -596,13 +596,13 @@ describe('startAttachWatcher', () => {
       await vi.advanceTimersByTimeAsync(150);
       expect(sendToolListChanged).not.toHaveBeenCalled();
 
-      // Now add a target — next tick should detect 0→N and emit once.
+      // Now add a target — next tick should detect 0→N and emit.
       const target: CdpTarget = { id: 'w1', title: 'Page', url: 'https://example.com' };
       connection.setTargets([target]);
       await vi.advanceTimersByTimeAsync(200);
       expect(sendToolListChanged).toHaveBeenCalledTimes(1);
 
-      // Further ticks should NOT emit again (watcher cleared after first emit).
+      // Same target remains — further ticks with unchanged signature should NOT emit.
       await vi.advanceTimersByTimeAsync(500);
       expect(sendToolListChanged).toHaveBeenCalledTimes(1);
 
@@ -654,7 +654,7 @@ describe('startAttachWatcher', () => {
     }
   });
 
-  it('calls onFirstAttach exactly once on 0→N transition', async () => {
+  it('calls onAttach on 0→N transition', async () => {
     vi.useFakeTimers();
     try {
       const connection = new FakeCdpConnection([]);
@@ -662,21 +662,21 @@ describe('startAttachWatcher', () => {
       const fakeServer = {
         sendToolListChanged,
       } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
-      const onFirstAttach = vi.fn();
+      const onAttach = vi.fn();
 
-      const watcher = startAttachWatcher(connection, fakeServer, 100, onFirstAttach);
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach);
 
       await vi.advanceTimersByTimeAsync(150);
-      expect(onFirstAttach).not.toHaveBeenCalled();
+      expect(onAttach).not.toHaveBeenCalled();
 
       const target: CdpTarget = { id: 'w4', title: 'Page', url: 'https://example.com' };
       connection.setTargets([target]);
       await vi.advanceTimersByTimeAsync(200);
-      expect(onFirstAttach).toHaveBeenCalledTimes(1);
+      expect(onAttach).toHaveBeenCalledTimes(1);
 
-      // Further ticks should NOT call onFirstAttach again.
+      // Same target — further ticks with unchanged signature should NOT call onAttach again.
       await vi.advanceTimersByTimeAsync(500);
-      expect(onFirstAttach).toHaveBeenCalledTimes(1);
+      expect(onAttach).toHaveBeenCalledTimes(1);
 
       watcher.stop();
     } finally {
@@ -684,7 +684,7 @@ describe('startAttachWatcher', () => {
     }
   });
 
-  it('calls onFirstAttach immediately when already attached', () => {
+  it('calls onAttach immediately when already attached', () => {
     vi.useFakeTimers();
     try {
       const target: CdpTarget = { id: 'w5', title: 'Page', url: 'https://example.com' };
@@ -693,10 +693,134 @@ describe('startAttachWatcher', () => {
       const fakeServer = {
         sendToolListChanged,
       } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
-      const onFirstAttach = vi.fn();
+      const onAttach = vi.fn();
 
-      const watcher = startAttachWatcher(connection, fakeServer, 100, onFirstAttach);
-      expect(onFirstAttach).toHaveBeenCalledTimes(1);
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach);
+      expect(onAttach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── issue #509: target 교체 감지 테스트 ─────────────────────────────────
+
+  it('re-fires on target replacement (1→1 with different id) — stale dashboard fix #509', async () => {
+    vi.useFakeTimers();
+    try {
+      const targetA: CdpTarget = { id: 'A', title: 'Page A', url: 'https://example.com/a' };
+      const connection = new FakeCdpConnection([targetA]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onAttach = vi.fn();
+
+      // starts with targetA → immediate emit
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1);
+      expect(onAttach).toHaveBeenCalledTimes(1);
+
+      // replace with targetB (same count, different id — simulates rescan)
+      const targetB: CdpTarget = { id: 'B', title: 'Page B', url: 'https://example.com/b' };
+      connection.setTargets([targetB]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(2);
+      expect(onAttach).toHaveBeenCalledTimes(2);
+
+      // same targetB — no additional emit
+      await vi.advanceTimersByTimeAsync(500);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(2);
+      expect(onAttach).toHaveBeenCalledTimes(2);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT re-fire when the same target persists (unchanged signature)', async () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'stable', title: 'Page', url: 'https://example.com' };
+      const connection = new FakeCdpConnection([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onAttach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1);
+
+      // many ticks — same target, no change
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1);
+      expect(onAttach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT fire callback on full detach (→ empty)', async () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'D', title: 'Page', url: 'https://example.com' };
+      const connection = new FakeCdpConnection([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onAttach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach);
+      expect(onAttach).toHaveBeenCalledTimes(1); // initial emit
+
+      // detach all — signature changes to '' but callback must NOT fire
+      connection.setTargets([]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onAttach).toHaveBeenCalledTimes(1); // still 1
+      expect(sendToolListChanged).toHaveBeenCalledTimes(1); // still 1
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-fires after detach then re-attach (→[] →[C])', async () => {
+    vi.useFakeTimers();
+    try {
+      const targetC: CdpTarget = { id: 'C', title: 'Page C', url: 'https://example.com/c' };
+      const connection = new FakeCdpConnection([]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onAttach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach);
+      // starts empty — no emit
+      await vi.advanceTimersByTimeAsync(150);
+      expect(onAttach).not.toHaveBeenCalled();
+
+      // attach → emit
+      connection.setTargets([targetC]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onAttach).toHaveBeenCalledTimes(1);
+
+      // detach — no callback
+      connection.setTargets([]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onAttach).toHaveBeenCalledTimes(1);
+
+      // re-attach same id — emit again (signature changed from '' to 'C')
+      connection.setTargets([targetC]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onAttach).toHaveBeenCalledTimes(2);
 
       watcher.stop();
     } finally {

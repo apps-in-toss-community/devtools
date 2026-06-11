@@ -548,15 +548,31 @@ function buildAttachHtml(
   return filled.replace('</body>', `${sseScript}\n</body>`);
 }
 
+export interface QrHttpServerOptions {
+  /**
+   * SSE 주기 갱신 간격 (ms). 기본값 90_000 (90초).
+   *
+   * SSE 구독자가 있는 동안 이 간격마다 `notifyStateChange()`와 동일한 push를 수행한다.
+   * `getDashboardState()`가 호출 시점에 `at=` TOTP 코드를 재발급하므로, push 자체가
+   * 열린 탭의 인스펙터 링크를 신선하게 유지한다. 90s 주기 < relay gate 허용창 ~3분
+   * (±6 TOTP steps)이므로 탭이 열려 있는 한 링크가 항상 유효하다 (issue #509).
+   *
+   * 테스트에서 짧은 값(예: 50ms)을 주입해 검증한다. `undefined`이면 기본값 90_000.
+   */
+  sseRefreshIntervalMs?: number;
+}
+
 /**
  * 로컬 HTTP 서버를 127.0.0.1 random port(또는 `AIT_DEBUG_HTTP_PORT` env)로 시작한다.
  * MCP debug server 생애주기에 묶어 사용 — `runDebugServer` shutdown 시 `close()`로 정리.
  *
  * @param getDashboardState - dashboard 상태를 반환하는 클로저. 주입 시 `GET /` dashboard와
  *   `GET /events` SSE 스트림이 활성화된다. 미주입 시 두 라우트는 204/서비스 없음으로 응답.
+ * @param options - 서버 옵션. `sseRefreshIntervalMs`로 idle 탭 TOTP 만료 방지 주기를 조정.
  */
 export async function startQrHttpServer(
   getDashboardState?: () => DashboardState,
+  options?: QrHttpServerOptions,
 ): Promise<QrHttpServer> {
   const { default: QRCode } = await import('qrcode');
 
@@ -743,23 +759,39 @@ export async function startQrHttpServer(
   }
   const port = address.port;
 
+  /** idle 탭 TOTP 만료 방지용 주기 SSE 갱신 interval. */
+  function notifyStateChangeInternal(): void {
+    if (!getDashboardState) return;
+    const state = getDashboardState();
+    for (const client of sseClients) {
+      try {
+        pushStateToClient(client, state);
+      } catch {
+        // 연결이 이미 끊어진 경우 — 무시 (close 핸들러가 목록에서 제거함).
+      }
+    }
+  }
+
+  // 주기 SSE 갱신 — getDashboardState() 호출 시점에 TOTP at=가 재발급되므로
+  // push 자체가 열린 탭의 인스펙터 링크를 신선하게 유지한다 (issue #509).
+  // .unref()로 프로세스 종료를 막지 않는다.
+  const refreshIntervalMs = options?.sseRefreshIntervalMs ?? 90_000;
+  const refreshHandle = setInterval(() => {
+    if (sseClients.length > 0 && getDashboardState) {
+      notifyStateChangeInternal();
+    }
+  }, refreshIntervalMs).unref();
+
   return {
     port,
     buildAttachPageUrl(attachUrl: string): string {
       return `http://127.0.0.1:${port}/attach?u=${encodeURIComponent(attachUrl)}`;
     },
     notifyStateChange(): void {
-      if (!getDashboardState) return;
-      const state = getDashboardState();
-      for (const client of sseClients) {
-        try {
-          pushStateToClient(client, state);
-        } catch {
-          // 연결이 이미 끊어진 경우 — 무시 (close 핸들러가 목록에서 제거함).
-        }
-      }
+      notifyStateChangeInternal();
     },
     close(): Promise<void> {
+      clearInterval(refreshHandle);
       return new Promise((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });

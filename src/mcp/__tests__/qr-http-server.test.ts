@@ -348,6 +348,107 @@ describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 주기 SSE 갱신 — idle 탭 TOTP 만료 방지 (issue #509)
+//
+// startQrHttpServer는 실제 Node HTTP 서버를 기동하므로 vi.useFakeTimers()를
+// 조합하면 서버 내부 setInterval을 fake로 교체하지 못한다. 대신 짧은 실제
+// interval(20ms)을 주입하고 실제 시간을 기다린다.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — 주기 SSE 갱신 (#509)', () => {
+  it('sseRefreshIntervalMs 경과 후 SSE 구독자가 있으면 getDashboardState를 재호출한다', async () => {
+    let callCount = 0;
+    const state: DashboardState = {
+      tunnel: { up: true, wssUrl: 'wss://<RELAY>' },
+      pages: [{ id: 'page-1', url: 'https://example.com/app' }],
+      attachUrl: null,
+    };
+
+    const srv = await startQrHttpServer(
+      () => {
+        callCount++;
+        return state;
+      },
+      { sseRefreshIntervalMs: 20 },
+    );
+
+    // SSE 연결 — sseClients에 추가되게 한다.
+    const ctrl = new AbortController();
+    const fetchPromise = fetch(`http://127.0.0.1:${srv.port}/events`, {
+      signal: ctrl.signal,
+    });
+    // 연결이 서버에 도달하고 초기 push가 일어날 시간을 준다.
+    await new Promise<void>((r) => setTimeout(r, 30));
+    const countAfterConnect = callCount; // 초기 push(1회) 이상
+
+    // 주기 갱신이 추가로 일어날 시간(20ms × 2 이상)을 기다린다.
+    await new Promise<void>((r) => setTimeout(r, 60));
+
+    // getDashboardState가 주기적으로 재호출됐어야 한다.
+    expect(callCount).toBeGreaterThan(countAfterConnect);
+
+    ctrl.abort();
+    await fetchPromise.catch(() => {});
+    await srv.close();
+  }, 3_000);
+
+  it('SSE 구독자 없으면 주기 interval이 getDashboardState를 호출하지 않는다', async () => {
+    let callCount = 0;
+    const state: DashboardState = {
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    };
+
+    const srv = await startQrHttpServer(
+      () => {
+        callCount++;
+        return state;
+      },
+      { sseRefreshIntervalMs: 20 },
+    );
+
+    // 구독자 없이 interval 3회 이상 경과
+    await new Promise<void>((r) => setTimeout(r, 80));
+
+    // 구독자가 없으므로 주기 갱신이 getDashboardState를 호출해선 안 된다.
+    expect(callCount).toBe(0);
+
+    await srv.close();
+  }, 3_000);
+
+  it('close() 후에는 주기 interval이 더 이상 발화하지 않는다', async () => {
+    let callCount = 0;
+    const state: DashboardState = {
+      tunnel: { up: true, wssUrl: 'wss://<RELAY>' },
+      pages: [],
+      attachUrl: null,
+    };
+
+    const srv = await startQrHttpServer(
+      () => {
+        callCount++;
+        return state;
+      },
+      { sseRefreshIntervalMs: 20 },
+    );
+
+    // SSE 연결 + 초기 push 대기
+    const ctrl = new AbortController();
+    fetch(`http://127.0.0.1:${srv.port}/events`, { signal: ctrl.signal }).catch(() => {});
+    await new Promise<void>((r) => setTimeout(r, 30));
+
+    ctrl.abort();
+    await srv.close();
+    const countAfterClose = callCount;
+
+    // close 후 interval 3회 이상 경과 — callCount가 증가해선 안 된다.
+    await new Promise<void>((r) => setTimeout(r, 80));
+    expect(callCount).toBe(countAfterClose);
+  }, 3_000);
+});
+
+// ---------------------------------------------------------------------------
 // "연결된 Pages" 섹션 — pages: null 이면 숨김 (#411 결함 1)
 //
 // env 3/4(debug-server)는 pages: Array 라이브 목록을 채워 섹션을 보여주고,
