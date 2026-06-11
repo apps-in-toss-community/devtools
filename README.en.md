@@ -82,6 +82,26 @@ devtools-mcp   # start MCP server
 
 ---
 
+## On-device debugging in one line
+
+To enable on-device CDP debugging in environments 2, 3, and 4, add **one line** to your mini-app entry (`main.tsx` or equivalent):
+
+```ts
+// main.tsx (or the top of your mini-app entry)
+import '@ait-co/devtools/in-app/auto';
+```
+
+What this single line does:
+
+- **Self-gate**: if neither `?debug=1` nor `?relay=` is in the URL, and it is not a DEV build, the entry does nothing. The chunk stays dormant and has no impact on a normal production load.
+- **Attach**: when the gate passes, calls `maybeAttach()` to inject the Chii `target.js` script (Layer B/C gate semantics are fully preserved).
+- **SDK bridge**: installs `window.__sdk` / `window.__sdkCall` so an agent can drive any SDK API directly over the CDP relay via `Runtime.evaluate`. Silently skipped if `@apps-in-toss/web-framework` is not available.
+- **Types**: provides `Window.__sdk` / `__sdkCall` global type declarations automatically — no separate `globals.d.ts` needed in your project.
+
+For environments 3 and 4 (intoss-private relay), the relay QR deep-link carries `?debug=1&relay=<wss>` query params, so this one line is all the wiring you need. Environment 2 (PWA, `tunnel: { cdp: true }`) works the same way.
+
+> For dogfood builds with TOTP authentication, inject `__DEBUG_TOTP_SECRET__` via your build define and use `@ait-co/devtools/in-app` directly with `evaluateDebugGate({ verifyTotpCode })` + `maybeAttach()`. `in-app/auto` does not inject a TOTP verifier, so Layer C3 is disabled.
+
 ## Five common problems
 
 **"QR window doesn't open"**
@@ -102,7 +122,7 @@ The page on the phone died (OOM, JS exception, or native bridge crash). Relaunch
 
 **"SDK not available" — window.__sdkCall not injected**
 
-When `call_sdk` returns `ok: false, error: "window.__sdkCall is not available"`, a non-dogfood bundle is loaded. Redeploy through the dogfood channel with the `__DEBUG_BUILD__` flag enabled and try again. This error is the expected result in environment 2 (PWA). (Related: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
+When `call_sdk` returns `ok: false, error: "window.__sdkCall is not available"`, the SDK bridge has not been installed. Check that `import '@ait-co/devtools/in-app/auto'` is present at the top of your mini-app entry — see the "On-device debugging in one line" section above. This error is the expected result in environment 2 (PWA). (Related: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
 
 **"QR scanned but auth rejected" — TOTP code expired**
 
@@ -1123,6 +1143,7 @@ Returns the full current mock state (permissions, location, auth, network, IAP, 
 | `@ait-co/devtools/mcp/server` | Dev-mode MCP stdio server function (Node.js) |
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin entry point (debug / dev mode, Node.js) |
 | `@ait-co/devtools/in-app` | In-app debug attach — runtime gate (layers B/C) + Chii target.js injection. The consumer wraps the import in `if (__DEBUG_BUILD__)` so it is DCE'd from release builds — dogfood builds only |
+| `@ait-co/devtools/in-app/auto` | Self-gating side-effect entry — a single `import '@ait-co/devtools/in-app/auto'` line wires attach + SDK bridge. Active only when `?debug=1` / `?relay=` are in the URL or it is a DEV build; stays dormant on normal production loads. See the [section above](#on-device-debugging-in-one-line) |
 
 ## Telemetry
 

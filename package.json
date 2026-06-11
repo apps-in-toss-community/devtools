@@ -25,6 +25,10 @@
       "types": "./dist/in-app/index.d.ts",
       "import": "./dist/in-app/index.js"
     },
+    "./in-app/auto": {
+      "types": "./dist/in-app/auto.d.ts",
+      "import": "./dist/in-app/auto.js"
+    },
     "./unplugin": {
       "types": "./dist/unplugin/index.d.ts",
       "import": "./dist/unplugin/index.js",

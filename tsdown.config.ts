@@ -84,6 +84,17 @@ export default defineConfig([
     format: ['esm'],
   },
   {
+    // Self-gating side-effect entry. Consumers add one line to their app entry:
+    //   import '@ait-co/devtools/in-app/auto';
+    // The entry self-gates on URL params + DEV flag and, when the gate passes,
+    // calls maybeAttach() and installs the SDK bridge (window.__sdk/__sdkCall).
+    // @apps-in-toss/web-framework is an optional peer — resolved via dynamic
+    // import at runtime, never a static dependency of this bundle.
+    ...common,
+    entry: { 'in-app/auto': 'src/in-app/auto.ts' },
+    format: ['esm'],
+  },
+  {
     ...common,
     entry: { 'unplugin/index': 'src/unplugin/index.ts' },
     format: ['esm', 'cjs'],

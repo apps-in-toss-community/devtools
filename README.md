@@ -82,6 +82,26 @@ devtools-mcp   # MCP 서버 시작
 
 ---
 
+## on-device 디버깅 한 줄 설정
+
+환경 2·3·4에서 on-device CDP 디버깅을 활성화하려면 미니앱 entry(`main.tsx` 등)에 **한 줄**을 추가하세요:
+
+```ts
+// main.tsx (또는 미니앱 entry 최상단)
+import '@ait-co/devtools/in-app/auto';
+```
+
+이 한 줄이 하는 일:
+
+- **self-gate**: URL에 `?debug=1` 또는 `?relay=`가 없고, DEV 빌드도 아니라면 아무것도 하지 않습니다. 청크는 dormant 상태로 남아 일반 프로덕션 로드에 영향을 주지 않습니다.
+- **attach**: gate가 통과하면 `maybeAttach()`를 호출해 Chii `target.js`를 주입합니다 (Layer B·C 게이트 시맨틱스는 완전히 유지).
+- **SDK 브리지**: `window.__sdk` / `window.__sdkCall`을 설치해 에이전트가 CDP relay의 `Runtime.evaluate`로 SDK API를 직접 구동할 수 있게 합니다. `@apps-in-toss/web-framework`가 없으면 조용히 skip합니다.
+- **타입**: `Window.__sdk` / `__sdkCall` 글로벌 타입을 자동으로 제공합니다 — 별도 `globals.d.ts` 불필요.
+
+환경 3·4(intoss-private relay) 빌드는 relay QR 딥링크가 `?debug=1&relay=<wss>` 파라미터를 실어 보내므로, 이 한 줄만 있으면 별도 게이트 코드가 필요 없습니다. 환경 2(PWA, `tunnel: { cdp: true }`)도 동일하게 동작합니다.
+
+> TOTP 인증이 필요한 dogfood 빌드는 빌드 define으로 `__DEBUG_TOTP_SECRET__`을 주입하고 `@ait-co/devtools/in-app`을 직접 import해 `evaluateDebugGate({ verifyTotpCode })` + `maybeAttach()`를 사용하세요. `in-app/auto`는 TOTP verifier를 주입하지 않으므로 C3 레이어가 비활성화됩니다.
+
 ## 자주 겪는 문제 5가지
 
 **"QR 창이 안 열림"**
@@ -102,7 +122,7 @@ cloudflared quick tunnel은 수 시간 후 drop될 수 있습니다. `devtools-m
 
 **"SDK 부재" — window.__sdkCall 미주입**
 
-`call_sdk` 호출 시 `ok: false, error: "window.__sdkCall is not available"` 에러가 뜨면 dogfood 빌드가 아닌 일반 번들이 로드된 것입니다. `__DEBUG_BUILD__` 플래그가 켜진 dogfood 채널로 재배포 후 다시 시도하세요. 환경 2(PWA)에서는 이 에러가 예상 결과입니다. (관련: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
+`call_sdk` 호출 시 `ok: false, error: "window.__sdkCall is not available"` 에러가 뜨면 SDK 브리지가 아직 설치되지 않은 상태입니다. 아래 "on-device 디버깅 한 줄 설정" 섹션을 참고해 `import '@ait-co/devtools/in-app/auto'`가 미니앱 entry에 추가돼 있는지 확인하세요. 환경 2(PWA)에서는 이 에러가 예상 결과입니다. (관련: [#285](https://github.com/apps-in-toss-community/devtools/issues/285))
 
 **"QR 스캔했는데 인증 실패" — TOTP 만료**
 
@@ -1163,6 +1183,7 @@ export default {
 | `@ait-co/devtools/mcp/server` | dev-mode MCP stdio server 함수 (Node.js) |
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
 | `@ait-co/devtools/in-app` | In-app debug attach — 런타임 gate(layer B·C) + Chii target.js 주입. 소비자가 `if (__DEBUG_BUILD__)`로 import를 감싸 release 빌드에서 DCE — dogfood 빌드 전용 |
+| `@ait-co/devtools/in-app/auto` | Self-gating side-effect entry — `import '@ait-co/devtools/in-app/auto'` 한 줄로 attach + SDK 브리지 설치. URL 파라미터(`?debug=1` / `?relay=`) 또는 DEV 빌드에서만 활성화, 일반 프로덕션 로드는 dormant. [위 섹션](#on-device-디버깅-한-줄-설정) 참고 |
 
 ## 텔레메트리
 
