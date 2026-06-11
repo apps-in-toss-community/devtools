@@ -6,7 +6,7 @@
  *   - tunnelDownError(): 터널 미가동 한국어 메시지
  *   - pageMissingError(): 페이지 미attach 한국어 메시지 + build_attach_url 안내
  *   - pageCrashError(): 페이지 crash 한국어 메시지 + 재attach 안내
- *   - sdkAbsentError(): SDK 부재 한국어 메시지 + dogfood 채널 안내
+ *   - sdkAbsentError(): SDK 부재 한국어 메시지 + dog-food 채널 안내
  *   - relayDisconnectError(): relay 연결 끊김 한국어 메시지
  *   - tierRejectionError(): Tier 거부 — 한국어 + 하위 호환 영문 패턴 포함
  *   - classifyToolError(): 에러 메시지 패턴으로 4상태 자동 분류
@@ -103,8 +103,8 @@ describe('sdkAbsentError — 상태 4: SDK 부재', () => {
     expect(getText(sdkAbsentError())).toContain('window.__sdkCall');
   });
 
-  it('포함: "dogfood" (다음 행동 안내)', () => {
-    expect(getText(sdkAbsentError())).toContain('dogfood');
+  it('포함: "dog-food" (다음 행동 안내)', () => {
+    expect(getText(sdkAbsentError())).toContain('dog-food');
   });
 
   it('toolName 있으면 prefix에 포함', () => {
@@ -115,7 +115,7 @@ describe('sdkAbsentError — 상태 4: SDK 부재', () => {
     expect(sdkAbsentError().isError).toBe(true);
   });
 
-  // issue #360 — local 세션(`--target=local`, env 1)은 dogfood 재배포가 아니라
+  // issue #360 — local 세션(`--target=local`, env 1)은 dog-food 재배포가 아니라
   // dev 서버/unplugin alias 확인이 다음 행동이다.
   it('isLocal=true: "pnpm dev" + unplugin alias 안내 포함', () => {
     const text = getText(sdkAbsentError('call_sdk', true));
@@ -124,15 +124,15 @@ describe('sdkAbsentError — 상태 4: SDK 부재', () => {
     expect(text).toContain('unplugin');
   });
 
-  it('isLocal=true: dogfood/aitcc 재배포 안내는 미포함 (relay 메시지와 분기)', () => {
+  it('isLocal=true: dog-food/aitcc 재배포 안내는 미포함 (relay 메시지와 분기)', () => {
     const text = getText(sdkAbsentError('call_sdk', true));
-    expect(text).not.toContain('dogfood');
+    expect(text).not.toContain('dog-food');
     expect(text).not.toContain('aitcc app deploy');
   });
 
-  it('isLocal 생략(기본 false): relay/dogfood 안내 유지 (하위 호환)', () => {
+  it('isLocal 생략(기본 false): relay/dog-food 안내 유지 (하위 호환)', () => {
     const text = getText(sdkAbsentError('call_sdk'));
-    expect(text).toContain('dogfood');
+    expect(text).toContain('dog-food');
     expect(text).not.toContain('pnpm dev');
   });
 });
@@ -191,7 +191,7 @@ describe('classifyToolError — 에러 패턴 자동 분류', () => {
     const err = new Error('sdk-absent: window.__sdkCall이 주입되지 않았습니다.');
     const result = classifyToolError(err, 'call_sdk');
     expect(getText(result)).toContain('window.__sdkCall');
-    expect(getText(result)).toContain('dogfood');
+    expect(getText(result)).toContain('dog-food');
   });
 
   // issue #360 — page-side probe가 던지는 sdk-absent 메시지는 relay 가정으로
@@ -201,13 +201,13 @@ describe('classifyToolError — 에러 패턴 자동 분류', () => {
     const result = classifyToolError(err, 'call_sdk', true);
     expect(getText(result)).toContain('pnpm dev');
     expect(getText(result)).toContain('unplugin');
-    expect(getText(result)).not.toContain('dogfood');
+    expect(getText(result)).not.toContain('dog-food');
   });
 
-  it('sdk-absent + isLocal 생략 → relay/dogfood 안내 (하위 호환)', () => {
+  it('sdk-absent + isLocal 생략 → relay/dog-food 안내 (하위 호환)', () => {
     const err = new Error('sdk-absent: window.__sdkCall이 주입되지 않았습니다.');
     const result = classifyToolError(err, 'call_sdk');
-    expect(getText(result)).toContain('dogfood');
+    expect(getText(result)).toContain('dog-food');
     expect(getText(result)).not.toContain('pnpm dev');
   });
 

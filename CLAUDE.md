@@ -162,7 +162,7 @@ issue #309의 dead-lock(빈 세션 첫 `tools/list`에서 Tier B `build_attach_u
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
 | `@ait-co/devtools/in-app` | In-app debug attach — 런타임 gate(layer B·C) + Chii target.js 주입. 소비자가 `if (__DEBUG_BUILD__)`로 import를 감싸 release 빌드에서 DCE — dogfood 빌드 전용 |
 
-## 실기기 미리보기 — 환경 2 (AITC Sandbox PWA, tunnel + launcher)
+## 실기기 미리보기 — 환경 2 (AITC Sandbox App (PWA), tunnel + launcher)
 
 이 섹션은 4겹 fidelity 사다리의 **환경 2 = AITC Sandbox App**을 다룬다. 환경 1(로컬 브라우저 + mock SDK)이 구조적으로 메울 수 없는 실기기 WebKit 엔진·실 터치/뷰포트를 토스 검수·WebView 없이 확인하는 겹이다 — `devtools.aitc.dev/launcher/`에 배포된 installable PWA(`e2e/fixture/launcher/`)가 그 진입점이고, agent-plugin의 `/ait setup-phone-preview`가 이 환경을 배선하는 station 보조 skill이다. 설계 정본은 umbrella `meta/four-environments-fidelity.md` §1.1·§1.2(환경 2 매트릭스).
 

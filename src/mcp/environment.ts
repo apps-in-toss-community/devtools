@@ -14,7 +14,7 @@
  *      see `cdp-connection.ts`). Authoritative, known before any target
  *      attaches, and swappable at runtime by pointing at a different connection.
  *
- *   2. `relay-dev` vs `relay-live` — physically underivable (dogfood and
+ *   2. `relay-dev` vs `relay-live` — physically underivable (dog-food and
  *      production relays are byte-identical on the wire), so it is a single
  *      operator-supplied bit, `liveIntent`. It is armed only by
  *      `start_debug({ mode: 'relay-live' })` and is inert whenever the active
@@ -52,7 +52,7 @@
  * #378).
  *
  *   - `mock`         — local Chromium + mock SDK (env 1) — active connection is local.
- *   - `relay-dev`    — real-device dogfood relay (env 3) — relay connection, liveIntent off,
+ *   - `relay-dev`    — real-device dog-food relay (env 3) — relay connection, liveIntent off,
  *                      intoss-private WebView (the relay devtools started).
  *   - `relay-live`   — real-device live/production relay (env 4) — relay connection,
  *                      liveIntent on, read-only LIVE guard active.
@@ -72,7 +72,7 @@ export type ConnectionKind = 'relay' | 'local';
  * Origin of a relay connection — the discriminator that distinguishes two relay
  * families that are otherwise both `kind: 'relay'` (issue #378):
  *
- *   - `'intoss-webview'` — the intoss-private dogfood / live relay (env 3/4),
+ *   - `'intoss-webview'` — the intoss-private dog-food / live relay (env 3/4),
  *     booted BY the MCP server (`bootRelayFamily`). Maps to `relay-dev` /
  *     `relay-live` depending on `liveIntent`.
  *   - `'external-pwa'`   — an external CDP relay the unplugin already brought up
@@ -132,7 +132,7 @@ export function toLegacyEnv(env: McpEnvironment): 'mock' | 'relay' {
  *
  * `relayOrigin` is the booted-family discriminator (NOT sniffed from the URL)
  * that distinguishes the env-2 external-PWA relay (`relay-mobile`) from the
- * intoss-private dogfood relay (`relay-dev`); both are `kind: 'relay'`.
+ * intoss-private dog-food relay (`relay-dev`); both are `kind: 'relay'`.
  *
  * Pure — used at every output boundary (envelope `meta.env`, `get_debug_status`,
  * `measure_safe_area` provenance) so the surface never sniffs a URL again.

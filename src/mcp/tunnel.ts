@@ -174,7 +174,7 @@ export async function renderAttachBanner(input: AttachBannerInput): Promise<stri
     authNote,
     '',
     '  Use build_attach_url to generate a deep link with the current TOTP code.',
-    '  Scan the QR to locate the relay (open the dogfood URL separately with',
+    '  Scan the QR to locate the relay (open the dog-food URL separately with',
     '  ?debug=1&relay=<wss>&at=<code> or use the build_attach_url tool):',
     '',
     qr,

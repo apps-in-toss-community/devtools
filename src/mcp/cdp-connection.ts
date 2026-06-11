@@ -234,7 +234,7 @@ export interface CdpConnection {
    * `mock` vs `relay` split is now a free, authoritative property of the
    * connection itself, known before any target attaches. The `relay-dev` vs
    * `relay-live` distinction is orthogonal (operator-supplied `liveIntent`,
-   * see `environment.ts`) because dogfood and production relays are
+   * see `environment.ts`) because dog-food and production relays are
    * byte-identical on the wire.
    */
   readonly kind: 'relay' | 'local';
