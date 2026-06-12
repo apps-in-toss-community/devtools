@@ -17,7 +17,9 @@ import {
   _resetSelfAttachedForTest,
   deriveSelfTargetScriptUrl,
   injectSelfTarget,
+  maybeStripCdpForSelfDebug,
   parseSelfDebugParams,
+  stripCdpParamsFromUrl,
 } from './selfdebug.js';
 
 const RELAY_WSS = 'wss://abc-def.trycloudflare.com/relay';
@@ -176,5 +178,78 @@ describe('injectSelfTarget — selfAttached guard', () => {
     expect(
       document.querySelectorAll<HTMLScriptElement>(`script[src="${expectedSrc}"]`).length,
     ).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stripCdpParamsFromUrl (issue #552)
+// ---------------------------------------------------------------------------
+
+describe('stripCdpParamsFromUrl', () => {
+  it('removes debug, relay, and at params', () => {
+    const url =
+      'https://abc.trycloudflare.com/?debug=1&relay=wss%3A%2F%2Fabc.com%2Frelay&at=123456&foo=bar';
+    const result = stripCdpParamsFromUrl(url);
+    const parsed = new URL(result);
+    expect(parsed.searchParams.has('debug')).toBe(false);
+    expect(parsed.searchParams.has('relay')).toBe(false);
+    expect(parsed.searchParams.has('at')).toBe(false);
+    // Non-CDP param must be preserved
+    expect(parsed.searchParams.get('foo')).toBe('bar');
+  });
+
+  it('returns the URL unchanged when no CDP params are present', () => {
+    const url = 'https://abc.trycloudflare.com/?foo=bar&baz=1';
+    expect(stripCdpParamsFromUrl(url)).toBe(url);
+  });
+
+  it('handles an invalid URL by returning it as-is', () => {
+    expect(stripCdpParamsFromUrl('not-a-url')).toBe('not-a-url');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// maybeStripCdpForSelfDebug — deep-link / pendingUrl paths (issue #552)
+// ---------------------------------------------------------------------------
+
+const DECORATED_URL = `https://abc.trycloudflare.com/?foo=bar&debug=1&relay=${encodeURIComponent(RELAY_WSS)}&at=111111`;
+
+describe('maybeStripCdpForSelfDebug — selfdebug=1 (strip active)', () => {
+  const SEARCH_WITH_SELFDEBUG = `?selfdebug=1&relay=${encodeURIComponent(RELAY_WSS)}&at=111111&url=https%3A%2F%2Fabc.trycloudflare.com%2F`;
+
+  it('strips debug/relay/at from the iframe URL when selfdebug=1 + valid relay', () => {
+    const result = maybeStripCdpForSelfDebug(DECORATED_URL, SEARCH_WITH_SELFDEBUG);
+    const parsed = new URL(result);
+    expect(parsed.searchParams.has('debug')).toBe(false);
+    expect(parsed.searchParams.has('relay')).toBe(false);
+    expect(parsed.searchParams.has('at')).toBe(false);
+    // Non-CDP param must be preserved
+    expect(parsed.searchParams.get('foo')).toBe('bar');
+  });
+
+  it('is idempotent — already-stripped URL passes through unchanged', () => {
+    const stripped = 'https://abc.trycloudflare.com/?foo=bar';
+    const result = maybeStripCdpForSelfDebug(stripped, SEARCH_WITH_SELFDEBUG);
+    expect(result).toBe(stripped);
+  });
+});
+
+describe('maybeStripCdpForSelfDebug — selfdebug absent (no strip, regression guard)', () => {
+  it('returns the iframe URL unchanged when selfdebug=1 is absent', () => {
+    const search = `?relay=${encodeURIComponent(RELAY_WSS)}&at=111111&debug=1`;
+    expect(maybeStripCdpForSelfDebug(DECORATED_URL, search)).toBe(DECORATED_URL);
+  });
+
+  it('returns the iframe URL unchanged when selfdebug=0', () => {
+    const search = `?selfdebug=0&relay=${encodeURIComponent(RELAY_WSS)}&at=111111&debug=1`;
+    expect(maybeStripCdpForSelfDebug(DECORATED_URL, search)).toBe(DECORATED_URL);
+  });
+
+  it('returns the iframe URL unchanged when relay is absent (selfdebug=1 alone is not enough)', () => {
+    expect(maybeStripCdpForSelfDebug(DECORATED_URL, '?selfdebug=1')).toBe(DECORATED_URL);
+  });
+
+  it('returns the iframe URL unchanged for empty search string', () => {
+    expect(maybeStripCdpForSelfDebug(DECORATED_URL, '')).toBe(DECORATED_URL);
   });
 });

@@ -176,3 +176,54 @@ export function maybeAttachSelf(): void {
   if (!result.enabled) return;
   injectSelfTarget(result.params);
 }
+
+// ---------------------------------------------------------------------------
+// CDP param list — must match Launcher.tsx's CDP_FORWARD_PARAMS
+// ---------------------------------------------------------------------------
+
+const CDP_PARAMS = ['debug', 'relay', 'at'] as const;
+
+/**
+ * Removes CDP debug params (`debug`/`relay`/`at`) from a URL string.
+ *
+ * Pure function — no DOM, no side effects.
+ *
+ * Mirrors `stripCdpParams` in `Launcher.tsx`. Kept here so
+ * {@link maybeStripCdpForSelfDebug} can be unit-tested without importing the
+ * React component module.
+ */
+export function stripCdpParamsFromUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  for (const key of CDP_PARAMS) {
+    parsed.searchParams.delete(key);
+  }
+  return parsed.toString();
+}
+
+/**
+ * Returns `iframeUrl` with CDP params stripped when the launcher search string
+ * indicates selfdebug mode is active; otherwise returns `iframeUrl` unchanged.
+ *
+ * Covers the **deep-link and pendingUrl paths** (issue #552): both routes
+ * ultimately obtain their URL from `consumeDeepLinkUrl()`, which calls this
+ * function so the iframe never receives `debug`/`relay`/`at` when the launcher
+ * itself is the sole debug client (single-attach model, option a — #535).
+ *
+ * Pure function — no DOM, no side effects. Idempotent: if the params are
+ * already absent the URL is returned unchanged.
+ *
+ * @param iframeUrl  - The fully-decorated iframe URL (output of `decorateIframeSrc`).
+ * @param searchStr  - The launcher URL search string captured **before**
+ *   `history.replaceState` removes it (e.g. the value of `location.search`
+ *   at the top of `consumeDeepLinkUrl`).
+ */
+export function maybeStripCdpForSelfDebug(iframeUrl: string, searchStr: string): string {
+  const result = parseSelfDebugParams(searchStr);
+  if (!result.enabled) return iframeUrl;
+  return stripCdpParamsFromUrl(iframeUrl);
+}
