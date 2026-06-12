@@ -6,9 +6,14 @@
 
 **A. 안정 `/inspector` 엔드포인트 (QR HTTP 서버)**
 
-`GET http://127.0.0.1:<qr-port>/inspector`를 추가한다. 요청마다 활성 타겟의 TOTP를 생성하고
-`buildChiiInspectorUrl`로 조립한 URL로 302 redirect한다. relay 비활성 또는 타겟 없음이면 502 + ko/en HTML.
-URL에 시크릿이 없으므로 stdout·대시보드·로그에 출력 가능. redirect Location은 HTTP 응답으로만 전달 — 로그 금지.
+`GET http://127.0.0.1:<qr-port>/inspector`를 추가한다. 요청마다 `getDirectInspectorUrl()` getter를
+호출해 활성 타겟의 TOTP를 생성하고 `buildChiiInspectorUrl`로 조립한 URL로 302 redirect한다.
+relay 비활성 또는 타겟 없음이면 502 + ko/en HTML. URL에 시크릿이 없으므로 stdout·대시보드·로그에
+출력 가능. redirect Location은 HTTP 응답으로만 전달 — 로그 금지.
+
+`getDashboardState().inspectorUrl`(= `/inspector` 자기 자신)을 redirect 대상으로 쓰면
+무한 루프(ERR_TOO_MANY_REDIRECTS)가 발생한다. `/inspector` 라우트는 `getDirectInspectorUrl`
+getter를 별도로 주입받아 직접 chii front_end URL을 조립하도록 분리해 이 루프를 방지한다.
 
 **B. env 2 inspector는 로컬 base 우선**
 

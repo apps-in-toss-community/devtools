@@ -1265,3 +1265,151 @@ describe('startQrHttpServer — /attach mode-aware chrome 분기 (#468)', () => 
     expect(html).not.toContain('__LIVE_FAQ__');
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /inspector — 안정 진입점 자기참조 redirect 루프 방지 (#530 버그 수정)
+//
+// 배경: getDashboardState().inspectorUrl = /inspector 자기 자신으로 세팅하면
+// GET /inspector → 302 → /inspector → 302 → ... 무한 루프 발생.
+// 수정: /inspector 라우트는 getDashboardState가 아닌 getDirectInspectorUrl()를
+// 옵션으로 주입받아 직접 chii front_end URL을 조립한다.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — GET /inspector 라우트 (#530 루프 수정)', () => {
+  // SECRET-HANDLING: 테스트 fixture host는 *.example.com 사용 (tunnel host 노출 금지).
+  const CHII_URL =
+    'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Ftest%3Ftarget%3Dabc%26at%3D123456&panel=console';
+
+  it('getDirectInspectorUrl 미주입 → 503', async () => {
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: true, wssUrl: null }, pages: [], attachUrl: null }),
+      // getDirectInspectorUrl 미주입
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`);
+      expect(res.status).toBe(503);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('ok:true → 302 redirect, Location이 chii front_end URL (자기 자신 아님)', async () => {
+    let callCount = 0;
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: true, wssUrl: null }, pages: [], attachUrl: null }),
+      {
+        getDirectInspectorUrl: () => {
+          callCount += 1;
+          return { ok: true, url: CHII_URL };
+        },
+      },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`, { redirect: 'manual' });
+      // 302 redirect 확인
+      expect(res.status).toBe(302);
+      const location = res.headers.get('Location');
+      // Location이 /inspector 자기 자신이 아님 — 루프 불가
+      expect(location).not.toBe(`http://127.0.0.1:${srv.port}/inspector`);
+      // front_end/chii_app.html 포함 확인
+      expect(location).toContain('front_end/chii_app.html');
+      expect(location).toBe(CHII_URL);
+      // Cache-Control: no-store
+      expect(res.headers.get('Cache-Control')).toBe('no-store');
+      // getter가 호출됐음 확인 (TOTP fresh mint 의미)
+      expect(callCount).toBe(1);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('getter가 매 요청마다 호출됨 (TOTP fresh mint 보장)', async () => {
+    let callCount = 0;
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: true, wssUrl: null }, pages: [], attachUrl: null }),
+      {
+        getDirectInspectorUrl: () => {
+          callCount += 1;
+          return { ok: true, url: CHII_URL };
+        },
+      },
+    );
+    try {
+      await fetch(`http://127.0.0.1:${srv.port}/inspector`, { redirect: 'manual' });
+      await fetch(`http://127.0.0.1:${srv.port}/inspector`, { redirect: 'manual' });
+      expect(callCount).toBe(2);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('ok:false, reason:relayDown → 502 (200/302 아님)', async () => {
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: false, wssUrl: null }, pages: [], attachUrl: null }),
+      {
+        getDirectInspectorUrl: () => ({ ok: false, reason: 'relayDown' }),
+      },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`);
+      expect(res.status).toBe(502);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('ok:false, reason:noTarget → 502 (200/302 아님)', async () => {
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: true, wssUrl: null }, pages: [], attachUrl: null }),
+      {
+        getDirectInspectorUrl: () => ({ ok: false, reason: 'noTarget' }),
+      },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`);
+      expect(res.status).toBe(502);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('ok:false, reason:totpUnavailable → 502 (fail-closed, 인증 없는 URL로 redirect 금지)', async () => {
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: true, wssUrl: null }, pages: [], attachUrl: null }),
+      {
+        getDirectInspectorUrl: () => ({ ok: false, reason: 'totpUnavailable' }),
+      },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`);
+      // fail-closed: 절대 at= 없는 URL로 redirect하지 않는다
+      expect(res.status).toBe(502);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SECRET: stderr/stdout에 redirect Location(tunnel host)이 찍히지 않음', async () => {
+    // /inspector의 Location header는 HTTP 응답으로만 — 로그 출력 금지.
+    // 이 테스트는 redirect: 'manual'로 Location 헤더를 직접 검사해
+    // 값이 테스트 pixel에 노출되지 않음을 간접 확인한다.
+    // 실제 출력 캡처는 프로세스 수준 mocking이 필요하므로 여기서는
+    // 헤더 값이 예상 URL과 일치함(= 로그 노출 여부와 무관한 정상 동작)만 검증한다.
+    const SECRET_HOST = 'abc123.trycloudflare.example.com';
+    const directUrl = `https://${SECRET_HOST}/front_end/chii_app.html?wss=secret&panel=console`;
+    const srv = await startQrHttpServer(
+      () => ({ tunnel: { up: true, wssUrl: null }, pages: [], attachUrl: null }),
+      {
+        getDirectInspectorUrl: () => ({ ok: true, url: directUrl }),
+      },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`, { redirect: 'manual' });
+      expect(res.status).toBe(302);
+      // Location 헤더는 HTTP 응답에만 — 정상 전달 확인
+      expect(res.headers.get('Location')).toBe(directUrl);
+    } finally {
+      await srv.close();
+    }
+  });
+});

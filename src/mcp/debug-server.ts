@@ -52,7 +52,7 @@ import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
 import { buildDeepLinkAttachUrl, buildLauncherAttachUrl } from './deeplink.js';
-import { AutoDevtoolsOpener } from './devtools-opener.js';
+import { AutoDevtoolsOpener, buildChiiInspectorUrl } from './devtools-opener.js';
 import { wrapEnvelope } from './envelope.js';
 import {
   deriveEnvironment,
@@ -74,7 +74,12 @@ import {
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
-import { type DashboardState, type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
+import {
+  type DashboardState,
+  type QrHttpServer,
+  type QrHttpServerOptions,
+  startQrHttpServer,
+} from './qr-http-server.js';
 import { loadRelaySecretReadOnly } from './relay-secret-store.js';
 import { acquireLock, readServerLock } from './server-lock.js';
 import {
@@ -2535,12 +2540,40 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     };
   };
 
+  // getDirectInspectorUrl — /inspector 라우트에서 직접 chii front_end URL을 조립.
+  // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프가 발생하므로
+  // 별도 getter로 분리한다. 매 요청마다 호출되어 TOTP를 요청 시점에 mint한다.
+  // SECRET-HANDLING: ok:true url에 relay host + at= 코드가 담긴다 — 로그/stdout 출력 금지.
+  const getDirectInspectorUrl = (): ReturnType<
+    NonNullable<QrHttpServerOptions['getDirectInspectorUrl']>
+  > => {
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      return { ok: false, reason: 'relayDown' };
+    }
+    const targets = router.active.listTargets();
+    if (targets.length === 0) {
+      return { ok: false, reason: 'noTarget' };
+    }
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    if (!totpSecret) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    const url = buildChiiInspectorUrl(relayHttpUrl, targets[0].id, () =>
+      generateTotp(totpSecret, Date.now()),
+    );
+    if (url === null) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    return { ok: true, url };
+  };
+
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
   // 도달하는 race를 없애기 위해 cloudflared(fire-and-forget)와 달리 동기 await 사용.
   // GUI 없는 환경에서는 startQrHttpServer가 실패해도 text QR fallback으로 동작한다.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer(getDashboardState);
+    qrServer = await startQrHttpServer(getDashboardState, { getDirectInspectorUrl });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -2835,11 +2868,39 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     };
   };
 
+  // getDirectInspectorUrl — /inspector 라우트에서 직접 chii front_end URL을 조립.
+  // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프가 발생하므로
+  // 별도 getter로 분리한다. 매 요청마다 호출되어 TOTP를 요청 시점에 mint한다.
+  // SECRET-HANDLING: ok:true url에 relay host + at= 코드가 담긴다 — 로그/stdout 출력 금지.
+  const getDirectInspectorUrl = (): ReturnType<
+    NonNullable<QrHttpServerOptions['getDirectInspectorUrl']>
+  > => {
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      return { ok: false, reason: 'relayDown' };
+    }
+    const targets = router.active.listTargets();
+    if (targets.length === 0) {
+      return { ok: false, reason: 'noTarget' };
+    }
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    if (!totpSecret) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    const url = buildChiiInspectorUrl(relayHttpUrl, targets[0].id, () =>
+      generateTotp(totpSecret, Date.now()),
+    );
+    if (url === null) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    return { ok: true, url };
+  };
+
   // Local QR HTTP server — awaited so the first build_attach_url call (after a
   // relay switch) doesn't race its startup. Failure falls back to text QR.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer(getDashboardState);
+    qrServer = await startQrHttpServer(getDashboardState, { getDirectInspectorUrl });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -3099,11 +3160,39 @@ export async function runMobileDebugServer(
     };
   };
 
+  // getDirectInspectorUrl — /inspector 라우트에서 직접 chii front_end URL을 조립.
+  // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프가 발생하므로
+  // 별도 getter로 분리한다. 매 요청마다 호출되어 TOTP를 요청 시점에 mint한다.
+  // SECRET-HANDLING: ok:true url에 relay host + at= 코드가 담긴다 — 로그/stdout 출력 금지.
+  const getDirectInspectorUrl = (): ReturnType<
+    NonNullable<QrHttpServerOptions['getDirectInspectorUrl']>
+  > => {
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      return { ok: false, reason: 'relayDown' };
+    }
+    const targets = router.active.listTargets();
+    if (targets.length === 0) {
+      return { ok: false, reason: 'noTarget' };
+    }
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    if (!totpSecret) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    const url = buildChiiInspectorUrl(relayHttpUrl, targets[0].id, () =>
+      generateTotp(totpSecret, Date.now()),
+    );
+    if (url === null) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    return { ok: true, url };
+  };
+
   // Local QR HTTP server — awaited so the first build_attach_url call doesn't
   // race its startup. Failure falls back to text QR.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer(getDashboardState);
+    qrServer = await startQrHttpServer(getDashboardState, { getDirectInspectorUrl });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
