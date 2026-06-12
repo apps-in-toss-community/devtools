@@ -1399,11 +1399,15 @@ export function Launcher(): React.JSX.Element {
           }}
         >
           {/*
-          Letterbox diagnosis label (#469): when the runtime geometry matches
-          the iOS standalone letterbox signature (standalone + height shortfall
-          — see letterbox.ts), name the strip in-page. The band itself is
-          OUTSIDE the window (OS-painted manifest background_color) so this
-          label is the only way the page can explain it.
+          Letterbox diagnosis label (#469, re-grounded #527): when the runtime
+          geometry matches the iOS standalone letterbox signature (standalone +
+          height shortfall — see letterbox.ts), name the condition in-page.
+          NOTE: the original "band is OUTSIDE the window (OS-painted)" theory
+          was refuted on real hardware (2026-06-12, Safari Web Inspector manual
+          height override paints into the band) — the render surface is the full
+          screen and only the ICB is mis-reported. The screen.height px
+          correction above now fills the band; this label reports that the
+          correction is active.
         */}
           {letterboxDetected && (
             <div
