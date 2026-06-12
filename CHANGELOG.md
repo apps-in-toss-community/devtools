@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.86
+
+### Patch Changes
+
+- c87f44d: `build_attach_url` 도구에 `wait_timeout_seconds` param 추가 — `wait_for_attach=true` 시 대기 시간을 1–600 s 범위에서 조절 가능 (default 60 s). 유효 범위 밖 입력(0/음수/NaN/비숫자)은 에러 없이 default로 폴백. `deps.waitForAttachTimeoutMs` 기본값을 90 000 ms → 60 000 ms로 정정, 도구 description의 stale "polls up to 30 s" 문구를 "default 60 s, wait_timeout_seconds로 조절"로 갱신.
+- ece5890: `get_debug_status`가 `list_pages`와 동일하게 pages 조립 전 `refreshTargets()`를 호출해 stale 캐시로 인한 pages:0 / 잘못된 `nextRecommendedAction` 보고를 수정한다. relay에 target이 붙어 있어도 status가 "pages 없음"으로 오판하던 문제(#551)를 해결한다. refresh 실패 시에는 기존 캐시를 그대로 사용해 gracefully 동작한다.
+
 ## 0.1.85
 
 ### Patch Changes
