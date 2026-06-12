@@ -308,6 +308,8 @@ export const en: Record<StringKey, string> = {
   'launcher.diagYes': 'yes',
   'launcher.diagNo': 'no',
   'launcher.letterboxDetected': 'Letterbox correction +{pt}pt applied — using full screen height.',
+  'launcher.letterboxClipped':
+    'An iOS viewport bug makes the bottom {pt}pt unusable — rotating to landscape and back to portrait may recover it.',
   // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': 'Mini App',
   'launcher.navbar.back': 'Back',

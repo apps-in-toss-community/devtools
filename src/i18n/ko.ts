@@ -309,6 +309,8 @@ export const ko = {
   'launcher.diagYes': '예',
   'launcher.diagNo': '아니요',
   'launcher.letterboxDetected': 'letterbox 보정 +{pt}pt 적용됨 — 화면 전체를 사용합니다.',
+  'launcher.letterboxClipped':
+    'iOS 뷰포트 버그로 화면 아래 {pt}pt를 쓸 수 없습니다 — 기기를 가로로 돌렸다 세로로 돌리면 복구될 수 있어요.',
   // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': '미니앱',
   'launcher.navbar.back': '뒤로가기',

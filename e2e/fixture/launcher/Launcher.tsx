@@ -14,7 +14,13 @@ import type { Locale } from '../../../src/i18n/index.js';
 import { setLocale } from '../../../src/i18n/index.js';
 import { useLocale, useT } from '../../../src/i18n/react.js';
 import { resolveLauncherEntry } from './entry.js';
-import { detectLetterbox, type SafeAreaInsets, type ViewportMetrics } from './letterbox.js';
+import {
+  detectLetterbox,
+  type LetterboxVerification,
+  type SafeAreaInsets,
+  type ViewportMetrics,
+  verifyLetterboxCorrection,
+} from './letterbox.js';
 import {
   AIT_NAV_BAR_HEIGHT_PARTNER,
   computeNavBarBridgeInsets,
@@ -692,6 +698,18 @@ export function Launcher(): React.JSX.Element {
   const [metrics, setMetrics] = useState<ViewportMetrics | null>(null);
   const [chromeDeltaPx, setChromeDeltaPx] = useState<number | null>(null);
 
+  // #561 verify-then-correct: the #527 px expansion is applied first, then the
+  // bottom sentinel below verifies it actually paints. Until the IO reports,
+  // the verdict is `pending`; on real hardware it settles to `clipped` (the
+  // expansion does NOT reach the band — see letterbox.ts header) and the layout
+  // falls back to the honest formula. `visible` keeps the correction for any
+  // device/state where it genuinely holds. Reset to `pending` whenever the
+  // letterbox geometry changes (rotation re-evaluation), so a healed-then-
+  // recurred window is re-verified rather than trusting a stale verdict.
+  const [letterboxVerified, setLetterboxVerified] = useState<LetterboxVerification | 'pending'>(
+    'pending',
+  );
+
   // Nav-bar emulation (#495/#507). navBarType + title are read from the launcher
   // query ONCE at mount — consumeDeepLinkUrl() strips the query via
   // replaceState, so the initializer captures them before they are gone.
@@ -715,6 +733,9 @@ export function Launcher(): React.JSX.Element {
   const scannerRef = useRef<QrScanner | null>(null);
   const bottomChromeRef = useRef<HTMLDivElement | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
+  // #561: the px-corrected root container — the verification sentinel is mounted
+  // at its bottom edge to test whether the correction actually paints.
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   // SECURITY: never derive the title from the tunnel host. When name= is absent
   // resolveAppTitle returns null and we fall back to a generic localized label.
@@ -959,6 +980,74 @@ export function Launcher(): React.JSX.Element {
   }, []);
 
   const letterbox = metrics ? detectLetterbox(metrics) : null;
+  const letterboxDetected = letterbox?.detected ?? false;
+  const letterboxShortfallPx = letterbox?.shortfallPx ?? 0;
+
+  // #561: the conditions under which the #527 px expansion is even attempted.
+  // (shortfall>0 is implied by detected, but kept explicit so a 0-shortfall edge
+  // never triggers a meaningless override.)
+  const correctionAttempted = letterboxDetected && letterboxShortfallPx > 0;
+
+  // The px expansion is applied optimistically while the sentinel verification
+  // is `pending` or has confirmed `visible`; once the sentinel proves the band
+  // is `clipped` we drop it and fall back to the honest calc()/100% formula.
+  const applyPxCorrection = correctionAttempted && letterboxVerified !== 'clipped';
+
+  // Only claim the correction to the framed app (bridge bottom restored, "+Npt
+  // applied" toast) once the sentinel has CONFIRMED the band paints. Pending and
+  // clipped both forward the honest letterboxCorrected=false (bottom zeroed).
+  const letterboxCorrected = correctionAttempted && letterboxVerified === 'visible';
+
+  // Reset the verification verdict whenever the letterbox geometry changes so a
+  // rotation that heals the window (shortfall 0 → not detected) and a later
+  // recurrence are each re-verified from scratch rather than trusting a stale
+  // `visible`/`clipped`. Keyed on the geometry that feeds the verdict.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on geometry, not the setter's stable identity
+  useEffect(() => {
+    setLetterboxVerified('pending');
+  }, [correctionAttempted, letterboxShortfallPx]);
+
+  // #561 verify-then-correct: with the px expansion applied and pending, mount a
+  // 1px sentinel at the bottom of the corrected container and observe whether it
+  // intersects the top-level viewport. On real hardware the WebKit viewport
+  // clips at screen.height − statusBar, so the sentinel reports clipped and the
+  // layout falls back; a timeout (~1s of silence) is also treated as clipped so
+  // the harmful expansion is never left in place on faith. The verdict resets to
+  // pending on geometry change (effect above), which re-arms this verification.
+  useEffect(() => {
+    if (screen !== 'live' || !applyPxCorrection || letterboxVerified !== 'pending') return;
+    const root = rootRef.current;
+    if (root === null || typeof IntersectionObserver === 'undefined') return;
+
+    const cancel = verifyLetterboxCorrection(
+      (onResult) => {
+        const sentinel = document.createElement('div');
+        sentinel.setAttribute('aria-hidden', 'true');
+        sentinel.dataset.testid = 'launcher-letterbox-sentinel';
+        sentinel.style.cssText =
+          'position:absolute;left:0;bottom:0;width:1px;height:1px;pointer-events:none';
+        root.appendChild(sentinel);
+        const observer = new IntersectionObserver(
+          (entries) => {
+            const entry = entries[0];
+            if (entry) onResult(entry.isIntersecting);
+          },
+          { root: null, threshold: [0] },
+        );
+        observer.observe(sentinel);
+        return () => {
+          observer.disconnect();
+          sentinel.remove();
+        };
+      },
+      (result) => setLetterboxVerified(result),
+      {
+        setTimeout: window.setTimeout.bind(window),
+        clearTimeout: window.clearTimeout.bind(window),
+      },
+    );
+    return cancel;
+  }, [screen, applyPxCorrection, letterboxVerified]);
 
   // Forward the launcher's real env() insets to the framed dev app (#484,
   // slice 2). The launcher is the top-level document so its env() reading is the
@@ -970,11 +1059,21 @@ export function Launcher(): React.JSX.Element {
   // letterboxDetected is passed so computeBridgeInsets() can zero the phantom
   // bottom inset when the window is letterboxed (#491): the window stops above
   // the home indicator so the app must not pad for an inset it cannot reach.
+  //
+  // #561: letterboxCorrected is forwarded only after the sentinel confirms the
+  // expansion paints (letterboxVerified==='visible'). While pending/clipped it
+  // is false, so computeNavBarBridgeInsets keeps the honest bottom-0 path. When
+  // verification settles (pending→visible|clipped) this effect re-runs and the
+  // post() delivers the final insets.
   useEffect(() => {
     if (screen !== 'live') return;
-    const letterboxDetected = letterbox?.detected ?? false;
     const post = () =>
-      postSafeAreaInsetsTo(frameRef.current?.contentWindow ?? null, letterboxDetected, navBarType);
+      postSafeAreaInsetsTo(
+        frameRef.current?.contentWindow ?? null,
+        letterboxDetected,
+        navBarType,
+        letterboxCorrected,
+      );
     window.addEventListener('resize', post);
     window.addEventListener('orientationchange', post);
     window.visualViewport?.addEventListener('resize', post);
@@ -988,7 +1087,7 @@ export function Launcher(): React.JSX.Element {
       window.removeEventListener('orientationchange', post);
       window.visualViewport?.removeEventListener('resize', post);
     };
-  }, [screen, letterbox?.detected, navBarType]);
+  }, [screen, letterboxDetected, letterboxCorrected, navBarType]);
 
   // On-device ICB discriminator (#475): Δ between window.innerHeight and the
   // bottom chrome's resolved bottom edge. A healthy fixed anchor yields
@@ -1075,25 +1174,26 @@ export function Launcher(): React.JSX.Element {
   // Render
   // ---------------------------------------------------------------------------
 
-  // #527: when letterbox is detected, the ICB is mis-reported as screen.height
-  // minus the status-bar height (e.g. 797 instead of 844). The render surface is
-  // actually the full screen.height. Overriding the root container height with
-  // screen.height px bypasses the ICB mis-report and lets the layout reach the
-  // real bottom of the screen.
+  // #527 + #561 (verify-then-correct): when letterbox is detected the ICB is
+  // mis-reported as screen.height − statusBar (e.g. 797 vs 844). The #527 px
+  // override (root container = screen.height px) is applied OPTIMISTICALLY while
+  // verification is pending, but it does NOT actually paint into the bottom band
+  // on real hardware — the WebKit top-level viewport clips at ≈797, proven by an
+  // IntersectionObserver sentinel ladder (2026-06-13, see letterbox.ts header).
+  // The bottom sentinel effect above settles `letterboxVerified`; when it is
+  // `clipped` (or times out) `applyPxCorrection` flips false and the layout
+  // falls back to the honest calc()/100% formula, which leaves the dead band
+  // visible but never clips the mini-app's own content. `letterboxDetected` /
+  // `letterboxShortfallPx` / `applyPxCorrection` / `letterboxCorrected` are
+  // computed once near the verdict (above) and reused here.
   //
-  // NOTE (touch hit-testing): the bottom 47pt band that becomes reachable via
-  // this correction has not yet been validated for touch input on real hardware —
-  // only paint has been confirmed (Safari Web Inspector height override, 2026-06-12).
-  // Confirm that buttons placed in the corrected band respond to taps in the next
-  // phone verification round.
-  const letterboxDetected = letterbox?.detected ?? false;
-  const letterboxShortfallPx = letterbox?.shortfallPx ?? 0;
   // safeAreaTop is only used for iframe height calculation; metrics is non-null
   // whenever letterboxDetected is true (letterbox is derived from metrics).
   const envTop = letterboxDetected ? (metrics?.safeAreaTop ?? 0) : 0;
 
   return (
     <div
+      ref={rootRef}
       style={{
         // Sizing comes from inset alone (#469): an explicit width/height
         // over-constrains the box (width/height beat right/bottom), so a
@@ -1102,17 +1202,16 @@ export function Launcher(): React.JSX.Element {
         // #444 WebKit clamp for the case where the ICB resolves wider than the
         // visual viewport.
         //
-        // #527 letterbox correction: when the ICB is mis-reported (shortfall>0),
-        // override height with screen.height px so the layout fills the true
-        // render surface. This beats the right/bottom inset that would otherwise
-        // cap the box at the mis-reported ICB height. Resize/orientationchange
-        // re-evaluates the letterbox verdict (readViewportMetrics effect), which
-        // triggers a React re-render and resets the height.
+        // #527 + #561 letterbox correction: when the ICB is mis-reported the px
+        // override (height = screen.height) is applied while verification is
+        // pending/visible (applyPxCorrection). Once the bottom sentinel proves
+        // the band is clipped (or times out), applyPxCorrection flips false and
+        // the box reverts to inset:0 alone — tracking the real ≈797 ICB so the
+        // honest iframe formula below loses no mini-app content. Resize/
+        // orientationchange re-evaluates the verdict and re-arms verification.
         position: 'fixed',
         inset: 0,
-        ...(letterboxDetected && letterboxShortfallPx > 0
-          ? { height: `${window.screen.height}px` }
-          : {}),
+        ...(applyPxCorrection ? { height: `${window.screen.height}px` } : {}),
         maxWidth: '100dvw',
         overflowX: 'hidden',
         overflowY: 'auto',
@@ -1313,13 +1412,16 @@ export function Launcher(): React.JSX.Element {
         // loaded and its mock message listener is installed. resize/orientation
         // re-posts are wired in the effect above. Pass the current letterbox
         // verdict so the bottom inset is zeroed when the window is letterboxed
-        // (#491 bridge bottom correction) and the navBarType so the partner top
-        // inset is zeroed (the bar is launcher chrome; iframe starts below it).
+        // (#491 bridge bottom correction), letterboxCorrected so the bottom is
+        // restored ONLY after the sentinel confirms the band paints (#561), and
+        // the navBarType so the partner top inset is zeroed (the bar is launcher
+        // chrome; iframe starts below it).
         onLoad={(e) =>
           postSafeAreaInsetsTo(
             e.currentTarget.contentWindow,
-            letterbox?.detected ?? false,
+            letterboxDetected,
             navBarType,
+            letterboxCorrected,
           )
         }
         style={{
@@ -1353,14 +1455,17 @@ export function Launcher(): React.JSX.Element {
           // game). 100% resolves against the fixed-positioning ICB (#469 — not
           // 100dvh, which mis-resolves on iOS standalone cold start).
           //
-          // #527 letterbox correction: when the ICB is mis-reported the root
-          // container is set to screen.height px, but the iframe's 100%/calc
-          // expressions still resolve against the ICB — not the corrected
-          // container height. Use explicit px values derived from screen.height
-          // so the iframe fills the actual render surface:
+          // #527 + #561 letterbox correction: while the px override is applied
+          // (applyPxCorrection — pending/visible) the root container is set to
+          // screen.height px, but the iframe's 100%/calc expressions resolve
+          // against the ICB, not the corrected container — so use explicit px
+          // values derived from screen.height:
           //   partner: screen.height − env(top) − 54px bar
           //   game:    screen.height (full-bleed)
-          height: letterboxDetected
+          // Once the sentinel proves the band is clipped (applyPxCorrection
+          // false), revert to the honest calc()/100% formula — 100% resolving
+          // against the real ≈797 ICB — so no mini-app content is clipped.
+          height: applyPxCorrection
             ? navBarType === 'partner'
               ? `${window.screen.height - envTop - AIT_NAV_BAR_HEIGHT_PARTNER}px`
               : `${window.screen.height}px`
@@ -1459,12 +1564,12 @@ export function Launcher(): React.JSX.Element {
             position: 'fixed',
             left: 'max(12px, env(safe-area-inset-left))',
             right: 'max(12px, env(safe-area-inset-right))',
-            // #527: letterbox-corrected window reaches the real screen bottom.
-            // Keep a conservative flat 12px for the corrected case until touch
-            // hit-testing in the bottom band is confirmed on real hardware (see
-            // the NOTE in the letterboxDetected block above).
-            // Healthy edge-to-edge windows pad the real home indicator.
-            bottom: letterboxDetected ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
+            // #527 + #561: while the px correction is applied (applyPxCorrection)
+            // the container reaches the real screen bottom — keep a conservative
+            // flat 12px. Once the correction is dropped (clipped/timeout) the
+            // container is back to the real ICB, so pad the real home indicator
+            // like a healthy edge-to-edge window.
+            bottom: applyPxCorrection ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
             zIndex: 30,
             display: 'flex',
             flexDirection: 'column',
@@ -1474,20 +1579,22 @@ export function Launcher(): React.JSX.Element {
           }}
         >
           {/*
-          Letterbox diagnosis label (#469, re-grounded #527): when the runtime
+          Letterbox diagnosis label (#469, re-grounded #561): when the runtime
           geometry matches the iOS standalone letterbox signature (standalone +
           height shortfall — see letterbox.ts), name the condition in-page.
-          NOTE: the original "band is OUTSIDE the window (OS-painted)" theory
-          was refuted on real hardware (2026-06-12, Safari Web Inspector manual
-          height override paints into the band) — the render surface is the full
-          screen and only the ICB is mis-reported. The screen.height px
-          correction above now fills the band; this label reports that the
-          correction is active.
+          NOTE: the earlier "screen.height px correction fills the band" claim was
+          refuted on real hardware (2026-06-13 IO sentinel ladder, #561) — the
+          WebKit top-level viewport clips at ≈797 and the px expansion does not
+          paint into the band. The label now reflects the verification verdict:
+          while pending/visible it reports the correction; once the sentinel
+          proves the band is clipped it states the limit honestly and points to
+          the known manual recovery (rotate landscape → portrait).
         */}
           {letterboxDetected && (
             <div
               role="status"
               data-testid="launcher-letterbox-label"
+              data-letterbox-verified={letterboxCorrected ? 'visible' : 'clipped'}
               style={{
                 alignSelf: 'center',
                 pointerEvents: 'auto',
@@ -1503,7 +1610,9 @@ export function Launcher(): React.JSX.Element {
                 backdropFilter: 'blur(4px)',
               }}
             >
-              {t('launcher.letterboxDetected', { pt: letterboxShortfallPx })}
+              {letterboxVerified === 'clipped'
+                ? t('launcher.letterboxClipped', { pt: letterboxShortfallPx })
+                : t('launcher.letterboxDetected', { pt: letterboxShortfallPx })}
             </div>
           )}
 

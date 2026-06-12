@@ -5,13 +5,45 @@
 //
 // Background (#469 forensics, iPhone 16e Simulator / iOS 26.5; #475 real-device
 // CDP measurements, iOS 26): in standalone (home-screen) mode, iOS can
-// mis-size the web view to (screen height − status-bar height) while anchoring
-// it at the TOP. The missing ~47pt strip at the bottom is OUTSIDE the window —
-// the OS paints it with the manifest `background_color`, and no page CSS
-// (100dvh, inset:0) can reach it. From inside the page the signature is:
+// mis-size the web view while anchoring it at the TOP. From inside the page the
+// signature is:
 //
 //   window.innerHeight ≈ screen.height − statusBar   (shortfall)
 //   display-mode: standalone
+//
+// Geometry model (CORRECTED 2026-06-13, #561 — supersedes the earlier
+// "missing strip is OUTSIDE the window, OS-painted" theory):
+//
+//   The window is the FULL screen height — real-device measurement of an
+//   attached letterboxed iframe reported outerHeight 844 === screen.height,
+//   screenY 0, standalone true. It is NOT an OS-level letterbox.
+//
+//   What is mis-sized is the WebKit top-level VIEWPORT: layout + content paint
+//   + hit-testing all clip at screen.height − statusBar (≈797 on a 844 screen).
+//   An IntersectionObserver sentinel ladder (sentinels at bottom 0…110px inside
+//   the framed page) found the clip boundary exactly at y≈797: every sentinel at
+//   or below the boundary reported isIntersecting:false, the first above it
+//   reported true. The bottom ~47pt band receives only the canvas background
+//   (black) — no content paints there and no touch lands there.
+//
+//   Consequence: the #527 px expansion (forcing the root container to
+//   screen.height px) does NOT paint into that band — a fixed box does not
+//   contribute to document scroll overflow, so the band stays unreachable. Worse,
+//   stretching the iframe to screen.height − envTop − bar (743) while the real
+//   viewport is 797 CLIPS the mini-app's own bottom ~47px of content (its bottom
+//   buttons silently vanish). The pre-#527 formula (calc(100% − env(top) − bar),
+//   100% resolving against the real ≈797 ICB → iframe ≈696) leaves the dead band
+//   visible but loses no content. The earlier "Web Inspector height override
+//   paints into the band (2026-06-12)" observation is now believed to be an
+//   artifact of the Inspector attach itself altering viewport state — it is
+//   irreconcilable with today's IO-ladder measurement.
+//
+//   #561 response: the px correction is no longer applied on faith. Launcher.tsx
+//   applies it, then VERIFIES it at runtime (verifyLetterboxCorrection() below —
+//   a bottom sentinel + top-level IntersectionObserver). If the sentinel is
+//   clipped, the layout falls back to the honest calc()/100% formula, bridge
+//   insets are re-sent with letterboxCorrected=false (bottom 0), and the toast
+//   states the limit honestly instead of claiming a fix.
 //
 // Discriminator (#479 rule, restored in #491): the canonical letterbox
 // signature under black-translucent is:
@@ -169,4 +201,98 @@ export function detectLetterbox(metrics: ViewportMetrics): LetterboxVerdict {
     metrics.safeAreaTop > 0;
 
   return { detected, shortfallPx };
+}
+
+// ---------------------------------------------------------------------------
+// Runtime self-verification of the #527 px correction (#561)
+// ---------------------------------------------------------------------------
+
+/** Outcome of verifying that the px-corrected container actually paints. */
+export type LetterboxVerification = 'visible' | 'clipped';
+
+/**
+ * One-shot observation of whether a sentinel placed at the very bottom of the
+ * corrected container intersects the top-level viewport. Abstracts the
+ * `IntersectionObserver` so the verification flow can be unit-tested without a
+ * real one (jsdom has no IO). `onResult` is invoked at most once with the
+ * observed `isIntersecting`; the returned function disconnects the observer and
+ * removes the sentinel (idempotent — safe to call after a result or a timeout).
+ */
+export type SentinelObserver = (onResult: (isIntersecting: boolean) => void) => () => void;
+
+/**
+ * Injectable timer pair so the timeout guard is testable with fake timers.
+ * Generic over the handle type so the real `window.setTimeout`/`clearTimeout`
+ * pair (handle = number) type-checks without a cast, and tests can inject a
+ * stub returning any handle they like.
+ */
+export interface VerificationTimers<H = unknown> {
+  setTimeout: (fn: () => void, ms: number) => H;
+  clearTimeout: (handle: H) => void;
+}
+
+/**
+ * Time budget (ms) for the IntersectionObserver to report. If it stays silent
+ * past this, the band is treated as clipped — the honest fallback is the safe
+ * default (it never hides mini-app content), so a missing callback must not
+ * leave the harmful #527 expansion in place.
+ */
+export const LETTERBOX_VERIFY_TIMEOUT_MS = 1000;
+
+/**
+ * Verify that the #527 px correction actually paints to the screen bottom,
+ * rather than assuming it (the assumption was refuted on real hardware — see
+ * the geometry-model note in this file's header, #561).
+ *
+ * The caller installs a 1px sentinel at `bottom:0` of the corrected container
+ * and wires it to a top-level `IntersectionObserver` (root null), exposed here
+ * as `observe`. This function arms a timeout guard and resolves exactly once:
+ *
+ *   - sentinel intersects   → 'visible'  (correction holds — keep it)
+ *   - sentinel clipped      → 'clipped'  (fall back to the honest layout)
+ *   - observer never fires  → 'clipped'  (timeout — fail safe, never keep #527)
+ *
+ * After resolving it disconnects the observer and removes the sentinel via the
+ * `observe` cleanup. Pure control-flow (no DOM, no real IO/timer) — the DOM and
+ * IntersectionObserver wiring lives in Launcher.tsx, the timing is injected — so
+ * all three branches are unit-testable.
+ *
+ * @returns a cancel function. Calling it before resolution aborts the
+ *   verification (clears the timeout, disconnects the observer) WITHOUT invoking
+ *   `onVerified` — used by the React effect cleanup on unmount / re-evaluation.
+ */
+export function verifyLetterboxCorrection<H>(
+  observe: SentinelObserver,
+  onVerified: (result: LetterboxVerification) => void,
+  timers: VerificationTimers<H>,
+  timeoutMs: number = LETTERBOX_VERIFY_TIMEOUT_MS,
+): () => void {
+  let settled = false;
+  let timeoutHandle: H | undefined;
+  let disconnect: (() => void) | null = null;
+
+  // Single resolution path: clear the timer, tear down the observer/sentinel,
+  // and notify. Guarded so a late IO callback after a timeout is a no-op.
+  const settle = (result: LetterboxVerification, notify: boolean): void => {
+    if (settled) return;
+    settled = true;
+    if (timeoutHandle !== undefined) timers.clearTimeout(timeoutHandle);
+    disconnect?.();
+    if (notify) onVerified(result);
+  };
+
+  timeoutHandle = timers.setTimeout(() => settle('clipped', true), timeoutMs);
+
+  disconnect = observe((isIntersecting) => {
+    settle(isIntersecting ? 'visible' : 'clipped', true);
+  });
+
+  // Defensive: a real IntersectionObserver never reports synchronously inside
+  // observe(), but if a stub did, settle() ran before `disconnect` was assigned
+  // — so its disconnect?.() was a no-op. Tear down here now that we hold the
+  // cleanup, to avoid a leaked observer/sentinel.
+  if (settled) disconnect();
+
+  // Return the abort handle for the React cleanup (no notify).
+  return () => settle('clipped', false);
 }
