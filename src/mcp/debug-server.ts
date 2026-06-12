@@ -640,6 +640,18 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       const waitForAttach = request.params.arguments?.wait_for_attach === true;
       // open_in_browser defaults to true when not explicitly set.
       const openInBrowser = request.params.arguments?.open_in_browser !== false;
+      // selfdebug: opt-in launcher self-target mode (#543). Only valid in env 2.
+      const selfdebug = request.params.arguments?.selfdebug === true;
+
+      // Guard: selfdebug is a launcher-only feature — reject early for env 3/4
+      // so the caller gets a clear diagnostic instead of silently ignoring the flag.
+      if (selfdebug && env !== 'relay-mobile') {
+        return mcpError(
+          'build_attach_url: selfdebug=true는 env 2 / relay-sandbox 전용 기능입니다. ' +
+            '현재 환경(env 3/4)에서는 launcher가 없어 self-target 모드를 지원하지 않습니다. ' +
+            'launcher self-target이 필요하다면 relay-sandbox 모드로 재시작하세요.',
+        );
+      }
 
       // ── relay-mobile branch (env 2 — launcher PWA QR) ─────────────────────
       if (env === 'relay-mobile') {
@@ -729,6 +741,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // the QR payload only — not logged or returned as standalone fields.
         const attachUrl = buildLauncherAttachUrl(tunnelHttpUrl, tunnelStatus.wssUrl, totpCode, {
           name: launcherAppName,
+          ...(selfdebug ? { selfdebug: true } : {}),
         });
         // Notify dashboard with components (not a finished URL) so getDashboardState
         // re-mints a fresh TOTP code on every SSE push/reload (Defect 1).

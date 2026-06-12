@@ -153,7 +153,13 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'The response includes a `totp` field with `expiresAt` (ISO timestamp, ~3 min from issuance). ' +
       'If the phone scan happens after expiresAt, the relay will reject the code — just call ' +
       'build_attach_url again to get a fresh URL. ' +
-      'Without AIT_DEBUG_TOTP_SECRET, the attachUrl has no expiry.',
+      'Without AIT_DEBUG_TOTP_SECRET, the attachUrl has no expiry.\n\n' +
+      'selfdebug (env 2 / relay-sandbox only): pass selfdebug=true to add &selfdebug=1 to the ' +
+      'launcher deep-link. The launcher PWA then registers its own document as the CDP target ' +
+      'instead of the framed mini-app. SINGLE-ATTACH MODEL: attaching the launcher self-target ' +
+      'evicts any currently-attached mini-app target — use this mode exclusively for diagnosing ' +
+      'the launcher document itself (DOM, safe-area, console). Not applicable in env 3/4 ' +
+      '(relay-staging/relay-live) — passing selfdebug=true there returns an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -186,6 +192,16 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'When AIT_TUNNEL_BASE_URL is unset (env 2 / relay-mobile only), the daemon reads the app tunnel URL ' +
             'from <projectRoot>/.ait_urls written by the dev server (tunnel:{cdp:true}). ' +
             "Pass this because the daemon's own cwd is fixed at launch. Omit when AIT_TUNNEL_BASE_URL is set explicitly.",
+        },
+        selfdebug: {
+          type: 'boolean',
+          description:
+            'Env 2 / relay-sandbox only. When true, adds &selfdebug=1 to the launcher deep-link ' +
+            'so the launcher PWA registers its own document as the CDP target (launcher diagnostics mode). ' +
+            'SINGLE-ATTACH MODEL: self-target attach evicts any currently-attached mini-app target. ' +
+            'Use only when you need to inspect the launcher itself (DOM, safe-area, console). ' +
+            'Passing selfdebug=true in env 3/4 (relay-staging/relay-live) returns an error. ' +
+            'Default: false (omitted — output is byte-identical to previous behaviour).',
         },
       },
       // scheme_url is required only for env 3/relay-staging; env 2/relay-sandbox uses AIT_TUNNEL_BASE_URL.

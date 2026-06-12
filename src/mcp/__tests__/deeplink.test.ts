@@ -278,6 +278,52 @@ describe('buildLauncherAttachUrl', () => {
     expect(parsed.searchParams.get('name')).toBe('my-app');
     expect(parsed.searchParams.get('icon')).toBe(icon);
   });
+
+  // ---------------------------------------------------------------------------
+  // opts.selfdebug — launcher self-target mode (#543)
+  // ---------------------------------------------------------------------------
+
+  it('opts.selfdebug=true adds &selfdebug=1 to the URL', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { selfdebug: true });
+    expect(new URL(out).searchParams.get('selfdebug')).toBe('1');
+  });
+
+  it('opts.selfdebug=false does NOT add selfdebug param', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { selfdebug: false });
+    expect(new URL(out).searchParams.has('selfdebug')).toBe(false);
+  });
+
+  it('opts.selfdebug omitted (undefined) does NOT add selfdebug param', () => {
+    const out = buildLauncherAttachUrl(TUNNEL, WSS);
+    expect(new URL(out).searchParams.has('selfdebug')).toBe(false);
+  });
+
+  it('opts.selfdebug=true is byte-identical to manual &selfdebug=1 suffix', () => {
+    const withOpt = buildLauncherAttachUrl(TUNNEL, WSS);
+    const withOptSelfdebug = buildLauncherAttachUrl(TUNNEL, WSS, undefined, { selfdebug: true });
+    // Ensure the selfdebug variant is just the base + &selfdebug=1.
+    expect(withOptSelfdebug).toBe(`${withOpt}&selfdebug=1`);
+  });
+
+  it('selfdebug=true can be combined with name, icon, and totpCode', () => {
+    const icon = 'https://example.com/icon.png';
+    const out = buildLauncherAttachUrl(TUNNEL, WSS, '123456', {
+      name: 'my-app',
+      icon,
+      selfdebug: true,
+    });
+    const parsed = new URL(out);
+    expect(parsed.searchParams.get('at')).toBe('123456');
+    expect(parsed.searchParams.get('name')).toBe('my-app');
+    expect(parsed.searchParams.get('icon')).toBe(icon);
+    expect(parsed.searchParams.get('selfdebug')).toBe('1');
+  });
+
+  it('selfdebug=false (no opt) output is byte-identical to previous output without opts', () => {
+    const withoutOpts = buildLauncherAttachUrl(TUNNEL, WSS, '654321');
+    const withSelfdebugFalse = buildLauncherAttachUrl(TUNNEL, WSS, '654321', { selfdebug: false });
+    expect(withSelfdebugFalse).toBe(withoutOpts);
+  });
 });
 
 // ---------------------------------------------------------------------------
