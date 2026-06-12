@@ -238,6 +238,10 @@ export const en: Record<StringKey, string> = {
   'dashboard.inspector.open': 'Open inspector',
   'dashboard.inspector.waiting': 'Inspector URL pending — appears after a page attaches',
 
+  // qr-http-server — /inspector stable entry (issue #530)
+  'inspector.error.noTarget': 'No page attached. Attach a device and try again.',
+  'inspector.error.relayDown': 'Relay is not active. Start a relay session first.',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // Copy branches per session mode into sandbox (env 2) / intoss (env 3·4) families (#468).
   'attach.title': 'AIT Debug Session — QR Scan',

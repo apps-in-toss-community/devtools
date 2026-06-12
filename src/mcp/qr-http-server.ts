@@ -126,6 +126,12 @@ export interface QrHttpServer {
   /** `http://127.0.0.1:<port>/attach?u=<encoded>` URL 생성 헬퍼. */
   buildAttachPageUrl(attachUrl: string): string;
   /**
+   * 안정 인스펙터 진입점 URL — `http://127.0.0.1:<port>/inspector` (issue #530).
+   * 클릭 시점에 TOTP를 mint하고 302 redirect하므로 URL 자체에 시크릿이 없다.
+   * 대시보드/stdout/로그 어디든 출력 가능.
+   */
+  readonly inspectorStableUrl: string;
+  /**
    * 상태 변경 시 호출 — SSE 구독자에게 최신 상태를 push한다.
    * `getDashboardState`가 주입돼 있지 않으면 no-op.
    */
@@ -715,6 +721,66 @@ export async function startQrHttpServer(
       return;
     }
 
+    // ── GET /inspector — 안정 인스펙터 진입점 (issue #530) ───────────────────
+    // 클릭 시점에 TOTP를 mint하고 302 redirect. URL 자체에 시크릿 없음 — 출력 가능.
+    // SECRET-HANDLING: redirect Location(relay host + at=)은 HTTP 응답으로만 전달.
+    // 로그에 Location 값 출력 금지.
+    if (path === '/inspector') {
+      if (!getDashboardState) {
+        res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Inspector endpoint is not available in this server mode.');
+        return;
+      }
+      const state = getDashboardState();
+      const s = resolveLocaleStrings(locale);
+      // relay 없음 (relay 미활성)
+      if (!state.inspectorUrl && state.tunnel.up === false) {
+        const msgKo = s('inspector.error.relayDown');
+        const body =
+          `<!DOCTYPE html><html lang="${locale}"><head>` +
+          `<meta charset="utf-8"><title>Inspector</title></head><body>` +
+          `<p>${escapeHtml(msgKo)}</p>` +
+          `<p style="font-size:0.9em;color:#666">` +
+          (locale === 'ko'
+            ? '(<a href="/">대시보드로 돌아가기</a>)'
+            : '(<a href="/">Back to dashboard</a>)') +
+          `</p></body></html>`;
+        res.writeHead(502, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(body);
+        return;
+      }
+      // target 없음 (relay up이지만 페이지 미attach)
+      if (!state.inspectorUrl) {
+        const msgKo = s('inspector.error.noTarget');
+        const body =
+          `<!DOCTYPE html><html lang="${locale}"><head>` +
+          `<meta charset="utf-8"><title>Inspector</title></head><body>` +
+          `<p>${escapeHtml(msgKo)}</p>` +
+          `<p style="font-size:0.9em;color:#666">` +
+          (locale === 'ko'
+            ? '(<a href="/">대시보드로 돌아가기</a>)'
+            : '(<a href="/">Back to dashboard</a>)') +
+          `</p></body></html>`;
+        res.writeHead(502, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(body);
+        return;
+      }
+      // inspectorUrl 있음 — 302 redirect. Location에 relay host + TOTP at= 포함.
+      // SECRET-HANDLING: Location 값은 HTTP 응답으로만 — 로그/stdout 출력 금지.
+      res.writeHead(302, {
+        Location: state.inspectorUrl,
+        'Cache-Control': 'no-store',
+      });
+      res.end();
+      return;
+    }
+
     if (path === '/qr.png') {
       const encodedU = params.get('u') ?? '';
       let attachUrl: string;
@@ -786,6 +852,11 @@ export async function startQrHttpServer(
     port,
     buildAttachPageUrl(attachUrl: string): string {
       return `http://127.0.0.1:${port}/attach?u=${encodeURIComponent(attachUrl)}`;
+    },
+    // 안정 인스펙터 진입점 URL (issue #530) — 클릭 시 302 redirect (TOTP 클릭 시점 mint).
+    // URL 자체에 시크릿 없음 → 대시보드/stdout/로그 어디든 출력 가능.
+    get inspectorStableUrl(): string {
+      return `http://127.0.0.1:${port}/inspector`;
     },
     notifyStateChange(): void {
       notifyStateChangeInternal();

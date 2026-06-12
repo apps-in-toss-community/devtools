@@ -304,6 +304,8 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                 let relayWssUrl: string | undefined;
                 // SECRET-HANDLING: relayHttpUrl carries the relay host — never logged.
                 let relayHttpUrl: string | undefined;
+                // LOCAL relay base — loopback URL, safe to surface (issue #530).
+                let relayLocalHttpUrl: string | undefined;
                 if (tunnelConfig.cdp) {
                   try {
                     // Relay-auth baseline (issue #250): the env-2 CDP relay is
@@ -355,6 +357,12 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                     // relayHttpUrl for .ait_urls write below; never logged.
                     relayHttpUrl = rt.url;
                     relayWssUrl = rt.url.replace(/^https:/, 'wss:');
+                    // LOCAL relay base for MCP inspector URL assembly (issue #530):
+                    // the relay process runs on this machine, so the inspector
+                    // front_end + client WS can use the loopback address directly —
+                    // no tunnel round-trip for the developer's browser.
+                    // Safe to surface: loopback URL contains no tunnel host.
+                    relayLocalHttpUrl = `http://127.0.0.1:${r.port}`;
                   } catch (err: unknown) {
                     console.warn(
                       `[@ait-co/devtools] tunnel: CDP relay not started — screen preview works without on-device debugging: ${
@@ -399,6 +407,8 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                   projectRoot: server.config.root,
                   tunnelBaseUrl: t.url,
                   ...(relayHttpUrl !== undefined ? { relayBaseUrl: relayHttpUrl } : {}),
+                  // Issue #530: local relay base for inspector URL (loopback, no tunnel host).
+                  ...(relayLocalHttpUrl !== undefined ? { relayLocalUrl: relayLocalHttpUrl } : {}),
                 });
                 relayUrlDeleteFn = (root: string) => deleteRelayUrls({ projectRoot: root });
 
