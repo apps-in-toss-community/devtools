@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Probe FS</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body {
+        height: 100%;
+        background: #0b0d10;
+        color: #e2e8f0;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+
+      /* Safe-area probe: lives off-screen, reads env() values via getComputedStyle */
+      #sa-probe {
+        position: fixed;
+        top: -9999px;
+        left: -9999px;
+        width: 1px;
+        height: 1px;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /* Red band: top 47px — status-bar zone */
+      #band-top {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        height: 47px;
+        background: rgba(255, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #fff;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      /* Green band: bottom 34px — home indicator zone */
+      #band-bottom {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        height: 34px;
+        background: rgba(0, 255, 0, 0.5);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #000;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      #readout {
+        position: relative;
+        min-height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 16px 48px;
+      }
+
+      table {
+        border-collapse: collapse;
+        font-size: 13px;
+        line-height: 1.7;
+        width: 100%;
+        max-width: 360px;
+      }
+
+      td:first-child {
+        color: #94a3b8;
+        padding-right: 12px;
+        white-space: nowrap;
+      }
+
+      td:last-child {
+        color: #f8fafc;
+        word-break: break-all;
+      }
+
+      .shortfall-row td:last-child {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .shortfall-zero td:last-child {
+        color: #4ade80;
+      }
+
+      .shortfall-nonzero td:last-child {
+        color: #f87171;
+      }
+
+      .variant-badge {
+        position: fixed;
+        top: 52px;
+        right: 10px;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(52, 211, 153, 0.2);
+        color: #34d399;
+        pointer-events: none;
+        z-index: 101;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Safe-area env() probe element -->
+    <div id="sa-probe"></div>
+
+    <!-- Variant label (visible below status bar) -->
+    <div class="variant-badge">fullscreen manifest</div>
+
+    <!-- Position bands -->
+    <div id="band-top">RED = 창 최상단 47px (status bar 영역)</div>
+    <div id="band-bottom">GREEN = 창 최하단 34px (홈 인디케이터 영역)</div>
+
+    <!-- Live readout -->
+    <div id="readout">
+      <table id="metrics">
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <script>
+      (() => {
+        'use strict';
+
+        var tbody = document.querySelector('#metrics tbody');
+        var saProbe = document.getElementById('sa-probe');
+
+        function safeArea() {
+          var cs = getComputedStyle(saProbe);
+          return {
+            top:    cs.paddingTop,
+            right:  cs.paddingRight,
+            bottom: cs.paddingBottom,
+            left:   cs.paddingLeft,
+          };
+        }
+
+        function uaSummary() {
+          var ua = navigator.userAgent;
+          var m = ua.match(/OS (\d+[_\d]*)/);
+          return m ? 'iOS ' + m[1].replace(/_/g, '.') : ua.slice(0, 60);
+        }
+
+        function update() {
+          var sa = safeArea();
+          var iw = window.innerWidth;
+          var ih = window.innerHeight;
+          var sw = screen.width;
+          var sh = screen.height;
+          var shortfall = sh - ih;
+          var vvh = window.visualViewport ? window.visualViewport.height.toFixed(1) : 'n/a';
+          var modeFullscreen = window.matchMedia('(display-mode: fullscreen)').matches;
+          var modeStandalone = window.matchMedia('(display-mode: standalone)').matches;
+          var navStandalone = typeof navigator.standalone !== 'undefined' ? String(navigator.standalone) : 'n/a';
+
+          // iOS는 fullscreen manifest를 standalone으로 fallback하는 경우가 있다.
+          // 두 matchMedia 값을 나란히 표시해 실제 동작을 드러낸다.
+          var rows = [
+            ['innerW × H', iw + ' × ' + ih],
+            ['screen W × H', sw + ' × ' + sh],
+            ['shortfall (screen.H − inner.H)', shortfall],
+            ['visualViewport.height', vvh],
+            ['safe-area top', sa.top],
+            ['safe-area right', sa.right],
+            ['safe-area bottom', sa.bottom],
+            ['safe-area left', sa.left],
+            ['display-mode: fullscreen', String(modeFullscreen)],
+            ['display-mode: standalone', String(modeStandalone)],
+            ['navigator.standalone', navStandalone],
+            ['UA', uaSummary()],
+          ];
+
+          var html = '';
+          rows.forEach(function(row, i) {
+            var isShortfall = i === 2;
+            var cls = '';
+            if (isShortfall) {
+              cls = 'shortfall-row ' + (shortfall === 0 ? 'shortfall-zero' : 'shortfall-nonzero');
+            }
+            html += '<tr class="' + cls + '"><td>' + row[0] + '</td><td>' + row[1] + '</td></tr>';
+          });
+          tbody.innerHTML = html;
+        }
+
+        update();
+
+        window.addEventListener('resize', update);
+        window.addEventListener('orientationchange', function() {
+          // orientationchange fires before innerHeight settles; wait a frame
+          setTimeout(update, 50);
+        });
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', update);
+        }
+      })();
+    </script>
+  </body>
+</html>
