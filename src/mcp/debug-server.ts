@@ -638,8 +638,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     // shared QR rendering path (attachUrl + relayUrl + totp + authorityWarning).
     if (name === 'build_attach_url') {
       const waitForAttach = request.params.arguments?.wait_for_attach === true;
-      // open_in_browser defaults to true when not explicitly set.
-      const openInBrowser = request.params.arguments?.open_in_browser !== false;
+      // open_in_browser 옵션은 삭제됨 (#553) — 항상 대시보드 오픈을 시도한다.
+      // 구버전 클라이언트가 open_in_browser 키를 보내도 에러 없이 무시됨(하위호환).
       // selfdebug: opt-in launcher self-target mode (#543). Only valid in env 2.
       const selfdebug = request.params.arguments?.selfdebug === true;
 
@@ -788,10 +788,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             : '';
           const guiAvailable = canOpenBrowser();
 
-          if (openInBrowser && !guiAvailable) {
+          if (!guiAvailable) {
             const headlessNote =
-              '[open_in_browser] GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
-              'open_in_browser=false로 자동 폴백합니다. ' +
+              'GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
               '텍스트 QR을 폰 카메라로 스캔하거나, 로컬 GUI 환경에서 실행하세요.\n\n';
             const qrHeadless = await renderQr(attachUrl);
             const headlessText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qrHeadless}`;
@@ -832,7 +831,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             };
           }
 
-          if (openInBrowser && guiAvailable && qrHttpServer) {
+          if (guiAvailable && qrHttpServer) {
             const httpUrl = qrHttpServer.buildAttachPageUrl(attachUrl);
             const pngUrl = `http://127.0.0.1:${qrHttpServer.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
             const browserResult = await openQrInBrowser(httpUrl, pngUrl);
@@ -897,7 +896,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               ? `\nstderr: ${browserResult.stderrSummary}`
               : '';
             const fallbackNote =
-              `[open_in_browser] 브라우저 자동 열기에 실패했습니다. ` +
+              `브라우저 자동 열기에 실패했습니다. ` +
               `다음 URL을 직접 브라우저에서 여세요:\n${browserResult.httpUrl}\n` +
               `또는 PNG로 받기: ${browserResult.pngUrl}` +
               stderrNote +
@@ -1070,11 +1069,10 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // mockReturnValueOnce 등 테스트 대역이 여러 번 호출로 소비되지 않도록.
         const guiAvailable = canOpenBrowser();
 
-        // headless 환경 감지: open_in_browser=true인데 GUI가 없는 경우 안내 후 text QR fallback.
-        if (openInBrowser && !guiAvailable) {
+        // headless 환경 감지: GUI가 없는 경우 안내 후 text QR fallback.
+        if (!guiAvailable) {
           const headlessNote =
-            '[open_in_browser] GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
-            'open_in_browser=false로 자동 폴백합니다. ' +
+            'GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
             '텍스트 QR을 폰 카메라로 스캔하거나, 로컬 GUI 환경에서 실행하세요.\n\n';
           const qrHeadless = await renderQr(attachUrl);
           const headlessText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qrHeadless}`;
@@ -1119,8 +1117,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
-        // Try to open QR in browser when requested, a GUI is available, and the HTTP server is up.
-        if (openInBrowser && guiAvailable && qrHttpServer) {
+        // Try to open QR in browser: GUI is available and the HTTP server is up.
+        if (guiAvailable && qrHttpServer) {
           const httpUrl = qrHttpServer.buildAttachPageUrl(attachUrl);
           const pngUrl = `http://127.0.0.1:${qrHttpServer.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
 
@@ -1193,7 +1191,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             ? `\nstderr: ${browserResult.stderrSummary}`
             : '';
           const fallbackNote =
-            `[open_in_browser] 브라우저 자동 열기에 실패했습니다. ` +
+            `브라우저 자동 열기에 실패했습니다. ` +
             `다음 URL을 직접 브라우저에서 여세요:\n` +
             `${browserResult.httpUrl}\n` +
             `또는 PNG로 받기: ${browserResult.pngUrl}` +
@@ -1238,7 +1236,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           };
         }
 
-        // open_in_browser=false or no GUI available or no HTTP server: text QR fallback.
+        // No GUI available or no HTTP server: text QR fallback.
         const qr = await renderQr(attachUrl);
         const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totp ? { totp } : {}) }, null, 2)}\n\n${qr}`;
 

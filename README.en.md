@@ -106,7 +106,7 @@ For environments 3 and 4 (intoss-private relay), the relay QR deep-link carries 
 
 **"QR window doesn't open"**
 
-Either `build_attach_url` wasn't called first, or `open_in_browser` failed silently in a headless environment. The terminal output includes a path to a saved PNG — open that file directly, or scan the text QR printed in the terminal. (Related: [#288](https://github.com/apps-in-toss-community/devtools/issues/288))
+Either `build_attach_url` wasn't called first, or the MCP server is running in a headless environment where no browser can be opened. The tool result always includes a text QR — scan it directly with your phone camera. On a local GUI machine, the dashboard opens automatically in the browser.
 
 **"Page not attached" — list_pages returns an empty array**
 

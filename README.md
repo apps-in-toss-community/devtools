@@ -106,7 +106,7 @@ import '@ait-co/devtools/in-app/auto';
 
 **"QR 창이 안 열림"**
 
-`build_attach_url`을 먼저 호출하지 않았거나, GUI 없는 headless 환경에서 `open_in_browser`가 실패한 경우입니다. 터미널에 PNG 저장 경로가 출력됩니다 — 그 파일을 직접 열거나, 텍스트 QR을 터미널에서 스캔하세요. (관련: [#288](https://github.com/apps-in-toss-community/devtools/issues/288))
+`build_attach_url`을 먼저 호출하지 않았거나, GUI 없는 headless 환경이라 대시보드를 열 수 없는 경우입니다. 도구 결과에 텍스트 QR이 출력되므로 폰 카메라로 직접 스캔하세요. 로컬 GUI 환경에서는 대시보드가 자동으로 브라우저에 열립니다.
 
 **"page 미attach" — list_pages가 빈 배열 반환**
 

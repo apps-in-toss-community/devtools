@@ -974,13 +974,13 @@ describe('startParentWatcher', () => {
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — open_in_browser reliability (#288)
+// build_attach_url — 항상 대시보드 오픈 시도 (#553, 구 #288 open_in_browser 헤드리스 폴백)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — open_in_browser headless fallback (#288)', () => {
+describe('build_attach_url — always open dashboard (headless fallback when GUI unavailable, #553)', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
-  it('when open_in_browser=true but canOpenBrowser()=false: response contains headless notice and text QR (no isError)', async () => {
+  it('when canOpenBrowser()=false: response contains headless notice and text QR (no isError)', async () => {
     // canOpenBrowser is already mocked to false in this file's module-level mock.
     const client = await makeClient({ getTunnelStatus: () => tunnelUp });
 
@@ -988,6 +988,7 @@ describe('build_attach_url — open_in_browser headless fallback (#288)', () => 
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=headless-test',
+        // open_in_browser 키를 보내도 무시됨 (하위호환)
         open_in_browser: true,
       },
     });
@@ -996,7 +997,8 @@ describe('build_attach_url — open_in_browser headless fallback (#288)', () => 
     const text = getContent(result)[0]!.text!;
     // 헤드리스 환경 안내 메시지가 포함되어야 함
     expect(text).toContain('GUI 환경이 감지되지 않았습니다');
-    expect(text).toContain('open_in_browser=false로 자동 폴백');
+    // [open_in_browser] 접두어는 더 이상 출력되지 않음
+    expect(text).not.toContain('[open_in_browser]');
     // 텍스트 QR 경로로 폴백 — attachUrl, relayUrl이 포함
     expect(text).toContain('attachUrl');
     expect(text).toContain('relayUrl');
@@ -1023,6 +1025,7 @@ describe('build_attach_url — open_in_browser headless fallback (#288)', () => 
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=browser-ok-test',
+        // open_in_browser 키를 보내도 무시됨 (하위호환)
         open_in_browser: true,
       },
     });
@@ -1062,7 +1065,7 @@ describe('build_attach_url — open_in_browser headless fallback (#288)', () => 
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=browser-fail-test',
-        open_in_browser: true,
+        // open_in_browser 키를 보내도 무시됨 (하위호환)
       },
     });
 
@@ -1075,8 +1078,8 @@ describe('build_attach_url — open_in_browser headless fallback (#288)', () => 
     expect(text).toContain('PNG로 받기');
     // failureReason 포함
     expect(text).toContain('failureReason');
-    // 브라우저 실패 안내 포함
-    expect(text).toContain('[open_in_browser]');
+    // [open_in_browser] 접두어는 더 이상 출력되지 않음
+    expect(text).not.toContain('[open_in_browser]');
   });
 });
 
@@ -1094,7 +1097,6 @@ describe('build_attach_url — scheme authority warning', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=valid-uuid',
-        open_in_browser: false,
       },
     });
 
@@ -1111,7 +1113,6 @@ describe('build_attach_url — scheme authority warning', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://web?_deploymentId=uuid',
-        open_in_browser: false,
       },
     });
 
@@ -1130,7 +1131,6 @@ describe('build_attach_url — scheme authority warning', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://?_deploymentId=uuid',
-        open_in_browser: false,
       },
     });
 
@@ -1141,28 +1141,32 @@ describe('build_attach_url — scheme authority warning', () => {
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — open_in_browser (#221)
+// build_attach_url — browser dashboard (항상 오픈 시도, #553 / 구 #221)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — open_in_browser', () => {
+describe('build_attach_url — browser dashboard (always attempted, #553)', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
-  it('open_in_browser=false falls back to text QR (original behaviour)', async () => {
+  it('legacy open_in_browser=false key is ignored — always attempts browser open; when no GUI/server falls back to text QR', async () => {
+    // canOpenBrowser is mocked to false at module level — no GUI available, no HTTP server.
     const client = await makeClient({ getTunnelStatus: () => tunnelUp });
 
     const result = await client.callTool({
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
+        // open_in_browser=false 키를 보내도 무시됨 (하위호환) — 항상 오픈 시도하되 headless이면 text QR
         open_in_browser: false,
       },
     });
 
     expect(result.isError).toBeFalsy();
     const text = getContent(result)[0]!.text!;
-    // Text QR path: result should contain attachUrl JSON.
+    // GUI 없으므로 text QR 경로 — attachUrl, relayUrl 포함
     expect(text).toContain('attachUrl');
     expect(text).toContain('relayUrl');
+    // [open_in_browser] 접두어는 더 이상 출력되지 않음
+    expect(text).not.toContain('[open_in_browser]');
   });
 
   it('when canOpenBrowser() returns true and qrHttpServer is set, result shows HTTP URL (not raw attachUrl)', async () => {
@@ -1190,7 +1194,6 @@ describe('build_attach_url — open_in_browser', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
-        open_in_browser: true,
       },
     });
 
@@ -1230,7 +1233,6 @@ describe('build_attach_url — open_in_browser', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
-        open_in_browser: true,
       },
     });
 
@@ -1241,6 +1243,8 @@ describe('build_attach_url — open_in_browser', () => {
     expect(text).toContain('http://127.0.0.1:19999/attach');
     // text QR fallback: attachUrl JSON should be in the QR path too.
     expect(text).toContain('attachUrl');
+    // [open_in_browser] 접두어는 더 이상 출력되지 않음
+    expect(text).not.toContain('[open_in_browser]');
   });
 });
 
@@ -1263,7 +1267,6 @@ describe('build_attach_url — TOTP auto-splice', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
-        open_in_browser: false,
       },
     });
 
@@ -1283,7 +1286,6 @@ describe('build_attach_url — TOTP auto-splice', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
-        open_in_browser: false,
       },
     });
 
@@ -1305,7 +1307,6 @@ describe('build_attach_url — TOTP auto-splice', () => {
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
-        open_in_browser: false,
       },
     });
 
@@ -1353,7 +1354,6 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-435',
-        open_in_browser: false,
       },
     });
 
@@ -1391,7 +1391,6 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-435-remint',
-        open_in_browser: false,
       },
     });
 
@@ -1455,7 +1454,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     try {
       await client.callTool({
         name: 'build_attach_url',
-        arguments: { open_in_browser: false },
+        arguments: {},
       });
 
       expect(storedParts).not.toBeNull();
@@ -1545,7 +1544,6 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
         name: 'build_attach_url',
         arguments: {
           scheme_url: 'intoss-private://app?_deploymentId=no-secret',
-          open_in_browser: false,
         },
       });
       // Must be a tool-level error (isError: true) — not a successful attach URL.
@@ -1588,7 +1586,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     try {
       const result = await client.callTool({
         name: 'build_attach_url',
-        arguments: { open_in_browser: false, selfdebug: true },
+        arguments: { selfdebug: true },
       });
       expect(result.isError).toBeFalsy();
       const content = result.content as Array<{ type: string; text?: string }>;
@@ -1624,7 +1622,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     try {
       const result = await client.callTool({
         name: 'build_attach_url',
-        arguments: { open_in_browser: false, selfdebug: false },
+        arguments: { selfdebug: false },
       });
       expect(result.isError).toBeFalsy();
       const content = result.content as Array<{ type: string; text?: string }>;
@@ -1659,7 +1657,6 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
       name: 'build_attach_url',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
-        open_in_browser: false,
         selfdebug: true,
       },
     });
@@ -1694,7 +1691,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     try {
       const result = await client.callTool({
         name: 'build_attach_url',
-        arguments: { open_in_browser: false },
+        arguments: {},
       });
       // Must be a tool-level error (isError: true) — not a successful attach URL.
       expect(result.isError).toBe(true);
