@@ -229,7 +229,7 @@ export async function promptTtyConsent(): Promise<ConsentState> {
     '\n[@ait-co/devtools] 익명 사용 통계를 보내도 될까요?\n' +
       '  버전·날짜만 수집하고 PII는 없습니다. 언제든 Environment 탭에서 끌 수 있어요.\n' +
       '  자세히: https://docs.aitc.dev/privacy\n' +
-      '  (y) 네, 보낼게요  (n) 아니요  (기본: n, 30초 후 자동 선택)\n',
+      '  (y) 네, 보낼게요  (n) 아니요  (무응답 시 보류 — 다음 기동 때 다시 물어요)\n',
   );
 
   let answer = '';
