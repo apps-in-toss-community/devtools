@@ -638,9 +638,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     // shared QR rendering path (attachUrl + relayUrl + totp + authorityWarning).
     if (name === 'build_attach_url') {
       const waitForAttach = request.params.arguments?.wait_for_attach === true;
-      // open_in_browser 옵션이 삭제됨 (#553) — 항상 대시보드 오픈을 시도한다.
-      // 구버전 클라이언트가 open_in_browser 키를 보내도 무시(하위호환).
-      const openInBrowser = true;
+      // open_in_browser 옵션은 삭제됨 (#553) — 항상 대시보드 오픈을 시도한다.
+      // 구버전 클라이언트가 open_in_browser 키를 보내도 에러 없이 무시됨(하위호환).
       // selfdebug: opt-in launcher self-target mode (#543). Only valid in env 2.
       const selfdebug = request.params.arguments?.selfdebug === true;
 
