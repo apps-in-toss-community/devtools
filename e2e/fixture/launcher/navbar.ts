@@ -163,14 +163,16 @@ export function extractLauncherSearch(raw: string): string | null {
  * (`ait:safe-area-insets`), now that #495 makes the partner nav bar part of the
  * launcher chrome.
  *
- * Bridge-inset matrix (re-grounded for #495):
+ * Bridge-inset matrix (re-grounded for #495, updated for #527 correction):
  *
- *   | navBarType | letterbox | top forwarded | bottom forwarded | rationale            |
- *   |------------|-----------|---------------|------------------|----------------------|
- *   | partner    | false     | 0             | raw.bottom       | status bar + 54px bar are launcher chrome; iframe starts below them, so its own env(top)=0 — matches viewport.ts partner-portrait model (#190 real env top=0). |
- *   | partner    | true      | 0             | 0                | letterbox: bottom is phantom (#491) → zeroed; top still 0 (bar consumes it). |
- *   | game       | false     | raw.top       | raw.bottom       | full-bleed canvas under the status bar; floating capsule overlays — same geometry as pre-#495 (raw env passes through). |
- *   | game       | true      | raw.top       | 0                | letterbox bottom correction (#491) applies; top is the real status-bar overlap. |
+ *   | navBarType | letterbox | corrected | top forwarded | bottom forwarded | rationale |
+ *   |------------|-----------|-----------|---------------|------------------|-----------|
+ *   | partner    | false     | n/a       | 0             | raw.bottom       | bar is launcher chrome; iframe starts below it, env(top)=0. |
+ *   | partner    | true      | true      | 0             | raw.bottom       | #527: frame reaches real screen bottom → restore actual bottom inset. |
+ *   | partner    | true      | false     | 0             | 0                | legacy #491: frame still stops above indicator → phantom bottom zeroed. |
+ *   | game       | false     | n/a       | raw.top       | raw.bottom       | full-bleed canvas; raw env passes through. |
+ *   | game       | true      | true      | raw.top       | raw.bottom       | #527: correction restores real bottom. |
+ *   | game       | true      | false     | raw.top       | 0                | legacy #491: phantom bottom zeroed. |
  *
  * For the partner bar, top is forced to 0 because the iframe no longer sits under
  * the OS status bar — the launcher's status-bar strip + nav bar occupy that
@@ -182,6 +184,11 @@ export function extractLauncherSearch(raw: string): string | null {
  * floating capsule is a transparent overlay), so the raw status-bar inset is the
  * honest value — identical to the pre-#495 letterbox-only correction.
  *
+ * `letterboxCorrected` (default true) propagates to `computeBridgeInsets` (#527):
+ * when the screen.height px correction is in effect the frame genuinely reaches
+ * the home-indicator band, so the bottom inset is meaningful and must not be
+ * zeroed. Pass false only on the legacy/uncorrected path.
+ *
  * Pure function — no DOM reads — so it can be tested under vitest independently
  * of the React component.
  */
@@ -189,8 +196,9 @@ export function computeNavBarBridgeInsets(
   raw: SafeAreaInsets,
   letterboxDetected: boolean,
   navBarType: NavBarType,
+  letterboxCorrected = true,
 ): SafeAreaInsets {
-  const base = computeLetterboxBridgeInsets(raw, letterboxDetected);
+  const base = computeLetterboxBridgeInsets(raw, letterboxDetected, letterboxCorrected);
   if (navBarType === 'game') return base;
   // Partner bar consumes the status-bar + nav-bar band as launcher chrome; the
   // iframe starts below it so its top inset is 0.

@@ -101,12 +101,19 @@ export interface SafeAreaInsets {
 
 /**
  * Compute the insets to forward to the framed dev app, applying letterbox
- * corrections (#491).
+ * corrections (#491, updated #527).
  *
  * - top: always the raw measured value (status bar overlap is real).
- * - bottom: zeroed when letterbox is detected — the window stops above the
- *   home indicator, so the phantom bottom inset would add dead-band padding
- *   for space the app can never reach. Healthy windows pass the raw value.
+ * - bottom: behaviour depends on whether screen.height px correction (#527) is
+ *   in effect:
+ *   - correction applied (letterboxCorrected=true, default when detected):
+ *     raw.bottom is restored — the frame now reaches the real screen bottom
+ *     (home-indicator area) so the inset is meaningful.
+ *   - correction NOT applied (letterboxCorrected=false, legacy path, letterbox
+ *     detected but correction unavailable): bottom is zeroed — the window
+ *     stops above the home indicator so the phantom inset must not be used
+ *     (#491 original rationale).
+ *   - not detected: raw.bottom passed through unchanged.
  * - left/right: always raw.
  *
  * Pure function — no DOM reads — so it can be tested under vitest independently
@@ -115,10 +122,15 @@ export interface SafeAreaInsets {
 export function computeBridgeInsets(
   raw: SafeAreaInsets,
   letterboxDetected: boolean,
+  letterboxCorrected = true,
 ): SafeAreaInsets {
   return {
     top: raw.top,
-    bottom: letterboxDetected ? 0 : raw.bottom,
+    // #527: when correction is applied the frame extends to screen.height and
+    // genuinely reaches the home-indicator area — restore the real bottom inset.
+    // Without correction (legacy path) the frame still stops above the indicator,
+    // so keep the #491 zeroing. Healthy windows always pass raw.bottom through.
+    bottom: letterboxDetected && !letterboxCorrected ? 0 : raw.bottom,
     left: raw.left,
     right: raw.right,
   };

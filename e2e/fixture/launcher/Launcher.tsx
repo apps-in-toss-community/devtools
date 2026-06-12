@@ -149,13 +149,18 @@ function postSafeAreaInsetsTo(
   target: Window | null,
   letterboxDetected: boolean,
   navBarType: NavBarType,
+  letterboxCorrected = true,
 ): void {
   if (!target) return;
   const raw = measureSafeAreaInsets();
   // #495: the partner nav bar is now launcher chrome and the iframe starts below
   // it, so the forwarded top is 0 (matches viewport.ts partner-portrait model).
   // The game variant stays full-bleed, so the raw status-bar inset passes through.
-  const insets = computeNavBarBridgeInsets(raw, letterboxDetected, navBarType);
+  //
+  // #527: letterboxCorrected=true (default) when the screen.height px correction
+  // is in effect — the frame genuinely reaches the home-indicator area, so the
+  // real bottom inset (34) is restored instead of being zeroed (#491 original).
+  const insets = computeNavBarBridgeInsets(raw, letterboxDetected, navBarType, letterboxCorrected);
   // targetOrigin '*': the framed tunnel page is cross-origin
   // (*.trycloudflare.com) and the insets are non-sensitive geometry. The
   // receiver (src/mock/safe-area-bridge.ts) validates shape + range.
@@ -995,6 +1000,23 @@ export function Launcher(): React.JSX.Element {
   // Render
   // ---------------------------------------------------------------------------
 
+  // #527: when letterbox is detected, the ICB is mis-reported as screen.height
+  // minus the status-bar height (e.g. 797 instead of 844). The render surface is
+  // actually the full screen.height. Overriding the root container height with
+  // screen.height px bypasses the ICB mis-report and lets the layout reach the
+  // real bottom of the screen.
+  //
+  // NOTE (touch hit-testing): the bottom 47pt band that becomes reachable via
+  // this correction has not yet been validated for touch input on real hardware —
+  // only paint has been confirmed (Safari Web Inspector height override, 2026-06-12).
+  // Confirm that buttons placed in the corrected band respond to taps in the next
+  // phone verification round.
+  const letterboxDetected = letterbox?.detected ?? false;
+  const letterboxShortfallPx = letterbox?.shortfallPx ?? 0;
+  // safeAreaTop is only used for iframe height calculation; metrics is non-null
+  // whenever letterboxDetected is true (letterbox is derived from metrics).
+  const envTop = letterboxDetected ? (metrics?.safeAreaTop ?? 0) : 0;
+
   return (
     <div
       style={{
@@ -1004,8 +1026,18 @@ export function Launcher(): React.JSX.Element {
         // box. inset:0 tracks the real ICB on both axes. maxWidth keeps the
         // #444 WebKit clamp for the case where the ICB resolves wider than the
         // visual viewport.
+        //
+        // #527 letterbox correction: when the ICB is mis-reported (shortfall>0),
+        // override height with screen.height px so the layout fills the true
+        // render surface. This beats the right/bottom inset that would otherwise
+        // cap the box at the mis-reported ICB height. Resize/orientationchange
+        // re-evaluates the letterbox verdict (readViewportMetrics effect), which
+        // triggers a React re-render and resets the height.
         position: 'fixed',
         inset: 0,
+        ...(letterboxDetected && letterboxShortfallPx > 0
+          ? { height: `${window.screen.height}px` }
+          : {}),
         maxWidth: '100dvw',
         overflowX: 'hidden',
         overflowY: 'auto',
@@ -1245,8 +1277,19 @@ export function Launcher(): React.JSX.Element {
           // height explicitly: full window minus the partner bar offset (0 for
           // game). 100% resolves against the fixed-positioning ICB (#469 — not
           // 100dvh, which mis-resolves on iOS standalone cold start).
-          height:
-            navBarType === 'partner'
+          //
+          // #527 letterbox correction: when the ICB is mis-reported the root
+          // container is set to screen.height px, but the iframe's 100%/calc
+          // expressions still resolve against the ICB — not the corrected
+          // container height. Use explicit px values derived from screen.height
+          // so the iframe fills the actual render surface:
+          //   partner: screen.height − env(top) − 54px bar
+          //   game:    screen.height (full-bleed)
+          height: letterboxDetected
+            ? navBarType === 'partner'
+              ? `${window.screen.height - envTop - AIT_NAV_BAR_HEIGHT_PARTNER}px`
+              : `${window.screen.height}px`
+            : navBarType === 'partner'
               ? `calc(100% - env(safe-area-inset-top) - ${AIT_NAV_BAR_HEIGHT_PARTNER}px)`
               : '100%',
           background: '#fff',
@@ -1341,11 +1384,12 @@ export function Launcher(): React.JSX.Element {
             position: 'fixed',
             left: 'max(12px, env(safe-area-inset-left))',
             right: 'max(12px, env(safe-area-inset-right))',
-            // Letterboxed window never reaches the home indicator — use a flat
-            // 12px so the chrome sits just inside the mis-sized window (#491:
-            // bottom inset is phantom in letterbox state and must not be used).
+            // #527: letterbox-corrected window reaches the real screen bottom.
+            // Keep a conservative flat 12px for the corrected case until touch
+            // hit-testing in the bottom band is confirmed on real hardware (see
+            // the NOTE in the letterboxDetected block above).
             // Healthy edge-to-edge windows pad the real home indicator.
-            bottom: letterbox?.detected ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
+            bottom: letterboxDetected ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
             zIndex: 30,
             display: 'flex',
             flexDirection: 'column',
@@ -1355,13 +1399,17 @@ export function Launcher(): React.JSX.Element {
           }}
         >
           {/*
-          Letterbox diagnosis label (#469): when the runtime geometry matches
-          the iOS standalone letterbox signature (standalone + height shortfall
-          — see letterbox.ts), name the strip in-page. The band itself is
-          OUTSIDE the window (OS-painted manifest background_color) so this
-          label is the only way the page can explain it.
+          Letterbox diagnosis label (#469, re-grounded #527): when the runtime
+          geometry matches the iOS standalone letterbox signature (standalone +
+          height shortfall — see letterbox.ts), name the condition in-page.
+          NOTE: the original "band is OUTSIDE the window (OS-painted)" theory
+          was refuted on real hardware (2026-06-12, Safari Web Inspector manual
+          height override paints into the band) — the render surface is the full
+          screen and only the ICB is mis-reported. The screen.height px
+          correction above now fills the band; this label reports that the
+          correction is active.
         */}
-          {letterbox?.detected && (
+          {letterboxDetected && (
             <div
               role="status"
               data-testid="launcher-letterbox-label"
@@ -1375,12 +1423,12 @@ export function Launcher(): React.JSX.Element {
                 textAlign: 'center',
                 borderRadius: '10px',
                 background: 'rgba(20,22,26,.92)',
-                border: '1px solid #fdd663',
-                color: '#fdd663',
+                border: '1px solid #9aa0a6',
+                color: '#9aa0a6',
                 backdropFilter: 'blur(4px)',
               }}
             >
-              {t('launcher.letterboxDetected', { pt: letterbox.shortfallPx })}
+              {t('launcher.letterboxDetected', { pt: letterboxShortfallPx })}
             </div>
           )}
 
