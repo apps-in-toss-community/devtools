@@ -145,8 +145,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Scan the QR with the phone to open the launcher, which frames the tunnel URL and attaches CDP.\n\n' +
       'Set wait_for_attach=true to block until a page attaches (polls up to 30 s). ' +
       'On timeout, call build_attach_url again to resume polling. ' +
-      'When open_in_browser=true (default), saves the QR as a PNG and opens it in the OS default ' +
-      'browser — only works when the MCP server runs on a local GUI machine (not headless/remote containers). ' +
+      'The server automatically opens the QR dashboard in the OS default browser when running on a ' +
+      'local GUI machine — headless/remote environments fall back to the text QR in the tool output.' +
       '\n\nTOTP auth: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the returned attachUrl ' +
       'automatically includes the current one-time code (at=<code>). The code is valid for ~3 minutes ' +
       '(the relay gate accepts ±6 TOTP steps = 180–210 s of backwards acceptance). ' +
@@ -177,13 +177,6 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'If true, block after returning the QR until a page attaches to the relay (polls ' +
             'listTargets ~1 s interval, timeout 30 s). On attach, the response includes the ' +
             'attached page list. On timeout, call build_attach_url again to resume polling.',
-        },
-        open_in_browser: {
-          type: 'boolean',
-          description:
-            'If true (default), render the QR as a PNG and open it in the OS default browser. ' +
-            'Only works when the MCP server is running on a local GUI machine — headless or ' +
-            'remote container environments should set this to false to use the text QR fallback.',
         },
         projectRoot: {
           type: 'string',

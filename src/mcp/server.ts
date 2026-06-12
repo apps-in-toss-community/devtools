@@ -217,10 +217,6 @@ const DEV_TOOL_DEFINITIONS = [
           type: 'boolean',
           description: 'If true, block until a page attaches.',
         },
-        open_in_browser: {
-          type: 'boolean',
-          description: 'If true (default), open the QR PNG in the OS browser.',
-        },
       },
       required: ['scheme_url'],
     },
