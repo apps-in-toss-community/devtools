@@ -4,8 +4,10 @@
 // Collected by vitest via the `*.vitest.ts` include in vitest.config.ts (same
 // pattern as entry.vitest.ts / letterbox.vitest.ts / navbar.vitest.ts).
 //
-// Pure functions (parseSelfDebugParams, parseSelfDebugFromScannedUrl,
-// deriveSelfTargetScriptUrl) are tested without any DOM.
+// Pure functions (parseSelfDebugParams, deriveSelfTargetScriptUrl) are tested
+// without any DOM. The in-app scan path (issue #535) feeds showLive's
+// launcherSearch (extractLauncherSearch output) into parseSelfDebugParams —
+// launcher-style URL extraction is covered by navbar.vitest.ts.
 //
 // injectSelfTarget runs under jsdom (document is available) and is tested here
 // for the selfAttached guard (issue #535: double-scan single-inject invariant).
@@ -15,7 +17,6 @@ import {
   _resetSelfAttachedForTest,
   deriveSelfTargetScriptUrl,
   injectSelfTarget,
-  parseSelfDebugFromScannedUrl,
   parseSelfDebugParams,
 } from './selfdebug.js';
 
@@ -85,73 +86,6 @@ describe('parseSelfDebugParams — enabled paths', () => {
       `?selfdebug=1&debug=1&relay=${encodeURIComponent(RELAY_WSS)}&url=https://example.com&at=999000`,
     );
     expect(result).toEqual({
-      enabled: true,
-      params: { relayUrl: RELAY_WSS, atCode: '999000' },
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// parseSelfDebugFromScannedUrl — in-app QR scan path (issue #535)
-// ---------------------------------------------------------------------------
-
-const LAUNCHER_BASE = 'https://devtools.aitc.dev/launcher/';
-const TUNNEL_URL = 'https://abc-def.trycloudflare.com/';
-
-describe('parseSelfDebugFromScannedUrl — disabled paths', () => {
-  it('empty string → disabled', () => {
-    expect(parseSelfDebugFromScannedUrl('')).toEqual({ enabled: false });
-  });
-
-  it('unparseable string → disabled', () => {
-    expect(parseSelfDebugFromScannedUrl('not-a-url')).toEqual({ enabled: false });
-  });
-
-  it('direct tunnel URL (no url= param) → disabled', () => {
-    expect(parseSelfDebugFromScannedUrl(TUNNEL_URL)).toEqual({ enabled: false });
-  });
-
-  it('direct tunnel URL with selfdebug=1 but no url= → disabled (not launcher-style)', () => {
-    const raw = `${TUNNEL_URL}?selfdebug=1&relay=${encodeURIComponent(RELAY_WSS)}`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({ enabled: false });
-  });
-
-  it('launcher URL without selfdebug → disabled', () => {
-    const raw = `${LAUNCHER_BASE}?url=${encodeURIComponent(TUNNEL_URL)}`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({ enabled: false });
-  });
-
-  it('launcher URL with selfdebug=1 but no relay → disabled', () => {
-    const raw = `${LAUNCHER_BASE}?url=${encodeURIComponent(TUNNEL_URL)}&selfdebug=1`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({ enabled: false });
-  });
-
-  it('launcher URL with selfdebug=1 and relay not wss: → disabled', () => {
-    const raw = `${LAUNCHER_BASE}?url=${encodeURIComponent(TUNNEL_URL)}&selfdebug=1&relay=https://relay.example.com`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({ enabled: false });
-  });
-});
-
-describe('parseSelfDebugFromScannedUrl — enabled paths', () => {
-  it('launcher URL with selfdebug=1 + valid wss relay + no at → enabled, atCode empty', () => {
-    const raw = `${LAUNCHER_BASE}?url=${encodeURIComponent(TUNNEL_URL)}&selfdebug=1&relay=${encodeURIComponent(RELAY_WSS)}`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({
-      enabled: true,
-      params: { relayUrl: RELAY_WSS, atCode: '' },
-    });
-  });
-
-  it('launcher URL with selfdebug=1 + valid wss relay + at= → enabled, atCode forwarded', () => {
-    const raw = `${LAUNCHER_BASE}?url=${encodeURIComponent(TUNNEL_URL)}&selfdebug=1&relay=${encodeURIComponent(RELAY_WSS)}&at=123456`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({
-      enabled: true,
-      params: { relayUrl: RELAY_WSS, atCode: '123456' },
-    });
-  });
-
-  it('extra params (debug=1, name=, icon=) do not affect the result', () => {
-    const raw = `${LAUNCHER_BASE}?url=${encodeURIComponent(TUNNEL_URL)}&debug=1&selfdebug=1&relay=${encodeURIComponent(RELAY_WSS)}&at=999000&name=MyApp`;
-    expect(parseSelfDebugFromScannedUrl(raw)).toEqual({
       enabled: true,
       params: { relayUrl: RELAY_WSS, atCode: '999000' },
     });

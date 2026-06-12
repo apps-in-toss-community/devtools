@@ -176,36 +176,3 @@ export function maybeAttachSelf(): void {
   if (!result.enabled) return;
   injectSelfTarget(result.params);
 }
-
-/**
- * Parses self-debug parameters from a raw scanned URL string (the QR payload).
- *
- * This is the companion to {@link parseSelfDebugParams} for the in-app QR scan
- * path (issue #535). In standalone PWA mode the launcher boots via start_url
- * (no query string), so `maybeAttachSelf()` cannot fire on mount. Instead,
- * `showLive()` calls this helper to detect `selfdebug=1` in the scanned
- * launcher URL and inject the self-target on the fly.
- *
- * The raw string is a full launcher URL such as:
- *   `https://devtools.aitc.dev/launcher/?url=https://…&selfdebug=1&relay=wss://…&at=…`
- *
- * Only launcher-style URLs (those containing a `url=` param) are inspected —
- * a direct tunnel URL cannot carry selfdebug params. Returns `{ enabled: false }`
- * for direct tunnel URLs, unparseable strings, or URLs without `selfdebug=1`.
- *
- * Pure function — no DOM, no side effects.
- *
- * @param rawScanned - The raw string from the QR scanner (launcher URL).
- */
-export function parseSelfDebugFromScannedUrl(rawScanned: string): SelfDebugParseResult {
-  if (!rawScanned) return { enabled: false };
-  let parsed: URL;
-  try {
-    parsed = new URL(rawScanned);
-  } catch {
-    return { enabled: false };
-  }
-  // Only launcher-style URLs (with `url=` param) can carry selfdebug params.
-  if (!parsed.searchParams.has('url')) return { enabled: false };
-  return parseSelfDebugParams(parsed.search);
-}
