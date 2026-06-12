@@ -1,0 +1,11 @@
+{
+  "name": "Letterbox Probe — Fullscreen",
+  "short_name": "Probe FS",
+  "description": "iOS fullscreen vs standalone display-mode 판별용 letterbox 진단 probe. 커뮤니티 오픈소스.",
+  "start_url": "/letterbox-probe/fullscreen/",
+  "scope": "/letterbox-probe/fullscreen/",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10"
+}

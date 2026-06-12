@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Probe PXFIX</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body {
+        height: 100%;
+        background: #0b0d10;
+        color: #e2e8f0;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+
+      /* #root: 문서 흐름 내 wrapper. pxfix ON 시 height: screen.height px 명시 보정.
+         이 요소가 물리 바닥까지 늘어나야 #band-doc-bottom(absolute)이 바닥에 닿는다. */
+      #root {
+        position: relative;
+        min-height: 100%;
+      }
+
+      /* Safe-area probe: lives off-screen, reads env() values via getComputedStyle */
+      #sa-probe {
+        position: fixed;
+        top: -9999px;
+        left: -9999px;
+        width: 1px;
+        height: 1px;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        visibility: hidden;
+        pointer-events: none;
+      }
+
+      /* Red band: top 47px — status-bar zone */
+      #band-top {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        height: 47px;
+        background: rgba(255, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #fff;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      /* Green band: bottom 34px — home indicator zone (viewport-anchored) */
+      #band-bottom {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        height: 34px;
+        background: rgba(0, 255, 0, 0.5);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #000;
+        pointer-events: none;
+        z-index: 100;
+      }
+
+      /* Blue band: bottom 47px of the DOCUMENT (absolute, document-anchored).
+         판정: pxfix ON 상태에서 이 밴드가 GREEN 아래로 내려와 물리 바닥에 닿으면 보정 성립. */
+      #band-doc-bottom {
+        position: absolute;
+        bottom: 0; left: 0; right: 0;
+        height: 47px;
+        background: rgba(59, 130, 246, 0.6);
+        display: flex;
+        align-items: center;
+        padding: 0 10px;
+        font-size: 11px;
+        color: #fff;
+        pointer-events: none;
+        z-index: 99;
+      }
+
+      #readout {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 16px 80px;
+      }
+
+      table {
+        border-collapse: collapse;
+        font-size: 13px;
+        line-height: 1.7;
+        width: 100%;
+        max-width: 360px;
+      }
+
+      td:first-child {
+        color: #94a3b8;
+        padding-right: 12px;
+        white-space: nowrap;
+      }
+
+      td:last-child {
+        color: #f8fafc;
+        word-break: break-all;
+      }
+
+      .shortfall-row td:last-child {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .shortfall-zero td:last-child {
+        color: #4ade80;
+      }
+
+      .shortfall-nonzero td:last-child {
+        color: #f87171;
+      }
+
+      .variant-badge {
+        position: fixed;
+        top: 52px;
+        right: 10px;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: rgba(251, 146, 60, 0.2);
+        color: #fb923c;
+        pointer-events: none;
+        z-index: 101;
+      }
+
+      #toggle-btn {
+        position: fixed;
+        bottom: 44px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 110;
+        padding: 8px 20px;
+        border: 1px solid #475569;
+        border-radius: 6px;
+        background: #1e293b;
+        color: #e2e8f0;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      #toggle-btn:active {
+        background: #334155;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Safe-area env() probe element -->
+    <div id="sa-probe"></div>
+
+    <!-- Variant label (visible below status bar) -->
+    <div class="variant-badge">pxfix (#527)</div>
+
+    <!-- Position bands -->
+    <div id="band-top">RED = 창 최상단 47px (status bar 영역)</div>
+    <div id="band-bottom">GREEN = viewport 최하단 34px (fixed)</div>
+
+    <!-- Document-anchored wrapper (pxfix 보정 대상) -->
+    <div id="root">
+      <!-- Blue band: document bottom (absolute) -->
+      <div id="band-doc-bottom">BLUE = 문서 최하단 47px (absolute) — GREEN보다 아래 닿으면 보정 성립</div>
+
+      <!-- Live readout -->
+      <div id="readout">
+        <table id="metrics">
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Toggle button -->
+    <button id="toggle-btn" type="button">pxfix ON — 보정 끄기</button>
+
+    <script>
+      (() => {
+        'use strict';
+
+        var root = document.getElementById('root');
+        var toggleBtn = document.getElementById('toggle-btn');
+        var tbody = document.querySelector('#metrics tbody');
+        var saProbe = document.getElementById('sa-probe');
+
+        // 초기 상태: ON
+        var pxfixOn = true;
+
+        function applyPxfix() {
+          if (pxfixOn) {
+            // #527 보정: root 높이를 screen.height px로 명시해 letterbox 영역을 채운다.
+            root.style.height = screen.height + 'px';
+            toggleBtn.textContent = 'pxfix ON — 보정 끄기';
+          } else {
+            root.style.height = '';
+            toggleBtn.textContent = 'pxfix OFF — 보정 켜기';
+          }
+        }
+
+        toggleBtn.addEventListener('click', function() {
+          pxfixOn = !pxfixOn;
+          applyPxfix();
+          update();
+        });
+
+        function safeArea() {
+          var cs = getComputedStyle(saProbe);
+          return {
+            top:    cs.paddingTop,
+            right:  cs.paddingRight,
+            bottom: cs.paddingBottom,
+            left:   cs.paddingLeft,
+          };
+        }
+
+        function uaSummary() {
+          var ua = navigator.userAgent;
+          var m = ua.match(/OS (\d+[_\d]*)/);
+          return m ? 'iOS ' + m[1].replace(/_/g, '.') : ua.slice(0, 60);
+        }
+
+        function update() {
+          var sa = safeArea();
+          var iw = window.innerWidth;
+          var ih = window.innerHeight;
+          var sw = screen.width;
+          var sh = screen.height;
+          var shortfall = sh - ih;
+          var vvh = window.visualViewport ? window.visualViewport.height.toFixed(1) : 'n/a';
+          var standalone = window.matchMedia('(display-mode: standalone)').matches;
+          var navStandalone = typeof navigator.standalone !== 'undefined' ? String(navigator.standalone) : 'n/a';
+          var rootH = root.getBoundingClientRect().height.toFixed(1);
+          var scrollH = document.documentElement.scrollHeight;
+
+          var rows = [
+            ['pxfix 상태', pxfixOn ? 'ON (screen.height px 적용)' : 'OFF (미적용)'],
+            ['root.height (style)', pxfixOn ? sh + 'px (명시)' : '미설정'],
+            ['root.getBCR().height', rootH],
+            ['innerW × H', iw + ' × ' + ih],
+            ['screen W × H', sw + ' × ' + sh],
+            ['shortfall (screen.H − inner.H)', shortfall],
+            ['visualViewport.height', vvh],
+            ['doc scrollHeight', scrollH],
+            ['scrollY', window.scrollY],
+            ['safe-area top', sa.top],
+            ['safe-area right', sa.right],
+            ['safe-area bottom', sa.bottom],
+            ['safe-area left', sa.left],
+            ['display-mode: standalone', String(standalone)],
+            ['navigator.standalone', navStandalone],
+            ['UA', uaSummary()],
+          ];
+
+          var html = '';
+          rows.forEach(function(row, i) {
+            var isShortfall = i === 5;
+            var cls = '';
+            if (isShortfall) {
+              cls = 'shortfall-row ' + (shortfall === 0 ? 'shortfall-zero' : 'shortfall-nonzero');
+            }
+            html += '<tr class="' + cls + '"><td>' + row[0] + '</td><td>' + row[1] + '</td></tr>';
+          });
+          tbody.innerHTML = html;
+        }
+
+        // 초기 적용
+        applyPxfix();
+        update();
+
+        window.addEventListener('resize', function() {
+          // 보정 ON 상태에서 resize 시 screen.height도 갱신될 수 있으므로 재적용
+          if (pxfixOn) applyPxfix();
+          update();
+        });
+        window.addEventListener('scroll', update, { passive: true });
+        window.addEventListener('orientationchange', function() {
+          setTimeout(function() {
+            if (pxfixOn) applyPxfix();
+            update();
+          }, 50);
+        });
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', update);
+        }
+      })();
+    </script>
+  </body>
+</html>

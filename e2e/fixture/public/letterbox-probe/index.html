@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Letterbox Probe 허브</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      html, body {
+        min-height: 100%;
+        background: #0b0d10;
+        color: #e2e8f0;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+      }
+
+      .container {
+        max-width: 480px;
+        margin: 0 auto;
+        padding: 40px 20px 60px;
+      }
+
+      h1 {
+        font-size: 18px;
+        font-weight: 700;
+        color: #f8fafc;
+        margin-bottom: 6px;
+      }
+
+      .subtitle {
+        font-size: 12px;
+        color: #64748b;
+        margin-bottom: 32px;
+        line-height: 1.6;
+      }
+
+      h2 {
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #475569;
+        margin-bottom: 12px;
+        margin-top: 28px;
+      }
+
+      .probe-list {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .probe-item {
+        border: 1px solid #1e293b;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .probe-item a {
+        display: block;
+        padding: 12px 14px 10px;
+        text-decoration: none;
+        color: inherit;
+        background: #0f172a;
+        transition: background 0.1s;
+      }
+
+      .probe-item a:active {
+        background: #1e293b;
+      }
+
+      .probe-name {
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .badge {
+        font-size: 10px;
+        font-weight: 400;
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+
+      .badge-existing {
+        background: rgba(100, 116, 139, 0.2);
+        color: #94a3b8;
+      }
+
+      .badge-new {
+        background: rgba(52, 211, 153, 0.15);
+        color: #34d399;
+      }
+
+      .probe-desc {
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.6;
+      }
+
+      .notice {
+        margin-top: 32px;
+        padding: 14px 16px;
+        border: 1px solid #1e3a2f;
+        border-radius: 8px;
+        background: #0a1f18;
+        font-size: 12px;
+        color: #86efac;
+        line-height: 1.7;
+      }
+
+      .notice strong {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #4ade80;
+        margin-bottom: 6px;
+      }
+
+      .notice ol {
+        padding-left: 18px;
+        margin-top: 6px;
+      }
+
+      .notice li {
+        margin-bottom: 4px;
+      }
+
+      .footer {
+        margin-top: 48px;
+        font-size: 11px;
+        color: #334155;
+        line-height: 1.6;
+        border-top: 1px solid #1e293b;
+        padding-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Letterbox Probe 허브</h1>
+      <p class="subtitle">
+        iOS 웹 클립(홈 화면 추가)에서 letterbox 동작을 meta/manifest 조합별로 비교하는 진단용 페이지 모음입니다.<br />
+        각 변형을 별도 웹 클립으로 설치해 동일 기기에서 나란히 비교하세요.
+      </p>
+
+      <h2>기존 변형 (기준선)</h2>
+      <ul class="probe-list">
+        <li class="probe-item">
+          <a href="./default/">
+            <div class="probe-name">
+              default
+              <span class="badge badge-existing">기존</span>
+            </div>
+            <div class="probe-desc">viewport-fit=cover + status-bar-style=default — 기본 동작 기준선.</div>
+          </a>
+        </li>
+        <li class="probe-item">
+          <a href="./translucent/">
+            <div class="probe-name">
+              black-translucent
+              <span class="badge badge-existing">기존</span>
+            </div>
+            <div class="probe-desc">viewport-fit=cover + black-translucent — ICB가 status bar까지 확장되는 조합.</div>
+          </a>
+        </li>
+        <li class="probe-item">
+          <a href="./hack/">
+            <div class="probe-name">
+              min-height hack
+              <span class="badge badge-existing">기존</span>
+            </div>
+            <div class="probe-desc">html을 safe-area-inset-top만큼 늘려 letterbox 영역을 문서 콘텐츠로 채우는 시도.</div>
+          </a>
+        </li>
+      </ul>
+
+      <h2>신규 변형</h2>
+      <ul class="probe-list">
+        <li class="probe-item">
+          <a href="./fullscreen/">
+            <div class="probe-name">
+              fullscreen manifest
+              <span class="badge badge-new">신규</span>
+            </div>
+            <div class="probe-desc">
+              manifest display: "fullscreen" + translucent meta — iOS가 fullscreen을 standalone으로 fallback하는지,
+              아니면 다른 지오메트리를 주는지 판별. display-mode: fullscreen / standalone 양쪽 matchMedia 표시.
+            </div>
+          </a>
+        </li>
+        <li class="probe-item">
+          <a href="./pxfix/">
+            <div class="probe-name">
+              pxfix (#527 단독 재현)
+              <span class="badge badge-new">신규</span>
+            </div>
+            <div class="probe-desc">
+              root에 height: screen.height px 명시 보정(#527 메커니즘)을 단독으로 재현.
+              ON/OFF 토글로 보정 전후 비교 — 파란 문서 하단 밴드가 물리 바닥에 닿으면 보정 성립.
+            </div>
+          </a>
+        </li>
+        <li class="probe-item">
+          <a href="./contain/">
+            <div class="probe-name">
+              viewport-fit=contain
+              <span class="badge badge-new">신규</span>
+            </div>
+            <div class="probe-desc">
+              viewport-fit=contain + black-translucent — cover 제거 효과 분리.
+              safe-area-inset-* 값이 0으로 보고되는지, ICB 높이가 달라지는지 확인.
+            </div>
+          </a>
+        </li>
+      </ul>
+
+      <div class="notice">
+        <strong>iOS 웹 클립 설치 주의</strong>
+        iOS 웹 클립은 설치 시점의 meta와 manifest를 동결합니다. 변형마다 별도 웹 클립으로 설치하고,
+        페이지를 수정한 뒤에는 반드시 삭제 후 재추가해야 변경이 반영됩니다.
+        <ol>
+          <li>Safari에서 각 변형 페이지를 직접 열기.</li>
+          <li>공유 메뉴 → "홈 화면에 추가".</li>
+          <li>변형마다 이름을 구분해 별도 아이콘으로 저장.</li>
+          <li>페이지 내용이 바뀌면 홈 화면 아이콘을 삭제하고 3단계부터 다시 진행.</li>
+        </ol>
+      </div>
+
+      <div class="footer">
+        커뮤니티 오픈소스 프로젝트입니다.
+      </div>
+    </div>
+  </body>
+</html>
