@@ -44,6 +44,10 @@ class FakeCdpConnection implements CdpConnection {
   readonly kind = 'relay' as const;
 
   private _targets: CdpTarget[];
+  /** If set, called when refreshTargets() is invoked — replaces _targets. */
+  private _onRefresh?: () => CdpTarget[] | Promise<CdpTarget[]>;
+  /** Counts how many times refreshTargets() was called. */
+  refreshCallCount = 0;
 
   constructor(targets: CdpTarget[] = []) {
     this._targets = targets;
@@ -51,6 +55,21 @@ class FakeCdpConnection implements CdpConnection {
 
   setTargets(t: CdpTarget[]): void {
     this._targets = t;
+  }
+
+  /** Register a callback that runs when refreshTargets() is called. */
+  setOnRefresh(fn: () => CdpTarget[] | Promise<CdpTarget[]>): void {
+    this._onRefresh = fn;
+  }
+
+  async refreshTargets(): Promise<CdpTarget[]> {
+    this.refreshCallCount++;
+    if (this._onRefresh) {
+      const result = await this._onRefresh();
+      this._targets = result;
+      return result;
+    }
+    return this._targets;
   }
 
   enableDomains(): Promise<void> {
@@ -470,6 +489,75 @@ describe('getDiagnostics helper', () => {
     });
     expect(resultAlive.process.parentAlive).toBe(true);
     expect(resultDead.process.parentAlive).toBe(false);
+  });
+
+  // ---- refreshTargets on get_debug_status (#551) ----------------------------
+
+  it('(a) calls refreshTargets before reading pages — relay target present after refresh', async () => {
+    // Simulate the #551 scenario: in-memory cache is empty, but relay /targets
+    // returns a target. refreshTargets() updates the cache; get_debug_status
+    // should see the updated pages after the refresh.
+    const connection = new FakeCdpConnection([]); // cache starts empty
+    connection.setOnRefresh(() => [{ id: 'tgt1', title: 'App', url: 'http://127.0.0.1:5173/' }]);
+
+    const result = await getDiagnostics({
+      tunnel: tunnelUp,
+      connection,
+      env: 'relay-dev',
+      envReason: 'test',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+
+    // refreshTargets must have been called at least once.
+    expect(connection.refreshCallCount).toBeGreaterThanOrEqual(1);
+    // pages should reflect the freshly fetched target, not the stale empty cache.
+    expect(result.pages).not.toBeNull();
+    expect(result.pages!.pages).toHaveLength(1);
+    expect(result.pages!.pages[0]!.id).toBe('tgt1');
+    // nextRecommendedAction must be null — a page is attached, so no re-attach needed.
+    expect(result.nextRecommendedAction).toBeNull();
+  });
+
+  it('(b) refresh failure falls back to cached state without throwing', async () => {
+    // refreshTargets throws (e.g. relay unreachable) — get_debug_status must
+    // still return a result using the in-memory cache, not propagate the error.
+    const connection = new FakeCdpConnection([
+      { id: 'cached', title: 'Cached Page', url: 'http://127.0.0.1:5173/' },
+    ]);
+    connection.setOnRefresh(() => {
+      throw new Error('fetch failed: connection refused');
+    });
+
+    const result = await getDiagnostics({
+      tunnel: tunnelUp,
+      connection,
+      env: 'relay-dev',
+      envReason: 'test',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+
+    // No error propagated — result is valid.
+    expect(result.pages).not.toBeNull();
+    // The cached target is used as fallback.
+    expect(result.pages!.pages).toHaveLength(1);
+    expect(result.pages!.pages[0]!.id).toBe('cached');
+  });
+
+  it('(c) no connection → refreshTargets is not called, pages stays null', async () => {
+    // When no connection is supplied (e.g. dev-mode server), getDiagnostics
+    // must behave exactly as before — pages: null, no error.
+    const result = await getDiagnostics({
+      tunnel: tunnelDown,
+      // connection intentionally omitted
+      env: 'mock',
+      envReason: 'default-mock',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+
+    expect(result.pages).toBeNull();
   });
 });
 

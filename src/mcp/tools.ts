@@ -2177,8 +2177,17 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
   };
 
   // list_pages — non-fatal; null on any error.
+  // Refresh from relay first (#551 — stale cache causes pages:0 / wrong
+  // nextRecommendedAction even when a target is attached). Same best-effort
+  // pattern as the list_pages handler: errors are silently ignored so the
+  // caller always gets *something* back, even when the relay is unreachable.
   let pages: ListPagesResult | null = null;
   if (connection !== undefined) {
+    try {
+      await connection.refreshTargets?.();
+    } catch {
+      // Ignore refresh errors — continue with cached state.
+    }
     try {
       pages = listPages(connection, tunnel);
     } catch {
