@@ -30,6 +30,7 @@ import {
   resolveAppIcon,
   resolveAppTitle,
 } from './navbar.js';
+import { maybeAttachSelf } from './selfdebug.js';
 
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
 
@@ -761,6 +762,17 @@ export function Launcher(): React.JSX.Element {
   // ---------------------------------------------------------------------------
 
   useEffect(() => {
+    // Self-debug opt-in (issue #531): when `selfdebug=1` is present in the
+    // launcher URL together with a valid `relay=` param, register the launcher
+    // document itself as a Chii CDP target so an agent can directly observe
+    // launcher geometry, styles, and state without requiring human eyes.
+    //
+    // Single-attach model: once the self-target connects, the relay evicts any
+    // previously-connected mini-app target (last-attach-wins). This is
+    // intentional — self-debug is "launcher diagnostics mode", not simultaneous
+    // dual-attach. Without `selfdebug=1` this call is a cheap no-op.
+    maybeAttachSelf();
+
     // Service worker registration (non-fatal)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/launcher/sw.js', { scope: '/launcher/' }).catch(() => {});
