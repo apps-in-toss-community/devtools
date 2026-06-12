@@ -126,6 +126,12 @@ export interface QrHttpServer {
   /** `http://127.0.0.1:<port>/attach?u=<encoded>` URL 생성 헬퍼. */
   buildAttachPageUrl(attachUrl: string): string;
   /**
+   * 안정 인스펙터 진입점 URL — `http://127.0.0.1:<port>/inspector` (issue #530).
+   * 클릭 시점에 TOTP를 mint하고 302 redirect하므로 URL 자체에 시크릿이 없다.
+   * 대시보드/stdout/로그 어디든 출력 가능.
+   */
+  readonly inspectorStableUrl: string;
+  /**
    * 상태 변경 시 호출 — SSE 구독자에게 최신 상태를 push한다.
    * `getDashboardState`가 주입돼 있지 않으면 no-op.
    */
@@ -560,6 +566,25 @@ export interface QrHttpServerOptions {
    * 테스트에서 짧은 값(예: 50ms)을 주입해 검증한다. `undefined`이면 기본값 90_000.
    */
   sseRefreshIntervalMs?: number;
+  /**
+   * GET /inspector 라우트에서 클릭 시점 직접 인스펙터 URL을 조립하는 getter.
+   *
+   * getDashboardState().inspectorUrl(= /inspector 자기 자신)로 redirect하면 무한 루프가
+   * 발생하므로, /inspector 라우트 내부는 이 getter로 직접 chii front_end URL을 조립한다.
+   * 매 요청마다 호출되므로 TOTP를 요청 시점에 mint한다.
+   *
+   * - 미주입 → 기존 503 응답 유지.
+   * - `ok: false, reason: 'relayDown'` → 502 (relay 미활성).
+   * - `ok: false, reason: 'noTarget'` → 502 (relay up이지만 페이지 미attach).
+   * - `ok: false, reason: 'totpUnavailable'` → 502 (TOTP secret 미설정, fail-closed).
+   * - `ok: true` → 302 Location: url (Cache-Control: no-store).
+   *
+   * SECRET-HANDLING: ok:true 시 url 안에 relay host + TOTP at= 코드가 담긴다.
+   * Location 헤더로 전달되는 건 의도된 transport. 로그/stdout 출력 금지.
+   */
+  getDirectInspectorUrl?: () =>
+    | { ok: true; url: string }
+    | { ok: false; reason: 'relayDown' | 'noTarget' | 'totpUnavailable' };
 }
 
 /**
@@ -569,6 +594,7 @@ export interface QrHttpServerOptions {
  * @param getDashboardState - dashboard 상태를 반환하는 클로저. 주입 시 `GET /` dashboard와
  *   `GET /events` SSE 스트림이 활성화된다. 미주입 시 두 라우트는 204/서비스 없음으로 응답.
  * @param options - 서버 옵션. `sseRefreshIntervalMs`로 idle 탭 TOTP 만료 방지 주기를 조정.
+ *   `getDirectInspectorUrl`로 /inspector 라우트에서 직접 조립 URL을 제공해 redirect 루프를 방지.
  */
 export async function startQrHttpServer(
   getDashboardState?: () => DashboardState,
@@ -715,6 +741,51 @@ export async function startQrHttpServer(
       return;
     }
 
+    // ── GET /inspector — 안정 인스펙터 진입점 (issue #530) ───────────────────
+    // 클릭 시점에 getDirectInspectorUrl()로 직접 chii front_end URL을 조립해 302 redirect.
+    // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프 → 분리됨.
+    // SECRET-HANDLING: redirect Location(relay host + at=)은 HTTP 응답으로만 전달.
+    // 로그에 Location 값 출력 금지.
+    if (path === '/inspector') {
+      const getDirectInspectorUrl = options?.getDirectInspectorUrl;
+      if (!getDirectInspectorUrl) {
+        res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Inspector endpoint is not available in this server mode.');
+        return;
+      }
+      // 매 요청마다 getter 호출 — TOTP를 요청 시점에 mint.
+      const result = getDirectInspectorUrl();
+      const s = resolveLocaleStrings(locale);
+      if (!result.ok) {
+        const msgKey =
+          result.reason === 'noTarget' ? 'inspector.error.noTarget' : 'inspector.error.relayDown';
+        const msg = s(msgKey);
+        const body =
+          `<!DOCTYPE html><html lang="${locale}"><head>` +
+          `<meta charset="utf-8"><title>Inspector</title></head><body>` +
+          `<p>${escapeHtml(msg)}</p>` +
+          `<p style="font-size:0.9em;color:#666">` +
+          (locale === 'ko'
+            ? '(<a href="/">대시보드로 돌아가기</a>)'
+            : '(<a href="/">Back to dashboard</a>)') +
+          `</p></body></html>`;
+        res.writeHead(502, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-store',
+        });
+        res.end(body);
+        return;
+      }
+      // ok: true — 302 redirect. Location에 relay host + TOTP at= 포함.
+      // SECRET-HANDLING: Location 값은 HTTP 응답으로만 — 로그/stdout 출력 금지.
+      res.writeHead(302, {
+        Location: result.url,
+        'Cache-Control': 'no-store',
+      });
+      res.end();
+      return;
+    }
+
     if (path === '/qr.png') {
       const encodedU = params.get('u') ?? '';
       let attachUrl: string;
@@ -786,6 +857,11 @@ export async function startQrHttpServer(
     port,
     buildAttachPageUrl(attachUrl: string): string {
       return `http://127.0.0.1:${port}/attach?u=${encodeURIComponent(attachUrl)}`;
+    },
+    // 안정 인스펙터 진입점 URL (issue #530) — 클릭 시 302 redirect (TOTP 클릭 시점 mint).
+    // URL 자체에 시크릿 없음 → 대시보드/stdout/로그 어디든 출력 가능.
+    get inspectorStableUrl(): string {
+      return `http://127.0.0.1:${port}/inspector`;
     },
     notifyStateChange(): void {
       notifyStateChangeInternal();

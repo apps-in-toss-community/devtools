@@ -225,8 +225,20 @@ export function openUrlInBrowser(url: string): boolean {
  */
 export interface DevtoolsOpenOptions {
   /**
+   * Stable local inspector URL (`http://127.0.0.1:<port>/inspector`) from the
+   * QR HTTP server (issue #530). When provided this URL is opened in the browser
+   * instead of building a direct `front_end/chii_app.html?wss=…` URL. The
+   * `/inspector` endpoint mints a fresh TOTP at click time and redirects, so
+   * there is no TOTP-expiry race. Safe to log (no tunnel host, no TOTP code).
+   *
+   * When absent, falls back to building a direct inspector URL from
+   * `relayHttpBaseUrl` + `mintTotp` (legacy path, kept for backward compat).
+   */
+  inspectorStableUrl?: string | null;
+  /**
    * Local HTTP base URL of the Chii relay, e.g. `http://127.0.0.1:9100`.
-   * Used to build the `<relay-base>/front_end/chii_app.html?wss=…` URL.
+   * Used to build the `<relay-base>/front_end/chii_app.html?wss=…` URL when
+   * `inspectorStableUrl` is not available.
    *
    * For env 3/4 (intoss relay) this is `http://127.0.0.1:<port>`.
    * For env 2 (external PWA relay) this is the relay's external HTTP URL
@@ -246,6 +258,7 @@ export interface DevtoolsOpenOptions {
   /**
    * Function that mints a fresh TOTP code when called. Called at most once per
    * `open()` invocation, immediately before building the inspector URL.
+   * Only used when `inspectorStableUrl` is absent.
    *
    * Pass `undefined` when TOTP is disabled (no `at=` param is added).
    *
@@ -258,63 +271,91 @@ export interface DevtoolsOpenOptions {
 }
 
 /**
- * Manages auto-opening Chrome DevTools exactly once per relay attach session.
+ * Manages auto-opening Chrome DevTools on every NEW target attach (issue #530).
  *
  * Create one instance per `runDebugServer` call and pass its `open()` method
- * as the `onFirstAttach` callback to `startAttachWatcher`.
+ * as the `onAttach` callback to the attach watcher (via `DualConnectionRouter`).
  *
- * The open fires at most once. Subsequent `open()` calls are no-ops.
+ * The open fires for each NEW `targetId` — subsequent notifications for the
+ * same target are de-duplicated. Re-attach with a fresh targetId (e.g. after
+ * page reload on the phone) fires a new open. The URL opened is the stable
+ * `/inspector` endpoint (issue #530) when `inspectorStableUrl` is provided —
+ * it mints a fresh TOTP at click time so there is no expiry race. Falls back to
+ * building a direct `front_end/chii_app.html?wss=…` URL when
+ * `inspectorStableUrl` is absent.
+ *
  * Opt-out and mock-environment guard are checked at call time.
  */
 export class AutoDevtoolsOpener {
-  private _opened = false;
+  /** Per-target de-dupe set (issue #530 — target-unit guard replaces once-per-daemon). */
+  private readonly _openedTargets = new Set<string>();
 
   /**
    * Attempts to auto-open Chii DevTools in the developer's browser.
    *
-   * Builds a `<relay-base>/front_end/chii_app.html?wss=…` URL pointing at the
-   * attached target. A fresh TOTP `at=` code is minted at call time so the
-   * relay's WebSocket upgrade gate accepts the connection.
+   * Opens when:
+   *   - `options.targetId` is a NEW target (not yet in `_openedTargets`).
    *
    * No-op when any of the following conditions hold:
-   *   1. Already opened this session (`_opened` is true).
+   *   1. `targetId` has already been opened (`_openedTargets` has it).
    *   2. `AIT_AUTO_DEVTOOLS=0` opt-out is set.
    *   3. `options.env` is `mock` (env 1 — F12 is already available).
-   *   4. `options.relayHttpBaseUrl` is null/undefined/empty (relay not up yet).
-   *   5. `options.targetId` is null/undefined/empty (no page attached yet).
+   *   4. `options.targetId` is null/undefined/empty (no page attached yet).
+   *   5. Neither `inspectorStableUrl` nor `relayHttpBaseUrl` is available.
    *
-   * Always writes the DevTools URL to stderr so the developer can copy it
-   * if the browser open fails or the popup is blocked.
+   * When `inspectorStableUrl` is provided (issue #530 stable URL): opens
+   * `http://127.0.0.1:<port>/inspector` directly and writes it to stderr.
+   * The URL contains no tunnel host or TOTP code — safe to log anywhere.
    *
-   * TOTP expiry caveat: the `at=` code embedded in the URL is valid for ~3
-   * minutes (relay gate ±RELAY_VERIFY_SKEW_STEPS=6 steps = 180–210 s). The
-   * developer must open the URL within that window; if they miss it, reload
-   * the page or re-run `open()` (though the once-per-session guard prevents
-   * that — restart the MCP server if needed).
+   * Legacy path (no `inspectorStableUrl`): builds a direct
+   * `<relay-base>/front_end/chii_app.html?wss=…` URL from `relayHttpBaseUrl`
+   * + `mintTotp`, writes to stderr. TOTP expiry caveat applies (~3 min window).
    *
-   * SECRET-HANDLING: the inspector URL (written to stderr) contains the relay
-   * host and a short-lived TOTP code. Do NOT write it to stdout or any
-   * persistent log.
+   * SECRET-HANDLING: direct inspector URL (written to stderr) may contain relay
+   * host and TOTP code. Stable URL is secret-free. Neither must go to stdout or
+   * persistent logs.
    */
   open(options: DevtoolsOpenOptions): void {
-    if (this._opened) return;
     if (isAutoDevtoolsDisabled()) return;
     if (options.env === 'mock') return;
-    if (!options.relayHttpBaseUrl) return;
     if (!options.targetId) return;
 
-    this._opened = true;
+    // Target-unit de-dupe (issue #530): re-attach with a new targetId fires again.
+    const targetId = options.targetId;
+    if (this._openedTargets.has(targetId)) return;
+
+    // Use stable /inspector URL when available (issue #530) — secret-free, no expiry.
+    if (options.inspectorStableUrl) {
+      this._openedTargets.add(targetId);
+      const stableUrl = options.inspectorStableUrl;
+      process.stderr.write(
+        '[ait-debug] 기기가 연결됐습니다 — Chii DevTools를 자동으로 엽니다.\n' +
+          `[ait-debug] 인스펙터 URL: ${stableUrl}\n` +
+          '[ait-debug] (AIT_AUTO_DEVTOOLS=0 으로 자동 열기를 끌 수 있습니다)\n',
+      );
+      const opened = openUrlInBrowser(stableUrl);
+      if (!opened) {
+        process.stderr.write(
+          `[ait-debug] 브라우저 자동 열기 실패 — ${stableUrl} 을 브라우저에서 직접 여세요.\n`,
+        );
+      }
+      return;
+    }
+
+    // Legacy path: build direct inspector URL from relayHttpBaseUrl + mintTotp.
+    if (!options.relayHttpBaseUrl) return;
+
+    this._openedTargets.add(targetId);
 
     const inspectorUrl = buildChiiInspectorUrl(
       options.relayHttpBaseUrl,
-      options.targetId,
+      targetId,
       options.mintTotp,
     );
 
     // FAIL-CLOSED (#509): buildChiiInspectorUrl returns null when mintTotp is
     // absent (no valid at= code → relay WS gate would reject the connection).
-    // Mark _opened so this once-per-session guard fires, but skip the browser
-    // open and stderr URL line — there is nothing useful to open.
+    // Record targetId in set so this guard fires, but skip browser open.
     if (inspectorUrl === null) {
       process.stderr.write(
         '[ait-debug] 기기가 연결됐습니다 — TOTP secret 미설정으로 인스펙터 URL을 생성할 수 없습니다.\n' +
@@ -338,8 +379,17 @@ export class AutoDevtoolsOpener {
     }
   }
 
-  /** Returns `true` if `open()` has passed all guards and fired once. */
+  /**
+   * Returns `true` if `open()` has been called for at least one target.
+   * (Replaces the old once-per-session `_opened` flag; kept for interface
+   * compatibility with tests that read `opener.opened`.)
+   */
   get opened(): boolean {
-    return this._opened;
+    return this._openedTargets.size > 0;
+  }
+
+  /** Returns the set of target IDs that have already been auto-opened. */
+  get openedTargets(): ReadonlySet<string> {
+    return this._openedTargets;
   }
 }

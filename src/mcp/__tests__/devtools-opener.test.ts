@@ -1,6 +1,6 @@
 /**
  * Tests for devtools-opener: Chii self-hosted inspector URL assembly,
- * opt-out guard, and AutoDevtoolsOpener session-once semantics.
+ * opt-out guard, and AutoDevtoolsOpener per-target dedupe semantics (issue #530).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -234,7 +234,7 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).toContain('127.0.0.1:9100');
   });
 
-  it('is a no-op on second call (duplicate guard)', () => {
+  it('is a no-op on second call for the same targetId (per-target dedupe)', () => {
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -249,9 +249,30 @@ describe('AutoDevtoolsOpener', () => {
       mintTotp: fixtureMintTotp,
       env: 'relay-dev',
     });
-    // Second call should not write to stderr.
+    // Second call for the same target should not write to stderr.
     expect(stderrOutput).toBe('');
     expect(opener.opened).toBe(true);
+  });
+
+  it('fires again for a new targetId (per-target dedupe, issue #530)', () => {
+    // A page reload on the phone yields a new targetId — should auto-open again.
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-first',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    stderrOutput = '';
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-second',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    // Second call with a NEW target should write to stderr.
+    expect(stderrOutput).toContain('DevTools URL');
+    expect(opener.openedTargets.size).toBe(2);
   });
 
   it('is a no-op when env is mock', () => {
@@ -377,5 +398,66 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).toContain('at=');
     // The expiry caveat must be communicated to the developer (#490: updated to ~3분).
     expect(stderrOutput).toContain('3분');
+  });
+
+  // ── inspectorStableUrl 경로 (issue #530 stable /inspector URL) ──────────
+  it('uses inspectorStableUrl when provided — no tunnel host or TOTP code in stderr', () => {
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      inspectorStableUrl: 'http://127.0.0.1:19000/inspector',
+      relayHttpBaseUrl: 'https://tunnel.trycloudflare.com',
+      targetId: 'tgt',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    expect(opener.opened).toBe(true);
+    // Stable URL written to stderr.
+    expect(stderrOutput).toContain('http://127.0.0.1:19000/inspector');
+    // Tunnel host must NOT appear in stderr (SECRET-HANDLING).
+    expect(stderrOutput).not.toContain('tunnel.trycloudflare.com');
+    // TOTP code must NOT appear in stderr (stable URL has no TOTP).
+    expect(stderrOutput).not.toContain('123456');
+    // No expiry notice when using the stable URL.
+    expect(stderrOutput).not.toContain('3분');
+  });
+
+  it('inspectorStableUrl path: is a no-op on second call for same targetId', () => {
+    const opener = new AutoDevtoolsOpener();
+    const stableUrl = 'http://127.0.0.1:19000/inspector';
+    opener.open({
+      inspectorStableUrl: stableUrl,
+      relayHttpBaseUrl: null,
+      targetId: 'tgt',
+      env: 'relay-dev',
+    });
+    stderrOutput = '';
+    opener.open({
+      inspectorStableUrl: stableUrl,
+      relayHttpBaseUrl: null,
+      targetId: 'tgt',
+      env: 'relay-dev',
+    });
+    expect(stderrOutput).toBe('');
+    expect(opener.opened).toBe(true);
+  });
+
+  it('inspectorStableUrl path: fires again for a new targetId', () => {
+    const opener = new AutoDevtoolsOpener();
+    const stableUrl = 'http://127.0.0.1:19000/inspector';
+    opener.open({
+      inspectorStableUrl: stableUrl,
+      relayHttpBaseUrl: null,
+      targetId: 'tgt-first',
+      env: 'relay-dev',
+    });
+    stderrOutput = '';
+    opener.open({
+      inspectorStableUrl: stableUrl,
+      relayHttpBaseUrl: null,
+      targetId: 'tgt-second',
+      env: 'relay-dev',
+    });
+    expect(stderrOutput).toContain(stableUrl);
+    expect(opener.openedTargets.size).toBe(2);
   });
 });

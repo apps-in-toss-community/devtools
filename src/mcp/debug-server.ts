@@ -74,7 +74,12 @@ import {
 import { LocalCdpConnection } from './local-connection.js';
 import { launchChromium } from './local-launcher.js';
 import { logError, logInfo, logWarn } from './log.js';
-import { type DashboardState, type QrHttpServer, startQrHttpServer } from './qr-http-server.js';
+import {
+  type DashboardState,
+  type QrHttpServer,
+  type QrHttpServerOptions,
+  startQrHttpServer,
+} from './qr-http-server.js';
 import { loadRelaySecretReadOnly } from './relay-secret-store.js';
 import { acquireLock, readServerLock } from './server-lock.js';
 import {
@@ -1765,6 +1770,19 @@ export interface BootedFamily {
    * SECRET-HANDLING: this value contains the relay host. MUST NOT be logged.
    */
   relayHttpUrl?: string;
+  /**
+   * LOCAL loopback HTTP base URL of the Chii relay for env-2
+   * (`http://127.0.0.1:<relay-port>`). When set, the MCP uses this instead of
+   * `relayHttpUrl` (the cloudflare tunnel base) to build inspector URLs — so
+   * front_end page load and the client WS leg stay on the loopback and do not
+   * traverse the tunnel (issue #530).
+   *
+   * Only relevant for `bootExternalRelayFamily` (env-2): the intoss relay
+   * (`bootRelayFamily`) already uses a loopback `relay.baseUrl`.
+   *
+   * Safe to log/surface: loopback address contains no tunnel host.
+   */
+  relayLocalHttpUrl?: string;
 }
 
 /**
@@ -1956,7 +1974,39 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
  * wss URL) — it is NEVER logged here. The caller validates presence and passes
  * the value straight to the CDP client.
  */
-export async function bootExternalRelayFamily(relayBaseUrl: string): Promise<BootedFamily> {
+/**
+ * Attempts to read the local loopback HTTP base URL of the env-2 Chii relay
+ * (issue #530). Resolution order:
+ *   1. `AIT_RELAY_LOCAL_URL` env var, if set and non-empty.
+ *   2. `relayLocalUrl` from the `.ait_urls` file, if `projectRoot` is given.
+ *   3. `undefined` — caller falls back to the tunnel base (existing behavior).
+ *
+ * This is a best-effort read — never throws. The returned value is a plain
+ * `http://127.0.0.1:<port>` loopback URL; no secret exposure.
+ */
+export async function readRelayLocalUrl(
+  env: NodeJS.ProcessEnv = process.env,
+  projectRoot?: string,
+): Promise<string | undefined> {
+  const envValue = (env.AIT_RELAY_LOCAL_URL ?? '').trim();
+  if (envValue !== '') return envValue;
+
+  if (projectRoot !== undefined) {
+    try {
+      const { readRelayUrls } = await import('./relay-url-store.js');
+      const stored = await readRelayUrls({ projectRoot });
+      if (stored?.relayLocalUrl) return stored.relayLocalUrl;
+    } catch {
+      // Silent best-effort.
+    }
+  }
+  return undefined;
+}
+
+export async function bootExternalRelayFamily(
+  relayBaseUrl: string,
+  relayLocalUrl?: string,
+): Promise<BootedFamily> {
   // Relay-auth baseline (issue #250): the env-2 PWA relay is reachable over a
   // public `*.trycloudflare.com` tunnel (started by the unplugin). The Layer C
   // TOTP gate is what blocks a leaked tunnel URL, so a configured secret is
@@ -1974,10 +2024,14 @@ export async function bootExternalRelayFamily(relayBaseUrl: string): Promise<Boo
     connection,
     // External env-2 PWA relay → relay-mobile (distinct from relay-dev).
     relayOrigin: 'external-pwa',
-    // HTTP base of the external relay — used by AutoDevtoolsOpener.
+    // HTTP base of the external relay — used as fallback for inspector URL.
     // For env-2 this is the cloudflare tunnel URL (https://<host>.trycloudflare.com).
     // SECRET-HANDLING: not logged.
     relayHttpUrl: relayBaseUrl,
+    // LOCAL loopback base for inspector URL assembly (issue #530) — preferred
+    // over relayHttpUrl when available so front_end + client WS stay local.
+    // Safe to log: loopback URL contains no tunnel host.
+    relayLocalHttpUrl: relayLocalUrl,
     getTunnelStatus: () => tunnelStatus,
     stop() {
       // The unplugin owns the relay + its tunnel — close ONLY our CDP client.
@@ -2101,6 +2155,13 @@ export interface DualRouterDeps {
    * and TOTP links (issue #509).
    */
   onPageAttach?: () => void;
+  /**
+   * Returns the stable `/inspector` URL from the QR HTTP server (issue #530).
+   * Called by `armWatcher` to pass to `AutoDevtoolsOpener.open()` so it can
+   * open the secret-free stable URL instead of building a direct TOTP URL.
+   * Returns null if the QR server is not yet started.
+   */
+  getInspectorStableUrl?: () => string | null;
 }
 
 /**
@@ -2186,13 +2247,18 @@ export class DualConnectionRouter implements ConnectionRouter {
   }
 
   /**
-   * Local HTTP base URL of the Chii relay for the currently-active family (#503).
-   * Used by `getDashboardState` to build the inspector URL via `buildChiiInspectorUrl`.
-   * Returns `undefined` when no relay family is active (local/mock mode).
-   * SECRET-HANDLING: not logged — callers must not write this to stdout/logs.
+   * HTTP base URL of the Chii relay to use for inspector URL assembly (#503,
+   * #530). Prefers the LOCAL loopback base (`relayLocalHttpUrl`) when available
+   * so front_end page load + client WS do not traverse a cloudflare tunnel —
+   * falls back to `relayHttpUrl` (the tunnel base for env-2, loopback for env-3/4)
+   * when not set. Returns `undefined` when no relay family is active.
+   *
+   * SECRET-HANDLING: when relayLocalHttpUrl is absent this falls back to
+   * relayHttpUrl which may carry the tunnel host — callers must not log it.
    */
   get activeRelayHttpUrl(): string | undefined {
-    return this.activeFamily?.relayHttpUrl;
+    if (!this.activeFamily) return undefined;
+    return this.activeFamily.relayLocalHttpUrl ?? this.activeFamily.relayHttpUrl;
   }
 
   /** Every booted family (for unified shutdown). All families are lazy (#396). */
@@ -2262,12 +2328,18 @@ export class DualConnectionRouter implements ConnectionRouter {
             getLiveIntent(),
             activeFamily.relayOrigin,
           );
+          // Prefer the stable /inspector URL (issue #530): secret-free, no
+          // expiry race. Falls back to the direct URL path when qrServer is
+          // not yet available (should not happen in practice).
+          const inspectorStableUrl = this.deps.getInspectorStableUrl?.() ?? null;
           this.deps.devtoolsOpener.open({
+            inspectorStableUrl,
             relayHttpBaseUrl: activeFamily.relayHttpUrl,
             targetId: firstTarget?.id,
             // Mint a fresh TOTP code from the daemon's secret at open time.
             // The relay gate accepts ±RELAY_VERIFY_SKEW_STEPS=6 steps (~3 min).
             // SECRET-HANDLING: the closure captures only the getter, never logs.
+            // Only used when inspectorStableUrl is absent (legacy path).
             mintTotp: process.env.AIT_DEBUG_TOTP_SECRET
               ? () => generateTotp(process.env.AIT_DEBUG_TOTP_SECRET as string)
               : undefined,
@@ -2403,7 +2475,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
     bootLazyFor: async (key, projectRoot) =>
       key === 'relay-sandbox'
-        ? bootExternalRelayFamily(await readMobileRelayBaseUrl(process.env, projectRoot))
+        ? bootExternalRelayFamily(
+            await readMobileRelayBaseUrl(process.env, projectRoot),
+            await readRelayLocalUrl(process.env, projectRoot),
+          )
         : key === 'local-browser'
           ? bootLocalFamily()
           : bootRelayFamily({
@@ -2424,6 +2499,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     diagnosticsCollector,
     devtoolsOpener,
     onPageAttach: () => qrServer?.notifyStateChange(),
+    // Stable /inspector URL for auto-open (issue #530). qrServer is set after
+    // the router is created but before armWatcher fires, so the closure safely
+    // captures it by reference.
+    getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
   });
 
   // AIT.* methods ride the *active* connection's command channel (relay Chii or
@@ -2442,22 +2521,14 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   // getDashboardState 클로저 — qr-http-server dashboard에 현재 상태 전달.
   // rebuildAttachUrl()로 매 호출마다 최신 TOTP 코드를 mint한 URL을 생성한다 (Defect 1).
-  // SECRET-HANDLING: tunnel wssUrl + relay host는 up/down 상태 표시 또는 HTML 링크(의도된 transport)에만 사용.
+  // inspectorUrl은 안정 /inspector URL(issue #530) — 시크릿 없으므로 출력 가능.
   const getDashboardState = (): DashboardState => {
     const targets = router.active.listTargets();
-    const relayHttpUrl = router.activeRelayHttpUrl;
-    // inspectorUrl — relay up + 첫 번째 target attached 시 buildChiiInspectorUrl로 조립 (#503).
-    // TOTP 코드는 호출마다 fresh mint. relay 미활성 또는 미attached 시 null.
-    // SECRET-HANDLING: 로그/stdout 출력 금지 — 대시보드 HTML anchor href만 의도된 transport.
-    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
-    const inspectorUrl =
-      relayHttpUrl && targets.length > 0
-        ? buildChiiInspectorUrl(
-            relayHttpUrl,
-            targets[0].id,
-            totpSecret ? () => generateTotp(totpSecret, Date.now()) : undefined,
-          )
-        : null;
+    // inspectorUrl — /inspector 안정 진입점 (issue #530).
+    // qrServer가 아직 없으면 null(초기화 직후 race). qrServer가 생기면 항상 안정 URL.
+    // 클릭 시점에 TOTP를 mint하고 302 redirect하므로 stale 문제가 없다.
+    // SECRET-HANDLING: /inspector URL 자체에 시크릿 없음 — 출력 가능.
+    const inspectorUrl = qrServer?.inspectorStableUrl ?? null;
     return {
       tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
       pages: targets.map((t) => ({ id: t.id, url: t.url })),
@@ -2469,12 +2540,40 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     };
   };
 
+  // getDirectInspectorUrl — /inspector 라우트에서 직접 chii front_end URL을 조립.
+  // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프가 발생하므로
+  // 별도 getter로 분리한다. 매 요청마다 호출되어 TOTP를 요청 시점에 mint한다.
+  // SECRET-HANDLING: ok:true url에 relay host + at= 코드가 담긴다 — 로그/stdout 출력 금지.
+  const getDirectInspectorUrl = (): ReturnType<
+    NonNullable<QrHttpServerOptions['getDirectInspectorUrl']>
+  > => {
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      return { ok: false, reason: 'relayDown' };
+    }
+    const targets = router.active.listTargets();
+    if (targets.length === 0) {
+      return { ok: false, reason: 'noTarget' };
+    }
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    if (!totpSecret) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    const url = buildChiiInspectorUrl(relayHttpUrl, targets[0].id, () =>
+      generateTotp(totpSecret, Date.now()),
+    );
+    if (url === null) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    return { ok: true, url };
+  };
+
   // 로컬 QR HTTP 서버를 await로 시작 — build_attach_url 첫 호출이 qrHttpServer 확인 전에
   // 도달하는 race를 없애기 위해 cloudflared(fire-and-forget)와 달리 동기 await 사용.
   // GUI 없는 환경에서는 startQrHttpServer가 실패해도 text QR fallback으로 동작한다.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer(getDashboardState);
+    qrServer = await startQrHttpServer(getDashboardState, { getDirectInspectorUrl });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -2720,7 +2819,10 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
     bootLazyFor: async (key, projectRoot) =>
       key === 'relay-sandbox'
-        ? bootExternalRelayFamily(await readMobileRelayBaseUrl(process.env, projectRoot))
+        ? bootExternalRelayFamily(
+            await readMobileRelayBaseUrl(process.env, projectRoot),
+            await readRelayLocalUrl(process.env, projectRoot),
+          )
         : key === 'local-browser'
           ? bootLocalFamilyForEntry()
           : bootRelayFamily({
@@ -2735,6 +2837,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     diagnosticsCollector,
     devtoolsOpener,
     onPageAttach: () => qrServer?.notifyStateChange(),
+    // Stable /inspector URL for auto-open (issue #530).
+    getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
   });
 
   // AIT.* methods ride the *active* connection's command channel (local CDP or,
@@ -2753,17 +2857,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   const getDashboardState = (): DashboardState => {
     const targets = router.active.listTargets();
-    const relayHttpUrl = router.activeRelayHttpUrl;
-    // SECRET-HANDLING: inspectorUrl(relay host + at=)은 로그/stdout 출력 금지.
-    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
-    const inspectorUrl =
-      relayHttpUrl && targets.length > 0
-        ? buildChiiInspectorUrl(
-            relayHttpUrl,
-            targets[0].id,
-            totpSecret ? () => generateTotp(totpSecret, Date.now()) : undefined,
-          )
-        : null;
+    // inspectorUrl — /inspector 안정 진입점 (issue #530).
+    // SECRET-HANDLING: /inspector URL 자체에 시크릿 없음 — 출력 가능.
+    const inspectorUrl = qrServer?.inspectorStableUrl ?? null;
     return {
       tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
       pages: targets.map((t) => ({ id: t.id, url: t.url })),
@@ -2772,11 +2868,39 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     };
   };
 
+  // getDirectInspectorUrl — /inspector 라우트에서 직접 chii front_end URL을 조립.
+  // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프가 발생하므로
+  // 별도 getter로 분리한다. 매 요청마다 호출되어 TOTP를 요청 시점에 mint한다.
+  // SECRET-HANDLING: ok:true url에 relay host + at= 코드가 담긴다 — 로그/stdout 출력 금지.
+  const getDirectInspectorUrl = (): ReturnType<
+    NonNullable<QrHttpServerOptions['getDirectInspectorUrl']>
+  > => {
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      return { ok: false, reason: 'relayDown' };
+    }
+    const targets = router.active.listTargets();
+    if (targets.length === 0) {
+      return { ok: false, reason: 'noTarget' };
+    }
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    if (!totpSecret) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    const url = buildChiiInspectorUrl(relayHttpUrl, targets[0].id, () =>
+      generateTotp(totpSecret, Date.now()),
+    );
+    if (url === null) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    return { ok: true, url };
+  };
+
   // Local QR HTTP server — awaited so the first build_attach_url call (after a
   // relay switch) doesn't race its startup. Failure falls back to text QR.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer(getDashboardState);
+    qrServer = await startQrHttpServer(getDashboardState, { getDirectInspectorUrl });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });
@@ -2986,7 +3110,10 @@ export async function runMobileDebugServer(
     // populated AIT_DEBUG_TOTP_SECRET — never captured at server startup.
     bootLazyFor: async (key) =>
       key === 'relay-sandbox'
-        ? bootExternalRelayFamily(relayBaseUrl)
+        ? bootExternalRelayFamily(
+            relayBaseUrl,
+            await readRelayLocalUrl(process.env, options.projectRoot ?? process.cwd()),
+          )
         : key === 'local-browser'
           ? bootLocalFamily()
           : bootRelayFamily({
@@ -3001,6 +3128,8 @@ export async function runMobileDebugServer(
     diagnosticsCollector,
     devtoolsOpener,
     onPageAttach: () => qrServer?.notifyStateChange(),
+    // Stable /inspector URL for auto-open (issue #530).
+    getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
   });
 
   // AIT.* methods ride the *active* connection's command channel (external relay
@@ -3020,17 +3149,9 @@ export async function runMobileDebugServer(
 
   const getDashboardState = (): DashboardState => {
     const targets = router.active.listTargets();
-    const relayHttpUrl = router.activeRelayHttpUrl;
-    // SECRET-HANDLING: inspectorUrl(relay host + at=)은 로그/stdout 출력 금지.
-    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
-    const inspectorUrl =
-      relayHttpUrl && targets.length > 0
-        ? buildChiiInspectorUrl(
-            relayHttpUrl,
-            targets[0].id,
-            totpSecret ? () => generateTotp(totpSecret, Date.now()) : undefined,
-          )
-        : null;
+    // inspectorUrl — /inspector 안정 진입점 (issue #530).
+    // SECRET-HANDLING: /inspector URL 자체에 시크릿 없음 — 출력 가능.
+    const inspectorUrl = qrServer?.inspectorStableUrl ?? null;
     return {
       tunnel: { up: router.relayTunnelStatus().up, wssUrl: router.relayTunnelStatus().wssUrl },
       pages: targets.map((t) => ({ id: t.id, url: t.url })),
@@ -3039,11 +3160,39 @@ export async function runMobileDebugServer(
     };
   };
 
+  // getDirectInspectorUrl — /inspector 라우트에서 직접 chii front_end URL을 조립.
+  // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프가 발생하므로
+  // 별도 getter로 분리한다. 매 요청마다 호출되어 TOTP를 요청 시점에 mint한다.
+  // SECRET-HANDLING: ok:true url에 relay host + at= 코드가 담긴다 — 로그/stdout 출력 금지.
+  const getDirectInspectorUrl = (): ReturnType<
+    NonNullable<QrHttpServerOptions['getDirectInspectorUrl']>
+  > => {
+    const relayHttpUrl = router.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      return { ok: false, reason: 'relayDown' };
+    }
+    const targets = router.active.listTargets();
+    if (targets.length === 0) {
+      return { ok: false, reason: 'noTarget' };
+    }
+    const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+    if (!totpSecret) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    const url = buildChiiInspectorUrl(relayHttpUrl, targets[0].id, () =>
+      generateTotp(totpSecret, Date.now()),
+    );
+    if (url === null) {
+      return { ok: false, reason: 'totpUnavailable' };
+    }
+    return { ok: true, url };
+  };
+
   // Local QR HTTP server — awaited so the first build_attach_url call doesn't
   // race its startup. Failure falls back to text QR.
   let qrServer: QrHttpServer | undefined;
   try {
-    qrServer = await startQrHttpServer(getDashboardState);
+    qrServer = await startQrHttpServer(getDashboardState, { getDirectInspectorUrl });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     logWarn('server.start', { msg: `QR HTTP 서버 시작 실패 (text QR fallback 사용): ${message}` });

@@ -107,6 +107,15 @@ export interface WriteRelayUrlsDeps {
    */
   relayBaseUrl?: string;
   /**
+   * The CDP relay's LOCAL http base URL (`http://127.0.0.1:<relay-port>`).
+   * Set when `cdp: true` and the local relay port is known. Used by the MCP
+   * daemon's `bootExternalRelayFamily` to build the Chii inspector URL against
+   * the local relay rather than the cloudflare tunnel, so front_end page load
+   * and the client WS leg do not traverse the tunnel (issue #530).
+   * SECRET-HANDLING: local loopback URL — no tunnel host, safe to surface.
+   */
+  relayLocalUrl?: string;
+  /**
    * The app tunnel's https base URL (same value as `AIT_TUNNEL_BASE_URL`).
    * Omit when no tunnel URL is available.
    * SECRET-HANDLING: never log this value.
@@ -141,9 +150,13 @@ export async function writeRelayUrls(deps: WriteRelayUrlsDeps): Promise<void> {
   const filePath = urlsFilePath(projectRoot, existsSyncFn);
 
   // Build the payload — omit keys whose values are absent.
-  const payload: { relayBaseUrl?: string; tunnelBaseUrl?: string } = {};
+  const payload: { relayBaseUrl?: string; relayLocalUrl?: string; tunnelBaseUrl?: string } = {};
   if (typeof relayBaseUrl === 'string' && relayBaseUrl !== '') {
     payload.relayBaseUrl = relayBaseUrl;
+  }
+  const { relayLocalUrl } = deps;
+  if (typeof relayLocalUrl === 'string' && relayLocalUrl !== '') {
+    payload.relayLocalUrl = relayLocalUrl;
   }
   if (typeof tunnelBaseUrl === 'string' && tunnelBaseUrl !== '') {
     payload.tunnelBaseUrl = tunnelBaseUrl;
@@ -190,6 +203,7 @@ export interface ReadRelayUrlsDeps {
  */
 export async function readRelayUrls(deps?: ReadRelayUrlsDeps): Promise<{
   relayBaseUrl?: string;
+  relayLocalUrl?: string;
   tunnelBaseUrl?: string;
 } | null> {
   const { projectRoot, fs: fsDep, existsSync: existsSyncDep } = deps ?? {};
@@ -229,12 +243,18 @@ export async function readRelayUrls(deps?: ReadRelayUrlsDeps): Promise<{
   }
 
   const obj = parsed as Record<string, unknown>;
-  const result: { relayBaseUrl?: string; tunnelBaseUrl?: string } = {};
+  const result: { relayBaseUrl?: string; relayLocalUrl?: string; tunnelBaseUrl?: string } = {};
 
   const relay = obj.relayBaseUrl;
   if (typeof relay === 'string') {
     const trimmed = relay.trim();
     if (trimmed !== '') result.relayBaseUrl = trimmed;
+  }
+
+  const relayLocal = obj.relayLocalUrl;
+  if (typeof relayLocal === 'string') {
+    const trimmed = relayLocal.trim();
+    if (trimmed !== '') result.relayLocalUrl = trimmed;
   }
 
   const tunnel = obj.tunnelBaseUrl;

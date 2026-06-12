@@ -240,6 +240,10 @@ export const ko = {
   'dashboard.inspector.open': '인스펙터 열기',
   'dashboard.inspector.waiting': '인스펙터 URL 대기 중 (페이지 attach 후 표시됩니다)',
 
+  // qr-http-server — /inspector stable entry (issue #530)
+  'inspector.error.noTarget': '연결된 페이지가 없습니다. 기기를 attach한 후 다시 시도하세요.',
+  'inspector.error.relayDown': 'relay가 활성화되지 않았습니다. start_debug로 relay를 기동하세요.',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // 카피는 세션 mode별로 sandbox(환경 2) / intoss(환경 3·4) family로 분기한다 (#468).
   'attach.title': 'AIT 디버그 세션 — QR 스캔',
