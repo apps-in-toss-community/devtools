@@ -30,7 +30,12 @@ import {
   resolveAppIcon,
   resolveAppTitle,
 } from './navbar.js';
-import { injectSelfTarget, maybeAttachSelf, parseSelfDebugParams } from './selfdebug.js';
+import {
+  injectSelfTarget,
+  maybeAttachSelf,
+  maybeStripCdpForSelfDebug,
+  parseSelfDebugParams,
+} from './selfdebug.js';
 
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
 
@@ -130,12 +135,25 @@ function resolveScannedUrl(raw: string): string | null {
 }
 
 function consumeDeepLinkUrl(): string | null {
+  // Capture the full search string BEFORE replaceState wipes it so that
+  // selfdebug detection (issue #552) and decorateIframeSrc can both inspect it.
   const launcherSearch = location.search;
   const param = new URLSearchParams(launcherSearch).get('url');
   if (!param) return null;
   const url = normalizeUrl(param);
   history.replaceState(null, '', location.pathname);
-  return url ? decorateIframeSrc(url, launcherSearch) : null;
+  if (!url) return null;
+  const decorated = decorateIframeSrc(url, launcherSearch);
+  // Selfdebug deep-link path (issue #552): when `selfdebug=1` + a valid
+  // `relay=wss:` are present, the launcher document is the sole debug client
+  // (single-attach model, option a — same as showLive's in-app scan path).
+  // Strip debug/relay/at from the iframe URL so the mini-app does NOT also
+  // attempt to attach to the relay. `parseSelfDebugParams` is evaluated here,
+  // before replaceState has removed the query, so the detection is accurate.
+  // The actual injectSelfTarget call happens in the mount effect via
+  // `maybeAttachSelf()`, which also reads location.search before replaceState —
+  // both reads are safe because maybeAttachSelf() runs first in the effect body.
+  return maybeStripCdpForSelfDebug(decorated, launcherSearch);
 }
 
 // Read env(safe-area-inset-*) by measuring a throwaway element — CSS env() is
