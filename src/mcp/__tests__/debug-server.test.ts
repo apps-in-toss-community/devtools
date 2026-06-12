@@ -507,6 +507,176 @@ describe('build_attach_url — wait_for_attach', () => {
 });
 
 // ---------------------------------------------------------------------------
+// build_attach_url — wait_timeout_seconds (issue #558)
+// ---------------------------------------------------------------------------
+
+describe('build_attach_url — wait_timeout_seconds', () => {
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+
+  it('uses the specified wait_timeout_seconds when provided (short value → timeout fires quickly)', async () => {
+    // Never attaches a target, so the timeout path is exercised.
+    // Use a tiny wait_timeout_seconds (0.05 s) so the test completes quickly.
+    const connection = new FakeCdpConnection([]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      // deps default (60 s) — the param override (0.05 s) must win.
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=timeout-param-test',
+          wait_for_attach: true,
+          wait_timeout_seconds: 0.05,
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    // Must timeout (isError) — if it waited the full 60 s default the test would time out.
+    expect(result.isError).toBe(true);
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('list_pages');
+  });
+
+  it('uses the default 60 s timeout when wait_timeout_seconds is not specified', async () => {
+    // When the param is absent, deps.waitForAttachTimeoutMs (default 60 000) is used.
+    // We verify this indirectly: inject a tiny deps timeout and confirm the tool uses
+    // that small value (i.e., default propagation works) — the param is absent.
+    const connection = new FakeCdpConnection([]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 50, // injected small default
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=default-timeout-test',
+          wait_for_attach: true,
+          // wait_timeout_seconds intentionally absent
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    // The injected 50 ms default fires → isError.
+    expect(result.isError).toBe(true);
+  });
+
+  it('falls back to default when wait_timeout_seconds is 0 (invalid)', async () => {
+    // 0 is invalid — must fall back to deps.waitForAttachTimeoutMs, not to 1 s or 0 s.
+    const connection = new FakeCdpConnection([]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 50, // tiny default so the test completes quickly
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=zero-timeout-test',
+          wait_for_attach: true,
+          wait_timeout_seconds: 0,
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    // Falls back to the 50 ms deps default → isError (no tool error — lenient fallback).
+    expect(result.isError).toBe(true);
+    // No MCP protocol error — the tool itself must not throw.
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('list_pages');
+  });
+
+  it('falls back to default when wait_timeout_seconds is negative (invalid)', async () => {
+    const connection = new FakeCdpConnection([]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 50,
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=neg-timeout-test',
+          wait_for_attach: true,
+          wait_timeout_seconds: -10,
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    expect(result.isError).toBe(true);
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('list_pages');
+  });
+
+  it('falls back to default when wait_timeout_seconds is a non-number string (invalid)', async () => {
+    const connection = new FakeCdpConnection([]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 50,
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'build_attach_url',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=str-timeout-test',
+          wait_for_attach: true,
+          wait_timeout_seconds: 'fast' as unknown as number,
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    expect(result.isError).toBe(true);
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('list_pages');
+  });
+
+  it('wait_timeout_seconds param does not affect behavior when wait_for_attach is false', async () => {
+    // When wait_for_attach is false the timeout value is irrelevant.
+    // The call must return immediately without error regardless of wait_timeout_seconds.
+    const connection = new FakeCdpConnection([]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+    });
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://miniapp?_deploymentId=no-wait-test',
+        wait_for_attach: false,
+        wait_timeout_seconds: 1,
+      },
+    });
+
+    // Should succeed immediately (no attach waiting).
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('do NOT re-print the QR below in your reply');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Dynamic tool registration (issue #208)
 // ---------------------------------------------------------------------------
 

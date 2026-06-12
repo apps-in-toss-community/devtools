@@ -295,7 +295,7 @@ export interface DebugServerDeps {
   getTunnelStatus(): TunnelStatus;
   /**
    * Maximum time in ms to wait for a page to attach when `wait_for_attach=true`.
-   * Default 90 000 ms. Exposed for testing so tests can use a small value without
+   * Default 60 000 ms. Exposed for testing so tests can use a small value without
    * fake timers (which conflict with MCP SDK's own timeouts).
    */
   waitForAttachTimeoutMs?: number;
@@ -449,7 +449,7 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     router: routerDep,
     aitSource,
     getTunnelStatus,
-    waitForAttachTimeoutMs = 90_000,
+    waitForAttachTimeoutMs = 60_000,
     qrHttpServer,
     getEnvironment: getEnvDep,
     getEnvironmentReason: getEnvReasonDep,
@@ -643,6 +643,19 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       // selfdebug: opt-in launcher self-target mode (#543). Only valid in env 2.
       const selfdebug = request.params.arguments?.selfdebug === true;
 
+      // wait_timeout_seconds: per-call override of the default wait timeout.
+      // Clamp to 1–600 s; invalid values (0, negative, NaN, non-number) silently fall back to default.
+      const rawWaitTimeout = request.params.arguments?.wait_timeout_seconds;
+      const callTimeoutMs = (() => {
+        if (typeof rawWaitTimeout !== 'number' || !Number.isFinite(rawWaitTimeout)) {
+          return waitForAttachTimeoutMs;
+        }
+        const clamped = Math.max(1, Math.min(600, rawWaitTimeout));
+        // rawWaitTimeout ≤ 0 falls back to default (clamp produces 1 but intent is "invalid").
+        if (rawWaitTimeout <= 0) return waitForAttachTimeoutMs;
+        return Math.round(clamped) * 1000;
+      })();
+
       // Guard: selfdebug is a launcher-only feature — reject early for env 3/4
       // so the caller gets a clear diagnostic instead of silently ignoring the flag.
       if (selfdebug && env !== 'relay-mobile') {
@@ -799,22 +812,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             }
             let attachedPagesHl: ReturnType<CdpConnection['listTargets']> = [];
             try {
-              attachedPagesHl = await waitForAttachWithEvents(
-                conn,
-                isMatchingPage,
-                waitForAttachTimeoutMs,
-              );
+              attachedPagesHl = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
             } catch {
               attachedPagesHl = conn.listTargets();
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: buildTimeoutError(
-                      headlessText,
-                      waitForAttachTimeoutMs / 1000,
-                      attachedPagesHl,
-                    ),
+                    text: buildTimeoutError(headlessText, callTimeoutMs / 1000, attachedPagesHl),
                   },
                 ],
                 isError: true,
@@ -852,22 +857,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               }
               let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
               try {
-                attachedPages = await waitForAttachWithEvents(
-                  conn,
-                  isMatchingPage,
-                  waitForAttachTimeoutMs,
-                );
+                attachedPages = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
               } catch {
                 attachedPages = conn.listTargets();
                 return {
                   content: [
                     {
                       type: 'text' as const,
-                      text: buildTimeoutError(
-                        shortText,
-                        waitForAttachTimeoutMs / 1000,
-                        attachedPages,
-                      ),
+                      text: buildTimeoutError(shortText, callTimeoutMs / 1000, attachedPages),
                     },
                   ],
                   isError: true,
@@ -908,22 +905,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             }
             let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
             try {
-              attachedPagesFb = await waitForAttachWithEvents(
-                conn,
-                isMatchingPage,
-                waitForAttachTimeoutMs,
-              );
+              attachedPagesFb = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
             } catch {
               attachedPagesFb = conn.listTargets();
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: buildTimeoutError(
-                      baseText,
-                      waitForAttachTimeoutMs / 1000,
-                      attachedPagesFb,
-                    ),
+                    text: buildTimeoutError(baseText, callTimeoutMs / 1000, attachedPagesFb),
                   },
                 ],
                 isError: true,
@@ -947,18 +936,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           }
           let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
           try {
-            attachedPages = await waitForAttachWithEvents(
-              conn,
-              isMatchingPage,
-              waitForAttachTimeoutMs,
-            );
+            attachedPages = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
           } catch {
             attachedPages = conn.listTargets();
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text: buildTimeoutError(baseText, waitForAttachTimeoutMs / 1000, attachedPages),
+                  text: buildTimeoutError(baseText, callTimeoutMs / 1000, attachedPages),
                 },
               ],
               isError: true,
@@ -1084,22 +1069,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           // wait_for_attach + headless fallback
           let attachedPagesHl: ReturnType<CdpConnection['listTargets']> = [];
           try {
-            attachedPagesHl = await waitForAttachWithEvents(
-              conn,
-              isMatchingPage,
-              waitForAttachTimeoutMs,
-            );
+            attachedPagesHl = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
           } catch {
             attachedPagesHl = conn.listTargets();
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text: buildTimeoutError(
-                    headlessText,
-                    waitForAttachTimeoutMs / 1000,
-                    attachedPagesHl,
-                  ),
+                  text: buildTimeoutError(headlessText, callTimeoutMs / 1000, attachedPagesHl),
                 },
               ],
               isError: true,
@@ -1146,22 +1123,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             // wait_for_attach path (browser opened) — event-driven via waitForAttachWithEvents.
             let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
             try {
-              attachedPages = await waitForAttachWithEvents(
-                conn,
-                isMatchingPage,
-                waitForAttachTimeoutMs,
-              );
+              attachedPages = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
             } catch {
               attachedPages = conn.listTargets();
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: buildTimeoutError(
-                      shortText,
-                      waitForAttachTimeoutMs / 1000,
-                      attachedPages,
-                    ),
+                    text: buildTimeoutError(shortText, callTimeoutMs / 1000, attachedPages),
                   },
                 ],
                 isError: true,
@@ -1207,18 +1176,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           // wait_for_attach + fallback path — event-driven via waitForAttachWithEvents.
           let attachedPagesFb: ReturnType<CdpConnection['listTargets']> = [];
           try {
-            attachedPagesFb = await waitForAttachWithEvents(
-              conn,
-              isMatchingPage,
-              waitForAttachTimeoutMs,
-            );
+            attachedPagesFb = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
           } catch {
             attachedPagesFb = conn.listTargets();
             return {
               content: [
                 {
                   type: 'text' as const,
-                  text: buildTimeoutError(baseText, waitForAttachTimeoutMs / 1000, attachedPagesFb),
+                  text: buildTimeoutError(baseText, callTimeoutMs / 1000, attachedPagesFb),
                 },
               ],
               isError: true,
@@ -1254,18 +1219,14 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         // URL contains the expected deploymentId.
         let attachedPages: ReturnType<CdpConnection['listTargets']> = [];
         try {
-          attachedPages = await waitForAttachWithEvents(
-            conn,
-            isMatchingPage,
-            waitForAttachTimeoutMs,
-          );
+          attachedPages = await waitForAttachWithEvents(conn, isMatchingPage, callTimeoutMs);
         } catch {
           attachedPages = conn.listTargets();
           return {
             content: [
               {
                 type: 'text' as const,
-                text: buildTimeoutError(baseText, waitForAttachTimeoutMs / 1000, attachedPages),
+                text: buildTimeoutError(baseText, callTimeoutMs / 1000, attachedPages),
               },
             ],
             isError: true,
