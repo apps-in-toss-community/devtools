@@ -3,12 +3,29 @@ import { aitState } from '../../mock/state.js';
 import type { NetworkStatus, OperationalEnvironment, PlatformOS } from '../../mock/types.js';
 import { TELEMETRY_ENDPOINT } from '../../telemetry/index.js';
 import {
+  CURRENT_POLICY_VERSION,
   deleteMyData,
   isTier0Enabled,
   readConsentState,
   setConsentViaToggle,
   setTier0Enabled,
 } from '../../telemetry/state.js';
+
+// Machine-level consent endpoint path (must match TELEMETRY_CONSENT_PATH in
+// the unplugin). Fire-and-forget POST to persist toggle changes to the
+// machine file via the dev server (#542).
+const MACHINE_CONSENT_ENDPOINT = '/api/ait-devtools/telemetry-consent';
+
+function postMachineConsent(consent: 'granted' | 'denied'): void {
+  fetch(MACHINE_CONSENT_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ consent, policy_version: CURRENT_POLICY_VERSION }),
+  }).catch(() => {
+    /* silently ignore — no dev server in static deployments */
+  });
+}
+
 import { h, inputRow, monitoringNotice, selectRow } from '../helpers.js';
 
 export function renderEnvironmentTab(): HTMLElement {
@@ -191,7 +208,11 @@ function buildTelemetrySection(): HTMLElement {
     isGranted ? t('env.telemetry.turnOff') : t('env.telemetry.turnOn'),
   );
   toggleBtn.addEventListener('click', () => {
-    setConsentViaToggle(!isGranted);
+    const newConsent = !isGranted;
+    setConsentViaToggle(newConsent);
+    // Persist the toggle change to the machine-level file via the dev server
+    // (#542). Fire-and-forget — no dev server in static deployments.
+    postMachineConsent(newConsent ? 'granted' : 'denied');
     window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
   });
 
