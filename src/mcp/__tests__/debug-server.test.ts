@@ -1564,6 +1564,113 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // selfdebug option (#543) — relay-mobile adds &selfdebug=1, env 3/4 rejects
+  // ---------------------------------------------------------------------------
+
+  it('build_attach_url(relay-mobile, selfdebug=true) includes selfdebug=1 in attachUrl', async () => {
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-mobile',
+      getEnvironmentReason: () => 'test',
+      totpSecret: SECRET,
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const prevTunnel = process.env.AIT_TUNNEL_BASE_URL;
+    process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
+    try {
+      const result = await client.callTool({
+        name: 'build_attach_url',
+        arguments: { open_in_browser: false, selfdebug: true },
+      });
+      expect(result.isError).toBeFalsy();
+      const content = result.content as Array<{ type: string; text?: string }>;
+      const text = content[0]?.text ?? '';
+      // The attachUrl JSON field must contain selfdebug=1.
+      expect(text).toContain('selfdebug=1');
+    } finally {
+      if (prevTunnel === undefined) {
+        delete process.env.AIT_TUNNEL_BASE_URL;
+      } else {
+        process.env.AIT_TUNNEL_BASE_URL = prevTunnel;
+      }
+    }
+  });
+
+  it('build_attach_url(relay-mobile, selfdebug=false) output is byte-identical (no selfdebug param)', async () => {
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-mobile',
+      getEnvironmentReason: () => 'test',
+      totpSecret: SECRET,
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const prevTunnel = process.env.AIT_TUNNEL_BASE_URL;
+    process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
+    try {
+      const result = await client.callTool({
+        name: 'build_attach_url',
+        arguments: { open_in_browser: false, selfdebug: false },
+      });
+      expect(result.isError).toBeFalsy();
+      const content = result.content as Array<{ type: string; text?: string }>;
+      const text = content[0]?.text ?? '';
+      // Must NOT contain selfdebug in the output.
+      expect(text).not.toContain('selfdebug');
+    } finally {
+      if (prevTunnel === undefined) {
+        delete process.env.AIT_TUNNEL_BASE_URL;
+      } else {
+        process.env.AIT_TUNNEL_BASE_URL = prevTunnel;
+      }
+    }
+  });
+
+  it('build_attach_url(relay-dev, selfdebug=true) returns mcpError — launcher-only feature', async () => {
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      totpSecret: SECRET,
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'test-client', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({
+      name: 'build_attach_url',
+      arguments: {
+        scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
+        open_in_browser: false,
+        selfdebug: true,
+      },
+    });
+    expect(result.isError).toBe(true);
+    const content = result.content as Array<{ type: string; text?: string }>;
+    const text = content[0]?.text ?? '';
+    // Must name launcher-only restriction and env 2 guidance.
+    expect(text).toContain('selfdebug');
+    expect(text).toContain('relay-sandbox');
+  });
+
   // Defense-in-depth (#452): relay-mobile path must also refuse when TOTP secret is absent.
   it('build_attach_url(relay-mobile) returns mcpError when TOTP secret is unset (#452)', async () => {
     const server = createDebugServer({

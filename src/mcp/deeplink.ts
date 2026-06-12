@@ -25,6 +25,19 @@ export interface LauncherAttachUrlOpts {
    * param). Non-https or falsy values are not added.
    */
   icon?: string;
+  /**
+   * When `true`, adds `selfdebug=1` to the launcher URL so the launcher PWA
+   * registers its own document as a CDP target (issue #531/#543).
+   *
+   * **Single-attach model**: attaching the launcher self-target causes any
+   * currently-attached mini-app target to be evicted. This is intentional —
+   * `selfdebug` is a "launcher diagnostics mode" for inspecting the launcher's
+   * own DOM/console/safe-area, not simultaneous dual-attach.
+   *
+   * When `false` or omitted (default), the param is not added and the output
+   * is byte-identical to the previous behaviour.
+   */
+  selfdebug?: boolean;
 }
 
 /**
@@ -55,9 +68,10 @@ export interface LauncherAttachUrlOpts {
  * @param totpCode - Optional current TOTP code (6 digits). When provided, it
  *   is appended as `at=<totpCode>`. Must be computed at call time — it rotates
  *   every 30 s. Omit when TOTP is disabled.
- * @param opts - Optional app identity hints: `name` and `icon` (#498).
+ * @param opts - Optional app identity hints: `name`, `icon`, and `selfdebug`
+ *   (#498, #543).
  * @returns The launcher deep-link URL with `?url=<enc>&debug=1&relay=<enc>
- *   [&at=<code>][&name=<enc>][&icon=<enc>]` params.
+ *   [&at=<code>][&name=<enc>][&icon=<enc>][&selfdebug=1]` params.
  */
 export function buildLauncherAttachUrl(
   tunnelUrl: string,
@@ -85,6 +99,11 @@ export function buildLauncherAttachUrl(
     if (iconParsed?.protocol === 'https:') {
       url += `&icon=${encodeURIComponent(opts.icon)}`;
     }
+  }
+  // Self-debug opt-in (#543): add selfdebug=1 only when explicitly requested.
+  // Without this flag the output is byte-identical to the previous behaviour.
+  if (opts?.selfdebug === true) {
+    url += '&selfdebug=1';
   }
   return url;
 }
