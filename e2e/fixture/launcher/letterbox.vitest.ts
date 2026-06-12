@@ -7,12 +7,16 @@
 // 2026-06-11): the letterboxed window reported safeAreaBottom 34 (phantom),
 // not 0 as #487 assumed. Bottom carries no signal; top > 0 is reinstated.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   computeBridgeInsets,
   detectLetterbox,
   LETTERBOX_MIN_SHORTFALL_PX,
+  type LetterboxVerification,
+  type SentinelObserver,
+  type VerificationTimers,
   type ViewportMetrics,
+  verifyLetterboxCorrection,
 } from './letterbox.js';
 
 // iPhone 16e-class geometry (390×844 logical, 47pt status bar, 34pt home
@@ -220,18 +224,26 @@ describe('detectLetterbox', () => {
 });
 
 // ---------------------------------------------------------------------------
-// computeBridgeInsets — bridge bottom correction (#491, updated #527)
+// computeBridgeInsets — bridge bottom correction (#491, updated #527, #561)
 // ---------------------------------------------------------------------------
+//
+// #561 note: the pure function's contract is unchanged — letterboxCorrected=true
+// still means "the px correction reaches the home-indicator band → restore the
+// real bottom inset". What changed is WHEN the React layer passes true: only
+// after the bottom-sentinel verification confirms the band actually paints
+// (letterboxVerified==='visible'). While pending or clipped the caller now
+// passes false, so these corrected=true cases are the "verification passed"
+// branch and the corrected=false cases are the pending/clipped branch.
 
 describe('computeBridgeInsets', () => {
   const raw = { top: 47, bottom: 34, left: 0, right: 0 };
 
   // -------------------------------------------------------------------------
-  // #527 correction path (letterboxCorrected=true, the new default)
+  // Verification-passed path (letterboxCorrected=true → #527 bottom restored)
   // -------------------------------------------------------------------------
 
-  it('letterbox detected + corrected (default) → bottom RESTORED, top/left/right unchanged (#527)', () => {
-    // screen.height px correction is in effect: the frame genuinely reaches the
+  it('letterbox detected + corrected/verified-visible (default) → bottom RESTORED, top/left/right unchanged (#527)', () => {
+    // px correction verified visible: the frame genuinely reaches the
     // home-indicator area, so the real bottom inset (34) must be forwarded.
     const result = computeBridgeInsets(raw, true);
     expect(result.bottom).toBe(34);
@@ -300,5 +312,164 @@ describe('computeBridgeInsets', () => {
   it('healthy with raw bottom 0 (SE-class) → 0 passed through', () => {
     const result = computeBridgeInsets({ ...raw, bottom: 0 }, false);
     expect(result.bottom).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyLetterboxCorrection — runtime self-verification of the #527 px
+// correction (#561). On real hardware the WebKit top-level viewport clips the
+// bottom band, so the sentinel reports `clipped` and the layout must fall back.
+// jsdom has no IntersectionObserver, so the observer + timers are injected.
+// ---------------------------------------------------------------------------
+
+describe('verifyLetterboxCorrection', () => {
+  // A controllable IntersectionObserver stand-in: captures the result callback
+  // so the test can fire it on demand, and records disconnect/cleanup calls.
+  function makeObserver(): {
+    observe: SentinelObserver;
+    fire: (isIntersecting: boolean) => void;
+    disconnected: () => number;
+    fired: () => boolean;
+  } {
+    let cb: ((isIntersecting: boolean) => void) | null = null;
+    let disconnects = 0;
+    return {
+      observe: (onResult) => {
+        cb = onResult;
+        return () => {
+          disconnects += 1;
+        };
+      },
+      fire: (isIntersecting) => cb?.(isIntersecting),
+      disconnected: () => disconnects,
+      fired: () => cb !== null,
+    };
+  }
+
+  // A manual timer stand-in: stores the timeout callback so the test can trip
+  // it explicitly, and records clearTimeout so cancellation is observable.
+  function makeTimers(): {
+    timers: VerificationTimers<number>;
+    trip: () => void;
+    cleared: () => boolean;
+  } {
+    let pending: (() => void) | null = null;
+    let cleared = false;
+    return {
+      timers: {
+        setTimeout: (fn) => {
+          pending = fn;
+          return 1;
+        },
+        clearTimeout: () => {
+          cleared = true;
+        },
+      },
+      trip: () => pending?.(),
+      cleared: () => cleared,
+    };
+  }
+
+  it('(a) sentinel intersects → visible, correction kept, observer + timer torn down', () => {
+    const obs = makeObserver();
+    const { timers, trip, cleared } = makeTimers();
+    const onVerified = vi.fn<(r: LetterboxVerification) => void>();
+
+    verifyLetterboxCorrection(obs.observe, onVerified, timers);
+    obs.fire(true);
+
+    expect(onVerified).toHaveBeenCalledTimes(1);
+    expect(onVerified).toHaveBeenCalledWith('visible');
+    expect(obs.disconnected()).toBe(1); // sentinel/observer torn down
+    expect(cleared()).toBe(true); // timeout cancelled
+
+    // A late timeout firing after a result is a no-op (no second verdict).
+    trip();
+    expect(onVerified).toHaveBeenCalledTimes(1);
+  });
+
+  it('(b) sentinel clipped → clipped, fallback verdict, torn down', () => {
+    const obs = makeObserver();
+    const { timers, cleared } = makeTimers();
+    const onVerified = vi.fn<(r: LetterboxVerification) => void>();
+
+    verifyLetterboxCorrection(obs.observe, onVerified, timers);
+    obs.fire(false);
+
+    expect(onVerified).toHaveBeenCalledTimes(1);
+    expect(onVerified).toHaveBeenCalledWith('clipped');
+    expect(obs.disconnected()).toBe(1);
+    expect(cleared()).toBe(true);
+  });
+
+  it('(c) observer silent past timeout → clipped (fail safe — never keep #527)', () => {
+    const obs = makeObserver();
+    const { timers, trip } = makeTimers();
+    const onVerified = vi.fn<(r: LetterboxVerification) => void>();
+
+    verifyLetterboxCorrection(obs.observe, onVerified, timers);
+    // No obs.fire() — simulate the IO never reporting. Trip the timeout.
+    trip();
+
+    expect(onVerified).toHaveBeenCalledTimes(1);
+    expect(onVerified).toHaveBeenCalledWith('clipped');
+    expect(obs.disconnected()).toBe(1); // sentinel/observer cleaned up on timeout
+
+    // A late IO callback arriving after the timeout is ignored.
+    obs.fire(true);
+    expect(onVerified).toHaveBeenCalledTimes(1);
+    expect(onVerified).not.toHaveBeenCalledWith('visible');
+  });
+
+  it('cancel (React cleanup) before any result → no verdict, observer + timer torn down', () => {
+    const obs = makeObserver();
+    const { timers, trip, cleared } = makeTimers();
+    const onVerified = vi.fn<(r: LetterboxVerification) => void>();
+
+    const cancel = verifyLetterboxCorrection(obs.observe, onVerified, timers);
+    cancel();
+
+    expect(onVerified).not.toHaveBeenCalled();
+    expect(obs.disconnected()).toBe(1);
+    expect(cleared()).toBe(true);
+
+    // Both a late timeout and a late IO callback are no-ops after cancel.
+    trip();
+    obs.fire(true);
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  it('uses the injected timeout value', () => {
+    const obs = makeObserver();
+    let observedMs = -1;
+    const timers: VerificationTimers<number> = {
+      setTimeout: (_fn, ms) => {
+        observedMs = ms;
+        return 1;
+      },
+      clearTimeout: () => {},
+    };
+    verifyLetterboxCorrection(obs.observe, vi.fn(), timers, 250);
+    expect(observedMs).toBe(250);
+  });
+
+  it('a synchronously-firing observer still tears down (defensive)', () => {
+    // Real IntersectionObserver never reports synchronously, but a stub that
+    // does must not leak: the observer is disconnected even though the result
+    // arrived before `disconnect` was assigned.
+    let disconnects = 0;
+    const syncObserve: SentinelObserver = (onResult) => {
+      onResult(false); // fire during observe()
+      return () => {
+        disconnects += 1;
+      };
+    };
+    const { timers } = makeTimers();
+    const onVerified = vi.fn<(r: LetterboxVerification) => void>();
+
+    verifyLetterboxCorrection(syncObserve, onVerified, timers);
+
+    expect(onVerified).toHaveBeenCalledWith('clipped');
+    expect(disconnects).toBe(1);
   });
 });
