@@ -108,6 +108,16 @@ export function deriveSelfTargetScriptUrl(relayUrl: string, atCode: string): str
 let selfAttached = false;
 
 /**
+ * Resets the `selfAttached` guard to `false`.
+ *
+ * **Test-only** — exported exclusively so vitest can reset module state between
+ * test cases without reloading the module. Do not call this in production code.
+ */
+export function _resetSelfAttachedForTest(): void {
+  selfAttached = false;
+}
+
+/**
  * Injects the Chii `target.js` script into the launcher document, registering
  * the launcher document itself as a CDP target on the relay.
  *

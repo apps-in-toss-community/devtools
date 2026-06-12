@@ -30,9 +30,29 @@ import {
   resolveAppIcon,
   resolveAppTitle,
 } from './navbar.js';
-import { maybeAttachSelf } from './selfdebug.js';
+import { injectSelfTarget, maybeAttachSelf, parseSelfDebugParams } from './selfdebug.js';
 
 const CDP_FORWARD_PARAMS = ['debug', 'relay', 'at'] as const;
+
+/**
+ * Removes CDP debug params (debug/relay/at) from a tunnel URL.
+ *
+ * Used in selfdebug mode (issue #535) to prevent the mini-app iframe from also
+ * attempting to attach to the relay — the launcher self-target is the sole
+ * debug client in that mode (single-attach model, option a).
+ */
+function stripCdpParams(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  for (const key of CDP_FORWARD_PARAMS) {
+    parsed.searchParams.delete(key);
+  }
+  return parsed.toString();
+}
 
 // Extend the minimal type for <pwa-install> to include attributes and events
 // we interact with after removing disable-install-description and manual-chrome.
@@ -740,7 +760,32 @@ export function Launcher(): React.JSX.Element {
       stopScanner();
       if (launcherSearch !== undefined) applyNavBarParams(launcherSearch);
       setPendingUrl(null);
-      setLiveUrl(url);
+
+      // Selfdebug via in-app QR scan (issue #535): when the scanned launcher
+      // URL carries `selfdebug=1` + a valid `relay=wss:` param, register the
+      // launcher document itself as a Chii CDP target.
+      //
+      // Option (a) — launcher-diagnostics mode: strip CDP params from the
+      // iframe URL so the mini-app does NOT also attempt to attach to the
+      // relay. The selfAttached guard in selfdebug.ts prevents double injection
+      // when the user scans another selfdebug QR while one is already active.
+      //
+      // When launcherSearch is a non-null string we have a scanned launcher URL
+      // — extract self-debug params from the *raw scanned payload*, which is
+      // not directly available here. We re-derive it from launcherSearch alone
+      // because parseSelfDebugParams accepts a search string directly.
+      let iframeUrl = url;
+      if (launcherSearch != null) {
+        const selfResult = parseSelfDebugParams(launcherSearch);
+        if (selfResult.enabled) {
+          injectSelfTarget(selfResult.params);
+          // Strip debug/relay/at from the iframe URL to prevent the mini-app
+          // from attaching to the same relay (single-attach model).
+          iframeUrl = stripCdpParams(url);
+        }
+      }
+
+      setLiveUrl(iframeUrl);
       setScreen('live');
       setMsg('');
       setAuthBlockReason(null);
