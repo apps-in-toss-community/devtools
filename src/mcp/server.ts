@@ -215,7 +215,13 @@ const DEV_TOOL_DEFINITIONS = [
         },
         wait_for_attach: {
           type: 'boolean',
-          description: 'If true, block until a page attaches.',
+          description: 'If true, block until a page attaches (default 60 s).',
+        },
+        wait_timeout_seconds: {
+          type: 'number',
+          description:
+            'Maximum seconds to wait when wait_for_attach=true (default 60, range 1–600). ' +
+            'Invalid inputs fall back to default.',
         },
       },
       required: ['scheme_url'],

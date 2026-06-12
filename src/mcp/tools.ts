@@ -143,7 +143,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'and builds a launcher PWA deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). ' +
       'When projectRoot is given, the app name from <projectRoot>/package.json is automatically added as name= so the launcher partner bar shows it. ' +
       'Scan the QR with the phone to open the launcher, which frames the tunnel URL and attaches CDP.\n\n' +
-      'Set wait_for_attach=true to block until a page attaches (polls up to 30 s). ' +
+      'Set wait_for_attach=true to block until a page attaches (default 60 s, adjustable via wait_timeout_seconds). ' +
       'On timeout, call build_attach_url again to resume polling. ' +
       'The server automatically opens the QR dashboard in the OS default browser when running on a ' +
       'local GUI machine — headless/remote environments fall back to the text QR in the tool output.' +
@@ -175,8 +175,15 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'boolean',
           description:
             'If true, block after returning the QR until a page attaches to the relay (polls ' +
-            'listTargets ~1 s interval, timeout 30 s). On attach, the response includes the ' +
+            'listTargets ~1 s interval, default 60 s). On attach, the response includes the ' +
             'attached page list. On timeout, call build_attach_url again to resume polling.',
+        },
+        wait_timeout_seconds: {
+          type: 'number',
+          description:
+            'Maximum seconds to wait when wait_for_attach=true (default 60, range 1–600). ' +
+            'Values outside the range or invalid inputs (0, negative, NaN) fall back to the default silently. ' +
+            'Only meaningful when wait_for_attach=true.',
         },
         projectRoot: {
           type: 'string',
