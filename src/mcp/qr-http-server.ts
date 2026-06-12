@@ -219,13 +219,17 @@ function buildDashboardHtml(
     attachSection = `<p class="hint">${escapeHtml(s('dashboard.attach.hint'))}</p>`;
   }
 
-  // inspectorSection — 인스펙터 열기 링크 (#503).
-  // relay up + 페이지 attached(inspectorUrl 있음) 시에만 살아있는 링크를 표시.
-  // 미첨부(inspectorUrl null)이면 비활성 안내 힌트를 보여준다.
+  // inspectorSection — 인스펙터 열기 링크 (#503, gate 보정 #544).
+  // 게이트: pages.length > 0 (페이지가 attach돼 있을 때만 활성).
+  // #530 이후 inspectorUrl은 안정 /inspector URL이라 항상 non-null이지만,
+  // 미attach 상태에서 버튼을 클릭하면 502 noTarget을 반환할 뿐이다.
+  // 게이트를 pages.length > 0으로 바꿔 미attach 시 대기 힌트를 표시하고
+  // /과 /attach 양쪽에서 동일한 동작을 보장한다.
   // SECRET-HANDLING: inspectorUrl에 relay host + TOTP at= 코드가 담길 수 있으나
   // 대시보드 HTML 본문 렌더는 의도된 transport — 단 stdout/로그로 출력 금지.
+  const pagesAttached = Array.isArray(state.pages) && state.pages.length > 0;
   let inspectorSection: string;
-  if (state.inspectorUrl) {
+  if (pagesAttached && state.inspectorUrl) {
     const safeUrl = escapeHtml(state.inspectorUrl);
     const label = escapeHtml(s('dashboard.inspector.open'));
     inspectorSection = `<a class="inspector-link" id="inspector-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
@@ -466,11 +470,15 @@ function buildSseScript(strings: SseScriptStrings): string {
               }
             }
           }
-          // 인스펙터 링크 갱신 — #inspector-link (#503).
+          // 인스펙터 링크 갱신 — #inspector-link (#503, gate 보정 #544).
+          // 게이트: pages.length > 0 (페이지 attach 여부) — inspectorUrl 존재 여부가 아님.
+          // #530 이후 inspectorUrl은 항상 안정 URL이므로 null 게이트는 사실상 항상 활성이었다.
+          // pages.length > 0 으로 바꿔 미attach 시 대기 힌트를 보여주도록 수정.
           // SECRET-HANDLING: inspectorUrl을 console.log 등으로 출력하지 않는다.
           var insp = document.getElementById('inspector-link');
           if (insp) {
-            if (s.inspectorUrl) {
+            var pagesAttachedSse = Array.isArray(s.pages) && s.pages.length > 0;
+            if (pagesAttachedSse && s.inspectorUrl) {
               var safeInspUrl = String(s.inspectorUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
               insp.outerHTML = '<a class=\\"inspector-link\\" id=\\"inspector-link\\" href=\\"' + safeInspUrl + '\\" target=\\"_blank\\" rel=\\"noopener noreferrer\\">' + INSPECTOR_OPEN_LABEL + '</a>';
             } else {
@@ -493,21 +501,23 @@ function buildSseScript(strings: SseScriptStrings): string {
  * Attach 페이지 HTML — precompiled chrome에 per-request 동적 값을 채워 완성한다.
  *
  * 동적 파트:
- *   - __QR_DATA_URL__     : base64 data URL (QR 이미지)
- *   - __SAFE_LABEL__      : HTML-escaped deploymentId label (intoss family에만 존재)
- *   - __SAFE_ATTACH_URL__ : HTML-escaped attach URL (TOTP at= 코드 포함 — 의도된 전달)
- *   - __MODE_LABEL__      : 환경 배지 (`<p class="mode-label">…</p>` 또는 빈 문자열, #468)
- *   - __LIVE_FAQ__        : 환경 4 LIVE read-only `<li>` 또는 빈 문자열 (intoss family에만 존재)
+ *   - __QR_DATA_URL__       : base64 data URL (QR 이미지)
+ *   - __SAFE_LABEL__        : HTML-escaped deploymentId label (intoss family에만 존재)
+ *   - __SAFE_ATTACH_URL__   : HTML-escaped attach URL (TOTP at= 코드 포함 — 의도된 전달)
+ *   - __MODE_LABEL__        : 환경 배지 (`<p class="mode-label">…</p>` 또는 빈 문자열, #468)
+ *   - __LIVE_FAQ__          : 환경 4 LIVE read-only `<li>` 또는 빈 문자열 (intoss family에만 존재)
+ *   - __INSPECTOR_SECTION__ : "디버그 툴 열기" 버튼 또는 대기 힌트 (#544)
  *
  * mode-aware 분기 (#468): mode가 `relay-mobile`이면 sandbox family chrome(launcher
  * PWA 절차), 그 외는 intoss family chrome(토스 앱 절차)을 선택한다. `relay-live`는
  * intoss chrome에 LIVE read-only 라인을 추가한다.
  *
  * SSE 스크립트도 주입 — `#attach-section` hook이 있으면 `/events` push 때 QR이
- * `/qr.png?u=<fresh attachUrl>`로 자동 갱신된다. `#tunnel-status`·`#pages-list` 등
- * 나머지 selector는 /attach 페이지에 없으므로 null-guard로 no-op.
+ * `/qr.png?u=<fresh attachUrl>`로 자동 갱신된다. `#inspector-link`도 SSE push로
+ * pages.length > 0 게이트에 따라 활성/비활성 전환된다 (#544).
  *
  * SECRET-HANDLING: TOTP at= 코드는 attachUrl 캡슐 안에서만 노출 — 의도된 transport.
+ * inspectorStableUrl은 /inspector 안정 URL (127.0.0.1, 시크릿 없음) — 노출 가능.
  */
 function buildAttachHtml(
   qrDataUrl: string,
@@ -517,6 +527,8 @@ function buildAttachHtml(
   path = '/attach',
   params = new URLSearchParams(),
   mode?: McpEnvironment,
+  pagesAttached = false,
+  inspectorStableUrl: string | null = null,
 ): string {
   const s = resolveLocaleStrings(locale);
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
@@ -524,6 +536,19 @@ function buildAttachHtml(
   // 환경 4 전용 LIVE read-only 라인 — i18n 문자열은 신뢰된 빌드타임 카피(strong/code
   // 인라인 HTML 포함)라 verbatim 주입한다 (다른 FAQ 항목과 동일한 취급).
   const liveFaq = mode === 'relay-live' ? `<li>${s('attach.intoss.faq.liveReadOnly')}</li>` : '';
+
+  // inspector 섹션 — pages.length > 0 게이트 (#544).
+  // inspectorStableUrl은 /inspector 안정 URL (시크릿 없음) — href 노출 가능.
+  let inspectorSection: string;
+  if (pagesAttached && inspectorStableUrl) {
+    const safeUrl = escapeHtml(inspectorStableUrl);
+    const label = escapeHtml(s('dashboard.inspector.open'));
+    inspectorSection = `<a class="inspector-link" id="inspector-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  } else {
+    const hint = escapeHtml(s('dashboard.inspector.waiting'));
+    inspectorSection = `<span class="inspector-hint" id="inspector-link">${hint}</span>`;
+  }
+
   const chrome = attachChromeByLocale[locale][family];
   const filled = chrome
     .replaceAll('__LANG_SWITCHER__', langSwitcher)
@@ -531,11 +556,12 @@ function buildAttachHtml(
     .replaceAll('__LIVE_FAQ__', liveFaq)
     .replaceAll('__QR_DATA_URL__', qrDataUrl)
     .replaceAll('__SAFE_LABEL__', safeLabel)
-    .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl);
+    .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl)
+    .replaceAll('__INSPECTOR_SECTION__', inspectorSection);
 
-  // Inject SSE script so QR auto-refreshes on each /events push.
-  // `#attach-section` is the only selector present on /attach — other selectors
-  // (#tunnel-status, #pages-list, #updated) are null-guarded and are no-ops here.
+  // Inject SSE script so QR auto-refreshes on each /events push,
+  // and #inspector-link updates via pages.length > 0 gate on state change.
+  // dashboardSurface: false → /attach 표면 분기 (img src 교체, url-box textContent만 갱신).
   const sseStrings: SseScriptStrings = {
     tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
@@ -543,8 +569,7 @@ function buildAttachHtml(
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
-    // /attach 페이지에는 #inspector-link 가 없어 inspector 갱신은 no-op이지만
-    // SseScriptStrings 타입 충족을 위해 필드를 제공한다 (#503).
+    // /attach 페이지의 #inspector-link SSE 갱신에 쓰인다 (#544).
     inspectorOpenLabel: JSON.stringify(s('dashboard.inspector.open')),
     inspectorWaitingLabel: JSON.stringify(s('dashboard.inspector.waiting')),
     // /attach 표면: img src만 교체, #url-box textContent만 갱신 → url-box 이중 표시 방지(#458).
@@ -710,9 +735,21 @@ export async function startQrHttpServer(
         // best-effort
       }
 
-      // 현재 세션 mode — 카피 분기(#468). getDashboardState 미주입(legacy) 시 undefined
-      // → intoss family + 환경 라벨 없음 fallback.
-      const mode = getDashboardState?.().mode;
+      // 현재 세션 mode + pages 상태 — 카피 분기(#468), inspector 게이트(#544).
+      // getDashboardState 미주입(legacy) 시 undefined → intoss family + 환경 라벨 없음 fallback.
+      const currentState = getDashboardState?.();
+      const mode = currentState?.mode;
+      const pagesAttached =
+        Array.isArray(currentState?.pages) && (currentState?.pages.length ?? 0) > 0;
+      // inspectorStableUrl: /inspector 안정 URL (시크릿 없음) — getDirectInspectorUrl 주입 시만 활성.
+      // 서버 주소는 listen 후에만 확정되므로 server.address()로 런타임에 읽는다.
+      // (요청은 listen 완료 후 들어오므로 address()는 항상 non-null이다.)
+      const inspectorStableUrlForAttach: string | null = (() => {
+        if (!options?.getDirectInspectorUrl) return null;
+        const addr = server.address();
+        if (!addr || typeof addr === 'string') return null;
+        return `http://127.0.0.1:${addr.port}/inspector`;
+      })();
 
       // QR을 base64 data URL로 인라인 생성 — 외부 fetch 없이 self-contained HTML.
       QRCode.toDataURL(attachUrl, { type: 'image/png', errorCorrectionLevel: 'M' })
@@ -727,6 +764,8 @@ export async function startQrHttpServer(
             path,
             params,
             mode,
+            pagesAttached,
+            inspectorStableUrlForAttach,
           );
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',

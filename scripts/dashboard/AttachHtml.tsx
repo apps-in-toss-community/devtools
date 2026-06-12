@@ -55,6 +55,8 @@ interface AttachHtmlProps {
      */
     faqItems: string[];
     urlSection: string;
+    /** "디버그 툴 열기" section header — inspector button section (#544). */
+    inspectorSection: string;
     /** Copy button labels. */
     copy: string;
     /** Lang switcher labels — "한국어" / "English". */
@@ -66,11 +68,12 @@ interface AttachHtmlProps {
 /**
  * Static attach page chrome. All dynamic slots are `__PLACEHOLDER__` strings
  * that qr-http-server.ts fills at runtime:
- *   - `__QR_DATA_URL__`    — base64 data URL for the QR image
- *   - `__SAFE_LABEL__`     — HTML-escaped deploymentId label (intoss family only)
- *   - `__SAFE_ATTACH_URL__` — HTML-escaped attach URL (TOTP at= inside, intentional)
- *   - `__MODE_LABEL__`     — environment badge (`<p class="mode-label">…</p>`), or ''
- *   - `__LIVE_FAQ__`       — env-4 LIVE read-only `<li>`, or '' (intoss family only)
+ *   - `__QR_DATA_URL__`       — base64 data URL for the QR image
+ *   - `__SAFE_LABEL__`        — HTML-escaped deploymentId label (intoss family only)
+ *   - `__SAFE_ATTACH_URL__`   — HTML-escaped attach URL (TOTP at= inside, intentional)
+ *   - `__MODE_LABEL__`        — environment badge (`<p class="mode-label">…</p>`), or ''
+ *   - `__LIVE_FAQ__`          — env-4 LIVE read-only `<li>`, or '' (intoss family only)
+ *   - `__INSPECTOR_SECTION__` — "디버그 툴 열기" button or waiting hint (#544)
  */
 export function AttachHtml({ lang, family, strings }: AttachHtmlProps) {
   return (
@@ -129,6 +132,14 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
 .lang-switcher { display: flex; gap: 0.5rem; font-size: 0.75rem; }
 .lang-switcher a { color: #58a6ff; text-decoration: none; opacity: 0.6; }
 .lang-switcher a.active { font-weight: 700; text-decoration: underline; opacity: 1; }
+.inspector-link {
+  display: inline-block; margin-top: 0.5rem;
+  padding: 0.45rem 1rem; border-radius: 6px;
+  background: #1f6feb; color: #fff; font-size: 0.85rem; font-weight: 600;
+  text-decoration: none; text-align: center;
+}
+.inspector-link:hover { background: #388bfd; }
+.inspector-hint { display: inline-block; margin-top: 0.5rem; font-size: 0.8rem; opacity: 0.45; }
 `,
           }}
         />
@@ -188,6 +199,14 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
               {strings.copy}
             </button>
           </div>
+        </section>
+
+        <hr />
+
+        <section id="inspector-section">
+          <h2>{strings.inspectorSection}</h2>
+          {/* __INSPECTOR_SECTION__ filled at runtime — button or waiting hint (#544) */}
+          {'__INSPECTOR_SECTION__'}
         </section>
       </body>
     </html>
