@@ -161,6 +161,11 @@ describe('buildChiiInspectorUrl', () => {
 // isAutoDevtoolsDisabled
 // ---------------------------------------------------------------------------
 
+// isAutoDevtoolsDisabled — 기본값 OFF (opt-in) 모델 (#544)
+// 기본(미설정): disabled=true (창 자동 열기 안 함)
+// AIT_AUTO_DEVTOOLS=1: disabled=false (opt-in 자동 열기)
+// AIT_AUTO_DEVTOOLS=0: disabled=true (명시적 opt-out, 기존 의미 호환)
+// AIT_AUTO_DEVTOOLS=기타(false 등): disabled=true ('1'이 아닌 모든 값)
 describe('isAutoDevtoolsDisabled', () => {
   const originalEnv = process.env.AIT_AUTO_DEVTOOLS;
 
@@ -172,24 +177,24 @@ describe('isAutoDevtoolsDisabled', () => {
     }
   });
 
-  it('returns false when env var is absent', () => {
+  it('returns true when env var is absent (default OFF — opt-in model, #544)', () => {
     delete process.env.AIT_AUTO_DEVTOOLS;
-    expect(isAutoDevtoolsDisabled()).toBe(false);
+    expect(isAutoDevtoolsDisabled()).toBe(true);
   });
 
-  it('returns true when AIT_AUTO_DEVTOOLS=0', () => {
+  it('returns true when AIT_AUTO_DEVTOOLS=0 (explicit opt-out, backward compat)', () => {
     process.env.AIT_AUTO_DEVTOOLS = '0';
     expect(isAutoDevtoolsDisabled()).toBe(true);
   });
 
-  it('returns false when AIT_AUTO_DEVTOOLS=1', () => {
+  it('returns false when AIT_AUTO_DEVTOOLS=1 (opt-in enables auto-open)', () => {
     process.env.AIT_AUTO_DEVTOOLS = '1';
     expect(isAutoDevtoolsDisabled()).toBe(false);
   });
 
-  it('returns false when AIT_AUTO_DEVTOOLS=false (string)', () => {
+  it('returns true when AIT_AUTO_DEVTOOLS=false (string) — only "1" opts in', () => {
     process.env.AIT_AUTO_DEVTOOLS = 'false';
-    expect(isAutoDevtoolsDisabled()).toBe(false);
+    expect(isAutoDevtoolsDisabled()).toBe(true);
   });
 });
 
@@ -201,6 +206,9 @@ describe('isAutoDevtoolsDisabled', () => {
 // AutoDevtoolsOpener
 // ---------------------------------------------------------------------------
 
+// AutoDevtoolsOpener — #544 기본값 OFF 적용 후 테스트
+// "열려야 하는" 케이스는 AIT_AUTO_DEVTOOLS=1 (opt-in) 설정 후 확인.
+// "안 열려야 하는" 케이스는 미설정(default OFF) 또는 =0(명시적 opt-out).
 describe('AutoDevtoolsOpener', () => {
   let stderrOutput: string;
   let stderrSpy: ReturnType<typeof vi.spyOn>;
@@ -211,6 +219,7 @@ describe('AutoDevtoolsOpener', () => {
       stderrOutput += String(chunk);
       return true;
     });
+    // 기본은 미설정(기본 OFF) — 개별 테스트에서 =1로 opt-in.
     delete process.env.AIT_AUTO_DEVTOOLS;
     process.env.AIT_AUTO_DEVTOOLS_TEST_SKIP_SPAWN = '1';
   });
@@ -221,7 +230,23 @@ describe('AutoDevtoolsOpener', () => {
     delete process.env.AIT_AUTO_DEVTOOLS_TEST_SKIP_SPAWN;
   });
 
-  it('opens once and marks opened=true', () => {
+  // ── 기본값 OFF — 미설정 시 no-op 확인 (#544) ─────────────────────────────
+  it('is a no-op by default (AIT_AUTO_DEVTOOLS not set — default OFF, #544)', () => {
+    delete process.env.AIT_AUTO_DEVTOOLS;
+    const opener = new AutoDevtoolsOpener();
+    opener.open({
+      relayHttpBaseUrl: 'http://127.0.0.1:9100',
+      targetId: 'target-abc',
+      mintTotp: fixtureMintTotp,
+      env: 'relay-dev',
+    });
+    expect(opener.opened).toBe(false);
+    expect(stderrOutput).toBe('');
+  });
+
+  // ── opt-in (AIT_AUTO_DEVTOOLS=1) ─────────────────────────────────────────
+  it('opens once and marks opened=true when AIT_AUTO_DEVTOOLS=1 (opt-in)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -235,6 +260,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('is a no-op on second call for the same targetId (per-target dedupe)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -255,6 +281,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('fires again for a new targetId (per-target dedupe, issue #530)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     // A page reload on the phone yields a new targetId — should auto-open again.
     const opener = new AutoDevtoolsOpener();
     opener.open({
@@ -276,6 +303,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('is a no-op when env is mock', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -287,6 +315,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('is a no-op when relayHttpBaseUrl is null', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: null,
@@ -298,6 +327,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('is a no-op when relayHttpBaseUrl is empty string', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: '',
@@ -309,6 +339,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('is a no-op when targetId is null', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -320,6 +351,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('is a no-op when targetId is empty string', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -330,7 +362,7 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).toBe('');
   });
 
-  it('is a no-op when AIT_AUTO_DEVTOOLS=0', () => {
+  it('is a no-op when AIT_AUTO_DEVTOOLS=0 (explicit opt-out, backward compat)', () => {
     process.env.AIT_AUTO_DEVTOOLS = '0';
     const opener = new AutoDevtoolsOpener();
     opener.open({
@@ -343,7 +375,8 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).toBe('');
   });
 
-  it('writes the Chii inspector URL to stderr before attempting browser open', () => {
+  it('writes the Chii inspector URL to stderr before attempting browser open (opt-in)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'https://tunnel.trycloudflare.com',
@@ -356,7 +389,8 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).toContain('front_end/chii_app.html');
   });
 
-  it('embeds the TOTP code (not the secret) in the stderr URL', () => {
+  it('embeds the TOTP code (not the secret) in the stderr URL (opt-in)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -371,6 +405,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('fail-closed when mintTotp is absent — marks opened but skips browser open (issue #509)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     // relay 게이트는 at= 없는 WS를 4401로 거부하므로 URL을 만들지 않는다.
     // _opened=true를 유지해 once-per-session 가드가 동작하고, TOTP 미설정 안내를 stderr에 출력.
     const opener = new AutoDevtoolsOpener();
@@ -387,7 +422,8 @@ describe('AutoDevtoolsOpener', () => {
     expect(stderrOutput).toContain('TOTP');
   });
 
-  it('includes the TOTP expiry notice in stderr output', () => {
+  it('includes the TOTP expiry notice in stderr output (opt-in)', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       relayHttpBaseUrl: 'http://127.0.0.1:9100',
@@ -402,6 +438,7 @@ describe('AutoDevtoolsOpener', () => {
 
   // ── inspectorStableUrl 경로 (issue #530 stable /inspector URL) ──────────
   it('uses inspectorStableUrl when provided — no tunnel host or TOTP code in stderr', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     opener.open({
       inspectorStableUrl: 'http://127.0.0.1:19000/inspector',
@@ -411,8 +448,8 @@ describe('AutoDevtoolsOpener', () => {
       env: 'relay-dev',
     });
     expect(opener.opened).toBe(true);
-    // Stable URL written to stderr.
-    expect(stderrOutput).toContain('http://127.0.0.1:19000/inspector');
+    // Stable URL written to stderr (dashboard URL only, no inspector path).
+    expect(stderrOutput).toContain('http://127.0.0.1:19000');
     // Tunnel host must NOT appear in stderr (SECRET-HANDLING).
     expect(stderrOutput).not.toContain('tunnel.trycloudflare.com');
     // TOTP code must NOT appear in stderr (stable URL has no TOTP).
@@ -422,6 +459,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('inspectorStableUrl path: is a no-op on second call for same targetId', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     const stableUrl = 'http://127.0.0.1:19000/inspector';
     opener.open({
@@ -442,6 +480,7 @@ describe('AutoDevtoolsOpener', () => {
   });
 
   it('inspectorStableUrl path: fires again for a new targetId', () => {
+    process.env.AIT_AUTO_DEVTOOLS = '1';
     const opener = new AutoDevtoolsOpener();
     const stableUrl = 'http://127.0.0.1:19000/inspector';
     opener.open({
@@ -457,7 +496,7 @@ describe('AutoDevtoolsOpener', () => {
       targetId: 'tgt-second',
       env: 'relay-dev',
     });
-    expect(stderrOutput).toContain(stableUrl);
+    expect(stderrOutput).toContain('http://127.0.0.1:19000');
     expect(opener.openedTargets.size).toBe(2);
   });
 });

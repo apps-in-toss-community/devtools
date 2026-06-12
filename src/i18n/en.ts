@@ -235,8 +235,8 @@ export const en: Record<StringKey, string> = {
 
   // qr-http-server — inspector open link (#503)
   'dashboard.inspector.section': 'Inspector',
-  'dashboard.inspector.open': 'Open inspector',
-  'dashboard.inspector.waiting': 'Inspector URL pending — appears after a page attaches',
+  'dashboard.inspector.open': 'Open DevTools',
+  'dashboard.inspector.waiting': 'Attach a page to enable the "Open DevTools" button',
 
   // qr-http-server — /inspector stable entry (issue #530)
   'inspector.error.noTarget': 'No page attached. Attach a device and try again.',

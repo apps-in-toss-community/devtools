@@ -237,8 +237,8 @@ export const ko = {
 
   // qr-http-server — inspector open link (#503)
   'dashboard.inspector.section': '인스펙터',
-  'dashboard.inspector.open': '인스펙터 열기',
-  'dashboard.inspector.waiting': '인스펙터 URL 대기 중 (페이지 attach 후 표시됩니다)',
+  'dashboard.inspector.open': '디버그 툴 열기',
+  'dashboard.inspector.waiting': '페이지를 attach하면 "디버그 툴 열기" 버튼이 표시됩니다',
 
   // qr-http-server — /inspector stable entry (issue #530)
   'inspector.error.noTarget': '연결된 페이지가 없습니다. 기기를 attach한 후 다시 시도하세요.',

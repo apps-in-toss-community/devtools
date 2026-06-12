@@ -145,6 +145,7 @@ function renderAttachChrome(locale: Locale, family: AttachChromeFamily): string 
         faqSection: s('attach.faq.section'),
         faqItems,
         urlSection: s('attach.url.section'),
+        inspectorSection: s('dashboard.inspector.section'),
         copy: s('dashboard.url.copy'),
         langKo: s('dashboard.lang.ko'),
         langEn: s('dashboard.lang.en'),

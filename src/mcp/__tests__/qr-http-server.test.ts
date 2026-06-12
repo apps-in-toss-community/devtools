@@ -208,7 +208,8 @@ describe('startQrHttpServer — GET / dashboard HTML', () => {
 // ---------------------------------------------------------------------------
 
 describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
-  it('inspectorUrl 있으면 "인스펙터 열기" 링크(ko)가 target="_blank"로 렌더된다', async () => {
+  // gate 보정 (#544): pages.length > 0 일 때만 활성 링크를 표시한다 (inspectorUrl 존재 여부 아님).
+  it('pages.length > 0 + inspectorUrl 있으면 "디버그 툴 열기" 링크(ko)가 target="_blank"로 렌더된다 (#544)', async () => {
     const INSPECTOR_URL =
       'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1%26at%3D123456&panel=console';
     const srv = await startQrHttpServer(() => ({
@@ -221,8 +222,8 @@ describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
       const html = await (
         await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
       ).text();
-      // "인스펙터 열기" 링크 존재 확인
-      expect(html).toContain('인스펙터 열기');
+      // "디버그 툴 열기" 링크 존재 확인 (i18n 카피 갱신 #544)
+      expect(html).toContain('디버그 툴 열기');
       // inspector-link anchor로 렌더됨
       expect(html).toContain('class="inspector-link"');
       expect(html).toContain('target="_blank"');
@@ -233,7 +234,7 @@ describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
     }
   });
 
-  it('inspectorUrl 있으면 "Open inspector" 링크(en)가 렌더된다', async () => {
+  it('pages.length > 0 + inspectorUrl 있으면 "Open DevTools" 링크(en)가 렌더된다 (#544)', async () => {
     const INSPECTOR_URL =
       'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1&panel=console';
     const srv = await startQrHttpServer(() => ({
@@ -246,8 +247,30 @@ describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
       const html = await (
         await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'en' } })
       ).text();
-      expect(html).toContain('Open inspector');
+      expect(html).toContain('Open DevTools');
       expect(html).toContain('class="inspector-link"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('pages: [] 이면 대기 hint가 표시된다 — gate 보정 (#544)', async () => {
+    // pages.length === 0 이면 inspectorUrl이 있어도 대기 힌트를 표시한다.
+    const INSPECTOR_URL = 'http://127.0.0.1:9100/front_end/chii_app.html?ws=fake&panel=console';
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
+      pages: [],
+      attachUrl: null,
+      inspectorUrl: INSPECTOR_URL,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // pages.length === 0 → 대기 힌트
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+      expect(html).toContain('attach하면');
     } finally {
       await srv.close();
     }
@@ -267,7 +290,8 @@ describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
       // 링크 없이 대기 힌트가 표시돼야 함
       expect(html).not.toContain('class="inspector-link"');
       expect(html).toContain('class="inspector-hint"');
-      expect(html).toContain('attach 후 표시');
+      // 갱신된 i18n 텍스트 (#544)
+      expect(html).toContain('attach하면');
     } finally {
       await srv.close();
     }
@@ -1408,6 +1432,221 @@ describe('startQrHttpServer — GET /inspector 라우트 (#530 루프 수정)', 
       expect(res.status).toBe(302);
       // Location 헤더는 HTTP 응답에만 — 정상 전달 확인
       expect(res.headers.get('Location')).toBe(directUrl);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /attach 페이지 inspector 버튼 (#544)
+//
+// - getDirectInspectorUrl 주입 + pages.length > 0 → "디버그 툴 열기" 활성 버튼
+// - pages.length === 0 → 대기 힌트
+// - getDirectInspectorUrl 미주입 → 버튼 없음 (대기 힌트)
+// - SSE gate 보정: pages.length > 0 기준으로 inspector 링크를 활성/비활성 전환
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — /attach 페이지 inspector 버튼 (#544)', () => {
+  const attachUrlDummy =
+    'intoss-private://aitc-sdk-example?_deploymentId=test-inspector&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+
+  it('getDirectInspectorUrl 주입 + pages.length > 0 → "디버그 툴 열기" 활성 버튼(ko)', async () => {
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: null },
+        pages: [{ id: 'page-1', url: 'https://example.com' }],
+        attachUrl: attachUrlDummy,
+        inspectorUrl: `http://127.0.0.1:${(srv as unknown as { port: number }).port}/inspector`,
+      }),
+      {
+        getDirectInspectorUrl: () => ({
+          ok: true,
+          url: 'http://127.0.0.1:9100/front_end/chii_app.html?ws=fake&panel=console',
+        }),
+      },
+    );
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // 활성 버튼 존재
+      expect(html).toContain('class="inspector-link"');
+      expect(html).toContain('target="_blank"');
+      expect(html).toContain('디버그 툴 열기');
+      // /inspector URL href 포함
+      expect(html).toContain('/inspector');
+      // id="inspector-section" 섹션 존재
+      expect(html).toContain('id="inspector-section"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('pages.length === 0 → 대기 힌트 표시 (미attach 상태)', async () => {
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: null },
+        pages: [],
+        attachUrl: attachUrlDummy,
+      }),
+      {
+        getDirectInspectorUrl: () => ({
+          ok: false,
+          reason: 'noTarget' as const,
+        }),
+      },
+    );
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // 버튼 없이 대기 힌트
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+      expect(html).toContain('attach하면');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('getDirectInspectorUrl 미주입 → inspector 섹션에 대기 힌트', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [{ id: 'p1', url: 'https://example.com' }],
+      attachUrl: attachUrlDummy,
+    }));
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // getDirectInspectorUrl 없으면 버튼 없음
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('/attach SSE 스크립트에 inspector gate(pages.length > 0) 로직이 포함된다', async () => {
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: null },
+        pages: [],
+        attachUrl: attachUrlDummy,
+      }),
+      { getDirectInspectorUrl: () => ({ ok: false, reason: 'noTarget' as const }) },
+    );
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // SSE 스크립트에 pages.length > 0 게이트 로직이 있어야 한다
+      expect(html).toContain('pagesAttachedSse');
+      expect(html).toContain('s.pages.length > 0');
+      // #inspector-link 업데이트 로직
+      expect(html).toContain("getElementById('inspector-link')");
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('/attach inspector 버튼 href는 inspectorStableUrl(/inspector) — 시크릿 없음', async () => {
+    let capturedPort = 0;
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: null },
+        pages: [{ id: 'p1', url: 'https://example.com' }],
+        attachUrl: attachUrlDummy,
+      }),
+      {
+        getDirectInspectorUrl: () => ({
+          ok: true,
+          url: 'http://127.0.0.1:9100/front_end/chii_app.html?ws=fake&panel=console',
+        }),
+      },
+    );
+    capturedPort = srv.port;
+    try {
+      const html = await (
+        await fetch(srv.buildAttachPageUrl(attachUrlDummy), {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // href는 /inspector 안정 URL (127.0.0.1 로컬, 시크릿 없음)
+      expect(html).toContain(`http://127.0.0.1:${capturedPort}/inspector`);
+      // tunnel host·TOTP at= 코드가 href에 노출되지 않음
+      expect(html).not.toContain('fake');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dashboard inspector gate 보정 (#544)
+// inspectorUrl은 항상 안정 URL로 non-null이지만,
+// pages.length === 0 이면 대기 힌트를 표시해야 한다.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — dashboard inspector gate 보정 (#544)', () => {
+  it('pages: [] + inspectorUrl 있어도 대기 힌트 표시 (미attach 상태)', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+      // inspectorUrl이 non-null이어도 pages가 없으면 대기 힌트
+      inspectorUrl: 'http://127.0.0.1:9999/inspector',
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      expect(html).not.toContain('class="inspector-link"');
+      expect(html).toContain('class="inspector-hint"');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('pages: [목록] + inspectorUrl 있으면 활성 버튼 표시', async () => {
+    const INSPECTOR_URL = 'http://127.0.0.1:9999/inspector';
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [{ id: 'p1', url: 'https://example.com' }],
+      attachUrl: null,
+      inspectorUrl: INSPECTOR_URL,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      expect(html).toContain('class="inspector-link"');
+      expect(html).toContain('디버그 툴 열기');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SSE 스크립트에 pagesAttachedSse 게이트가 포함된다', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // SSE 스크립트의 inspector 갱신 로직에 pages.length > 0 게이트가 있어야 한다
+      expect(html).toContain('pagesAttachedSse');
+      expect(html).toContain('s.pages.length > 0');
     } finally {
       await srv.close();
     }

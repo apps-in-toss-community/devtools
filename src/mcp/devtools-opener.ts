@@ -159,12 +159,18 @@ export function buildChiiInspectorUrl(
 // ---------------------------------------------------------------------------
 
 /**
- * Returns `true` when auto-open is **disabled** via the `AIT_AUTO_DEVTOOLS`
- * env var. Only the explicit `"0"` value disables it; anything else (including
- * absent) leaves auto-open enabled.
+ * Returns `true` when auto-open is **disabled**.
+ *
+ * Default (env var absent or any value other than `"1"`) is **disabled** —
+ * the developer uses the "디버그 툴 열기" button on the /attach or dashboard
+ * page instead. Set `AIT_AUTO_DEVTOOLS=1` to restore the old automatic
+ * browser-open behaviour on device attach.
+ *
+ * `AIT_AUTO_DEVTOOLS=0` retains its explicit opt-out meaning for backward
+ * compatibility (same effect as absent).
  */
 export function isAutoDevtoolsDisabled(): boolean {
-  return process.env.AIT_AUTO_DEVTOOLS === '0';
+  return process.env.AIT_AUTO_DEVTOOLS !== '1';
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +335,9 @@ export class AutoDevtoolsOpener {
       this._openedTargets.add(targetId);
       const stableUrl = options.inspectorStableUrl;
       process.stderr.write(
-        '[ait-debug] 기기가 연결됐습니다 — Chii DevTools를 자동으로 엽니다.\n' +
-          `[ait-debug] 인스펙터 URL: ${stableUrl}\n` +
-          '[ait-debug] (AIT_AUTO_DEVTOOLS=0 으로 자동 열기를 끌 수 있습니다)\n',
+        '[ait-debug] 기기가 연결됐습니다.\n' +
+          `[ait-debug] QR 페이지 또는 대시보드(${stableUrl.replace('/inspector', '')})의 "디버그 툴 열기" 버튼을 눌러 DevTools를 여세요.\n` +
+          '[ait-debug] (AIT_AUTO_DEVTOOLS=1 로 설정하면 연결 시 자동으로 열립니다)\n',
       );
       const opened = openUrlInBrowser(stableUrl);
       if (!opened) {
@@ -365,9 +371,9 @@ export class AutoDevtoolsOpener {
     }
 
     process.stderr.write(
-      '[ait-debug] 기기가 연결됐습니다 — Chii DevTools를 자동으로 엽니다.\n' +
+      '[ait-debug] 기기가 연결됐습니다.\n' +
         `[ait-debug] DevTools URL: ${inspectorUrl}\n` +
-        '[ait-debug] (AIT_AUTO_DEVTOOLS=0 으로 자동 열기를 끌 수 있습니다)\n' +
+        '[ait-debug] (AIT_AUTO_DEVTOOLS=1 로 설정하면 연결 시 자동으로 열립니다)\n' +
         '[ait-debug] 주의: URL의 at= 코드는 ~3분 안에서만 유효합니다.\n',
     );
 
