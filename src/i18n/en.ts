@@ -303,8 +303,7 @@ export const en: Record<StringKey, string> = {
   'launcher.diagTitle': 'Viewport diagnostics',
   'launcher.diagYes': 'yes',
   'launcher.diagNo': 'no',
-  'launcher.letterboxDetected':
-    'Display area is {pt}pt short — likely an iOS standalone letterbox. Removing and re-adding the launcher to the home screen may fix it.',
+  'launcher.letterboxDetected': 'Letterbox correction +{pt}pt applied — using full screen height.',
   // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': 'Mini App',
   'launcher.navbar.back': 'Back',

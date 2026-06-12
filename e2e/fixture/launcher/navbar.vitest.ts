@@ -244,17 +244,35 @@ describe('computeNavBarBridgeInsets', () => {
     expect(result.right).toBe(0);
   });
 
-  it('partner + letterbox → top 0, bottom 0 (#491 bottom correction still applies)', () => {
+  it('partner + letterbox + corrected (default) → top 0, bottom RESTORED 34 (#527)', () => {
+    // screen.height px correction: frame reaches real bottom → restore bottom inset.
     const result = computeNavBarBridgeInsets(raw, true, 'partner');
+    expect(result.top).toBe(0);
+    expect(result.bottom).toBe(34);
+  });
+
+  it('partner + letterbox + NOT corrected (legacy) → top 0, bottom 0 (#491)', () => {
+    const result = computeNavBarBridgeInsets(raw, true, 'partner', false);
     expect(result.top).toBe(0);
     expect(result.bottom).toBe(0);
   });
 
-  it('partner: real-device today (top 47 / phantom bottom 34, letterbox) → top 0, bottom 0', () => {
+  it('partner: real-device (top 47 / phantom bottom 34, letterbox) + corrected → top 0, bottom 34 (#527)', () => {
     const result = computeNavBarBridgeInsets(
       { top: 47, bottom: 34, left: 0, right: 0 },
       true,
       'partner',
+    );
+    expect(result.top).toBe(0);
+    expect(result.bottom).toBe(34);
+  });
+
+  it('partner: real-device (top 47 / phantom bottom 34, letterbox) + NOT corrected → top 0, bottom 0 (#491)', () => {
+    const result = computeNavBarBridgeInsets(
+      { top: 47, bottom: 34, left: 0, right: 0 },
+      true,
+      'partner',
+      false,
     );
     expect(result.top).toBe(0);
     expect(result.bottom).toBe(0);
@@ -270,8 +288,15 @@ describe('computeNavBarBridgeInsets', () => {
     expect(result.bottom).toBe(34);
   });
 
-  it('game + letterbox → raw top kept, bottom zeroed (#491)', () => {
+  it('game + letterbox + corrected (default) → raw top kept, bottom RESTORED 34 (#527)', () => {
+    // screen.height px correction: frame reaches real bottom → restore bottom inset.
     const result = computeNavBarBridgeInsets(raw, true, 'game');
+    expect(result.top).toBe(47);
+    expect(result.bottom).toBe(34);
+  });
+
+  it('game + letterbox + NOT corrected (legacy) → raw top kept, bottom zeroed (#491)', () => {
+    const result = computeNavBarBridgeInsets(raw, true, 'game', false);
     expect(result.top).toBe(47);
     expect(result.bottom).toBe(0);
   });

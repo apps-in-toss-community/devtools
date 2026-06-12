@@ -304,8 +304,7 @@ export const ko = {
   'launcher.diagTitle': '뷰포트 진단',
   'launcher.diagYes': '예',
   'launcher.diagNo': '아니요',
-  'launcher.letterboxDetected':
-    '표시 영역이 {pt}pt 부족합니다 — iOS standalone letterbox로 보입니다. 런처를 홈 화면에서 제거 후 다시 설치하면 해소될 수 있어요.',
+  'launcher.letterboxDetected': 'letterbox 보정 +{pt}pt 적용됨 — 화면 전체를 사용합니다.',
   // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': '미니앱',
   'launcher.navbar.back': '뒤로가기',

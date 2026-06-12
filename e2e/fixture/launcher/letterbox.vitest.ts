@@ -220,19 +220,76 @@ describe('detectLetterbox', () => {
 });
 
 // ---------------------------------------------------------------------------
-// computeBridgeInsets — bridge bottom correction (#491)
+// computeBridgeInsets — bridge bottom correction (#491, updated #527)
 // ---------------------------------------------------------------------------
 
 describe('computeBridgeInsets', () => {
   const raw = { top: 47, bottom: 34, left: 0, right: 0 };
 
-  it('letterbox detected → bottom zeroed, top/left/right unchanged', () => {
+  // -------------------------------------------------------------------------
+  // #527 correction path (letterboxCorrected=true, the new default)
+  // -------------------------------------------------------------------------
+
+  it('letterbox detected + corrected (default) → bottom RESTORED, top/left/right unchanged (#527)', () => {
+    // screen.height px correction is in effect: the frame genuinely reaches the
+    // home-indicator area, so the real bottom inset (34) must be forwarded.
     const result = computeBridgeInsets(raw, true);
+    expect(result.bottom).toBe(34);
+    expect(result.top).toBe(47);
+    expect(result.left).toBe(0);
+    expect(result.right).toBe(0);
+  });
+
+  it('letterbox detected + corrected explicit → bottom RESTORED (#527)', () => {
+    const result = computeBridgeInsets(raw, true, true);
+    expect(result.bottom).toBe(34);
+    expect(result.top).toBe(47);
+  });
+
+  it('실측 오늘 letterbox(top 47 / phantom bottom 34) + corrected → bridge bottom 34 복원 (#527)', () => {
+    // iPhone iOS 18.7, 2026-06-12: with screen.height px correction the frame
+    // reaches the real screen bottom — restore the real bottom inset (34).
+    const result = computeBridgeInsets({ top: 47, bottom: 34, left: 0, right: 0 }, true);
+    expect(result.bottom).toBe(34);
+    expect(result.top).toBe(47);
+  });
+
+  it('letterbox detected + corrected + raw bottom 0 (SE-class, no home indicator) → 0', () => {
+    // SE-class device: no home indicator → bottom 0, correction does not change that.
+    const result = computeBridgeInsets({ ...raw, bottom: 0 }, true, true);
+    expect(result.bottom).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Legacy uncorrected path (letterboxCorrected=false, #491 original behaviour)
+  // -------------------------------------------------------------------------
+
+  it('letterbox detected + NOT corrected (legacy) → bottom zeroed (#491)', () => {
+    // When correction is unavailable the frame still stops above the home
+    // indicator — keep the #491 zeroing to avoid dead-band padding.
+    const result = computeBridgeInsets(raw, true, false);
     expect(result.bottom).toBe(0);
     expect(result.top).toBe(47);
     expect(result.left).toBe(0);
     expect(result.right).toBe(0);
   });
+
+  it('legacy: letterbox with raw bottom 0 → still 0 (idempotent)', () => {
+    const result = computeBridgeInsets({ ...raw, bottom: 0 }, true, false);
+    expect(result.bottom).toBe(0);
+  });
+
+  it('legacy: 실측 오늘 letterbox(top 47 / phantom bottom 34) + uncorrected → bridge bottom 0 (#491)', () => {
+    // Without correction the app must not add 34px padding for an area it cannot
+    // reach. This is the original #491 behaviour, now gated on letterboxCorrected=false.
+    const result = computeBridgeInsets({ top: 47, bottom: 34, left: 0, right: 0 }, true, false);
+    expect(result.bottom).toBe(0);
+    expect(result.top).toBe(47);
+  });
+
+  // -------------------------------------------------------------------------
+  // Healthy path (not letterbox) — unchanged regardless of corrected flag
+  // -------------------------------------------------------------------------
 
   it('healthy (not letterbox) → bottom passed through unchanged', () => {
     const result = computeBridgeInsets(raw, false);
@@ -240,22 +297,8 @@ describe('computeBridgeInsets', () => {
     expect(result.top).toBe(47);
   });
 
-  it('letterbox with raw bottom 0 → still 0 (idempotent)', () => {
-    const result = computeBridgeInsets({ ...raw, bottom: 0 }, true);
-    expect(result.bottom).toBe(0);
-  });
-
   it('healthy with raw bottom 0 (SE-class) → 0 passed through', () => {
     const result = computeBridgeInsets({ ...raw, bottom: 0 }, false);
     expect(result.bottom).toBe(0);
-  });
-
-  it('실측 오늘 letterbox(top 47 / phantom bottom 34) → bridge bottom 0', () => {
-    // iPhone iOS 18.7, 2026-06-11: letterbox window reports phantom bottom 34.
-    // The app must receive bottom 0 so it does not add 34px padding for a
-    // home indicator area it cannot reach.
-    const result = computeBridgeInsets({ top: 47, bottom: 34, left: 0, right: 0 }, true);
-    expect(result.bottom).toBe(0);
-    expect(result.top).toBe(47);
   });
 });
