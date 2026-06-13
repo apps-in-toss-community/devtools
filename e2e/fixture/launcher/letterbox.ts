@@ -11,9 +11,8 @@
 //   window.innerHeight ≈ screen.height − statusBar   (shortfall)
 //   display-mode: standalone
 //
-// Geometry model (CORRECTED 2026-06-13 → FURTHER CORRECTED 2026-06-13 v10/v11,
-// #563 — supersedes the earlier "px expansion does NOT paint into the band" claim
-// made in #561):
+// Geometry model (CORRECTED 2026-06-13, #561 — supersedes the earlier
+// "missing strip is OUTSIDE the window, OS-painted" theory):
 //
 //   The window is the FULL screen height — real-device measurement of an
 //   attached letterboxed iframe reported outerHeight 844 === screen.height,
@@ -27,37 +26,17 @@
 //   reported true. The bottom ~47pt band receives only the canvas background
 //   (black) — no content paints there and no touch lands there.
 //
-//   UPDATED (#563, v10 isolation experiment, 2026-06-13):
-//   (a) A `position:fixed` container set to screen.height px does NOT recalculate
-//       the WebKit viewport — a sentinel inside such a box still reports
-//       isIntersecting:false at y>797. Fixed elements do not contribute to
-//       document scroll overflow, so the viewport stays clipped at ≈797.
-//       This is why #527 (fixed container + iframe magic-number stretch) failed.
-//
-//   (b) However, "the px expansion cannot expand the viewport" was only
-//       half-correct. v10 also proved the positive: setting height on the
-//       DOCUMENT-FLOW ROOT — document.documentElement + document.body — DOES
-//       recalculate the WebKit top-level viewport to screen.height. The
-//       mis-size is a default, not a ceiling.
-//
-//   CONFIRMED (#563, v11 cross-origin propagation, 2026-06-13):
-//   When the launcher (parent document) sets document.documentElement.style.height
-//   + document.body.style.height to `${screen.height}px`, the cross-origin child
-//   iframe's own viewport also expands to 844 — window.innerHeight in the framed
-//   dev-app reads screen.height without any change to the dev-app's code.
-//
-//   CORRECT MECHANISM (#563):
-//   Imperative assignment:
-//     document.documentElement.style.height = `${screen.height}px`
-//     document.body.style.height = `${screen.height}px`
-//   …recalculates the WebKit top-level viewport and propagates through
-//   cross-origin iframes. `position:fixed` height or iframe magic-number sizing
-//   cannot substitute for this.
-//
-//   VIEWPORT RECALC VERDICT (#563):
-//   Use `innerHeight === screen.height` (NOT `clientHeight`) to confirm the
-//   correction held — after document-flow expansion clientHeight can still report
-//   the old value, but innerHeight reflects the recalculated viewport.
+//   Consequence: the #527 px expansion (forcing the root container to
+//   screen.height px) does NOT paint into that band — a fixed box does not
+//   contribute to document scroll overflow, so the band stays unreachable. Worse,
+//   stretching the iframe to screen.height − envTop − bar (743) while the real
+//   viewport is 797 CLIPS the mini-app's own bottom ~47px of content (its bottom
+//   buttons silently vanish). The pre-#527 formula (calc(100% − env(top) − bar),
+//   100% resolving against the real ≈797 ICB → iframe ≈696) leaves the dead band
+//   visible but loses no content. The earlier "Web Inspector height override
+//   paints into the band (2026-06-12)" observation is now believed to be an
+//   artifact of the Inspector attach itself altering viewport state — it is
+//   irreconcilable with today's IO-ladder measurement.
 //
 //   #561 response: the px correction is no longer applied on faith. Launcher.tsx
 //   applies it, then VERIFIES it at runtime (verifyLetterboxCorrection() below —
@@ -65,13 +44,6 @@
 //   clipped, the layout falls back to the honest calc()/100% formula, bridge
 //   insets are re-sent with letterboxCorrected=false (bottom 0), and the toast
 //   states the limit honestly instead of claiming a fix.
-//
-//   #563 mechanism change: Launcher.tsx now applies the correction by setting
-//   document.documentElement.style.height + document.body.style.height to
-//   `${screen.height}px` in a useEffect (not inline on the position:fixed
-//   container). The fixed container's inline height is removed. The iframe uses
-//   honest calc()/100% in all cases — the document-flow expansion propagates
-//   through so the iframe's viewport matches screen.height when correction holds.
 //
 // Discriminator (#479 rule, restored in #491): the canonical letterbox
 // signature under black-translucent is:

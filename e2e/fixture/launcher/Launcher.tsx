@@ -1049,40 +1049,6 @@ export function Launcher(): React.JSX.Element {
     return cancel;
   }, [screen, applyPxCorrection, letterboxVerified]);
 
-  // #563 document-flow viewport expansion: set document.documentElement +
-  // document.body height to screen.height px when applyPxCorrection is true.
-  // This recalculates the WebKit top-level viewport (v9 measurement confirmed
-  // stable at 844; v10 isolated that position:fixed cannot do this; v11 proved
-  // cross-origin iframes follow). When correction is dropped (clipped/timeout)
-  // or the letterbox is not detected, clear both heights so the layout reverts
-  // to the browser default.
-  //
-  // resize + orientationchange listeners re-apply after geometry changes:
-  // rotation can both heal the letterbox (shortfall→0) and re-trigger it, so
-  // we must recompute on each event rather than relying on a one-shot set.
-  // Cleanup clears on unmount regardless of applyPxCorrection state.
-  useEffect(() => {
-    const applyDocumentFlowHeight = () => {
-      if (applyPxCorrection) {
-        const h = `${window.screen.height}px`;
-        document.documentElement.style.height = h;
-        document.body.style.height = h;
-      } else {
-        document.documentElement.style.height = '';
-        document.body.style.height = '';
-      }
-    };
-    applyDocumentFlowHeight();
-    window.addEventListener('resize', applyDocumentFlowHeight);
-    window.addEventListener('orientationchange', applyDocumentFlowHeight);
-    return () => {
-      window.removeEventListener('resize', applyDocumentFlowHeight);
-      window.removeEventListener('orientationchange', applyDocumentFlowHeight);
-      document.documentElement.style.height = '';
-      document.body.style.height = '';
-    };
-  }, [applyPxCorrection]);
-
   // Forward the launcher's real env() insets to the framed dev app (#484,
   // slice 2). The launcher is the top-level document so its env() reading is the
   // ground truth; the framed page's mock would otherwise report a synthetic
@@ -1208,18 +1174,22 @@ export function Launcher(): React.JSX.Element {
   // Render
   // ---------------------------------------------------------------------------
 
-  // #563 (document-flow viewport expansion): when letterbox is detected the ICB
-  // is mis-reported as screen.height − statusBar (e.g. 797 vs 844). The #563 px
-  // correction sets document.documentElement + document.body height to
-  // screen.height px (document-flow root, NOT a fixed container), which
-  // recalculates the WebKit top-level viewport and propagates through
-  // cross-origin iframes (v9/v10/v11 measurements confirmed, see letterbox.ts).
-  // The #561 bottom sentinel still verifies the correction; when it is `clipped`
-  // (or times out) `applyPxCorrection` flips false, the document-flow heights
-  // are cleared (useEffect cleanup), and the layout reverts to honest
-  // calc()/100% — no mini-app content is clipped. `letterboxDetected` /
+  // #527 + #561 (verify-then-correct): when letterbox is detected the ICB is
+  // mis-reported as screen.height − statusBar (e.g. 797 vs 844). The #527 px
+  // override (root container = screen.height px) is applied OPTIMISTICALLY while
+  // verification is pending, but it does NOT actually paint into the bottom band
+  // on real hardware — the WebKit top-level viewport clips at ≈797, proven by an
+  // IntersectionObserver sentinel ladder (2026-06-13, see letterbox.ts header).
+  // The bottom sentinel effect above settles `letterboxVerified`; when it is
+  // `clipped` (or times out) `applyPxCorrection` flips false and the layout
+  // falls back to the honest calc()/100% formula, which leaves the dead band
+  // visible but never clips the mini-app's own content. `letterboxDetected` /
   // `letterboxShortfallPx` / `applyPxCorrection` / `letterboxCorrected` are
   // computed once near the verdict (above) and reused here.
+  //
+  // safeAreaTop is only used for iframe height calculation; metrics is non-null
+  // whenever letterboxDetected is true (letterbox is derived from metrics).
+  const envTop = letterboxDetected ? (metrics?.safeAreaTop ?? 0) : 0;
 
   return (
     <div
@@ -1232,11 +1202,16 @@ export function Launcher(): React.JSX.Element {
         // #444 WebKit clamp for the case where the ICB resolves wider than the
         // visual viewport.
         //
-        // #563 letterbox correction: the px expansion is now applied at the
-        // document-flow root (html+body height via useEffect), not on this
-        // fixed container. This container intentionally has no inline height.
+        // #527 + #561 letterbox correction: when the ICB is mis-reported the px
+        // override (height = screen.height) is applied while verification is
+        // pending/visible (applyPxCorrection). Once the bottom sentinel proves
+        // the band is clipped (or times out), applyPxCorrection flips false and
+        // the box reverts to inset:0 alone — tracking the real ≈797 ICB so the
+        // honest iframe formula below loses no mini-app content. Resize/
+        // orientationchange re-evaluates the verdict and re-arms verification.
         position: 'fixed',
         inset: 0,
+        ...(applyPxCorrection ? { height: `${window.screen.height}px` } : {}),
         maxWidth: '100dvw',
         overflowX: 'hidden',
         overflowY: 'auto',
@@ -1480,15 +1455,21 @@ export function Launcher(): React.JSX.Element {
           // game). 100% resolves against the fixed-positioning ICB (#469 — not
           // 100dvh, which mis-resolves on iOS standalone cold start).
           //
-          // #563 letterbox correction: the px expansion is now applied at the
-          // document-flow root (html+body height in a useEffect), not on this
-          // container. When the correction holds the ICB itself expands to
-          // screen.height, so 100%/calc automatically yield the right values
-          // without magic-number px arithmetic — and the cross-origin iframe's
-          // own viewport follows (v11 propagation confirmed). No separate
-          // applyPxCorrection branches needed here.
-          height:
-            navBarType === 'partner'
+          // #527 + #561 letterbox correction: while the px override is applied
+          // (applyPxCorrection — pending/visible) the root container is set to
+          // screen.height px, but the iframe's 100%/calc expressions resolve
+          // against the ICB, not the corrected container — so use explicit px
+          // values derived from screen.height:
+          //   partner: screen.height − env(top) − 54px bar
+          //   game:    screen.height (full-bleed)
+          // Once the sentinel proves the band is clipped (applyPxCorrection
+          // false), revert to the honest calc()/100% formula — 100% resolving
+          // against the real ≈797 ICB — so no mini-app content is clipped.
+          height: applyPxCorrection
+            ? navBarType === 'partner'
+              ? `${window.screen.height - envTop - AIT_NAV_BAR_HEIGHT_PARTNER}px`
+              : `${window.screen.height}px`
+            : navBarType === 'partner'
               ? `calc(100% - env(safe-area-inset-top) - ${AIT_NAV_BAR_HEIGHT_PARTNER}px)`
               : '100%',
           background: '#fff',
@@ -1583,11 +1564,10 @@ export function Launcher(): React.JSX.Element {
             position: 'fixed',
             left: 'max(12px, env(safe-area-inset-left))',
             right: 'max(12px, env(safe-area-inset-right))',
-            // #563: while the px correction is applied (applyPxCorrection) the
-            // document-flow expansion recalculates the viewport to screen.height
-            // so the container reaches the real screen bottom — keep a conservative
+            // #527 + #561: while the px correction is applied (applyPxCorrection)
+            // the container reaches the real screen bottom — keep a conservative
             // flat 12px. Once the correction is dropped (clipped/timeout) the
-            // viewport is back to the real ICB, so pad the real home indicator
+            // container is back to the real ICB, so pad the real home indicator
             // like a healthy edge-to-edge window.
             bottom: applyPxCorrection ? '12px' : 'max(12px, env(safe-area-inset-bottom))',
             zIndex: 30,
@@ -1599,13 +1579,16 @@ export function Launcher(): React.JSX.Element {
           }}
         >
           {/*
-          Letterbox diagnosis label (#469, #561, #563): when the runtime geometry
-          matches the iOS standalone letterbox signature (standalone + height
-          shortfall — see letterbox.ts), name the condition in-page. The #561
-          bottom sentinel verifies whether the document-flow expansion (#563)
-          actually recalculated the viewport; the label reflects the verdict:
-          while pending/visible it reports the correction; once the sentinel proves
-          the band is clipped it states the limit honestly.
+          Letterbox diagnosis label (#469, re-grounded #561): when the runtime
+          geometry matches the iOS standalone letterbox signature (standalone +
+          height shortfall — see letterbox.ts), name the condition in-page.
+          NOTE: the earlier "screen.height px correction fills the band" claim was
+          refuted on real hardware (2026-06-13 IO sentinel ladder, #561) — the
+          WebKit top-level viewport clips at ≈797 and the px expansion does not
+          paint into the band. The label now reflects the verification verdict:
+          while pending/visible it reports the correction; once the sentinel
+          proves the band is clipped it states the limit honestly and points to
+          the known manual recovery (rotate landscape → portrait).
         */}
           {letterboxDetected && (
             <div
