@@ -545,20 +545,24 @@ describe('latch oscillation guard (#563 regression — the violent jitter)', () 
   // 844↔797 metric sequence that the self-induced resize produced. Under the
   // OLD live-derived logic this array would oscillate true/false/true/false…;
   // under the latch it is monotone true after the first detection.
+  // Pure model of the Launcher's correction lifecycle (idle→applying→held),
+  // run sample-by-sample so the test can assert the verdict the FORCE decision
+  // reads does NOT flip-flop across the alternating 844↔797 sequence. The phase
+  // transitions are split across `let next` so TS does not narrow `phase` to a
+  // literal that would make a later `=== 'applying'` look unreachable.
   function driveLatch(seq: ViewportMetrics[]): boolean[] {
-    let phase: 'idle' | 'applying' | 'held' | 'clipped' = 'idle';
     let armedEpoch: string | null = null;
+    let correctionActive = false;
     const out: boolean[] = [];
     for (const m of seq) {
       const key = letterboxEpochKey(m);
       if (key !== null && armedEpoch !== key) {
         armedEpoch = key;
-        phase = 'idle';
+        correctionActive = false; // new epoch re-arms detection (phase→idle)
       }
-      if (phase === 'idle' && detectLetterbox(m).detected) phase = 'applying';
-      // (sentinel 'visible' lands later) — model it settling to held once applying:
-      if (phase === 'applying') phase = 'held';
-      const correctionActive = phase === 'applying' || phase === 'held';
+      // idle→applying→held collapses to "a real letterbox in this epoch latches
+      // the correction on, and shortfall→0 never releases it" — the invariant.
+      if (!correctionActive && detectLetterbox(m).detected) correctionActive = true;
       out.push(isLetterboxResolved(m, correctionActive)); // what applyPxCorrection reads
     }
     return out;
