@@ -203,6 +203,48 @@ export function detectLetterbox(metrics: ViewportMetrics): LetterboxVerdict {
   return { detected, shortfallPx };
 }
 
+/**
+ * Stable identity of the current GENUINE geometry epoch — screen dimensions +
+ * orientation. Deliberately EXCLUDES innerHeight / visualViewportHeight so the
+ * html/body height force (which only moves innerHeight) does NOT change the key:
+ * a held correction stays within one epoch and is never released by its own
+ * shortfall→0 side effect. Only a true rotation (portrait↔landscape flips the
+ * orientation char) or a real screen-dimension change advances the epoch and
+ * re-arms detection. Returns null for degenerate metrics (screenHeight ≤ 0,
+ * observed transiently on iOS background/foreground) so a garbage snapshot can
+ * never forge an epoch transition that clears a valid force.
+ */
+export function letterboxEpochKey(m: ViewportMetrics): string | null {
+  if (m.screenWidth <= 0 || m.screenHeight <= 0) return null;
+  const portrait = m.innerWidth <= m.screenWidth;
+  return `${m.screenWidth}x${m.screenHeight}|${portrait ? 'P' : 'L'}`;
+}
+
+/**
+ * Correction-aware letterbox verdict. When a correction is being held and the
+ * viewport now reads full height (shortfall ≈ 0), report detected=true ("the
+ * correction is HOLDING") rather than false — so a successful correction never
+ * reads as "never was letterboxed" and the force is never torn down by its own
+ * success. When correctionActive is false this is byte-identical to
+ * detectLetterbox(m).detected (the honest signature), so when the real cause is
+ * gone (epoch change clears correctionActive) it honestly returns false.
+ *
+ * The "holding" branch reuses detectLetterbox's exact guards (standalone +
+ * portrait + safeAreaTop > 0) so there is no boundary off-by-one and partial
+ * expansions (797→820, shortfall 24) still satisfy the raw branch above
+ * unchanged.
+ */
+export function isLetterboxResolved(m: ViewportMetrics, correctionActive: boolean): boolean {
+  if (detectLetterbox(m).detected) return true;
+  if (!correctionActive) return false;
+  // Correction in force: treat the geometry as if the height matched screen
+  // height and re-run the SAME guards (standalone + portrait + safeAreaTop > 0).
+  // Reusing detectLetterbox's guard set keeps the threshold contract
+  // single-sourced.
+  const portrait = m.innerWidth <= m.screenWidth;
+  return m.standalone && portrait && m.safeAreaTop > 0;
+}
+
 // ---------------------------------------------------------------------------
 // Runtime self-verification of the #527 px correction (#561)
 // ---------------------------------------------------------------------------

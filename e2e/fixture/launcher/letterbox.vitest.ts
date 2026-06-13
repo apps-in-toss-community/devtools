@@ -11,8 +11,10 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   computeBridgeInsets,
   detectLetterbox,
+  isLetterboxResolved,
   LETTERBOX_MIN_SHORTFALL_PX,
   type LetterboxVerification,
+  letterboxEpochKey,
   type SentinelObserver,
   type VerificationTimers,
   type ViewportMetrics,
@@ -471,5 +473,113 @@ describe('verifyLetterboxCorrection', () => {
 
     expect(onVerified).toHaveBeenCalledWith('clipped');
     expect(disconnects).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// letterboxEpochKey + isLetterboxResolved — the geometry-epoch latch (#566).
+// These two pure functions encode the anti-oscillation invariant that fixes the
+// #563 violent jitter: the epoch key is invariant under the html/body force, and
+// the resolved verdict stays "detected" while a correction holds.
+// ---------------------------------------------------------------------------
+
+describe('letterboxEpochKey', () => {
+  it('the height force (797→844) does NOT change the epoch key', () => {
+    const pre = base({ innerHeight: 797, visualViewportHeight: 797 }); // letterboxed
+    const post = base({ innerHeight: 844, visualViewportHeight: 844 }); // force landed
+    expect(letterboxEpochKey(pre)).toBe(letterboxEpochKey(post)); // SAME epoch — anti-oscillation invariant
+    expect(letterboxEpochKey(post)).toBe('390x844|P');
+  });
+
+  it('real rotation flips the orientation char (P→L)', () => {
+    const portrait = base({ innerWidth: 390, innerHeight: 797 });
+    const landscape = base({
+      innerWidth: 844,
+      innerHeight: 390,
+      screenWidth: 390,
+      screenHeight: 844,
+    });
+    expect(letterboxEpochKey(portrait)).toBe('390x844|P');
+    expect(letterboxEpochKey(landscape)).toBe('390x844|L');
+    expect(letterboxEpochKey(portrait)).not.toBe(letterboxEpochKey(landscape));
+  });
+
+  it('degenerate metrics (screenHeight 0, iOS background) → null (cannot forge an epoch change)', () => {
+    expect(letterboxEpochKey(base({ screenHeight: 0, innerHeight: 0 }))).toBeNull();
+    expect(letterboxEpochKey(base({ screenWidth: 0 }))).toBeNull();
+  });
+});
+
+describe('isLetterboxResolved (correction-aware)', () => {
+  it('correctionActive=false is byte-identical to detectLetterbox', () => {
+    const lb = base({ innerHeight: 797, visualViewportHeight: 797 });
+    const healthy = base();
+    expect(isLetterboxResolved(lb, false)).toBe(detectLetterbox(lb).detected);
+    expect(isLetterboxResolved(healthy, false)).toBe(detectLetterbox(healthy).detected);
+  });
+
+  it('THE FIX: shortfall→0 while a correction is HELD still reads detected (force not torn down)', () => {
+    // After the force lands, innerHeight===screenHeight so detectLetterbox=false.
+    const healed = base({ innerHeight: 844, visualViewportHeight: 844, safeAreaTop: 47 });
+    expect(detectLetterbox(healed).detected).toBe(false); // raw predicate erases its own signal
+    expect(isLetterboxResolved(healed, true)).toBe(true); // but the latch sees "holding"
+  });
+
+  it('genuine heal (landscape, correction cleared) honestly returns false', () => {
+    const landscape = base({ innerWidth: 844, innerHeight: 390, safeAreaTop: 0 });
+    expect(isLetterboxResolved(landscape, true)).toBe(false); // not portrait → not holding
+    expect(isLetterboxResolved(landscape, false)).toBe(false);
+  });
+
+  it('partial expansion (797→820, shortfall 24) still resolved via the RAW branch (no boundary off-by-one)', () => {
+    const partial = base({ innerHeight: 820, visualViewportHeight: 820, safeAreaTop: 47 });
+    expect(detectLetterbox(partial).shortfallPx).toBe(24);
+    expect(detectLetterbox(partial).detected).toBe(true); // 24 >= 24
+    expect(isLetterboxResolved(partial, true)).toBe(true);
+  });
+});
+
+describe('latch oscillation guard (#563 regression — the violent jitter)', () => {
+  // Simulate the reducer the Launcher drives, in pure form, to assert the
+  // verdict the FORCE decision reads does NOT flip-flop across the alternating
+  // 844↔797 metric sequence that the self-induced resize produced. Under the
+  // OLD live-derived logic this array would oscillate true/false/true/false…;
+  // under the latch it is monotone true after the first detection.
+  function driveLatch(seq: ViewportMetrics[]): boolean[] {
+    let phase: 'idle' | 'applying' | 'held' | 'clipped' = 'idle';
+    let armedEpoch: string | null = null;
+    const out: boolean[] = [];
+    for (const m of seq) {
+      const key = letterboxEpochKey(m);
+      if (key !== null && armedEpoch !== key) {
+        armedEpoch = key;
+        phase = 'idle';
+      }
+      if (phase === 'idle' && detectLetterbox(m).detected) phase = 'applying';
+      // (sentinel 'visible' lands later) — model it settling to held once applying:
+      if (phase === 'applying') phase = 'held';
+      const correctionActive = phase === 'applying' || phase === 'held';
+      out.push(isLetterboxResolved(m, correctionActive)); // what applyPxCorrection reads
+    }
+    return out;
+  }
+
+  it('alternating 797/844/797/844 within one epoch latches and does NOT oscillate', () => {
+    const lb = base({ innerHeight: 797, visualViewportHeight: 797 });
+    const forced = base({ innerHeight: 844, visualViewportHeight: 844 });
+    // The exact loop signature: detect 797 → force → 844 → (old code) un-detect → 797 → …
+    const verdicts = driveLatch([lb, forced, lb, forced, forced, lb]);
+    // First sample arms; every subsequent sample stays held — NO false in the tail.
+    expect(verdicts).toEqual([true, true, true, true, true, true]);
+    // Explicit anti-flip assertion: no two consecutive verdicts differ after index 0.
+    for (let i = 1; i < verdicts.length; i++) expect(verdicts[i]).toBe(true);
+  });
+
+  it('a genuine rotation to landscape DOES release the latch (re-arm works)', () => {
+    const portrait = base({ innerHeight: 797, visualViewportHeight: 797 });
+    const landscape = base({ innerWidth: 844, innerHeight: 390, safeAreaTop: 0 });
+    const verdicts = driveLatch([portrait, landscape]);
+    expect(verdicts[0]).toBe(true); // letterboxed portrait → held
+    expect(verdicts[1]).toBe(false); // rotation = new epoch → reset → honest false
   });
 });
