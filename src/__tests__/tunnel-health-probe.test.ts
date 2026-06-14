@@ -17,6 +17,10 @@ function makeFakeTunnel(url: string): QuickTunnel {
   return {
     url,
     wssUrl: url.replace(/^https/, 'wss'),
+    // FIX 1: onUnexpectedExit is required by the updated QuickTunnel interface.
+    // In these tests we don't trigger it via child-exit events, so a no-op stub
+    // satisfies the contract without altering existing test behaviour.
+    onUnexpectedExit: vi.fn(),
     stop: vi.fn(),
   };
 }

@@ -38,6 +38,21 @@ export interface QuickTunnel {
   url: string;
   /** Same host as `wss://` — the relay endpoint the phone attaches to. */
   wssUrl: string;
+  /**
+   * PID of the cloudflared child process. Present once the tunnel is up.
+   * Safe to surface in diagnostics (plain integer — not a secret).
+   */
+  childPid?: number;
+  /**
+   * Register a callback to be invoked when the cloudflared child exits
+   * unexpectedly (i.e. NOT due to our own `stop()` call). The caller
+   * (`startTunnelHealthProbe`) uses this to immediately trigger reissue
+   * without waiting for the next probe interval.
+   *
+   * Only one callback can be registered at a time; calling this again
+   * replaces the previous one.
+   */
+  onUnexpectedExit(cb: (code: number | null) => void): void;
   stop(): void;
 }
 
@@ -52,6 +67,11 @@ async function ensureCloudflaredBin(): Promise<void> {
 /**
  * Opens a cloudflared quick tunnel to the local relay port and resolves once
  * the public URL is assigned.
+ *
+ * FIX 1 (issue #571): after URL resolution the returned `QuickTunnel` object
+ * watches the cloudflared child process for unexpected exits and calls any
+ * registered `onUnexpectedExit` callback so the health probe can immediately
+ * trigger reissue instead of waiting for the next poll interval.
  */
 export async function startQuickTunnel(localPort: number): Promise<QuickTunnel> {
   await ensureCloudflaredBin();
@@ -81,10 +101,27 @@ export async function startQuickTunnel(localPort: number): Promise<QuickTunnel> 
     tunnel.once('exit', onExit);
   });
 
+  // FIX 1: watch for unexpected child death AFTER URL is resolved.
+  // `intentionalStop` guards against triggering a reissue when we called stop() ourselves
+  // (cloudflared exits on SIGINT from tunnel.stop(), which would otherwise look like a crash).
+  let intentionalStop = false;
+  let unexpectedExitCb: ((code: number | null) => void) | null = null;
+
+  tunnel.once('exit', (code: number | null) => {
+    if (!intentionalStop && unexpectedExitCb !== null) {
+      unexpectedExitCb(code);
+    }
+  });
+
   return {
     url,
     wssUrl: url.replace(/^https/, 'wss'),
-    stop: () => {
+    childPid: (tunnel.process as { pid?: number } | null)?.pid,
+    onUnexpectedExit(cb: (code: number | null) => void): void {
+      unexpectedExitCb = cb;
+    },
+    stop(): void {
+      intentionalStop = true;
       tunnel.stop();
     },
   };
@@ -278,6 +315,10 @@ export interface TunnelHealthProbeOptions {
  * times). On success the caller is notified via `onReissue`; on permanent
  * failure via `onPermanentDrop`.
  *
+ * FIX 1 (issue #571): the probe also subscribes to each tunnel's
+ * `onUnexpectedExit` callback to detect child death *immediately* instead of
+ * waiting for the next probe interval (which could be 60 s away).
+ *
  * @returns `stop` — call during server shutdown to clear the probe interval.
  */
 export function startTunnelHealthProbe(
@@ -299,6 +340,71 @@ export function startTunnelHealthProbe(
   let consecutiveFailures = 0;
   let reissueAttempts = 0;
   let stopped = false;
+
+  // FIX 1: shared reissue-or-drop logic — called both from the periodic
+  // interval (after failuresBeforeReissue consecutive probe misses) and from
+  // the child-exit handler (immediately on unexpected process death).
+  const doReissueOrDrop = async (): Promise<void> => {
+    if (stopped) return;
+
+    reissueAttempts += 1;
+    if (reissueAttempts > MAX_REISSUE_ATTEMPTS) {
+      // Already exhausted — do not log again.
+      return;
+    }
+
+    log(
+      `[ait-debug] tunnel drop detected — reissuing (attempt ${reissueAttempts}/${MAX_REISSUE_ATTEMPTS})\n`,
+    );
+
+    try {
+      const newTunnel = await spawnTunnel(localPort);
+      // Stop the old tunnel process to free system resources.
+      try {
+        currentTunnel.stop();
+      } catch {
+        // Ignore stop errors — the process may already be dead.
+      }
+      currentTunnel = newTunnel;
+      consecutiveFailures = 0;
+      // FIX 1: arm child-exit watcher on the newly spawned tunnel too.
+      armChildExitWatch(newTunnel);
+      log(`[ait-debug] tunnel reissued — new relay: ${newTunnel.wssUrl}\n`);
+      onReissue(newTunnel);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(`[ait-debug] tunnel reissue attempt ${reissueAttempts} failed: ${message}\n`);
+
+      if (reissueAttempts >= MAX_REISSUE_ATTEMPTS) {
+        clearInterval(handle);
+        stopped = true;
+        const droppedAt = new Date().toISOString();
+        log(
+          `[ait-debug] tunnel permanently dropped after ${MAX_REISSUE_ATTEMPTS} reissue attempts — ` +
+            'restart the debug server to continue (npx @ait-co/devtools devtools-mcp).\n',
+        );
+        onPermanentDrop(droppedAt);
+      }
+    }
+  };
+
+  // FIX 1: register exit watcher on a QuickTunnel so unexpected child death
+  // immediately kicks off reissue without waiting for the probe interval.
+  const armChildExitWatch = (t: QuickTunnel): void => {
+    t.onUnexpectedExit((code) => {
+      if (stopped) return;
+      log(
+        `[ait-debug] cloudflared child exited unexpectedly (code=${code}) — triggering immediate reissue\n`,
+      );
+      // Set failures to threshold so the next interval probe also sees a clean
+      // state; the actual reissue happens immediately below.
+      consecutiveFailures = failuresBeforeReissue;
+      void doReissueOrDrop();
+    });
+  };
+
+  // Arm the watcher on the initial tunnel.
+  armChildExitWatch(initialTunnel);
 
   const handle = setInterval(() => {
     void (async () => {
@@ -328,43 +434,7 @@ export function startTunnelHealthProbe(
       }
 
       // Threshold reached — attempt reissue.
-      reissueAttempts += 1;
-      if (reissueAttempts > MAX_REISSUE_ATTEMPTS) {
-        // Already exhausted — do not log again.
-        return;
-      }
-
-      log(
-        `[ait-debug] tunnel drop detected — reissuing (attempt ${reissueAttempts}/${MAX_REISSUE_ATTEMPTS})\n`,
-      );
-
-      try {
-        const newTunnel = await spawnTunnel(localPort);
-        // Stop the old tunnel process to free system resources.
-        try {
-          currentTunnel.stop();
-        } catch {
-          // Ignore stop errors — the process may already be dead.
-        }
-        currentTunnel = newTunnel;
-        consecutiveFailures = 0;
-        log(`[ait-debug] tunnel reissued — new relay: ${newTunnel.wssUrl}\n`);
-        onReissue(newTunnel);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log(`[ait-debug] tunnel reissue attempt ${reissueAttempts} failed: ${message}\n`);
-
-        if (reissueAttempts >= MAX_REISSUE_ATTEMPTS) {
-          clearInterval(handle);
-          stopped = true;
-          const droppedAt = new Date().toISOString();
-          log(
-            `[ait-debug] tunnel permanently dropped after ${MAX_REISSUE_ATTEMPTS} reissue attempts — ` +
-              'restart the debug server to continue (npx @ait-co/devtools devtools-mcp).\n',
-          );
-          onPermanentDrop(droppedAt);
-        }
-      }
+      await doReissueOrDrop();
     })();
   }, probeIntervalMs);
 

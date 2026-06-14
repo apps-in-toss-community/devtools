@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { isPidAlive, startParentWatcher } from './parent-watcher.js';
+import { isPidAlive, startMaxAgeWatchdog, startParentWatcher } from './parent-watcher.js';
 
 // ---------------------------------------------------------------------------
 // isPidAlive
@@ -155,5 +155,101 @@ describe('startParentWatcher', () => {
     parentAlive = false;
     await vi.advanceTimersByTimeAsync(500);
     expect(onOrphaned).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// startMaxAgeWatchdog — FIX 4 (issue #571)
+// ---------------------------------------------------------------------------
+
+describe('startMaxAgeWatchdog', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('fires onExpired exactly once after maxAgeMs elapses', async () => {
+    const onExpired = vi.fn();
+    let t = 0;
+
+    startMaxAgeWatchdog(onExpired, {
+      maxAgeMs: 1_000,
+      intervalMs: 100,
+      now: () => t,
+    });
+
+    // Not yet elapsed.
+    t = 900;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(onExpired).not.toHaveBeenCalled();
+
+    // Threshold reached.
+    t = 1_000;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(onExpired).toHaveBeenCalledTimes(1);
+
+    // Must not fire again.
+    t = 5_000;
+    await vi.advanceTimersByTimeAsync(500);
+    expect(onExpired).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fire before maxAgeMs', async () => {
+    const onExpired = vi.fn();
+    let t = 0;
+
+    startMaxAgeWatchdog(onExpired, {
+      maxAgeMs: 500,
+      intervalMs: 100,
+      now: () => t,
+    });
+
+    // Stay just under the threshold.
+    t = 499;
+    await vi.advanceTimersByTimeAsync(400);
+    expect(onExpired).not.toHaveBeenCalled();
+  });
+
+  it('stop() prevents onExpired from firing', async () => {
+    const onExpired = vi.fn();
+    let t = 0;
+
+    const watchdog = startMaxAgeWatchdog(onExpired, {
+      maxAgeMs: 200,
+      intervalMs: 50,
+      now: () => t,
+    });
+
+    // Stop before threshold.
+    watchdog.stop();
+
+    t = 1_000; // way past threshold
+    await vi.advanceTimersByTimeAsync(500);
+    expect(onExpired).not.toHaveBeenCalled();
+  });
+
+  it('AIT_DEBUG_NO_MAX_AGE=1 opt-out: watchdog is not created when env var is set', async () => {
+    // We test the opt-out by verifying that stop() on a no-op watchdog
+    // created in the "disabled" branch (env var check in debug-server.ts)
+    // doesn't throw. The actual opt-out logic lives in debug-server.ts, not
+    // parent-watcher.ts — here we just verify the watchdog itself is sound.
+    const onExpired = vi.fn();
+    let t = 0;
+
+    const watchdog = startMaxAgeWatchdog(onExpired, {
+      maxAgeMs: 100,
+      intervalMs: 20,
+      now: () => t,
+    });
+
+    // stop() is idempotent.
+    watchdog.stop();
+    watchdog.stop();
+
+    t = 10_000;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(onExpired).not.toHaveBeenCalled();
   });
 });

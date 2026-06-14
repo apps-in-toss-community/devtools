@@ -367,3 +367,128 @@ describe('LockHandle.release', () => {
     expect(() => handle.release()).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FIX 3 (issue #571): tunnelChildPid stale detection
+// ---------------------------------------------------------------------------
+
+describe('acquireLock — FIX 3: tunnel child PID zombie detection', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    ({ dir } = setupTmpLockDir());
+  });
+
+  afterEach(() => {
+    teardownTmpLockDir(dir);
+  });
+
+  it('reclaims the lock when holder PID is alive but tunnelChildPid is dead', () => {
+    const lockPath = lockFilePath();
+    const dead = deadPid();
+
+    // Simulate a zombie daemon: Node process PID is our own (alive) but
+    // the cloudflared child has already died.
+    writeLockFile(lockPath, {
+      pid: process.pid, // alive
+      wssUrl: null,
+      startedAt: new Date().toISOString(),
+      tunnelChildPid: dead, // dead
+    });
+
+    const stderrLines: string[] = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      stderrLines.push(String(chunk));
+      return true;
+    });
+
+    let handle: ReturnType<typeof acquireLock> | undefined;
+    try {
+      // Should NOT throw — zombie detection reclaims the lock.
+      expect(() => {
+        handle = acquireLock();
+      }).not.toThrow();
+    } finally {
+      spy.mockRestore();
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
+      expect(raw.pid).toBe(process.pid);
+      // After takeover, tunnelChildPid should be absent (fresh lock).
+      expect(raw.tunnelChildPid).toBeUndefined();
+    } finally {
+      handle?.release();
+    }
+
+    // Verify the stale-lock message was logged to stderr.
+    const combined = stderrLines.join('');
+    expect(combined).toContain('tunnel child');
+    expect(combined).toContain('dead');
+  });
+
+  it('still throws ServerLockConflictError when holder PID and tunnelChildPid are both alive', () => {
+    const lockPath = lockFilePath();
+
+    writeLockFile(lockPath, {
+      pid: process.pid, // alive
+      wssUrl: null,
+      startedAt: new Date().toISOString(),
+      tunnelChildPid: process.pid, // also alive (using own PID as proxy)
+    });
+
+    expect(() => acquireLock()).toThrow(ServerLockConflictError);
+  });
+
+  it('is backward-compatible with old lock files that lack tunnelChildPid', () => {
+    const lockPath = lockFilePath();
+    const dead = deadPid();
+
+    // Old-format lock file (no tunnelChildPid field).
+    writeLockFile(lockPath, {
+      pid: dead,
+      wssUrl: 'wss://old.trycloudflare.com',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      // tunnelChildPid absent — old format
+    });
+
+    // Should behave as before: dead PID → stale lock recovered.
+    const handle = acquireLock();
+    try {
+      const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
+      expect(raw.pid).toBe(process.pid);
+    } finally {
+      handle.release();
+    }
+  });
+});
+
+describe('LockHandle.updateTunnelChildPid — FIX 3', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    ({ dir } = setupTmpLockDir());
+  });
+
+  afterEach(() => {
+    teardownTmpLockDir(dir);
+  });
+
+  it('writes tunnelChildPid to the lock file', () => {
+    const handle = acquireLock();
+    try {
+      handle.updateTunnelChildPid(12345);
+      const lockPath = lockFilePath();
+      const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
+      expect(raw.tunnelChildPid).toBe(12345);
+    } finally {
+      handle.release();
+    }
+  });
+
+  it('is a no-op after release', () => {
+    const handle = acquireLock();
+    handle.release();
+    expect(() => handle.updateTunnelChildPid(99999)).not.toThrow();
+  });
+});

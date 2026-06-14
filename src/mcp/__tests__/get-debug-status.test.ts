@@ -559,6 +559,74 @@ describe('getDiagnostics helper', () => {
 
     expect(result.pages).toBeNull();
   });
+
+  // ---- FIX 2 (issue #571): live childPid probe overrides cached tunnel.up ----
+
+  it('FIX 2: reports tunnel.up=false when tunnelChildPid is dead even if cached up=true', async () => {
+    // Simulate the 2d17h zombie scenario: tunnel cache says up=true but the
+    // cloudflared child process has already exited.
+    const tunnelUpCached: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+
+    // Use a PID that is guaranteed dead.
+    const candidates = [999999, 999998, 999997];
+    let deadChildPid: number | undefined;
+    for (const pid of candidates) {
+      try {
+        process.kill(pid, 0);
+        // alive — try next
+      } catch {
+        deadChildPid = pid;
+        break;
+      }
+    }
+    if (deadChildPid === undefined) {
+      // Skip if we can't find a dead PID on this machine (extremely unlikely).
+      return;
+    }
+
+    const result = await getDiagnostics({
+      tunnel: tunnelUpCached, // cache says up=true
+      tunnelChildPid: deadChildPid, // but child is dead
+      env: 'relay-dev',
+      envReason: 'test',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+
+    // FIX 2 must override the cached value.
+    expect(result.tunnel.up).toBe(false);
+  });
+
+  it('FIX 2: preserves tunnel.up=true when tunnelChildPid is alive', async () => {
+    const tunnelUpCached: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+
+    const result = await getDiagnostics({
+      tunnel: tunnelUpCached,
+      tunnelChildPid: process.pid, // own process is alive
+      env: 'relay-dev',
+      envReason: 'test',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+
+    expect(result.tunnel.up).toBe(true);
+  });
+
+  it('FIX 2: omitting tunnelChildPid does not affect tunnel.up (backward compat)', async () => {
+    const tunnelUpCached: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+
+    const result = await getDiagnostics({
+      tunnel: tunnelUpCached,
+      // tunnelChildPid intentionally omitted
+      env: 'relay-dev',
+      envReason: 'test',
+      collector: new InMemoryDiagnosticsCollector(),
+      readLock: () => null,
+    });
+
+    // No override when pid unknown.
+    expect(result.tunnel.up).toBe(true);
+  });
 });
 
 // ---- MCP tool via createDebugServer -----------------------------------------

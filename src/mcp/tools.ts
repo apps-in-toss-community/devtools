@@ -2138,6 +2138,16 @@ export interface GetDiagnosticsInput {
    * Defaults to `() => isPidAlive(process.ppid)` in production.
    */
   checkParentAlive?: () => boolean;
+  /**
+   * PID of the cloudflared child process — obtained from `QuickTunnel.childPid`
+   * and written to the lock file via `LockHandle.updateTunnelChildPid`.
+   *
+   * FIX 2 (issue #571): when this PID is known, `getDiagnostics` performs a
+   * live `isPidAlive(tunnelChildPid)` check and overrides `tunnel.up = false`
+   * if the child is dead, preventing the cached `up: true` from being reported
+   * as truth when the cloudflared process has already exited.
+   */
+  tunnelChildPid?: number | null;
 }
 
 /**
@@ -2161,6 +2171,7 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     recentErrorsLimit = 10,
     getMcpVersion = readMcpSdkVersion,
     checkParentAlive = () => isPidAlive(process.ppid),
+    tunnelChildPid,
   } = input;
 
   const [mcpVersion, devtoolsVersion] = await Promise.all([
@@ -2174,8 +2185,22 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
     ? { pid: lockData.pid, startedAt: lockData.startedAt, wssUrl: lockData.wssUrl }
     : null;
 
+  // FIX 2 (issue #571): if the cloudflared child PID is known, perform a live
+  // probe to detect child death even when the cached `tunnel.up` is still true.
+  // This prevents the 2d17h zombie scenario where the process died but the cache
+  // was never invalidated.
+  let effectiveUp = tunnel.up;
+  if (
+    tunnel.up &&
+    typeof tunnelChildPid === 'number' &&
+    tunnelChildPid !== null &&
+    !isPidAlive(tunnelChildPid)
+  ) {
+    effectiveUp = false;
+  }
+
   const tunnelInfo: DiagnosticsTunnelInfo = {
-    up: tunnel.up,
+    up: effectiveUp,
     wssUrl: tunnel.wssUrl,
     pid: lockData?.pid ?? null,
     startedAt: lockData?.startedAt ?? null,

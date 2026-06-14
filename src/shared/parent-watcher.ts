@@ -101,3 +101,58 @@ export function startParentWatcher(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// startMaxAgeWatchdog — FIX 4: daemon lifetime cap
+// ---------------------------------------------------------------------------
+
+/**
+ * Starts a periodic watchdog that calls `onExpired` once after `maxAgeMs`
+ * milliseconds have elapsed since the watchdog was created.
+ *
+ * Motivation (issue #571): cloudflared quick-tunnel lifetimes are finite (a
+ * few hours). A daemon that has been running for days will have outlived its
+ * tunnel regardless of whether the tunnel process exited cleanly. This watchdog
+ * caps the daemon's maximum age and forces a fresh start so the tunnel is
+ * replaced before it silently expires.
+ *
+ * @param onExpired  - Called once when the maximum age is reached. The caller
+ *                     should call `shutdown()` then `process.exit(0)`.
+ * @param opts.maxAgeMs    - Maximum daemon lifetime in ms. Default 6 h.
+ * @param opts.intervalMs  - Check interval in ms. Default 60 000 (1 min).
+ * @param opts.now         - Time source (injectable for tests). Default `Date.now`.
+ *
+ * @returns `stop` — call during shutdown to clear the interval.
+ */
+export function startMaxAgeWatchdog(
+  onExpired: () => void,
+  opts: {
+    maxAgeMs?: number;
+    intervalMs?: number;
+    now?: () => number;
+  } = {},
+): { stop(): void } {
+  const {
+    maxAgeMs = 6 * 60 * 60 * 1_000, // 6 hours
+    intervalMs = 60_000,
+    now = () => Date.now(),
+  } = opts;
+
+  const startedAt = now();
+  let fired = false;
+
+  const handle = setInterval(() => {
+    if (fired) return;
+    if (now() - startedAt >= maxAgeMs) {
+      fired = true;
+      clearInterval(handle);
+      onExpired();
+    }
+  }, intervalMs);
+
+  return {
+    stop() {
+      clearInterval(handle);
+    },
+  };
+}

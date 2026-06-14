@@ -45,7 +45,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { startParentWatcher } from '../shared/parent-watcher.js';
+import { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watcher.js';
 import { ChiiAitSource } from './ait-chii-source.js';
 import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
@@ -118,7 +118,7 @@ import {
   RELAY_VERIFY_SKEW_STEPS,
 } from './totp.js';
 
-export { startParentWatcher } from '../shared/parent-watcher.js';
+export { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watcher.js';
 
 import {
   generateAttachToken,
@@ -1806,6 +1806,15 @@ export interface BootRelayFamilyOptions {
    * surface silent 401s.
    */
   onAuthReject?: (event: import('./chii-relay.js').RelayAuthRejectEvent) => void;
+  /**
+   * Called with the cloudflared child PID once the tunnel is up.
+   *
+   * FIX 3 (issue #571): callers wire this to
+   * `lockHandle.updateTunnelChildPid(pid)` so the lock file records the child
+   * PID and a subsequent `acquireLock` can detect a zombie daemon (Node
+   * process alive, tunnel child dead) without requiring `--force`.
+   */
+  onTunnelChildPid?: (pid: number) => void;
 }
 
 /**
@@ -1869,6 +1878,12 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
       tunnel = t;
       tunnelStatus = makeTunnelStatus(true, t.wssUrl);
       options.onWssUrl?.(t.wssUrl);
+      // FIX 3 (issue #571): notify caller of the cloudflared child PID so it
+      // can be persisted in the server lock file for zombie detection.
+      // childPid is a plain integer — not a secret.
+      if (t.childPid !== undefined) {
+        options.onTunnelChildPid?.(t.childPid);
+      }
       // SECRET-HANDLING: wssUrl contains the relay host — do not log it directly.
       logInfo('tunnel.up', { totpEnabled });
 
@@ -2463,6 +2478,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
               },
+              // FIX 3 (issue #571): persist the cloudflared child PID in the
+              // lock file so a subsequent acquireLock can detect zombie daemons.
+              onTunnelChildPid: (pid) => {
+                lockHandle.updateTunnelChildPid(pid);
+              },
               // Issue #467: count relay TOTP 401s (secret-free) so
               // get_debug_status can distinguish "phone never arrived" from
               // "phone arrived but was rejected".
@@ -2606,6 +2626,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   let closed = false;
   let parentWatcher: { stop(): void } | null = null;
+  let maxAgeWatchdog: { stop(): void } | null = null;
 
   const shutdown = () => {
     // Idempotent: multiple simultaneous signals/exit/uncaught calls run only once.
@@ -2613,6 +2634,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     closed = true;
 
     parentWatcher?.stop();
+    maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     // Tear down every booted family (all lazy, #396 — only those ever started).
@@ -2638,6 +2660,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      maxAgeWatchdog?.stop();
       if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
@@ -2696,6 +2719,29 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       shutdown();
       process.exit(0);
     });
+  }
+
+  // FIX 4 (issue #571): max-age watchdog — self-terminate after a configured
+  // maximum lifetime. cloudflared quick-tunnel lifetimes are finite; a daemon
+  // that outlives its tunnel will silently fail. Default 6 hours.
+  //
+  // AIT_DEBUG_NO_MAX_AGE=1 disables the watchdog — useful for long-running
+  // manual debug sessions or process-manager environments.
+  // AIT_DEBUG_MAX_AGE_MS=<ms> overrides the default 6-hour cap.
+  if (process.env.AIT_DEBUG_NO_MAX_AGE !== '1') {
+    const maxAgeMs = process.env.AIT_DEBUG_MAX_AGE_MS
+      ? Number.parseInt(process.env.AIT_DEBUG_MAX_AGE_MS, 10) || undefined
+      : undefined;
+    maxAgeWatchdog = startMaxAgeWatchdog(
+      () => {
+        process.stderr.write(
+          '[ait-debug] max-age watchdog: daemon lifetime exceeded — shutting down for a fresh start.\n',
+        );
+        shutdown();
+        process.exit(0);
+      },
+      { maxAgeMs },
+    );
   }
 }
 
@@ -2802,6 +2848,10 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
               onWssUrl: (wssUrl) => {
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
+              },
+              // FIX 3 (issue #571): persist cloudflared child PID for zombie detection.
+              onTunnelChildPid: (pid) => {
+                lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
@@ -2928,11 +2978,13 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   let closed = false;
   let parentWatcher: { stop(): void } | null = null;
+  let maxAgeWatchdog: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
+    maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     // Tear down every booted family (all lazy, #396 — only those ever started).
@@ -2951,6 +3003,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      maxAgeWatchdog?.stop();
       if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
@@ -3002,6 +3055,23 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
       shutdown();
       process.exit(0);
     });
+  }
+
+  // FIX 4 (issue #571): max-age watchdog.
+  if (process.env.AIT_DEBUG_NO_MAX_AGE !== '1') {
+    const maxAgeMs = process.env.AIT_DEBUG_MAX_AGE_MS
+      ? Number.parseInt(process.env.AIT_DEBUG_MAX_AGE_MS, 10) || undefined
+      : undefined;
+    maxAgeWatchdog = startMaxAgeWatchdog(
+      () => {
+        process.stderr.write(
+          '[ait-debug] max-age watchdog: daemon lifetime exceeded — shutting down for a fresh start.\n',
+        );
+        shutdown();
+        process.exit(0);
+      },
+      { maxAgeMs },
+    );
   }
 }
 
@@ -3093,6 +3163,10 @@ export async function runMobileDebugServer(
               onWssUrl: (wssUrl) => {
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
+              },
+              // FIX 3 (issue #571): persist cloudflared child PID for zombie detection.
+              onTunnelChildPid: (pid) => {
+                lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
@@ -3219,11 +3293,13 @@ export async function runMobileDebugServer(
 
   let closed = false;
   let parentWatcher: { stop(): void } | null = null;
+  let maxAgeWatchdog: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
+    maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     for (const family of router.bootedFamilies()) family.stop();
@@ -3240,6 +3316,7 @@ export async function runMobileDebugServer(
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      maxAgeWatchdog?.stop();
       if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
@@ -3291,5 +3368,22 @@ export async function runMobileDebugServer(
       shutdown();
       process.exit(0);
     });
+  }
+
+  // FIX 4 (issue #571): max-age watchdog.
+  if (process.env.AIT_DEBUG_NO_MAX_AGE !== '1') {
+    const maxAgeMs = process.env.AIT_DEBUG_MAX_AGE_MS
+      ? Number.parseInt(process.env.AIT_DEBUG_MAX_AGE_MS, 10) || undefined
+      : undefined;
+    maxAgeWatchdog = startMaxAgeWatchdog(
+      () => {
+        process.stderr.write(
+          '[ait-debug] max-age watchdog: daemon lifetime exceeded — shutting down for a fresh start.\n',
+        );
+        shutdown();
+        process.exit(0);
+      },
+      { maxAgeMs },
+    );
   }
 }
