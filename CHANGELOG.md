@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.88
+
+### Patch Changes
+
+- 98f5cf0: fix(launcher): iOS letterbox 보정을 geometry-epoch 래치 + html/body force로 재작성 — 자가검증 진동(#563) 제거 + 데드밴드 실제 보정
+
 ## 0.1.87
 
 ### Patch Changes
