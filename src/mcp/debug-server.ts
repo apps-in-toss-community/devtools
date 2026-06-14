@@ -45,7 +45,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { startParentWatcher } from '../shared/parent-watcher.js';
+import { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watcher.js';
 import { ChiiAitSource } from './ait-chii-source.js';
 import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
@@ -118,7 +118,7 @@ import {
   RELAY_VERIFY_SKEW_STEPS,
 } from './totp.js';
 
-export { startParentWatcher } from '../shared/parent-watcher.js';
+export { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watcher.js';
 
 import {
   generateAttachToken,
@@ -375,6 +375,27 @@ export interface DebugServerDeps {
    * TOTP 코드는 rebuildAttachUrl() 내부에서만 mint되며 attachUrl의 at= param 안에만 노출.
    */
   onAttachUrlBuilt?: (parts: AttachUrlParts) => void;
+  /**
+   * Returns the cloudflared child PID of the currently active tunnel.
+   * When provided, `get_debug_status` passes it to `getDiagnostics` as the
+   * live in-memory source for FIX 2 (issue #571) — the PID is also picked up
+   * from the lock file as a fallback, but the in-memory value is preferred as
+   * it stays current across reissues.
+   *
+   * Production: injected by the run functions via a captured `activeTunnelChildPid`
+   * variable that is updated whenever `onTunnelChildPid` fires (including reissues).
+   * Tests inject a controlled value. Omitting it (old tests) falls back to the
+   * lock-file path in `getDiagnostics`.
+   */
+  getTunnelChildPid?: () => number | null | undefined;
+  /**
+   * Lock-file reader — injected here so tests can control the lock data without
+   * touching the filesystem. Defaults to `readServerLock` (the real file).
+   *
+   * This also enables handler-level tests for FIX 2 (issue #572 review) that
+   * need to simulate a stale lock with a dead tunnelChildPid.
+   */
+  readLock?: () => import('./server-lock.js').LockData | null;
 }
 
 /**
@@ -456,6 +477,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     diagnosticsCollector: collectorDep,
     totpSecret,
     onAttachUrlBuilt,
+    getTunnelChildPid,
+    readLock: readLockDep,
   } = deps;
 
   // Late-bound TOTP secret accessor (issue #396): production injects
@@ -464,6 +487,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   // back to the captured `totpSecret` — preserving existing test behavior.
   // SECRET-HANDLING: the returned value is used only for the at= code, never logged.
   const getTotpSecret = deps.getTotpSecret ?? (() => totpSecret);
+
+  // Lock-file reader — defaults to the real file reader; injected by tests to
+  // control lock data without touching the filesystem. Also used by the
+  // get_debug_status handler to forward lock data into getDiagnostics for the
+  // FIX 2 lock-file fallback (issue #572 review).
+  const readLockFn = readLockDep ?? readServerLock;
 
   // Dual-connection router (issue #348). Production passes a real router that
   // holds both the local + relay connections and flips `active` on
@@ -619,8 +648,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           env,
           envReason,
           collector,
-          readLock: readServerLock,
+          readLock: readLockFn,
           recentErrorsLimit,
+          tunnelChildPid: getTunnelChildPid?.() ?? undefined,
         });
         const attached = conn.listTargets().length > 0;
         return envelopeResult(result, name, env, attached);
@@ -1806,6 +1836,15 @@ export interface BootRelayFamilyOptions {
    * surface silent 401s.
    */
   onAuthReject?: (event: import('./chii-relay.js').RelayAuthRejectEvent) => void;
+  /**
+   * Called with the cloudflared child PID once the tunnel is up.
+   *
+   * FIX 3 (issue #571): callers wire this to
+   * `lockHandle.updateTunnelChildPid(pid)` so the lock file records the child
+   * PID and a subsequent `acquireLock` can detect a zombie daemon (Node
+   * process alive, tunnel child dead) without requiring `--force`.
+   */
+  onTunnelChildPid?: (pid: number) => void;
 }
 
 /**
@@ -1869,6 +1908,12 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
       tunnel = t;
       tunnelStatus = makeTunnelStatus(true, t.wssUrl);
       options.onWssUrl?.(t.wssUrl);
+      // FIX 3 (issue #571): notify caller of the cloudflared child PID so it
+      // can be persisted in the server lock file for zombie detection.
+      // childPid is a plain integer — not a secret.
+      if (t.childPid !== undefined) {
+        options.onTunnelChildPid?.(t.childPid);
+      }
       // SECRET-HANDLING: wssUrl contains the relay host — do not log it directly.
       logInfo('tunnel.up', { totpEnabled });
 
@@ -1879,6 +1924,12 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
           tunnel = newTunnel;
           tunnelStatus = makeTunnelStatus(true, newTunnel.wssUrl, null, 0);
           options.onWssUrl?.(newTunnel.wssUrl);
+          // FIX (issue #572 review): update the lock's tunnelChildPid so a later
+          // acquireLock sees the reissued tunnel's child — not the original dead one.
+          // childPid is a plain integer — not a secret.
+          if (newTunnel.childPid !== undefined) {
+            options.onTunnelChildPid?.(newTunnel.childPid);
+          }
           // Reprint the banner so the user (and agent) see the new URL + QR.
           void printAttachBanner({ wssUrl: newTunnel.wssUrl, totpEnabled }).then(() => {
             logInfo('tunnel.up', { totpEnabled, reissued: true });
@@ -2438,6 +2489,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // so `get_debug_status` can surface them in a single call.
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
+  // FIX (issue #572 review): track the live cloudflared child PID in memory so
+  // get_debug_status can pass it to getDiagnostics as source (a). Updated by
+  // onTunnelChildPid on initial boot and on every reissue.
+  let activeTunnelChildPid: number | null = null;
+
   const router = new DualConnectionRouter({
     // Lazy resolver for all three family slots (#378, #396, #424).
     // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL (or .ait_urls
@@ -2462,6 +2518,13 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
               onWssUrl: (wssUrl) => {
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
+              },
+              // FIX 3 (issue #571): persist the cloudflared child PID in the
+              // lock file so a subsequent acquireLock can detect zombie daemons.
+              // Also update the in-memory tracker (source a for FIX 2).
+              onTunnelChildPid: (pid) => {
+                activeTunnelChildPid = pid;
+                lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: count relay TOTP 401s (secret-free) so
               // get_debug_status can distinguish "phone never arrived" from
@@ -2571,6 +2634,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     aitSource,
     // Tunnel status follows the active relay family once one is lazy-booted (#356).
     getTunnelStatus: () => router.relayTunnelStatus(),
+    // FIX (issue #572 review): expose the live cloudflared child PID (source a)
+    // so get_debug_status can feed it into getDiagnostics for the FIX 2 probe.
+    getTunnelChildPid: () => activeTunnelChildPid,
     get qrHttpServer() {
       return qrServer;
     },
@@ -2606,6 +2672,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
 
   let closed = false;
   let parentWatcher: { stop(): void } | null = null;
+  let maxAgeWatchdog: { stop(): void } | null = null;
 
   const shutdown = () => {
     // Idempotent: multiple simultaneous signals/exit/uncaught calls run only once.
@@ -2613,6 +2680,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     closed = true;
 
     parentWatcher?.stop();
+    maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     // Tear down every booted family (all lazy, #396 — only those ever started).
@@ -2638,6 +2706,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      maxAgeWatchdog?.stop();
       if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
@@ -2696,6 +2765,29 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       shutdown();
       process.exit(0);
     });
+  }
+
+  // FIX 4 (issue #571): max-age watchdog — self-terminate after a configured
+  // maximum lifetime. cloudflared quick-tunnel lifetimes are finite; a daemon
+  // that outlives its tunnel will silently fail. Default 6 hours.
+  //
+  // AIT_DEBUG_NO_MAX_AGE=1 disables the watchdog — useful for long-running
+  // manual debug sessions or process-manager environments.
+  // AIT_DEBUG_MAX_AGE_MS=<ms> overrides the default 6-hour cap.
+  if (process.env.AIT_DEBUG_NO_MAX_AGE !== '1') {
+    const maxAgeMs = process.env.AIT_DEBUG_MAX_AGE_MS
+      ? Number.parseInt(process.env.AIT_DEBUG_MAX_AGE_MS, 10) || undefined
+      : undefined;
+    maxAgeWatchdog = startMaxAgeWatchdog(
+      () => {
+        process.stderr.write(
+          '[ait-debug] max-age watchdog: daemon lifetime exceeded — shutting down for a fresh start.\n',
+        );
+        shutdown();
+        process.exit(0);
+      },
+      { maxAgeMs },
+    );
   }
 }
 
@@ -2782,6 +2874,11 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
+  // FIX (issue #572 review): track the live cloudflared child PID in memory so
+  // get_debug_status can pass it to getDiagnostics as source (a). Updated by
+  // onTunnelChildPid on initial boot and on every reissue.
+  let activeTunnelChildPid: number | null = null;
+
   const router = new DualConnectionRouter({
     // Lazy resolver for all three family slots (#378, #396, #424).
     // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL (or .ait_urls
@@ -2802,6 +2899,12 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
               onWssUrl: (wssUrl) => {
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
+              },
+              // FIX 3 (issue #571): persist cloudflared child PID for zombie detection.
+              // Also update the in-memory tracker (source a for FIX 2).
+              onTunnelChildPid: (pid) => {
+                activeTunnelChildPid = pid;
+                lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
@@ -2900,6 +3003,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // until then it reports "down" (no relay tunnel exists), which keeps
     // build_attach_url correctly gated.
     getTunnelStatus: () => router.relayTunnelStatus(),
+    // FIX (issue #572 review): expose the live cloudflared child PID (source a)
+    // so get_debug_status can feed it into getDiagnostics for the FIX 2 probe.
+    getTunnelChildPid: () => activeTunnelChildPid,
     get qrHttpServer() {
       return qrServer;
     },
@@ -2928,11 +3034,13 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
 
   let closed = false;
   let parentWatcher: { stop(): void } | null = null;
+  let maxAgeWatchdog: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
+    maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     // Tear down every booted family (all lazy, #396 — only those ever started).
@@ -2951,6 +3059,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      maxAgeWatchdog?.stop();
       if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
@@ -3002,6 +3111,23 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
       shutdown();
       process.exit(0);
     });
+  }
+
+  // FIX 4 (issue #571): max-age watchdog.
+  if (process.env.AIT_DEBUG_NO_MAX_AGE !== '1') {
+    const maxAgeMs = process.env.AIT_DEBUG_MAX_AGE_MS
+      ? Number.parseInt(process.env.AIT_DEBUG_MAX_AGE_MS, 10) || undefined
+      : undefined;
+    maxAgeWatchdog = startMaxAgeWatchdog(
+      () => {
+        process.stderr.write(
+          '[ait-debug] max-age watchdog: daemon lifetime exceeded — shutting down for a fresh start.\n',
+        );
+        shutdown();
+        process.exit(0);
+      },
+      { maxAgeMs },
+    );
   }
 }
 
@@ -3073,6 +3199,11 @@ export async function runMobileDebugServer(
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
+  // FIX (issue #572 review): track the live cloudflared child PID in memory so
+  // get_debug_status can pass it to getDiagnostics as source (a). Updated by
+  // onTunnelChildPid on initial boot and on every reissue.
+  let activeTunnelChildPid: number | null = null;
+
   const router = new DualConnectionRouter({
     // Lazy resolver for all three family slots (#378, #396, #424). The external
     // relay boot captures the pre-flight `relayBaseUrl`. Its stop() closes ONLY
@@ -3093,6 +3224,12 @@ export async function runMobileDebugServer(
               onWssUrl: (wssUrl) => {
                 lockHandle.updateWssUrl(wssUrl);
                 qrServer?.notifyStateChange();
+              },
+              // FIX 3 (issue #571): persist cloudflared child PID for zombie detection.
+              // Also update the in-memory tracker (source a for FIX 2).
+              onTunnelChildPid: (pid) => {
+                activeTunnelChildPid = pid;
+                lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
@@ -3190,6 +3327,9 @@ export async function runMobileDebugServer(
     // relay is lazy-booted it reports up with its wss URL, so build_attach_url is
     // satisfied without us opening a cloudflared tunnel.
     getTunnelStatus: () => router.relayTunnelStatus(),
+    // FIX (issue #572 review): expose the live cloudflared child PID (source a)
+    // so get_debug_status can feed it into getDiagnostics for the FIX 2 probe.
+    getTunnelChildPid: () => activeTunnelChildPid,
     get qrHttpServer() {
       return qrServer;
     },
@@ -3219,11 +3359,13 @@ export async function runMobileDebugServer(
 
   let closed = false;
   let parentWatcher: { stop(): void } | null = null;
+  let maxAgeWatchdog: { stop(): void } | null = null;
 
   const shutdown = () => {
     if (closed) return;
     closed = true;
     parentWatcher?.stop();
+    maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
     router.stopWatcher();
     for (const family of router.bootedFamilies()) family.stop();
@@ -3240,6 +3382,7 @@ export async function runMobileDebugServer(
     if (!closed) {
       closed = true;
       parentWatcher?.stop();
+      maxAgeWatchdog?.stop();
       if (totpRefreshHandle) clearInterval(totpRefreshHandle);
       router.stopWatcher();
       for (const family of router.bootedFamilies()) family.stop();
@@ -3291,5 +3434,22 @@ export async function runMobileDebugServer(
       shutdown();
       process.exit(0);
     });
+  }
+
+  // FIX 4 (issue #571): max-age watchdog.
+  if (process.env.AIT_DEBUG_NO_MAX_AGE !== '1') {
+    const maxAgeMs = process.env.AIT_DEBUG_MAX_AGE_MS
+      ? Number.parseInt(process.env.AIT_DEBUG_MAX_AGE_MS, 10) || undefined
+      : undefined;
+    maxAgeWatchdog = startMaxAgeWatchdog(
+      () => {
+        process.stderr.write(
+          '[ait-debug] max-age watchdog: daemon lifetime exceeded — shutting down for a fresh start.\n',
+        );
+        shutdown();
+        process.exit(0);
+      },
+      { maxAgeMs },
+    );
   }
 }

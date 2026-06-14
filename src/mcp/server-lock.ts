@@ -48,11 +48,28 @@ export interface LockData {
   /** `null` until the cloudflared tunnel URL is assigned. */
   wssUrl: string | null;
   startedAt: string;
+  /**
+   * PID of the cloudflared child process. Written once the tunnel is up via
+   * `LockHandle.updateTunnelChildPid`. Absent in lock files written by older
+   * versions — those fall back to PID-only stale detection.
+   *
+   * FIX 3 (issue #571): `acquireLock` treats a live holder whose tunnel child
+   * is known-dead as a stale lock and reclaims it.
+   */
+  tunnelChildPid?: number | null;
 }
 
 export interface LockHandle {
   /** Updates the wssUrl field in the lock file once the tunnel URL is known. */
   updateWssUrl(wssUrl: string): void;
+  /**
+   * Updates the cloudflared child PID in the lock file once the tunnel is up.
+   *
+   * FIX 3 (issue #571): a second `acquireLock` caller will see this PID and
+   * can detect that the holder's tunnel child is dead even though the Node
+   * process itself is still alive, allowing lock reclamation.
+   */
+  updateTunnelChildPid(pid: number): void;
   /** Removes the lock file. Idempotent — safe to call multiple times. */
   release(): void;
 }
@@ -131,10 +148,14 @@ function readLock(lockPath: string): LockData | null {
       typeof (parsed as Record<string, unknown>).startedAt === 'string'
     ) {
       const p = parsed as Record<string, unknown>;
+      // FIX 3: read optional tunnelChildPid — absent in lock files from older
+      // versions; those fall back to PID-only stale detection.
+      const tunnelChildPid = typeof p.tunnelChildPid === 'number' ? p.tunnelChildPid : null;
       return {
         pid: p.pid as number,
         wssUrl: typeof p.wssUrl === 'string' ? p.wssUrl : null,
         startedAt: p.startedAt as string,
+        tunnelChildPid,
       };
     }
     // Unrecognised schema — treat as stale.
@@ -242,7 +263,19 @@ export function acquireLock(options: AcquireLockOptions = {}): LockHandle {
 
   if (existing !== null) {
     if (isPidAlive(existing.pid)) {
-      if (force) {
+      // FIX 3 (issue #571): even if the Node process is alive, check whether
+      // its cloudflared child has died. A zombie daemon whose tunnel is dead
+      // is effectively stale — reclaim the lock without waiting for the user
+      // to manually kill the process.
+      const tunnelChildPid = existing.tunnelChildPid;
+      const tunnelChildDead = typeof tunnelChildPid === 'number' && !isPidAlive(tunnelChildPid);
+
+      if (tunnelChildDead) {
+        process.stderr.write(
+          `[ait-debug] stale lock: holder PID=${existing.pid} alive but tunnel child PID=${tunnelChildPid} is dead — reclaiming lock.\n`,
+        );
+        // Fall through to write a fresh lock.
+      } else if (force) {
         // Force takeover: SIGTERM → 2 s grace → SIGKILL.
         process.stderr.write(
           `[ait-debug] --force: terminating existing session PID=${existing.pid} …\n`,
@@ -282,6 +315,11 @@ export function acquireLock(options: AcquireLockOptions = {}): LockHandle {
     updateWssUrl(wssUrl: string): void {
       if (released) return;
       data.wssUrl = wssUrl;
+      writeLock(lockPath, data);
+    },
+    updateTunnelChildPid(pid: number): void {
+      if (released) return;
+      data.tunnelChildPid = pid;
       writeLock(lockPath, data);
     },
     release(): void {
