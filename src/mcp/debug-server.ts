@@ -375,6 +375,27 @@ export interface DebugServerDeps {
    * TOTP 코드는 rebuildAttachUrl() 내부에서만 mint되며 attachUrl의 at= param 안에만 노출.
    */
   onAttachUrlBuilt?: (parts: AttachUrlParts) => void;
+  /**
+   * Returns the cloudflared child PID of the currently active tunnel.
+   * When provided, `get_debug_status` passes it to `getDiagnostics` as the
+   * live in-memory source for FIX 2 (issue #571) — the PID is also picked up
+   * from the lock file as a fallback, but the in-memory value is preferred as
+   * it stays current across reissues.
+   *
+   * Production: injected by the run functions via a captured `activeTunnelChildPid`
+   * variable that is updated whenever `onTunnelChildPid` fires (including reissues).
+   * Tests inject a controlled value. Omitting it (old tests) falls back to the
+   * lock-file path in `getDiagnostics`.
+   */
+  getTunnelChildPid?: () => number | null | undefined;
+  /**
+   * Lock-file reader — injected here so tests can control the lock data without
+   * touching the filesystem. Defaults to `readServerLock` (the real file).
+   *
+   * This also enables handler-level tests for FIX 2 (issue #572 review) that
+   * need to simulate a stale lock with a dead tunnelChildPid.
+   */
+  readLock?: () => import('./server-lock.js').LockData | null;
 }
 
 /**
@@ -456,6 +477,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     diagnosticsCollector: collectorDep,
     totpSecret,
     onAttachUrlBuilt,
+    getTunnelChildPid,
+    readLock: readLockDep,
   } = deps;
 
   // Late-bound TOTP secret accessor (issue #396): production injects
@@ -464,6 +487,12 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   // back to the captured `totpSecret` — preserving existing test behavior.
   // SECRET-HANDLING: the returned value is used only for the at= code, never logged.
   const getTotpSecret = deps.getTotpSecret ?? (() => totpSecret);
+
+  // Lock-file reader — defaults to the real file reader; injected by tests to
+  // control lock data without touching the filesystem. Also used by the
+  // get_debug_status handler to forward lock data into getDiagnostics for the
+  // FIX 2 lock-file fallback (issue #572 review).
+  const readLockFn = readLockDep ?? readServerLock;
 
   // Dual-connection router (issue #348). Production passes a real router that
   // holds both the local + relay connections and flips `active` on
@@ -619,8 +648,9 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           env,
           envReason,
           collector,
-          readLock: readServerLock,
+          readLock: readLockFn,
           recentErrorsLimit,
+          tunnelChildPid: getTunnelChildPid?.() ?? undefined,
         });
         const attached = conn.listTargets().length > 0;
         return envelopeResult(result, name, env, attached);
@@ -1894,6 +1924,12 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
           tunnel = newTunnel;
           tunnelStatus = makeTunnelStatus(true, newTunnel.wssUrl, null, 0);
           options.onWssUrl?.(newTunnel.wssUrl);
+          // FIX (issue #572 review): update the lock's tunnelChildPid so a later
+          // acquireLock sees the reissued tunnel's child — not the original dead one.
+          // childPid is a plain integer — not a secret.
+          if (newTunnel.childPid !== undefined) {
+            options.onTunnelChildPid?.(newTunnel.childPid);
+          }
           // Reprint the banner so the user (and agent) see the new URL + QR.
           void printAttachBanner({ wssUrl: newTunnel.wssUrl, totpEnabled }).then(() => {
             logInfo('tunnel.up', { totpEnabled, reissued: true });
@@ -2453,6 +2489,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // so `get_debug_status` can surface them in a single call.
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
+  // FIX (issue #572 review): track the live cloudflared child PID in memory so
+  // get_debug_status can pass it to getDiagnostics as source (a). Updated by
+  // onTunnelChildPid on initial boot and on every reissue.
+  let activeTunnelChildPid: number | null = null;
+
   const router = new DualConnectionRouter({
     // Lazy resolver for all three family slots (#378, #396, #424).
     // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL (or .ait_urls
@@ -2480,7 +2521,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
               },
               // FIX 3 (issue #571): persist the cloudflared child PID in the
               // lock file so a subsequent acquireLock can detect zombie daemons.
+              // Also update the in-memory tracker (source a for FIX 2).
               onTunnelChildPid: (pid) => {
+                activeTunnelChildPid = pid;
                 lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: count relay TOTP 401s (secret-free) so
@@ -2591,6 +2634,9 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     aitSource,
     // Tunnel status follows the active relay family once one is lazy-booted (#356).
     getTunnelStatus: () => router.relayTunnelStatus(),
+    // FIX (issue #572 review): expose the live cloudflared child PID (source a)
+    // so get_debug_status can feed it into getDiagnostics for the FIX 2 probe.
+    getTunnelChildPid: () => activeTunnelChildPid,
     get qrHttpServer() {
       return qrServer;
     },
@@ -2828,6 +2874,11 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
+  // FIX (issue #572 review): track the live cloudflared child PID in memory so
+  // get_debug_status can pass it to getDiagnostics as source (a). Updated by
+  // onTunnelChildPid on initial boot and on every reissue.
+  let activeTunnelChildPid: number | null = null;
+
   const router = new DualConnectionRouter({
     // Lazy resolver for all three family slots (#378, #396, #424).
     // SECRET-HANDLING: readMobileRelayBaseUrl reads AIT_RELAY_BASE_URL (or .ait_urls
@@ -2850,7 +2901,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
                 qrServer?.notifyStateChange();
               },
               // FIX 3 (issue #571): persist cloudflared child PID for zombie detection.
+              // Also update the in-memory tracker (source a for FIX 2).
               onTunnelChildPid: (pid) => {
+                activeTunnelChildPid = pid;
                 lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
@@ -2950,6 +3003,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     // until then it reports "down" (no relay tunnel exists), which keeps
     // build_attach_url correctly gated.
     getTunnelStatus: () => router.relayTunnelStatus(),
+    // FIX (issue #572 review): expose the live cloudflared child PID (source a)
+    // so get_debug_status can feed it into getDiagnostics for the FIX 2 probe.
+    getTunnelChildPid: () => activeTunnelChildPid,
     get qrHttpServer() {
       return qrServer;
     },
@@ -3143,6 +3199,11 @@ export async function runMobileDebugServer(
   const devtoolsOpener = new AutoDevtoolsOpener();
   const diagnosticsCollector = new InMemoryDiagnosticsCollector();
 
+  // FIX (issue #572 review): track the live cloudflared child PID in memory so
+  // get_debug_status can pass it to getDiagnostics as source (a). Updated by
+  // onTunnelChildPid on initial boot and on every reissue.
+  let activeTunnelChildPid: number | null = null;
+
   const router = new DualConnectionRouter({
     // Lazy resolver for all three family slots (#378, #396, #424). The external
     // relay boot captures the pre-flight `relayBaseUrl`. Its stop() closes ONLY
@@ -3165,7 +3226,9 @@ export async function runMobileDebugServer(
                 qrServer?.notifyStateChange();
               },
               // FIX 3 (issue #571): persist cloudflared child PID for zombie detection.
+              // Also update the in-memory tracker (source a for FIX 2).
               onTunnelChildPid: (pid) => {
+                activeTunnelChildPid = pid;
                 lockHandle.updateTunnelChildPid(pid);
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
@@ -3264,6 +3327,9 @@ export async function runMobileDebugServer(
     // relay is lazy-booted it reports up with its wss URL, so build_attach_url is
     // satisfied without us opening a cloudflared tunnel.
     getTunnelStatus: () => router.relayTunnelStatus(),
+    // FIX (issue #572 review): expose the live cloudflared child PID (source a)
+    // so get_debug_status can feed it into getDiagnostics for the FIX 2 probe.
+    getTunnelChildPid: () => activeTunnelChildPid,
     get qrHttpServer() {
       return qrServer;
     },

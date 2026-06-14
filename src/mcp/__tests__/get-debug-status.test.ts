@@ -734,6 +734,98 @@ describe('get_debug_status MCP tool', () => {
     const data = parseResult(result) as Record<string, unknown>;
     expect(data.nextRecommendedAction).toBeNull();
   });
+
+  // ---- FIX 2 HANDLER-LEVEL: production wiring gate (issue #572 review) --------
+  // These tests exercise the actual get_debug_status MCP handler (not just
+  // getDiagnostics directly) to verify the handler feeds tunnelChildPid into
+  // getDiagnostics so the live PID check fires in production.
+
+  it('HANDLER FIX 2 (source a): reports tunnel.up=false when getTunnelChildPid returns a dead PID', async () => {
+    // Find a guaranteed-dead PID.
+    const candidates = [999999, 999998, 999997];
+    let deadPid: number | undefined;
+    for (const pid of candidates) {
+      try {
+        process.kill(pid, 0);
+        // alive — try next
+      } catch {
+        deadPid = pid;
+        break;
+      }
+    }
+    if (deadPid === undefined) return; // extremely unlikely — skip
+
+    const deadChildPid = deadPid;
+    const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getTunnelChildPid: () => deadChildPid,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      diagnosticsCollector: new NoopCollector(),
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'handler-test', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const data = parseResult(result) as Record<string, unknown>;
+    const tunnel = data.tunnel as Record<string, unknown>;
+    // Handler must report up:false — the dead-PID override must fire end-to-end.
+    expect(tunnel.up).toBe(false);
+  });
+
+  it('HANDLER FIX 2 (source b lock fallback): reports tunnel.up=false when lock has dead tunnelChildPid', async () => {
+    // Verify source (b): when getTunnelChildPid is NOT injected but the lock
+    // file reader returns a dead tunnelChildPid, getDiagnostics falls back to it.
+    const candidates = [999999, 999998, 999997];
+    let deadPid: number | undefined;
+    for (const pid of candidates) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        deadPid = pid;
+        break;
+      }
+    }
+    if (deadPid === undefined) return;
+
+    const deadChildPid = deadPid;
+    const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
+
+    const server = createDebugServer({
+      connection: new FakeCdpConnection(),
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      // No getTunnelChildPid — relies on lock fallback (source b).
+      readLock: () => ({
+        pid: process.pid,
+        wssUrl: 'wss://abc.trycloudflare.com',
+        startedAt: new Date().toISOString(),
+        tunnelChildPid: deadChildPid,
+      }),
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test',
+      diagnosticsCollector: new NoopCollector(),
+    });
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'handler-test-lock', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
+    expect(result.isError).toBeFalsy();
+    const data = parseResult(result) as Record<string, unknown>;
+    const tunnel = data.tunnel as Record<string, unknown>;
+    expect(tunnel.up).toBe(false);
+  });
 });
 
 // ---- computeNextRecommendedAction unit tests --------------------------------

@@ -218,4 +218,48 @@ describe('startTunnelHealthProbe — FIX 1: child-exit immediate reissue', () =>
 
     stop();
   });
+
+  // ---- DEFECT 2 regression guard (issue #572 review) -------------------------
+  // bootRelayFamily's onReissue must call options.onTunnelChildPid with the new
+  // tunnel's childPid so the lock file and in-memory tracker stay accurate.
+  // This test verifies that startTunnelHealthProbe passes the full new tunnel
+  // (including childPid) to onReissue — confirming the signal is available for
+  // bootRelayFamily to forward.
+
+  it('DEFECT 2: onReissue receives the new tunnel with its childPid (regression guard for bootRelayFamily wiring)', async () => {
+    // The new tunnel has a childPid — bootRelayFamily's onReissue must forward it
+    // to options.onTunnelChildPid. Here we verify startTunnelHealthProbe delivers
+    // the full QuickTunnel object to onReissue (childPid included), so the caller
+    // (bootRelayFamily) can act on it.
+    const childPid = 42001;
+    const newTunnel = {
+      ...makeFakeTunnel('https://reissued.trycloudflare.com'),
+      childPid,
+    };
+    const onReissue = vi.fn();
+    const probe = vi.fn().mockResolvedValue(true);
+    const spawnTunnel = vi.fn().mockResolvedValue(newTunnel);
+    const initialTunnel = makeFakeTunnel('https://initial.trycloudflare.com');
+
+    const { stop } = startTunnelHealthProbe(initialTunnel, 12345, {
+      probeIntervalMs: 60_000,
+      onReissue,
+      onPermanentDrop: vi.fn(),
+      probe,
+      spawnTunnel,
+      log: () => {},
+    });
+
+    initialTunnel._triggerUnexpectedExit(0);
+    await vi.advanceTimersByTimeAsync(100);
+
+    // startTunnelHealthProbe must pass the full newTunnel (with childPid) to onReissue.
+    expect(onReissue).toHaveBeenCalledTimes(1);
+    expect(onReissue).toHaveBeenCalledWith(newTunnel);
+    // Verify childPid is present on the argument — bootRelayFamily relies on this.
+    const arg = onReissue.mock.calls[0]![0] as typeof newTunnel;
+    expect(arg.childPid).toBe(childPid);
+
+    stop();
+  });
 });

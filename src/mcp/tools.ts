@@ -2189,12 +2189,18 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
   // probe to detect child death even when the cached `tunnel.up` is still true.
   // This prevents the 2d17h zombie scenario where the process died but the cache
   // was never invalidated.
+  //
+  // Source priority: explicit `tunnelChildPid` arg (in-memory, always current) →
+  // lock file's `tunnelChildPid` (populated by FIX 3 via onTunnelChildPid) →
+  // null (no probe). The lock-file fallback ensures the check fires even when the
+  // handler didn't pass the in-memory PID explicitly (issue #572 review).
+  const effectiveTunnelChildPid = tunnelChildPid ?? lockData?.tunnelChildPid ?? null;
   let effectiveUp = tunnel.up;
   if (
     tunnel.up &&
-    typeof tunnelChildPid === 'number' &&
-    tunnelChildPid !== null &&
-    !isPidAlive(tunnelChildPid)
+    typeof effectiveTunnelChildPid === 'number' &&
+    effectiveTunnelChildPid !== null &&
+    !isPidAlive(effectiveTunnelChildPid)
   ) {
     effectiveUp = false;
   }
