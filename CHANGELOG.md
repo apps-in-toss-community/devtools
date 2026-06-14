@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.89
+
+### Patch Changes
+
+- d261bb8: relay `/targets` 라우트 TOTP 게이트 추가 — URL-leaker가 코드 없이 세션 메타데이터를 읽을 수 있던 갭 닫기 (#474)
+
 ## 0.1.88
 
 ### Patch Changes
