@@ -408,8 +408,11 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
           // res.end() wins — chii's Koa handler will not write.
           return;
         }
-        // Auth passed: fall through (no early return) so chii's Koa handler
-        // serves the /targets JSON response.
+        // Auth passed: return without ending the response. Node invokes every
+        // 'request' listener in registration order, so chii's Koa listener
+        // (registered later by chii.start) still runs and serves the /targets
+        // JSON — this return only means "this gate listener is done", not "end
+        // the response".
         return;
       }
 
