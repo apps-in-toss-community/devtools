@@ -346,32 +346,81 @@ export async function startChiiRelay(options: StartChiiRelayOptions = {}): Promi
   // `/at/<code>/` prefix only ever appears when TOTP is armed — the launcher
   // QR carries the `at` code — so the no-auth path never needs the strip.)
   if (verifyAuth) {
-    // Plain HTTP requests: only the path-prefixed form is ours — the phone
-    // fetches `target.js` via `https://<host>/at/<code>/target.js` (issue
-    // #466), which must be verified + stripped so chii's Koa static handler
-    // serves `/target.js`. Non-prefixed requests keep today's behaviour
-    // (ungated pass-through to chii).
+    // Plain HTTP requests: two cases are gated, everything else passes through.
+    //
+    // Case 1 — path-prefixed form (`/at/<code>/…`): the phone fetches
+    //   `target.js` via `https://<host>/at/<code>/target.js` (issue #466).
+    //   The prefix is rewritten to the query form and then verified; chii's Koa
+    //   static handler sees the stripped URL.
+    //
+    // Case 2 — `/targets` read route (issue #474): without gating this route a
+    //   URL-leaker (threat model: someone who obtained the tunnel URL but not
+    //   the secret) can read session metadata (id/url/title, including any query
+    //   params in the page URL) without a code. Debugger attach stays blocked by
+    //   the WS gate, but /targets is an HTTP read that was previously ungated.
+    //   The `at` code may arrive as a query param (`/targets?at=<code>`) — which
+    //   buildRelayVerifyAuth already handles — or via the `/at/<code>/` path
+    //   prefix (rewriteAtPathPrefix normalises that to the query form first).
+    //
+    // Static assets (target.js, chii front-end HTML/JS/CSS) and any other
+    // non-prefixed, non-/targets request keep today's ungated pass-through — the
+    // phone fetches some via the legacy no-prefix path and gating them would
+    // break env-2/3/4.
+    //
+    // SECRET-HANDLING: We do NOT log req.url or any auth value in this listener.
     httpServer.on('request', (req, res) => {
       const rewritten = rewriteAtPathPrefix(req.url ?? '');
-      if (rewritten === null) return;
-      req.url = rewritten;
-      if (!verifyAuth(req)) {
-        // We do NOT log req.url or any auth param here to avoid leaking codes.
-        // CORS header + tiny JSON body (issue #478): the script URL is
-        // cross-origin from the phone page (tunnel origin ≠ relay origin), so
-        // without ACAO a fetch() probe sees an opaque error and cannot tell
-        // auth rejection from a network failure. The header rides ONLY on
-        // this error response — no relay asset is exposed through it.
-        res.statusCode = 401;
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ error: RELAY_AUTH_REJECT_REASON }));
-        notifyAuthReject('http-request');
+      if (rewritten !== null) {
+        // Path-prefix form: normalise to query form, then verify.
+        req.url = rewritten;
+        if (!verifyAuth(req)) {
+          // CORS header + tiny JSON body (issue #478): the script URL is
+          // cross-origin from the phone page (tunnel origin ≠ relay origin), so
+          // without ACAO a fetch() probe sees an opaque error and cannot tell
+          // auth rejection from a network failure. The header rides ONLY on
+          // this error response — no relay asset is exposed through it.
+          res.statusCode = 401;
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: RELAY_AUTH_REJECT_REASON }));
+          notifyAuthReject('http-request');
+        }
+        // Auth passed (or was rejected above): return so the path-prefix branch
+        // never falls through to the /targets check below.
+        return;
       }
-      // Auth passed: no-op — chii's Koa 'request' listener (registered below
-      // by chii.start) serves the rewritten URL. (Koa skips writing when an
-      // earlier listener already ended the response, so the 401 path is safe
-      // even though Koa still runs.)
+
+      // Non-prefixed request: check if this is the /targets read route (issue
+      // #474). Extract the pathname robustly — req.url is a raw path+query
+      // string like `/targets?at=123456` so we split on `?`.
+      const pathname = (req.url ?? '').split('?')[0];
+      if (pathname === '/targets' || pathname === '/targets/') {
+        // The `at` code must be present as a query param — verifyAuth reads it
+        // from req.url via URLSearchParams, which already handles `?at=<code>`
+        // without any URL rewrite needed.
+        if (!verifyAuth(req)) {
+          // Same 401 shape as the path-prefix branch (issue #478 contract).
+          res.statusCode = 401;
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: RELAY_AUTH_REJECT_REASON }));
+          notifyAuthReject('http-request');
+          // res.end() wins — chii's Koa handler will not write.
+          return;
+        }
+        // Auth passed: return without ending the response. Node invokes every
+        // 'request' listener in registration order, so chii's Koa listener
+        // (registered later by chii.start) still runs and serves the /targets
+        // JSON — this return only means "this gate listener is done", not "end
+        // the response".
+        return;
+      }
+
+      // Any other non-prefixed request (static assets, chii front-end, etc.):
+      // ungated pass-through to chii. Auth passed: no-op — chii's Koa
+      // 'request' listener (registered below by chii.start) serves the URL.
+      // (Koa skips writing when an earlier listener already ended the response,
+      // so the 401 paths above are safe even though Koa still runs.)
     });
   }
 

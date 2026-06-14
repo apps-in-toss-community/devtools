@@ -203,7 +203,18 @@ export class ChiiCdpConnection implements CdpConnection {
 
   /** Refresh the attached-target list from the relay's `GET /targets`. */
   async refreshTargets(): Promise<CdpTarget[]> {
-    const res = await fetch(`${this.relayBaseUrl}/targets`);
+    // When TOTP is active, append a freshly-minted code as `?at=<code>` so the
+    // relay's /targets gate (issue #474) accepts this daemon poll. Mirrors the
+    // existing /client WS pattern (~line 412). `generateTotp` defaults `when` to
+    // Date.now() — rely on that default; never hand-compute the time.
+    // SECRET-HANDLING: never log `code` or `this.totpSecret`; the code rides only
+    // in the at= param.
+    let targetsUrl = `${this.relayBaseUrl}/targets`;
+    if (this.totpSecret) {
+      const code = generateTotp(this.totpSecret);
+      targetsUrl += `?at=${encodeURIComponent(code)}`;
+    }
+    const res = await fetch(targetsUrl);
     if (!res.ok) {
       throw new Error(`Chii relay /targets returned HTTP ${res.status} ${res.statusText}`);
     }
