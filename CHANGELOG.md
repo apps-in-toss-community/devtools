@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.95
+
+### Patch Changes
+
+- fb20bc2: stable peer를 2.8.0 라인까지 확장(`>=2.6.0 <3.0.0`) + mock을 web-framework 2.8.0·3.0-beta 두 라인 모두에 대해 컴파일 타임 검증(dual-line typecheck). `web-framework-2x` devDep alias(`npm:@apps-in-toss/web-framework@2.8.0`)와 `tsconfig.2x.json`·`__typecheck-2x.ts`를 추가해 `pnpm typecheck`가 양 라인을 모두 돈다. 라인별 표면 차이(2.x 부재 base `PermissionError` 1개)는 `AssertIfPresent`로 capability-gate (#583).
+- c71b76e: env-2 launcher가 navigationBar transparentBackground/theme(SDK 2.8.0)를 host chrome으로 재현 + deep-link 자동 주입 — `buildLauncherDeepLink`에 `navBarTransparent`/`navBarTheme` 옵션 추가, unplugin Options에 두 필드 추가, launcher partner bar가 투명 배경 + light/dark 전경 테마를 지원하며 `&navBarTransparent=1`/`&navBarTheme=<v>`로 QR/터널 URL에 자동 실린다 (#587).
+
 ## 0.1.94
 
 ### Patch Changes
