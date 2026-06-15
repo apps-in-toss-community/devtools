@@ -136,6 +136,79 @@ describe('buildLauncherDeepLink', () => {
     expect(parsed.searchParams.get('navBarType')).toBe('game');
     expect(parsed.searchParams.get('debug')).toBe('1');
   });
+
+  // ---------------------------------------------------------------------------
+  // #587: navBarTransparent + navBarTheme 주입
+  // ---------------------------------------------------------------------------
+
+  it('navBarTransparent:true → &navBarTransparent=1 주입 (#587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      navBarTransparent: true,
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('navBarTransparent')).toBe('1');
+  });
+
+  it('navBarTransparent:false → navBarTransparent 미주입 (back-compat, #587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      navBarTransparent: false,
+    });
+    expect(new URL(deepLink).searchParams.has('navBarTransparent')).toBe(false);
+  });
+
+  it('navBarTransparent 미지정 → navBarTransparent 없음 (back-compat, #587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {});
+    expect(new URL(deepLink).searchParams.has('navBarTransparent')).toBe(false);
+  });
+
+  it('navBarTheme:"dark" → &navBarTheme=dark 주입 (#587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      navBarTheme: 'dark',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('navBarTheme')).toBe('dark');
+  });
+
+  it('navBarTheme:"light" → &navBarTheme=light 주입 (#587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      navBarTheme: 'light',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('navBarTheme')).toBe('light');
+  });
+
+  it('navBarTheme 미지정 → navBarTheme 없음 (back-compat, #587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {});
+    expect(new URL(deepLink).searchParams.has('navBarTheme')).toBe(false);
+  });
+
+  it('navBarTransparent + navBarTheme 동시 주입 (#587)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      navBarTransparent: true,
+      navBarTheme: 'light',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('navBarTransparent')).toBe('1');
+    expect(parsed.searchParams.get('navBarTheme')).toBe('light');
+  });
+
+  it('navBarType + name + relay + navBarTransparent + navBarTheme 5파라미터 공존 (#587)', () => {
+    const relay = 'wss://relay-abc.trycloudflare.com';
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      relayWssUrl: relay,
+      name: 'my-app',
+      webViewType: 'game',
+      navBarTransparent: true,
+      navBarTheme: 'dark',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('debug')).toBe('1');
+    expect(parsed.searchParams.get('relay')).toBe(relay);
+    expect(parsed.searchParams.get('name')).toBe('my-app');
+    expect(parsed.searchParams.get('navBarType')).toBe('game');
+    expect(parsed.searchParams.get('navBarTransparent')).toBe('1');
+    expect(parsed.searchParams.get('navBarTheme')).toBe('dark');
+  });
 });
 
 describe('printTunnelBanner', () => {
