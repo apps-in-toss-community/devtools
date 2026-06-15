@@ -115,6 +115,7 @@ export {
   type MockPresetState,
   matchesPreset,
 } from './presets.js';
+export type { WebViewTypeValue } from './safe-area-bridge.js';
 // --- env-2 postMessage bridges (#484 safe-area-insets, #510 navigate-back) ---
 export {
   applyForwardedSafeAreaInsets,
@@ -124,7 +125,9 @@ export {
   isNavigateBackMessage,
   NAVIGATE_BACK_MESSAGE_TYPE,
   parseSafeAreaInsetsMessage,
+  parseWebViewTypeMessage,
   SAFE_AREA_INSETS_MESSAGE_TYPE,
+  WEB_VIEW_TYPE_MESSAGE_TYPE,
 } from './safe-area-bridge.js';
 export type { AitDevtoolsState } from './state.js';
 // --- 상태 관리 (내부 + 외부 접근용) ---

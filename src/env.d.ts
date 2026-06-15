@@ -13,6 +13,21 @@ declare const __MCP_SDK_VERSION__: string | null;
 // `if (__DEBUG_BUILD__)`. This package's own source never references it; the
 // in-app gate evaluates only the runtime layers (see src/in-app/gate.ts).
 
+/**
+ * Consumer-build constant injected by the devtools unplugin (#580) from the
+ * mini-app's `granite.config.ts` `webViewProps.type` (`@default 'partner'`).
+ *
+ * Like `__DEBUG_BUILD__`, this is a CONSUMER-build define — it does NOT exist
+ * in devtools' own build/test runs. Source that reads it MUST guard with
+ * `typeof __WEB_VIEW_TYPE__ !== 'undefined'` so a bare reference never throws a
+ * ReferenceError where the define was not injected. Declared here only so the
+ * `typeof` guard and the read narrow correctly under `tsc --noEmit`.
+ *
+ * `'external'` is the SDK's deprecated alias of `'partner'` (web-framework
+ * 2.6.1); the in-app self-report maps it to `'partner'` before posting.
+ */
+declare const __WEB_VIEW_TYPE__: 'partner' | 'external' | 'game' | undefined;
+
 interface Window {
   __ait?: import('./mock/state.js').AitStateManager;
 }

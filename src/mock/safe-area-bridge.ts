@@ -53,6 +53,31 @@ export const SAFE_AREA_INSETS_MESSAGE_TYPE = 'ait:safe-area-insets' as const;
  */
 export const NAVIGATE_BACK_MESSAGE_TYPE = 'ait:navigate-back' as const;
 
+/**
+ * The postMessage envelope the framed mini-app self-reports its webViewType
+ * with (#580). The mini-app knows its own type from the build constant
+ * `__WEB_VIEW_TYPE__` (`granite.config.ts`'s `webViewProps.type`, injected by
+ * the devtools unplugin). The launcher is cross-origin so it cannot read that
+ * constant directly — the mini-app posts it to `window.parent` once so the
+ * launcher (env-2 PWA shell) switches to game mode automatically, with no
+ * manual `?navBarType=game` URL edit.
+ *
+ * Direction: this is the SEND side's contract (posted from inside the iframe by
+ * `src/in-app/attach.ts`). The launcher's receive half lives in
+ * `e2e/fixture/launcher/Launcher.tsx` and mirrors the same value enum inline,
+ * staying decoupled from the mock package internals — the same pattern the
+ * other launcher message types follow.
+ *
+ * Value enum: only `'partner'` and `'game'` are valid. The SDK's deprecated
+ * `'external'` alias of `partner` (web-framework 2.6.1) is mapped to `'partner'`
+ * at the send site so the wire only ever carries the two shapes the launcher
+ * emulates.
+ */
+export const WEB_VIEW_TYPE_MESSAGE_TYPE = 'ait:web-view-type' as const;
+
+/** The two webViewType shapes the launcher can emulate (#580). */
+export type WebViewTypeValue = 'partner' | 'game';
+
 // Insets are CSS px; a real device tops out well under this. The bound rejects
 // nonsense (NaN/Infinity/negative/absurd) without being so tight it clips a
 // future large-notch device.
@@ -79,6 +104,29 @@ export function parseSafeAreaInsetsMessage(data: unknown): SafeAreaInsets | null
     return null;
   }
   return { top, bottom, left, right };
+}
+
+/**
+ * Parse + validate a raw postMessage payload into a webViewType value
+ * (`'partner'` | `'game'`), or return `null` when it is not a well-formed
+ * `ait:web-view-type` message (#580). Pure — unit tested without a real
+ * MessageEvent.
+ *
+ * Strict shape guard (the safety boundary for the cross-origin receive path):
+ * the payload must be a non-null object whose `type` is exactly
+ * {@link WEB_VIEW_TYPE_MESSAGE_TYPE} and whose `value` is exactly `'partner'`
+ * or `'game'` (an enum allow-list). Anything else — a foreign type, a missing
+ * or non-string value, the deprecated `'external'` alias, or any other string —
+ * returns `null` so a stray postMessage can never flip the launcher's visual
+ * mode. The send site is responsible for collapsing `'external'` → `'partner'`
+ * before posting; the parser does NOT silently accept it.
+ */
+export function parseWebViewTypeMessage(data: unknown): WebViewTypeValue | null {
+  if (typeof data !== 'object' || data === null) return null;
+  if ((data as { type?: unknown }).type !== WEB_VIEW_TYPE_MESSAGE_TYPE) return null;
+  const value = (data as { value?: unknown }).value;
+  if (value === 'partner' || value === 'game') return value;
+  return null;
 }
 
 /**

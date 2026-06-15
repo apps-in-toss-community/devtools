@@ -375,6 +375,16 @@ function NavBarCapsule({
 // The navigate-back postMessage type the framed dev app's mock bridge (#510) listens for.
 const NAVIGATE_BACK_MESSAGE_TYPE = 'ait:navigate-back';
 
+// The webViewType self-report postMessage type (#580). The framed mini-app
+// posts `{ type: 'ait:web-view-type', value: 'partner' | 'game' }` to its parent
+// (the in-app self-report in src/in-app/attach.ts) so the launcher auto-enters
+// game mode without a manual `?navBarType=game` URL edit. Canonical definition +
+// the receive-side parser live in src/mock/safe-area-bridge.ts
+// (WEB_VIEW_TYPE_MESSAGE_TYPE / parseWebViewTypeMessage); the value is mirrored
+// here (kept in sync by value) so the launcher stays decoupled from the mock
+// package internals — the same pattern the other launcher message types follow.
+const WEB_VIEW_TYPE_MESSAGE_TYPE = 'ait:web-view-type';
+
 // The `···` dropdown: diagnostics toggle, Rescan, and the language row. These
 // rehome the controls that used to float at the bottom of the screen (#495).
 function MoreMenu({
@@ -967,13 +977,24 @@ export function Launcher(): React.JSX.Element {
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       const data = e.data as unknown;
-      if (
-        typeof data !== 'object' ||
-        data === null ||
-        (data as { type?: unknown }).type !== 'ait:debug-attach-blocked'
-      ) {
+      if (typeof data !== 'object' || data === null) return;
+      const type = (data as { type?: unknown }).type;
+
+      // webViewType self-report (#580): the framed mini-app posts its own type
+      // once so the launcher auto-enters game mode. Cross-origin origin is NOT
+      // trusted — navBarType is a visual-mode switch only (no permission, same
+      // safety class as the debug-attach-blocked handling below). The strict
+      // enum allow-list below is the safety boundary: only the two values the
+      // launcher emulates flip the bar; anything else is ignored.
+      if (type === WEB_VIEW_TYPE_MESSAGE_TYPE) {
+        const value = (data as { value?: unknown }).value;
+        if (value === 'partner' || value === 'game') setNavBarType(value);
         return;
       }
+
+      // Defect 2 (#438) + expired-TOTP surfacing (#478): pick a localized
+      // banner variant from the framed page's debug-attach-blocked signal.
+      if (type !== 'ait:debug-attach-blocked') return;
       const reason = (data as { reason?: unknown }).reason;
       if (reason === 'auth' || reason === 'auth-expired') {
         setAuthBlockReason(reason);
