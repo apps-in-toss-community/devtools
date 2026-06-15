@@ -11,7 +11,9 @@ import {
   isNavigateBackMessage,
   NAVIGATE_BACK_MESSAGE_TYPE,
   parseSafeAreaInsetsMessage,
+  parseWebViewTypeMessage,
   SAFE_AREA_INSETS_MESSAGE_TYPE,
+  WEB_VIEW_TYPE_MESSAGE_TYPE,
 } from '../mock/safe-area-bridge.js';
 import { aitState } from '../mock/state.js';
 
@@ -358,5 +360,71 @@ describe('dispatchHostBackNavigation (backEvent 구독자 인지)', () => {
     expect(backSpy).not.toHaveBeenCalled();
 
     cleanup();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// webViewType self-report bridge (#580)
+// ---------------------------------------------------------------------------
+
+describe('webViewType bridge (#580)', () => {
+  describe('parseWebViewTypeMessage', () => {
+    it('accepts a well-formed partner message', () => {
+      expect(parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: 'partner' })).toBe(
+        'partner',
+      );
+    });
+
+    it('accepts a well-formed game message', () => {
+      expect(parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: 'game' })).toBe(
+        'game',
+      );
+    });
+
+    it('ignores extra (unknown) fields — forward compat', () => {
+      expect(
+        parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: 'game', _extra: 1 }),
+      ).toBe('game');
+    });
+
+    it('rejects the deprecated external alias (must be mapped at the send site)', () => {
+      // The send site collapses 'external' → 'partner'; the parser itself does
+      // NOT accept the raw alias — only the two shapes the launcher emulates.
+      expect(
+        parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: 'external' }),
+      ).toBeNull();
+    });
+
+    it('rejects an unknown value (enum allow-list)', () => {
+      for (const bad of ['Game', 'PARTNER', 'webview', '', 'partner ']) {
+        expect(
+          parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: bad }),
+        ).toBeNull();
+      }
+    });
+
+    it('rejects a missing or non-string value', () => {
+      expect(parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE })).toBeNull();
+      expect(parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: null })).toBeNull();
+      expect(parseWebViewTypeMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value: 1 })).toBeNull();
+    });
+
+    it('rejects a foreign message type (silent ignore)', () => {
+      expect(parseWebViewTypeMessage({ type: 'something-else', value: 'game' })).toBeNull();
+      expect(
+        parseWebViewTypeMessage({ type: SAFE_AREA_INSETS_MESSAGE_TYPE, value: 'game' }),
+      ).toBeNull();
+    });
+
+    it('rejects a missing type field', () => {
+      expect(parseWebViewTypeMessage({ value: 'game' })).toBeNull();
+    });
+
+    it('rejects non-object / null payloads', () => {
+      expect(parseWebViewTypeMessage(null)).toBeNull();
+      expect(parseWebViewTypeMessage(undefined)).toBeNull();
+      expect(parseWebViewTypeMessage('ait:web-view-type')).toBeNull();
+      expect(parseWebViewTypeMessage(42)).toBeNull();
+    });
   });
 });

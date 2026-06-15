@@ -24,7 +24,7 @@
 
 import { evaluateDebugGate, type GateResult } from './gate.js';
 
-export { deriveTargetScriptUrl, maybeAttach } from './attach.js';
+export { deriveTargetScriptUrl, maybeAttach, reportWebViewType } from './attach.js';
 export type { GateInput, GateResult, GateResultAttach, GateResultBlocked } from './gate.js';
 export { evaluateDebugGate, isPrivateAppsHost, isTrycloudflareHost } from './gate.js';
 

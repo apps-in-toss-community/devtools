@@ -682,3 +682,128 @@ describe('script.onerror fetch probe', () => {
     expect(postMessageSpy).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// reportWebViewType (#580) — webViewType self-report to the parent launcher.
+//
+// `__WEB_VIEW_TYPE__` is a bare consumer-build define guarded by `typeof`. In
+// vitest (no bundler define) a bare read would resolve via the global scope
+// chain, so we set/unset it on `globalThis` to simulate the injected / absent
+// cases without a bundler pass. The module-level once-guard is reset by a fresh
+// import after vi.resetModules() in each beforeEach.
+// ---------------------------------------------------------------------------
+
+describe('reportWebViewType (#580)', () => {
+  let reportWebViewType: () => void;
+  // Typed accessor for the bare global define — avoids `any` (noExplicitAny).
+  const globalDefine = globalThis as { __WEB_VIEW_TYPE__?: unknown };
+  const realParent = window.parent;
+
+  function setFramedParent(): ReturnType<typeof vi.fn> {
+    const postMessageSpy = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageSpy },
+      writable: true,
+      configurable: true,
+    });
+    return postMessageSpy;
+  }
+
+  function restoreParent(): void {
+    Object.defineProperty(window, 'parent', {
+      value: realParent,
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  beforeEach(async () => {
+    vi.resetModules();
+    ({ reportWebViewType } = await import('../in-app/attach.js'));
+  });
+
+  afterEach(() => {
+    restoreParent();
+    globalDefine.__WEB_VIEW_TYPE__ = undefined;
+  });
+
+  it("posts one ait:web-view-type message with value 'game' when __WEB_VIEW_TYPE__ is 'game' and framed", () => {
+    globalDefine.__WEB_VIEW_TYPE__ = 'game';
+    const postMessageSpy = setFramedParent();
+
+    reportWebViewType();
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+    expect(postMessageSpy).toHaveBeenCalledWith({ type: 'ait:web-view-type', value: 'game' }, '*');
+  });
+
+  it("posts value 'partner' for a partner build", () => {
+    globalDefine.__WEB_VIEW_TYPE__ = 'partner';
+    const postMessageSpy = setFramedParent();
+
+    reportWebViewType();
+
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'ait:web-view-type', value: 'partner' },
+      '*',
+    );
+  });
+
+  it("maps the deprecated 'external' alias to 'partner'", () => {
+    globalDefine.__WEB_VIEW_TYPE__ = 'external';
+    const postMessageSpy = setFramedParent();
+
+    reportWebViewType();
+
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'ait:web-view-type', value: 'partner' },
+      '*',
+    );
+  });
+
+  it('posts at most once across repeated calls', () => {
+    globalDefine.__WEB_VIEW_TYPE__ = 'game';
+    const postMessageSpy = setFramedParent();
+
+    reportWebViewType();
+    reportWebViewType();
+    reportWebViewType();
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT post when not inside an iframe (window.parent === window)', () => {
+    globalDefine.__WEB_VIEW_TYPE__ = 'game';
+    const postMessageSpy = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+    // Also stub window.postMessage to catch an accidental self-post.
+    const selfPost = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+
+    reportWebViewType();
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+    expect(selfPost).not.toHaveBeenCalled();
+    selfPost.mockRestore();
+  });
+
+  it('does NOT throw and does NOT post when __WEB_VIEW_TYPE__ is undefined', () => {
+    globalDefine.__WEB_VIEW_TYPE__ = undefined;
+    const postMessageSpy = setFramedParent();
+
+    expect(() => reportWebViewType()).not.toThrow();
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+
+  it('does NOT post for an unexpected define value', () => {
+    globalDefine.__WEB_VIEW_TYPE__ = 'something-weird';
+    const postMessageSpy = setFramedParent();
+
+    reportWebViewType();
+
+    expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+});

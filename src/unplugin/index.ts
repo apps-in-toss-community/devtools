@@ -77,6 +77,19 @@ export interface AitDevtoolsOptions {
    */
   mcp?: boolean;
   /**
+   * 미니앱의 webViewType (`granite.config.ts`의 `webViewProps.type`)을 빌드 상수
+   * `__WEB_VIEW_TYPE__`로 주입한다 (#580). **Vite 전용** (다른 번들러는 무시).
+   *
+   * 이 상수는 in-app self-report(`@ait-co/devtools/in-app`)가 읽어 launcher(env-2
+   * PWA)에 webViewType을 postMessage로 알리고, launcher가 game 타입 미니앱에서
+   * 수동 `?navBarType=game` URL 편집 없이 game 모드로 자동 진입하게 한다.
+   *
+   * 미지정 시 `'partner'`(web-framework `webViewProps.type`의 `@default`)로 주입한다.
+   * `game`이면 게임 모드로 자동 진입한다. (granite.config.ts를 config 시점에
+   * 자동으로 읽는 것은 TS 모듈 로더가 필요해 보류 — 명시 옵션으로 신뢰성 확보, #580.)
+   */
+  webViewType?: 'partner' | 'game';
+  /**
    * Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, 계정 불필요)로
    * 외부 노출해 실제 폰에서 미리보기. **Vite dev 모드 전용** — production은
    * `forceEnable`이어도 터널을 띄우지 않는다 (의도치 않은 노출 방지). 다른 번들러는
@@ -171,6 +184,11 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   // `shouldTunnel = isDev && !!tunnelOpt` guard below still blocks prod builds.
   const tunnelOpt = resolveTunnelOption(options?.tunnel, process.env);
   const shouldTunnel = isDev && !!tunnelOpt;
+
+  // #580: webViewType build constant. Injected as a Vite `define` so the
+  // in-app self-report can post it to the launcher for game-mode auto-entry.
+  // Defaults to 'partner' (web-framework webViewProps.type @default).
+  const webViewType = options?.webViewType ?? 'partner';
   const tunnelConfig = typeof tunnelOpt === 'object' ? tunnelOpt : {};
 
   return {
@@ -216,12 +234,17 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
     // skipped (unplugin passes `vite` key only when building for Vite).
     vite: {
       config() {
-        if (!shouldTunnel) return;
+        // #580: inject the webViewType build constant for every Vite build so
+        // the in-app self-report (@ait-co/devtools/in-app) can read it and post
+        // it to the launcher (env-2 PWA) for game-mode auto-entry. JSON.stringify
+        // makes it a string literal at the define substitution site.
+        const define = { __WEB_VIEW_TYPE__: JSON.stringify(webViewType) };
+        if (!shouldTunnel) return { define };
         // Vite blocks requests whose Host header isn't in `server.allowedHosts`
         // (defaults to localhost only). The quick-tunnel hostname is random per
         // run, so allow the whole `.trycloudflare.com` suffix while the tunnel
         // is on. (A leading `.` makes Vite match the domain and its subdomains.)
-        return { server: { allowedHosts: ['.trycloudflare.com'] } };
+        return { define, server: { allowedHosts: ['.trycloudflare.com'] } };
       },
 
       configureServer(server: import('vite').ViteDevServer) {

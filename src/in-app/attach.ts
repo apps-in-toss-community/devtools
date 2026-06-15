@@ -227,6 +227,66 @@ export function installRelayWsObserver(relayUrl: string): void {
 }
 
 /**
+ * The webViewType self-report postMessage type (#580).
+ *
+ * Canonical definition + the receive-side parser live in
+ * `src/mock/safe-area-bridge.ts` (`WEB_VIEW_TYPE_MESSAGE_TYPE`,
+ * `parseWebViewTypeMessage`). It is re-declared here as a local literal so the
+ * in-app entry does NOT import the mock barrel (which would drag mock internals
+ * — navigation/state — into the dogfood in-app graph). The two literals are
+ * kept in sync by value; if one changes, change both. Same decoupling pattern
+ * the launcher fixture uses for its message-type constants.
+ */
+const WEB_VIEW_TYPE_MESSAGE_TYPE = 'ait:web-view-type' as const;
+
+/** Guard so the webViewType self-report is posted at most once per page. */
+let webViewTypeReported = false;
+
+/**
+ * Self-report the mini-app's webViewType to the parent launcher shell, ONCE
+ * (#580).
+ *
+ * The mini-app's type is the build constant `__WEB_VIEW_TYPE__`, injected by
+ * the devtools unplugin from `granite.config.ts`'s `webViewProps.type`. The
+ * launcher (env-2 PWA) is cross-origin and cannot read it directly, so the
+ * framed page posts it to `window.parent`; the launcher switches to game mode
+ * automatically (no manual `?navBarType=game` URL edit).
+ *
+ * Defensive by construction — must NEVER break attach:
+ *  - `__WEB_VIEW_TYPE__` is a CONSUMER-build define; it does not exist in
+ *    devtools' own build or where the unplugin did not inject it. The `typeof`
+ *    guard avoids a ReferenceError; an absent constant is a silent no-op.
+ *  - Only posts when inside an iframe (`window.parent !== window`) — a
+ *    top-level load has no launcher shell to receive the message.
+ *  - The SDK's deprecated `'external'` alias of `partner` (web-framework 2.6.1)
+ *    is mapped to `'partner'`; the launcher only emulates `partner` | `game`.
+ *  - Wrapped in try/catch so any postMessage/iframe edge case is swallowed.
+ *
+ * SECRET-HANDLING: the payload carries ONLY the webViewType enum — no host,
+ * relay URL, code, or secret.
+ */
+export function reportWebViewType(): void {
+  if (webViewTypeReported) return;
+  try {
+    if (typeof window === 'undefined' || window.parent === window) return;
+    // `typeof` guard: the define is absent in devtools' own build and wherever
+    // the unplugin did not inject it — a bare read would throw ReferenceError.
+    const raw = typeof __WEB_VIEW_TYPE__ !== 'undefined' ? __WEB_VIEW_TYPE__ : undefined;
+    if (raw === undefined) return;
+    // Map the deprecated 'external' alias onto 'partner'; the launcher only
+    // knows the two shapes it emulates. Anything unexpected → no report.
+    const value: 'partner' | 'game' | null =
+      raw === 'game' ? 'game' : raw === 'partner' || raw === 'external' ? 'partner' : null;
+    if (value === null) return;
+    webViewTypeReported = true;
+    window.parent.postMessage({ type: WEB_VIEW_TYPE_MESSAGE_TYPE, value }, '*');
+  } catch {
+    // Never let the self-report break attach — swallow any iframe/postMessage
+    // edge case silently (no log: a missing define on plain loads is expected).
+  }
+}
+
+/**
  * Evaluates the 3-layer debug gate and, if the gate passes, injects the Chii
  * `target.js` script into `document.head`.
  *
@@ -250,6 +310,11 @@ export function installRelayWsObserver(relayUrl: string): void {
  *   custom value avoids the need to manipulate `window.location` in tests.
  */
 export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
+  // #580: self-report the mini-app's webViewType to the launcher shell once,
+  // independent of the gate outcome — the launcher auto-enters game mode for
+  // a game-type mini-app. No-op outside an iframe / when the define is absent.
+  reportWebViewType();
+
   if (!gateResult.attach) {
     console.debug(
       `[@ait-co/devtools] debug attach skipped — gate blocked (reason: ${gateResult.reason})`,
