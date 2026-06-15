@@ -68,6 +68,31 @@ export function parseNavBarType(search: string): NavBarType {
 }
 
 /**
+ * Decide whether the partner nav bar should render with a transparent background
+ * from the launcher query string (SDK 2.8.0 `navigationBar.transparentBackground`,
+ * #587).
+ *
+ * `navBarTransparent=1` → true. Anything else (absent, `0`, other values) → false.
+ */
+export function parseNavBarTransparent(search: string): boolean {
+  return new URLSearchParams(search).get('navBarTransparent') === '1';
+}
+
+/**
+ * Resolve the partner nav bar foreground theme from the launcher query string
+ * (SDK 2.8.0 `navigationBar.theme`, #587).
+ *
+ * `navBarTheme=light` → `'light'`, `navBarTheme=dark` → `'dark'`. Absent or
+ * any other value → `'dark'` (conservative default matching the current launcher
+ * bar — dark background + light text).
+ */
+export function parseNavBarTheme(search: string): 'light' | 'dark' {
+  const val = new URLSearchParams(search).get('navBarTheme');
+  if (val === 'light' || val === 'dark') return val;
+  return 'dark';
+}
+
+/**
  * Resolve the title shown in the partner nav bar.
  *
  * Reads the `name=` query param (a friendly app name the dev session may pass).
@@ -163,26 +188,41 @@ export function extractLauncherSearch(raw: string): string | null {
  * (`ait:safe-area-insets`), now that #495 makes the partner nav bar part of the
  * launcher chrome.
  *
- * Bridge-inset matrix (re-grounded for #495, updated for #527 correction):
+ * Bridge-inset matrix (re-grounded for #495, updated for #527 correction, extended
+ * for #587 partner+transparent):
  *
- *   | navBarType | letterbox | corrected | top forwarded | bottom forwarded | rationale |
- *   |------------|-----------|-----------|---------------|------------------|-----------|
- *   | partner    | false     | n/a       | 0             | raw.bottom       | bar is launcher chrome; iframe starts below it, env(top)=0. |
- *   | partner    | true      | true      | 0             | raw.bottom       | #527: frame reaches real screen bottom → restore actual bottom inset. |
- *   | partner    | true      | false     | 0             | 0                | legacy #491: frame still stops above indicator → phantom bottom zeroed. |
- *   | game       | false     | n/a       | raw.top       | raw.bottom       | full-bleed canvas; raw env passes through. |
- *   | game       | true      | true      | raw.top       | raw.bottom       | #527: correction restores real bottom. |
- *   | game       | true      | false     | raw.top       | 0                | legacy #491: phantom bottom zeroed. |
+ *   | navBarType | transparent | letterbox | corrected | top forwarded | bottom forwarded | rationale |
+ *   |------------|-------------|-----------|-----------|---------------|------------------|-----------|
+ *   | partner    | false       | false     | n/a       | 0             | raw.bottom       | bar is launcher chrome; iframe starts below it, env(top)=0. |
+ *   | partner    | false       | true      | true      | 0             | raw.bottom       | #527: frame reaches real screen bottom → restore actual bottom inset. |
+ *   | partner    | false       | true      | false     | 0             | 0                | legacy #491: frame still stops above indicator → phantom bottom zeroed. |
+ *   | partner    | true        | false     | n/a       | raw.top       | raw.bottom       | UNVERIFIED HYPOTHESIS (#587): transparent bar is overlay → iframe full-bleed; raw top passes through like game. |
+ *   | partner    | true        | true      | true      | raw.top       | raw.bottom       | UNVERIFIED HYPOTHESIS (#587): same as above + correction restores real bottom. |
+ *   | partner    | true        | true      | false     | raw.top       | 0                | UNVERIFIED HYPOTHESIS (#587): same as above + legacy phantom-bottom zero. |
+ *   | game       | n/a         | false     | n/a       | raw.top       | raw.bottom       | full-bleed canvas; raw env passes through. |
+ *   | game       | n/a         | true      | true      | raw.top       | raw.bottom       | #527: correction restores real bottom. |
+ *   | game       | n/a         | true      | false     | raw.top       | 0                | legacy #491: phantom bottom zeroed. |
  *
- * For the partner bar, top is forced to 0 because the iframe no longer sits under
- * the OS status bar — the launcher's status-bar strip + nav bar occupy that
- * region as host chrome. This mirrors `computeSafeAreaInsets` in viewport.ts,
- * which returns top=0 for partner portrait: the SDK's informational top=54 is
- * surfaced by the mock inside the framed page, not double-counted as padding.
+ * For the partner bar (non-transparent), top is forced to 0 because the iframe
+ * no longer sits under the OS status bar — the launcher's status-bar strip + nav
+ * bar occupy that region as host chrome. This mirrors `computeSafeAreaInsets` in
+ * viewport.ts, which returns top=0 for partner portrait: the SDK's informational
+ * top=54 is surfaced by the mock inside the framed page, not double-counted as
+ * padding.
  *
- * For the game variant, the iframe IS full-bleed under the status bar (the
- * floating capsule is a transparent overlay), so the raw status-bar inset is the
- * honest value — identical to the pre-#495 letterbox-only correction.
+ * For the game variant (and partner+transparent, see below), the iframe IS
+ * full-bleed under the status bar (the floating capsule / transparent bar is an
+ * overlay), so the raw status-bar inset is the honest value — identical to the
+ * pre-#495 letterbox-only correction.
+ *
+ * **UNVERIFIED HYPOTHESIS — partner+transparent (#587)**: when
+ * `transparentBackground: true` the partner bar becomes a transparent overlay
+ * over the iframe (content shows through). This is analogous to the game capsule:
+ * the iframe is full-bleed under the status bar, so the raw top inset should pass
+ * through. This behaviour has NOT been verified on a real device against the toss
+ * host — it is a reasonable inference from the semantics. If real-device testing
+ * contradicts it (e.g. the host still positions the WebView below the bar even
+ * when transparent), this branch must be corrected.
  *
  * `letterboxCorrected` (default true) propagates to `computeBridgeInsets` (#527):
  * when the screen.height px correction is in effect the frame genuinely reaches
@@ -197,12 +237,18 @@ export function computeNavBarBridgeInsets(
   letterboxDetected: boolean,
   navBarType: NavBarType,
   letterboxCorrected = true,
+  navBarTransparent = false,
 ): SafeAreaInsets {
   const base = computeLetterboxBridgeInsets(raw, letterboxDetected, letterboxCorrected);
   // game = full-bleed 가정으로 raw top을 그대로 통과시킨다. game frame type은 SDK deprecated
   // (web-framework 2.6.1) 이므로 실기기 실측은 미추진 — 이 passthrough는 미검증 경로다 (#577).
   if (navBarType === 'game') return base;
-  // Partner bar consumes the status-bar + nav-bar band as launcher chrome; the
-  // iframe starts below it so its top inset is 0.
+  // UNVERIFIED HYPOTHESIS (#587): partner+transparent — the bar becomes a
+  // transparent overlay, so the iframe is full-bleed (bar behind content). By
+  // analogy with the game capsule the raw top passes through. Not verified on
+  // real device against toss host — see JSDoc above.
+  if (navBarTransparent) return base;
+  // Partner bar (non-transparent) consumes the status-bar + nav-bar band as
+  // launcher chrome; the iframe starts below it so its top inset is 0.
   return { ...base, top: 0 };
 }

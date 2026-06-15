@@ -52,6 +52,21 @@ export interface PrintTunnelBannerOptions {
    * keep the URL clean.
    */
   webViewType?: 'partner' | 'game';
+  /**
+   * Whether the miniapp's navigationBar has `transparentBackground: true`
+   * (granite.config `navigationBar.transparentBackground`, SDK 2.8.0, #587).
+   * When `true`, the deep-link carries `&navBarTransparent=1` so the launcher
+   * partner bar renders with a transparent background (content shows through).
+   * `false` / omitted → not added (URL clean, back-compat).
+   */
+  navBarTransparent?: boolean;
+  /**
+   * The miniapp's navigationBar theme (`granite.config `navigationBar.theme`,
+   * SDK 2.8.0, #587). When `'light'` or `'dark'`, the deep-link carries
+   * `&navBarTheme=<v>` so the launcher partner bar uses the matching foreground
+   * colour. Omitted / other values → not added (URL clean, back-compat).
+   */
+  navBarTheme?: 'light' | 'dark';
 }
 
 const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
@@ -77,6 +92,21 @@ export interface BuildLauncherDeepLinkOptions {
    * clean.
    */
   webViewType?: 'partner' | 'game';
+  /**
+   * Whether the miniapp's navigationBar has `transparentBackground: true`
+   * (granite.config `navigationBar.transparentBackground`, SDK 2.8.0, #587).
+   * When `true`, adds `&navBarTransparent=1` to the deep-link so the launcher
+   * partner bar renders with a transparent background. Omitted when `false` /
+   * undefined to keep the URL clean (back-compat).
+   */
+  navBarTransparent?: boolean;
+  /**
+   * The miniapp's navigationBar theme (granite.config `navigationBar.theme`,
+   * SDK 2.8.0, #587). When `'light'` or `'dark'`, adds `&navBarTheme=<v>` to
+   * the deep-link so the launcher partner bar uses the matching foreground colour.
+   * Omitted when undefined / other values to keep the URL clean (back-compat).
+   */
+  navBarTheme?: 'light' | 'dark';
 }
 
 /**
@@ -100,6 +130,12 @@ export interface BuildLauncherDeepLinkOptions {
  * on scan. `'partner'` is the launcher's implicit default and is not added to
  * keep the URL clean (#584).
  *
+ * When `opts.navBarTransparent` is `true`, `&navBarTransparent=1` is appended
+ * so the launcher partner bar renders with a transparent background (#587).
+ *
+ * When `opts.navBarTheme` is `'light'` or `'dark'`, `&navBarTheme=<v>` is
+ * appended so the launcher partner bar uses the matching foreground colour (#587).
+ *
  * Back-compat: the second argument may also be a plain string (`relayWssUrl`)
  * for callers that haven't migrated to the options object yet.
  */
@@ -122,6 +158,12 @@ export function buildLauncherDeepLink(
   if (opts.webViewType === 'game') {
     url += '&navBarType=game';
   }
+  if (opts.navBarTransparent === true) {
+    url += '&navBarTransparent=1';
+  }
+  if (opts.navBarTheme === 'light' || opts.navBarTheme === 'dark') {
+    url += `&navBarTheme=${opts.navBarTheme}`;
+  }
   return url;
 }
 
@@ -140,6 +182,8 @@ export async function printTunnelBanner(
     relayWssUrl: opts.relayWssUrl,
     name: opts.name,
     webViewType: opts.webViewType,
+    navBarTransparent: opts.navBarTransparent,
+    navBarTheme: opts.navBarTheme,
   });
   const lines: string[] = [
     '',

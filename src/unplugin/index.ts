@@ -90,6 +90,23 @@ export interface AitDevtoolsOptions {
    */
   webViewType?: 'partner' | 'game';
   /**
+   * 미니앱의 `granite.config.ts` `navigationBar.transparentBackground` 값
+   * (SDK `@apps-in-toss/plugins@2.8.0` 신규 필드, #587). `true`이면 env-2 launcher
+   * deep-link에 `&navBarTransparent=1`을 주입해 launcher partner bar가 투명 배경으로
+   * 렌더된다. granite.config를 직접 읽지 않는다(version-agnostic, #580 원칙) —
+   * 소비자 vite.config가 `graniteConfig.navigationBar?.transparentBackground`를
+   * import해 이 옵션으로 넘긴다. 미지정 시 주입 안 함(URL 청정, back-compat).
+   */
+  navBarTransparent?: boolean;
+  /**
+   * 미니앱의 `granite.config.ts` `navigationBar.theme` 값
+   * (SDK `@apps-in-toss/plugins@2.8.0` 신규 필드, #587). `'light'` 또는 `'dark'`이면
+   * env-2 launcher deep-link에 `&navBarTheme=<v>`를 주입해 launcher partner bar가
+   * 해당 테마 글자/아이콘 색으로 렌더된다. granite.config를 직접 읽지 않는다
+   * (version-agnostic, #580 원칙). 미지정 시 주입 안 함(URL 청정, back-compat).
+   */
+  navBarTheme?: 'light' | 'dark';
+  /**
    * Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, 계정 불필요)로
    * 외부 노출해 실제 폰에서 미리보기. **Vite dev 모드 전용** — production은
    * `forceEnable`이어도 터널을 띄우지 않는다 (의도치 않은 노출 방지). 다른 번들러는
@@ -189,6 +206,10 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   // in-app self-report can post it to the launcher for game-mode auto-entry.
   // Defaults to 'partner' (web-framework webViewProps.type @default).
   const webViewType = options?.webViewType ?? 'partner';
+  // #587: navigationBar appearance options (SDK 2.8.0 granite.config fields).
+  // Forwarded to printTunnelBanner so the launcher deep-link carries the params.
+  const navBarTransparent = options?.navBarTransparent;
+  const navBarTheme = options?.navBarTheme;
   const tunnelConfig = typeof tunnelOpt === 'object' ? tunnelOpt : {};
 
   return {
@@ -543,6 +564,8 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                   relayWssUrl,
                   name: tunnelAppName,
                   webViewType,
+                  navBarTransparent,
+                  navBarTheme,
                 });
 
                 // env-2 URL file-based discovery (#424): write .ait_urls so the

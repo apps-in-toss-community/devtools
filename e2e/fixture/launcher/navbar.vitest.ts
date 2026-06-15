@@ -24,6 +24,8 @@ import {
   LAUNCHER_NAVBAR_ICON_SIZE_PX,
   LAUNCHER_NAVBAR_TITLE_GAP_PX,
   LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX,
+  parseNavBarTheme,
+  parseNavBarTransparent,
   parseNavBarType,
   resolveAppIcon,
   resolveAppTitle,
@@ -305,5 +307,84 @@ describe('computeNavBarBridgeInsets', () => {
     const sideInsets = { top: 0, bottom: 20, left: 59, right: 59 };
     expect(computeNavBarBridgeInsets(sideInsets, false, 'game').left).toBe(59);
     expect(computeNavBarBridgeInsets(sideInsets, false, 'partner').right).toBe(59);
+  });
+
+  // -------------------------------------------------------------------------
+  // partner + transparent (#587) — UNVERIFIED HYPOTHESIS: treated like game
+  // -------------------------------------------------------------------------
+
+  it('partner + transparent + healthy → raw top passes through (full-bleed, unverified hypothesis #587)', () => {
+    const result = computeNavBarBridgeInsets(raw, false, 'partner', true, true);
+    expect(result.top).toBe(47);
+    expect(result.bottom).toBe(34);
+  });
+
+  it('partner + transparent + letterbox + corrected → raw top passes through, bottom RESTORED (#587)', () => {
+    const result = computeNavBarBridgeInsets(raw, true, 'partner', true, true);
+    expect(result.top).toBe(47);
+    expect(result.bottom).toBe(34);
+  });
+
+  it('partner + transparent + letterbox + NOT corrected → raw top passes through, bottom 0 (#587)', () => {
+    const result = computeNavBarBridgeInsets(raw, true, 'partner', false, true);
+    expect(result.top).toBe(47);
+    expect(result.bottom).toBe(0);
+  });
+
+  it('partner + NOT transparent → top forced to 0 (normal partner behaviour, no regression)', () => {
+    const result = computeNavBarBridgeInsets(raw, false, 'partner', true, false);
+    expect(result.top).toBe(0);
+    expect(result.bottom).toBe(34);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseNavBarTransparent (#587)
+// ---------------------------------------------------------------------------
+
+describe('parseNavBarTransparent (#587)', () => {
+  it('navBarTransparent=1 → true', () => {
+    expect(parseNavBarTransparent('?navBarTransparent=1')).toBe(true);
+  });
+
+  it('navBarTransparent=0 → false', () => {
+    expect(parseNavBarTransparent('?navBarTransparent=0')).toBe(false);
+  });
+
+  it('navBarTransparent absent → false (default)', () => {
+    expect(parseNavBarTransparent('')).toBe(false);
+    expect(parseNavBarTransparent('?navBarType=partner')).toBe(false);
+  });
+
+  it('navBarTransparent=true (string) → false (only "1" is accepted)', () => {
+    expect(parseNavBarTransparent('?navBarTransparent=true')).toBe(false);
+  });
+
+  it('navBarTransparent=yes → false (only "1" is accepted)', () => {
+    expect(parseNavBarTransparent('?navBarTransparent=yes')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseNavBarTheme (#587)
+// ---------------------------------------------------------------------------
+
+describe('parseNavBarTheme (#587)', () => {
+  it('navBarTheme=light → "light"', () => {
+    expect(parseNavBarTheme('?navBarTheme=light')).toBe('light');
+  });
+
+  it('navBarTheme=dark → "dark"', () => {
+    expect(parseNavBarTheme('?navBarTheme=dark')).toBe('dark');
+  });
+
+  it('navBarTheme absent → "dark" (default)', () => {
+    expect(parseNavBarTheme('')).toBe('dark');
+    expect(parseNavBarTheme('?navBarType=partner')).toBe('dark');
+  });
+
+  it('navBarTheme=unknown → "dark" (default)', () => {
+    expect(parseNavBarTheme('?navBarTheme=system')).toBe('dark');
+    expect(parseNavBarTheme('?navBarTheme=auto')).toBe('dark');
   });
 });

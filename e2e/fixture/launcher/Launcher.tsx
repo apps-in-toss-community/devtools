@@ -33,6 +33,8 @@ import {
   LAUNCHER_NAVBAR_TITLE_GAP_PX,
   LAUNCHER_NAVBAR_TITLE_MARGIN_LEFT_PX,
   type NavBarType,
+  parseNavBarTheme,
+  parseNavBarTransparent,
   parseNavBarType,
   resolveAppIcon,
   resolveAppTitle,
@@ -196,6 +198,7 @@ function postSafeAreaInsetsTo(
   letterboxDetected: boolean,
   navBarType: NavBarType,
   letterboxCorrected = true,
+  navBarTransparent = false,
 ): void {
   if (!target) return;
   const raw = measureSafeAreaInsets();
@@ -206,7 +209,17 @@ function postSafeAreaInsetsTo(
   // #527: letterboxCorrected=true (default) when the screen.height px correction
   // is in effect — the frame genuinely reaches the home-indicator area, so the
   // real bottom inset (34) is restored instead of being zeroed (#491 original).
-  const insets = computeNavBarBridgeInsets(raw, letterboxDetected, navBarType, letterboxCorrected);
+  //
+  // #587: partner+transparent — unverified hypothesis that the bar is an overlay
+  // and the iframe is full-bleed (raw top passes through like game). See
+  // computeNavBarBridgeInsets JSDoc for the caveat.
+  const insets = computeNavBarBridgeInsets(
+    raw,
+    letterboxDetected,
+    navBarType,
+    letterboxCorrected,
+    navBarTransparent,
+  );
   // targetOrigin '*': the framed tunnel page is cross-origin
   // (*.trycloudflare.com) and the insets are non-sensitive geometry. The
   // receiver (src/mock/safe-area-bridge.ts) validates shape + range.
@@ -512,6 +525,8 @@ function MoreMenu({
 // variant has no back button (full-bleed canvas, same as the real toss host).
 function NavBar({
   navBarType,
+  navBarTransparent,
+  navBarTheme,
   title,
   iconSrc,
   iconVisible,
@@ -525,6 +540,20 @@ function NavBar({
   frameRef,
 }: {
   navBarType: NavBarType;
+  /**
+   * Whether the partner bar renders with a transparent background (#587).
+   * `transparentBackground: true` in granite.config `navigationBar`.
+   * When true the bar bg is transparent (content shows through) and the
+   * bar is an overlay over the full-bleed iframe.
+   */
+  navBarTransparent: boolean;
+  /**
+   * Partner bar foreground colour theme (#587).
+   * `theme: 'light'|'dark'` in granite.config `navigationBar`.
+   * `'dark'` = light text/icons on dark bg (current default).
+   * `'light'` = dark text/icons on light/transparent bg.
+   */
+  navBarTheme: 'light' | 'dark';
   title: string;
   /** Resolved icon URL (https: only). null = no icon slot. */
   iconSrc: string | null;
@@ -569,17 +598,29 @@ function NavBar({
     );
   }
 
-  // Partner: a full dark bar pinned below the launcher's own status-bar inset.
+  // Partner: a full bar pinned below the launcher's own status-bar inset.
   // height is AIT_NAV_BAR_HEIGHT_PARTNER; the status-bar strip above it is the
   // env(safe-area-inset-top) padding so the bar clears the OS status bar.
+  //
+  // #587: navBarTransparent → background becomes transparent (content shows
+  // through, bar is an overlay over the full-bleed iframe). navBarTheme controls
+  // foreground/text colour — 'dark' = light text (current default), 'light' =
+  // dark text for use over bright content.
   //
   // Back button (#510): clicking `←` posts ait:navigate-back to the framed
   // window via the cross-origin postMessage bridge. The framed app's mock
   // installNavigateBackBridge() listener calls history.back() there.
+  //
+  // data-navbar-transparent / data-navbar-theme: exposed for test inspection and
+  // debugging (same pattern as data-navbar-type).
+  const fgColor = navBarTheme === 'light' ? '#14161a' : '#e8eaed';
+  const barBg = navBarTransparent ? 'transparent' : '#14161a';
   return (
     <div
       data-testid="launcher-navbar"
       data-navbar-type="partner"
+      data-navbar-transparent={navBarTransparent ? 'true' : 'false'}
+      data-navbar-theme={navBarTheme}
       style={{
         position: 'fixed',
         top: 0,
@@ -587,7 +628,7 @@ function NavBar({
         right: 0,
         zIndex: 25,
         paddingTop: 'env(safe-area-inset-top)',
-        background: '#14161a',
+        background: barBg,
         pointerEvents: 'auto',
       }}
     >
@@ -626,7 +667,7 @@ function NavBar({
             style={{
               background: 'none',
               border: 'none',
-              color: '#e8eaed',
+              color: fgColor,
               cursor: 'pointer',
               // Match panel env1 back-btn metrics: LAUNCHER_NAVBAR_BACK_PADDING / FONT_SIZE_PX
               // (src/panel/styles.ts .ait-navbar-back — parity guard: navbar.vitest.ts).
@@ -675,7 +716,7 @@ function NavBar({
             <span
               data-testid="launcher-navbar-title"
               style={{
-                color: '#e8eaed',
+                color: fgColor,
                 fontSize: '15px',
                 fontWeight: 600,
                 whiteSpace: 'nowrap',
@@ -743,14 +784,22 @@ export function Launcher(): React.JSX.Element {
   const [correctionPhase, setCorrectionPhase] = useState<CorrectionPhase>('idle');
   const armedEpochRef = useRef<string | null>(null);
 
-  // Nav-bar emulation (#495/#507). navBarType + title are read from the launcher
-  // query ONCE at mount — consumeDeepLinkUrl() strips the query via
-  // replaceState, so the initializer captures them before they are gone.
+  // Nav-bar emulation (#495/#507/#587). navBarType + title + appearance are read
+  // from the launcher query ONCE at mount — consumeDeepLinkUrl() strips the query
+  // via replaceState, so the initializer captures them before they are gone.
   // Setters are kept so the scan/manual-input paths (#507) can update the bar
   // when a launcher-style QR URL carries name=/icon=/navBarType= params.
   // menuOpen drives the `···` dropdown that rehomes diagnostics/rescan/language.
   const [menuOpen, setMenuOpen] = useState(false);
   const [navBarType, setNavBarType] = useState<NavBarType>(() => parseNavBarType(location.search));
+  // #587: navigationBar appearance (SDK 2.8.0 transparentBackground / theme).
+  // Read from the deep-link query at mount; updated via applyNavBarParams on scan.
+  const [navBarTransparent, setNavBarTransparent] = useState<boolean>(() =>
+    parseNavBarTransparent(location.search),
+  );
+  const [navBarTheme, setNavBarTheme] = useState<'light' | 'dark'>(() =>
+    parseNavBarTheme(location.search),
+  );
   const [appTitle, setAppTitle] = useState<string | null>(() => resolveAppTitle(location.search));
   // Icon slot (#498/#507): resolved at mount from the query string; also updated
   // by showLive when a scanned/entered launcher-style URL carries icon= params.
@@ -804,7 +853,7 @@ export function Launcher(): React.JSX.Element {
   // Screen transitions
   // ---------------------------------------------------------------------------
 
-  // Apply nav-bar params from a launcher search string (#507).
+  // Apply nav-bar params from a launcher search string (#507, #587).
   // Called both from showLive (scan/manual-input) and implicitly by mount-time
   // useState initializers (deep-link path). When search is null (direct tunnel
   // URL, no `url=` param), we reset to defaults so a new RESCAN doesn't carry
@@ -812,6 +861,9 @@ export function Launcher(): React.JSX.Element {
   const applyNavBarParams = useCallback((search: string | null) => {
     const s = search ?? '';
     setNavBarType(parseNavBarType(s));
+    // #587: reset appearance fields from the new search string (or to defaults).
+    setNavBarTransparent(parseNavBarTransparent(s));
+    setNavBarTheme(parseNavBarTheme(s));
     setAppTitle(resolveAppTitle(s));
     const newIcon = resolveAppIcon(s);
     setAppIconSrc(newIcon);
@@ -1140,6 +1192,7 @@ export function Launcher(): React.JSX.Element {
         letterboxDetected,
         navBarType,
         letterboxCorrected,
+        navBarTransparent,
       );
     window.addEventListener('resize', post);
     window.addEventListener('orientationchange', post);
@@ -1154,7 +1207,7 @@ export function Launcher(): React.JSX.Element {
       window.removeEventListener('orientationchange', post);
       window.visualViewport?.removeEventListener('resize', post);
     };
-  }, [screen, letterboxDetected, letterboxCorrected, navBarType]);
+  }, [screen, letterboxDetected, letterboxCorrected, navBarType, navBarTransparent]);
 
   // On-device ICB discriminator (#475): Δ between window.innerHeight and the
   // bottom chrome's resolved bottom edge. A healthy fixed anchor yields
@@ -1440,6 +1493,8 @@ export function Launcher(): React.JSX.Element {
       {screen === 'live' && (
         <NavBar
           navBarType={navBarType}
+          navBarTransparent={navBarTransparent}
+          navBarTheme={navBarTheme}
           title={navBarTitle}
           iconSrc={appIconSrc}
           iconVisible={iconVisible}
@@ -1479,6 +1534,7 @@ export function Launcher(): React.JSX.Element {
             letterboxDetected,
             navBarType,
             letterboxCorrected,
+            navBarTransparent,
           )
         }
         style={{
@@ -1495,9 +1551,11 @@ export function Launcher(): React.JSX.Element {
           // env(safe-area-inset-top) then reads 0, matching the real partner
           // WebView coordinate system (#190). The game variant stays full-bleed
           // (top: 0) — its floating capsule overlays the canvas.
+          // #587: partner+transparent → bar is a transparent overlay, so the
+          // iframe is full-bleed like game (UNVERIFIED HYPOTHESIS — see navbar.ts).
           position: 'fixed',
           top:
-            navBarType === 'partner'
+            navBarType === 'partner' && !navBarTransparent
               ? `calc(env(safe-area-inset-top) + ${AIT_NAV_BAR_HEIGHT_PARTNER}px)`
               : 0,
           left: 0,
@@ -1518,8 +1576,9 @@ export function Launcher(): React.JSX.Element {
           // px branch (matches the v11 iframe{height:100%} experiment). When the
           // band genuinely clips the force is dropped and the same formula then
           // resolves against the real ≈797 ICB — no mini-app content is clipped.
+          // #587: partner+transparent → full-bleed height (same as game).
           height:
-            navBarType === 'partner'
+            navBarType === 'partner' && !navBarTransparent
               ? `calc(100% - env(safe-area-inset-top) - ${AIT_NAV_BAR_HEIGHT_PARTNER}px)`
               : '100%',
           background: '#fff',
