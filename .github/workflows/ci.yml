@@ -45,7 +45,7 @@ jobs:
       # both 3.0-beta (bare devDep) and the 2.x stable line (web-framework-2x
       # alias). If the alias silently disappears or drifts off the 2.8.x line,
       # tsconfig.2x.json would skip silently — fail fast instead of green-lying.
-      - run: node -e "const p=require('@apps-in-toss/web-framework-2x/package.json'); if(!/^2\.8\./.test(p.version)){console.error('2x alias not 2.8.x: '+p.version);process.exit(1)}"
+      - run: 'node -e "const p=require(''@apps-in-toss/web-framework-2x/package.json''); if(!/^2\.8\./.test(p.version)){console.error(''2x alias not 2.8.x: ''+p.version);process.exit(1)}"'
 
       - run: pnpm typecheck
 
