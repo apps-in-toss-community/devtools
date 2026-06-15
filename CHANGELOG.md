@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.91
+
+### Patch Changes
+
+- 17d63d0: launcher: letterbox 보정량이 0일 때 "+0pt 적용됨" 배너를 숨긴다 (held holding 분기 false-positive 제거). 레이아웃 verdict는 불변.
+
 ## 0.1.90
 
 ### Patch Changes
