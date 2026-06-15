@@ -1,14 +1,25 @@
 /**
- * 타입 호환성 검증 파일
+ * 타입 호환성 검증 파일 — 2.x stable 라인 (web-framework-2x alias)
  *
- * 빌드에는 포함되지 않는다. tsc --noEmit으로만 실행.
- * @apps-in-toss/web-framework의 export와 mock의 export가 호환되는지 컴파일 타임에 검증한다.
- * SDK가 업데이트되어 시그니처가 바뀌면 여기서 에러가 발생한다.
+ * `__typecheck.ts`(3.0-beta 라인)와 같은 본체를, devDep alias
+ * `@apps-in-toss/web-framework-2x`(= `npm:@apps-in-toss/web-framework@2.8.0`)
+ * 대상으로 한 번 더 컴파일한다 — mock이 2.x stable·3.0-beta 두 라인 모두와
+ * 호환됨을 CI에서 증명한다(`tsconfig.2x.json`이 이 파일만 include).
+ *
+ * 두 라인의 유일한 표면 차이는 base `PermissionError`다(2.x public surface 부재,
+ * 서브클래스 7개는 존재) → 그 한 심볼만 `AssertIfPresent`로 capability-gate하고
+ * 나머지 70개는 평면 `Assert`로 엄격 검증한다. 새 mock API를 추가할 때는 이 파일과
+ * `__typecheck.ts`를 함께 갱신한다(현재 skip 대상은 PermissionError base 1개뿐).
  */
 
-import type * as Original from '@apps-in-toss/web-framework';
+import type * as Original from '@apps-in-toss/web-framework-2x';
 import type { Assert, AssertIfPresent } from './__typecheck-shared.js';
 import type * as Mock from './mock/index.js';
+
+// 제네릭 인자에 `typeof Mock`/`typeof Original`을 직접 쓰면 TS2709가 나므로
+// 먼저 명명형 타입으로 고정한다.
+type MockNS = typeof Mock;
+type OrigNS = typeof Original;
 
 // --- Storage ---
 type _StorageGetItem = Assert<typeof Mock.Storage.getItem, typeof Original.Storage.getItem>;
@@ -175,7 +186,6 @@ type _ShowFullScreenAd = Assert<typeof Mock.showFullScreenAd, typeof Original.sh
 type _GraniteEvent = Assert<typeof Mock.graniteEvent, typeof Original.graniteEvent>;
 type _TdsEvent = Assert<typeof Mock.tdsEvent, typeof Original.tdsEvent>;
 type _AppsInTossEvent = Assert<typeof Mock.appsInTossEvent, typeof Original.appsInTossEvent>;
-// onVisibilityChangedByTransparentServiceWeb is removed in web-framework 3.0 — no Assert.
 
 // --- 게임/프로모션 ---
 type _GrantPromotionReward = Assert<
@@ -247,9 +257,9 @@ type _OpenPermissionDialog = Assert<
 type _RequestPermission = Assert<typeof Mock.requestPermission, typeof Original.requestPermission>;
 
 // --- PermissionError 계층 (web-framework 3.0+ 신규, runtime class) ---
-// base PermissionError는 2.x stable 라인 public surface에 부재(서브클래스 7개는 존재).
-// AssertIfPresent로 capability-gate: 3.0에선 존재→엄격 검증, 2.x에선 skip(true).
-type _PermissionError = AssertIfPresent<typeof Mock, typeof Original, 'PermissionError'>;
+// base PermissionError는 2.x stable 라인 public surface에 부재 → AssertIfPresent로
+// skip(true). 서브클래스 7개는 2.x에도 존재하므로 평면 Assert로 엄격 검증한다.
+type _PermissionError = AssertIfPresent<MockNS, OrigNS, 'PermissionError'>;
 type _FetchAlbumPhotosPermissionError = Assert<
   typeof Mock.FetchAlbumPhotosPermissionError,
   typeof Original.FetchAlbumPhotosPermissionError
@@ -284,9 +294,3 @@ type _RequestNotificationAgreement = Assert<
   typeof Mock.requestNotificationAgreement,
   typeof Original.requestNotificationAgreement
 >;
-
-// --- 추가 mock (web-framework 메인 export에는 없음, native-modules/web-bridge 개별 d.ts 기준) ---
-// getAnonymousKey, requestTossPayPaysBilling은 @apps-in-toss/web-framework 메인
-// 표면에서 노출되지 않는다 (web-bridge index.d.ts에서 re-export 안 됨). 사용자가
-// 깊은 경로로 import하거나 SDK가 향후 메인에 노출했을 때를 대비해 mock은
-// 두지만, Original.X로 시그니처 align할 대상 자체가 없어 Assert는 생략한다.

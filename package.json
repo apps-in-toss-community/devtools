@@ -55,7 +55,7 @@
     "check:mcp-react-free": "bash scripts/check-mcp-react-free.sh",
     "check:dashboard-html-fresh": "pnpm build:dashboard-html && git diff --exit-code src/mcp/dashboard.generated.ts",
     "dev": "tsdown --watch",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e/fixture/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.2x.json && tsc --noEmit -p e2e/fixture/tsconfig.json && tsc --noEmit -p scripts/tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "e2e:build": "pnpm build && vite build --config e2e/fixture/vite.config.ts",
@@ -69,7 +69,7 @@
     "prepublishOnly": "pnpm build && pnpm check:mcp-react-free && pnpm typecheck && pnpm test && pnpm build:og"
   },
   "peerDependencies": {
-    "@apps-in-toss/web-framework": ">=2.6.0 <2.7.0"
+    "@apps-in-toss/web-framework": ">=2.6.0 <3.0.0"
   },
   "peerDependenciesMeta": {
     "@apps-in-toss/web-framework": {
@@ -89,6 +89,7 @@
   "devDependencies": {
     "@ait-co/polyfill": "^0.1.17",
     "@apps-in-toss/web-framework": "3.0.0-beta.3051978",
+    "@apps-in-toss/web-framework-2x": "npm:@apps-in-toss/web-framework@2.8.0",
     "@biomejs/biome": "2.4.15",
     "@changesets/cli": "^2.31.0",
     "@khmyznikov/pwa-install": "^0.6.3",
