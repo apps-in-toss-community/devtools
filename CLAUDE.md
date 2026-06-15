@@ -110,8 +110,8 @@ src/
 
 1. 카테고리 디렉토리에 함수 구현 (예: `src/mock/device/`)
 2. `src/mock/index.ts`에 export
-3. `src/__typecheck.ts`에 `type _NewApi = Assert<typeof Mock.newApi, typeof Original.newApi>;`
-4. `pnpm typecheck`
+3. **두 typecheck 파일 모두 갱신**: `src/__typecheck.ts`(3.0-beta 라인)와 `src/__typecheck-2x.ts`(2.x stable 라인 — `web-framework-2x` alias)에 각각 `type _NewApi = Assert<typeof Mock.newApi, typeof Original.newApi>;`. 두 라인에 존재 유무가 갈리는 심볼만 `AssertIfPresent`로 capability-gate한다 (현재 skip 대상은 base `PermissionError` 1개뿐).
+4. `pnpm typecheck` (두 라인 tsc 모두 통과해야 한다)
 5. 테스트 작성
 
 ## SDK 업데이트 대응
