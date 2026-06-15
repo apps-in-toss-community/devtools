@@ -45,6 +45,13 @@ export interface PrintTunnelBannerOptions {
    * the generic default.
    */
   name?: string;
+  /**
+   * The miniapp's webViewType. When `'game'`, the deep-link carries `&navBarType=game`
+   * so the launcher enters game nav chrome automatically on scan (#584).
+   * `'partner'` (the default) is the launcher's implicit default — not added to
+   * keep the URL clean.
+   */
+  webViewType?: 'partner' | 'game';
 }
 
 const LAUNCHER_URL = 'https://devtools.aitc.dev/launcher/';
@@ -63,6 +70,13 @@ export interface BuildLauncherDeepLinkOptions {
    * Blank / whitespace-only values are not added.
    */
   name?: string;
+  /**
+   * The miniapp's webViewType. When `'game'`, adds `&navBarType=game` to the
+   * deep-link so the launcher enters game nav chrome automatically on scan (#584).
+   * `'partner'` (the launcher's implicit default) is not added to keep the URL
+   * clean.
+   */
+  webViewType?: 'partner' | 'game';
 }
 
 /**
@@ -80,6 +94,11 @@ export interface BuildLauncherDeepLinkOptions {
  *
  * When `opts.name` is given (non-blank), it is added as `&name=` so the launcher
  * partner bar shows the app name instead of the generic default (#498).
+ *
+ * When `opts.webViewType` is `'game'`, `&navBarType=game` is appended so the
+ * launcher enters game nav chrome (floating capsule, no full bar) automatically
+ * on scan. `'partner'` is the launcher's implicit default and is not added to
+ * keep the URL clean (#584).
  *
  * Back-compat: the second argument may also be a plain string (`relayWssUrl`)
  * for callers that haven't migrated to the options object yet.
@@ -100,6 +119,9 @@ export function buildLauncherDeepLink(
   if (opts.name !== undefined && opts.name.trim() !== '') {
     url += `&name=${encodeURIComponent(opts.name.trim())}`;
   }
+  if (opts.webViewType === 'game') {
+    url += '&navBarType=game';
+  }
   return url;
 }
 
@@ -114,7 +136,11 @@ export async function printTunnelBanner(
   opts: PrintTunnelBannerOptions = {},
 ): Promise<void> {
   const log = opts.log ?? ((m: string) => console.log(m));
-  const deepLink = buildLauncherDeepLink(url, { relayWssUrl: opts.relayWssUrl, name: opts.name });
+  const deepLink = buildLauncherDeepLink(url, {
+    relayWssUrl: opts.relayWssUrl,
+    name: opts.name,
+    webViewType: opts.webViewType,
+  });
   const lines: string[] = [
     '',
     '  ┌─ @ait-co/devtools · live tunnel ────────────────────────────',

@@ -102,6 +102,40 @@ describe('buildLauncherDeepLink', () => {
     expect(parsed.searchParams.get('relay')).toBe(relay);
     expect(parsed.searchParams.get('name')).toBe('sdk-example');
   });
+
+  it('webViewType:"game" → navBarType=game 주입 (#584)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      webViewType: 'game',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('navBarType')).toBe('game');
+  });
+
+  it('webViewType:"partner" → navBarType 미주입 (back-compat, launcher 기본값)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      webViewType: 'partner',
+    });
+    expect(new URL(deepLink).searchParams.has('navBarType')).toBe(false);
+  });
+
+  it('webViewType 미지정 → navBarType 없음 (back-compat)', () => {
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {});
+    expect(new URL(deepLink).searchParams.has('navBarType')).toBe(false);
+  });
+
+  it('relayWssUrl + name + webViewType:"game" 동시 → 세 param 모두 공존 (#584)', () => {
+    const relay = 'wss://relay-abc.trycloudflare.com';
+    const deepLink = buildLauncherDeepLink('https://abc-def.trycloudflare.com', {
+      relayWssUrl: relay,
+      name: 'my-game-app',
+      webViewType: 'game',
+    });
+    const parsed = new URL(deepLink);
+    expect(parsed.searchParams.get('relay')).toBe(relay);
+    expect(parsed.searchParams.get('name')).toBe('my-game-app');
+    expect(parsed.searchParams.get('navBarType')).toBe('game');
+    expect(parsed.searchParams.get('debug')).toBe('1');
+  });
 });
 
 describe('printTunnelBanner', () => {
