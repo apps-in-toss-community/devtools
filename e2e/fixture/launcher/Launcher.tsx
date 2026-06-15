@@ -1617,7 +1617,7 @@ export function Launcher(): React.JSX.Element {
           the limit honestly and points to the known manual recovery (rotate
           landscape → portrait).
         */}
-          {letterboxDetected && (
+          {letterboxDetected && (correctionPhase === 'clipped' || letterboxShortfallPx > 0) && (
             <div
               role="status"
               data-testid="launcher-letterbox-label"
