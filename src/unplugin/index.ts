@@ -542,6 +542,7 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
                   qr: tunnelConfig.qr,
                   relayWssUrl,
                   name: tunnelAppName,
+                  webViewType,
                 });
 
                 // env-2 URL file-based discovery (#424): write .ait_urls so the
