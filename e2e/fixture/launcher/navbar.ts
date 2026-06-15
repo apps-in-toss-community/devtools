@@ -199,6 +199,8 @@ export function computeNavBarBridgeInsets(
   letterboxCorrected = true,
 ): SafeAreaInsets {
   const base = computeLetterboxBridgeInsets(raw, letterboxDetected, letterboxCorrected);
+  // game = full-bleed 가정으로 raw top을 그대로 통과시킨다. game frame type은 SDK deprecated
+  // (web-framework 2.6.1) 이므로 실기기 실측은 미추진 — 이 passthrough는 미검증 경로다 (#577).
   if (navBarType === 'game') return base;
   // Partner bar consumes the status-bar + nav-bar band as launcher chrome; the
   // iframe starts below it so its top inset is 0.

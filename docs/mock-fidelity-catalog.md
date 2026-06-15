@@ -69,7 +69,7 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 | orientation | navBarType | measure 필요 항목 |
 |---|---|---|
 | portrait | partner | top(nav bar), bottom(home indicator), left, right |
-| portrait | game | top(투명 오버레이라 0 예상), bottom, left, right |
+| portrait | game | **SDK deprecated** (web-framework 2.6.1: `type?: 'partner' \| 'external' \| 'game'`, external/game `@deprecated`) → mock은 partner와 동일하게 취급(top=0). deprecated 경로는 신뢰할 ground truth를 얻을 수 없어 실측 미추진 (#577) |
 | landscape (notch 왼쪽) | partner | left(notchInset), top(0 예상), right, bottom |
 | landscape (notch 오른쪽) | partner | right(notchInset), top(0 예상), left, bottom |
 

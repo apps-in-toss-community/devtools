@@ -338,7 +338,9 @@ export function resolveViewportSize(state: ViewportState): { width: number; heig
  *   높이에 대한 정보용 값이고, WebView 좌표계에서 콘텐츠는 top=0부터 시작한다. 소비자가
  *   이 값을 `padding-top`으로 적용하면 실기기에서 잉여 공간이 생긴다(double-count).
  *   mock은 top=0을 반환해 소비자 코드가 실기기와 같은 결과를 내도록 한다.
- *   `game` type 측정은 아직 미진행이지만 동일하게 top=0을 반환한다(추후 실측으로 갱신).
+ *   `game` webViewProps.type은 SDK deprecated(web-framework 2.6.1: `type?: 'partner' | 'external' | 'game'`
+ *   에서 external/game이 `@deprecated`). 따라서 실측을 추진하지 않으며, mock은 game을 partner와
+ *   동일하게 취급해 top=0을 반환한다 — 분기 미추가 (#577).
  * - **Bottom = `safeAreaBottom`** (portrait home-indicator, 실측 34).
  *   landscape는 `safeAreaBottomLandscape`가 정의돼 있으면 그 값을 사용한다
  *   (iPhone 15 Pro landscape 실측 20 — portrait 34와 다름).
@@ -356,7 +358,8 @@ export function computeSafeAreaInsets(preset: ViewportPreset, landscape: boolean
   }
   // Portrait top=0: 토스 native nav bar는 partner WebView viewport 밖 — SDK top은 정보용이라
   // padding 대상이 아님(devtools#275). 소비자가 SDK top을 padding으로 적용해도 실기기와
-  // 같은 결과를 보도록 top=0을 반환한다. game type 실측 후 분기 필요 시 여기에 추가.
+  // 같은 결과를 보도록 top=0을 반환한다. game frame type은 SDK deprecated (#577) —
+  // 분기를 추가하지 않는다. mock은 game/partner 동일하게 top=0을 반환한다.
   if (!landscape) {
     return { top: 0, bottom: preset.safeAreaBottom, left: 0, right: 0 };
   }
