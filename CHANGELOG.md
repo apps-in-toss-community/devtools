@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.92
+
+### Patch Changes
+
+- 970b20c: docs: game webViewType이 SDK(web-framework 2.6.1) deprecated임을 확정 — mock safe-area는 game/partner 동일(top=0) 유지, 분기 미추가 (#577).
+
 ## 0.1.91
 
 ### Patch Changes
