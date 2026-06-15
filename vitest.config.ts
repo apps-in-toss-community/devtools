@@ -15,7 +15,12 @@ export default defineConfig({
     // keeps Playwright (testMatch '**/*.test.ts', testDir './e2e') from picking
     // these up, so the same launcher source is covered by both runners without
     // collision (#411).
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'e2e/fixture/launcher/**/*.vitest.ts'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'e2e/fixture/launcher/**/*.vitest.ts',
+      'e2e/fixture/launcher/**/*.vitest.tsx',
+    ],
     // Only the Playwright e2e specs are excluded — the launcher `*.vitest.ts`
     // files above stay in vitest's scope.
     exclude: ['e2e/**/*.test.ts', '.tmp/**', 'node_modules/**', '.claude/**'],
