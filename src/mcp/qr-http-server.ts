@@ -894,8 +894,13 @@ export async function startQrHttpServer(
 
   return {
     port,
-    buildAttachPageUrl(attachUrl: string): string {
-      return `http://127.0.0.1:${port}/attach?u=${encodeURIComponent(attachUrl)}`;
+    buildAttachPageUrl(_attachUrl: string): string {
+      // 사용자 대면 URL을 루트 `/`로 수렴 (#595).
+      // 같은 데몬이 attachUrl을 이미 server-state(getDashboardState)로 보유하므로
+      // `/attach?u=<encoded>` 쿼리는 redundant하다.
+      // SECRET-HANDLING: 브라우저에 열리는 URL에서 tunnel host·relay wss·TOTP at= 제거.
+      // /attach?u= 라우트 자체는 back-compat으로 유지(기존 인쇄된 링크 보호).
+      return `http://127.0.0.1:${port}/`;
     },
     // 안정 인스펙터 진입점 URL (issue #530) — 클릭 시 302 redirect (TOTP 클릭 시점 mint).
     // URL 자체에 시크릿 없음 → 대시보드/stdout/로그 어디든 출력 가능.
