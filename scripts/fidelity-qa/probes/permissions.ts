@@ -20,6 +20,6 @@ export const permissionsProbes: Probe[] = PERMISSION_NAMES.map((name) => ({
   id: `permissions.getPermission.${name}`,
   domain: 'permissions' as const,
   async run() {
-    return await getPermission(name);
+    return await getPermission({ name, access: 'access' });
   },
 }));

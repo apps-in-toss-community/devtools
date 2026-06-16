@@ -223,4 +223,7 @@ const _fetchAlbumItems = async (options?: FetchAlbumItemsOptions): Promise<Album
   if (mode === 'prompt') return fetchAlbumItemsPrompt(maxCount);
   return fetchAlbumItemsMock(maxCount, types);
 };
-export const fetchAlbumItems = withPermission(_fetchAlbumItems, 'photos');
+const _fetchAlbumItemsWithPermission = withPermission(_fetchAlbumItems, 'photos');
+export const fetchAlbumItems: typeof _fetchAlbumItemsWithPermission & {
+  isSupported: () => boolean;
+} = Object.assign(_fetchAlbumItemsWithPermission, { isSupported: () => true });

@@ -3,8 +3,12 @@
  * 각 디바이스 API (.getPermission, .openPermissionDialog)에 부착된다.
  */
 
+import type {
+  PermissionAccess,
+  PermissionName,
+  PermissionStatus,
+} from '@apps-in-toss/web-framework';
 import { aitState } from './state.js';
-import type { PermissionName, PermissionStatus } from './types.js';
 
 // --- PermissionError 계층 (web-framework 3.0+ 신규) ---
 // checkPermission()이 권한 거부 시 per-API *PermissionError 서브클래스를 throw한다 (#372).
@@ -83,24 +87,33 @@ const permissionErrorMap: Record<string, new () => PermissionError> = {
   setClipboardText: SetClipboardTextPermissionError,
 };
 
-export async function getPermission(name: PermissionName): Promise<PermissionStatus> {
-  return aitState.state.permissions[name];
+// SDK 시그니처: getPermission(permission: { name: PermissionName; access: PermissionAccess }): Promise<PermissionStatus>
+export async function getPermission(permission: {
+  name: PermissionName;
+  access: PermissionAccess;
+}): Promise<PermissionStatus> {
+  return aitState.state.permissions[permission.name];
 }
 
-export async function openPermissionDialog(name: PermissionName): Promise<'allowed' | 'denied'> {
-  const current = aitState.state.permissions[name];
+// SDK 시그니처: openPermissionDialog(permission: { name: PermissionName; access: PermissionAccess }): Promise<Exclude<PermissionStatus, "notDetermined">>
+export async function openPermissionDialog(permission: {
+  name: PermissionName;
+  access: PermissionAccess;
+}): Promise<'allowed' | 'denied'> {
+  const current = aitState.state.permissions[permission.name];
   if (current === 'allowed') return 'allowed';
   // notDetermined나 denied일 때 — Panel에서 설정된 값을 사용
   // 기본적으로는 allowed로 전환
-  aitState.patch('permissions', { [name]: 'allowed' });
+  aitState.patch('permissions', { [permission.name]: 'allowed' });
   return 'allowed';
 }
 
+// SDK 시그니처: requestPermission(permission: { name: PermissionName; access: PermissionAccess }): Promise<Exclude<PermissionStatus, "notDetermined">>
 export async function requestPermission(permission: {
   name: PermissionName;
-  access: string;
+  access: PermissionAccess;
 }): Promise<'allowed' | 'denied'> {
-  return openPermissionDialog(permission.name);
+  return openPermissionDialog(permission);
 }
 
 /** 권한이 필요한 함수에 .getPermission(), .openPermissionDialog()를 부착 */
@@ -115,8 +128,9 @@ export function withPermission<T extends (...args: never[]) => unknown>(
     getPermission: () => Promise<PermissionStatus>;
     openPermissionDialog: () => Promise<'allowed' | 'denied'>;
   };
-  enhanced.getPermission = () => getPermission(permissionName);
-  enhanced.openPermissionDialog = () => openPermissionDialog(permissionName);
+  enhanced.getPermission = () => getPermission({ name: permissionName, access: 'access' });
+  enhanced.openPermissionDialog = () =>
+    openPermissionDialog({ name: permissionName, access: 'access' });
   return enhanced;
 }
 

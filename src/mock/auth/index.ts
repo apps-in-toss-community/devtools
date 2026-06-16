@@ -18,11 +18,10 @@ export async function getIsTossLoginIntegratedService(): Promise<boolean | undef
   return aitState.state.auth.isTossLoginIntegrated;
 }
 
-export async function getUserKeyForGame(): Promise<
-  { hash: string; type: 'HASH' } | 'INVALID_CATEGORY' | 'ERROR' | undefined
-> {
-  if (!aitState.state.auth.userKeyHash) return undefined;
-  return { hash: aitState.state.auth.userKeyHash, type: 'HASH' };
+// SDK 3.0에서 getUserKeyForGame = typeof getAnonymousKey → Promise<{ hash: string; type: 'HASH' }>
+// 이전의 'INVALID_CATEGORY'|'ERROR'|undefined sentinel은 실제 SDK 타입에 없으므로 제거.
+export async function getUserKeyForGame(): Promise<{ hash: string; type: 'HASH' }> {
+  return { hash: aitState.state.auth.userKeyHash ?? '', type: 'HASH' };
 }
 
 export async function getAnonymousKey(): Promise<

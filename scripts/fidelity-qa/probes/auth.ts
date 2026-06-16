@@ -23,9 +23,6 @@ export const authProbes: Probe[] = [
     async run() {
       const result = await getUserKeyForGame();
       // Normalize: return type indicator only (hash value varies)
-      if (result === undefined || result === 'INVALID_CATEGORY' || result === 'ERROR') {
-        return result;
-      }
       return { type: result.type, hasHash: typeof result.hash === 'string' };
     },
   },

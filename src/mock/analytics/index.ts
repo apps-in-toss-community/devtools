@@ -26,7 +26,7 @@ export const Analytics = {
 
 export async function eventLog(params: {
   log_name: string;
-  log_type: 'debug' | 'info' | 'warn' | 'error' | 'event' | 'screen' | 'impression' | 'click';
+  log_type: string;
   params: Record<string, Primitive>;
 }): Promise<void> {
   aitState.logAnalytics({

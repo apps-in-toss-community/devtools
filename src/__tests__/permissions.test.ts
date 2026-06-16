@@ -21,16 +21,16 @@ describe('Permissions mock', () => {
   });
 
   it('getPermission: 상태의 권한 값을 반환한다', async () => {
-    expect(await getPermission('camera')).toBe('allowed');
-    expect(await getPermission('microphone')).toBe('notDetermined');
+    expect(await getPermission({ name: 'camera', access: 'access' })).toBe('allowed');
+    expect(await getPermission({ name: 'microphone', access: 'access' })).toBe('notDetermined');
   });
 
   it('openPermissionDialog: 이미 allowed면 그대로 반환', async () => {
-    expect(await openPermissionDialog('camera')).toBe('allowed');
+    expect(await openPermissionDialog({ name: 'camera', access: 'access' })).toBe('allowed');
   });
 
   it('openPermissionDialog: notDetermined를 allowed로 전환한다', async () => {
-    expect(await openPermissionDialog('microphone')).toBe('allowed');
+    expect(await openPermissionDialog({ name: 'microphone', access: 'access' })).toBe('allowed');
     expect(aitState.state.permissions.microphone).toBe('allowed');
   });
 
@@ -45,7 +45,7 @@ describe('Permissions mock', () => {
 
   it('openPermissionDialog: denied를 allowed로 전환한다', async () => {
     aitState.patch('permissions', { camera: 'denied' });
-    expect(await openPermissionDialog('camera')).toBe('allowed');
+    expect(await openPermissionDialog({ name: 'camera', access: 'access' })).toBe('allowed');
     expect(aitState.state.permissions.camera).toBe('allowed');
   });
 
@@ -61,7 +61,7 @@ describe('Permissions mock', () => {
 
   it('requestPermission: openPermissionDialog에 위임한다', async () => {
     aitState.patch('permissions', { microphone: 'notDetermined' });
-    expect(await requestPermission({ name: 'microphone', access: 'record' })).toBe('allowed');
+    expect(await requestPermission({ name: 'microphone', access: 'access' })).toBe('allowed');
     expect(aitState.state.permissions.microphone).toBe('allowed');
   });
 
