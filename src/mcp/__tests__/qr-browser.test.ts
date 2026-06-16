@@ -1,7 +1,9 @@
 /**
- * QR HTTP 서버 + browser open 기능 테스트 (issue #244):
+ * QR HTTP 서버 + browser open 기능 테스트 (issue #244, #595):
  *   - startQrHttpServer: /attach → HTML (base64 inline QR + 스캔 절차 + 진단 체크리스트)
  *   - startQrHttpServer: /qr.png → image/png + PNG magic bytes
+ *   - buildAttachPageUrl: 루트 `/` URL 반환 (#595 — 시크릿 없는 주소창 노출)
+ *   - openQrInBrowser: httpUrl이 루트 `/`이고 `?u=`/`at=`를 포함하지 않음
  *   - openQrInBrowser: platform별 fallback chain, 1차 실패 → 2차 호출
  *   - openQrInBrowser: 모두 실패 시 URL + stderr 안내
  *   - SECRET-HANDLING: at= 코드가 stderrSummary에서 redact되는지
@@ -87,12 +89,13 @@ describe('canOpenBrowser', () => {
 
 describe('startQrHttpServer', () => {
   it('GET /attach → HTML with base64 inline QR + scan steps + diagnostic checklist + attachUrl', async () => {
+    // buildAttachPageUrl은 루트 `/`를 반환하므로 (#595), /attach 라우트를 직접 테스트.
     const { startQrHttpServer } = await import('../qr-http-server.js');
     const srv = await startQrHttpServer();
 
     const attachUrl =
       'intoss-private://aitc-sdk-example?_deploymentId=test-uuid&debug=1&relay=wss%3A%2F%2Fx.trycloudflare.com';
-    const pageUrl = srv.buildAttachPageUrl(attachUrl);
+    const pageUrl = `http://127.0.0.1:${srv.port}/attach?u=${encodeURIComponent(attachUrl)}`;
 
     const res = await fetch(pageUrl, { headers: { 'Accept-Language': 'ko' } });
     expect(res.status).toBe(200);
@@ -144,15 +147,17 @@ describe('startQrHttpServer', () => {
     await srv.close();
   });
 
-  it('buildAttachPageUrl encodes attachUrl into /attach?u= query', async () => {
+  it('buildAttachPageUrl returns root / without query string (#595 — 시크릿 노출 표면 축소)', async () => {
     const { startQrHttpServer } = await import('../qr-http-server.js');
     const srv = await startQrHttpServer();
 
     const attachUrl = 'intoss-private://app?_deploymentId=abc&debug=1&relay=wss://r.tc.com';
     const url = srv.buildAttachPageUrl(attachUrl);
 
-    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/attach\?u=/);
-    expect(url).toContain(encodeURIComponent(attachUrl));
+    // 루트 `/`를 반환해야 한다 — 쿼리 없음, at= 없음.
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+    expect(url).not.toContain('?u=');
+    expect(url).not.toContain('at=');
 
     await srv.close();
   });
@@ -384,6 +389,26 @@ describe('openQrInBrowser', () => {
     // at= 값이 redact되어 있어야 함
     expect(result.stderrSummary).not.toContain('ABC123');
     expect(result.stderrSummary).toContain('at=<redacted>');
+  });
+
+  // #595: buildAttachPageUrl 이 루트 `/`를 반환하므로, 실제 caller가 넘기는 httpUrl은 루트 URL이다.
+  // openQrInBrowser 자체는 인자를 에코하므로, 루트 URL을 넘겼을 때 결과가 시크릿 없는 루트임을 검증.
+  it('#595: httpUrl이 루트 `/`이면 결과에 ?u= / at= 포함되지 않음', async () => {
+    setPlatform('darwin');
+    const { spawnSync } = await import('node:child_process');
+    (spawnSync as ReturnType<typeof vi.fn>).mockReturnValue({ status: 0, stderr: '', error: null });
+
+    const rootUrl = 'http://127.0.0.1:12345/';
+    const pngUrl = 'http://127.0.0.1:12345/qr.png?u=intoss-private%3A%2F%2Fapp';
+    const result = await openQrInBrowser(rootUrl, pngUrl);
+
+    expect(result.opened).toBe(true);
+    expect(result.httpUrl).toBe(rootUrl);
+    // httpUrl에 시크릿 포함 금지 — 쿼리 파라미터 없음
+    expect(result.httpUrl).not.toContain('?u=');
+    expect(result.httpUrl).not.toContain('at=');
+    // pngUrl은 여전히 ?u= 를 가질 수 있음 (stateless 이미지 헬퍼)
+    expect(result.pngUrl).toContain('/qr.png');
   });
 });
 

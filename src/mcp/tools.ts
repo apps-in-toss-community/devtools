@@ -932,13 +932,13 @@ export function canOpenBrowser(): boolean {
  * Result of `openQrInBrowser`.
  *
  * HTTP URL 기반으로 재구현 — tmp 파일 없음. `httpUrl`이 브라우저에 전달되는 URL이다.
- * SECRET-HANDLING: `httpUrl`은 127.0.0.1 로컬 전용이며 at= 코드 값을 직접 담지 않는다
- * (attachUrl은 /attach?u= query로 전달되어 서버 메모리에서만 처리).
+ * SECRET-HANDLING: `httpUrl`은 127.0.0.1 로컬 전용이며 tunnel host·relay wss·TOTP at= 코드를
+ * 담지 않는다 (#595). attachUrl은 server-state(getDashboardState)로만 보유된다.
  */
 export interface OpenQrInBrowserResult {
   /** `true` if the browser was successfully opened. */
   opened: boolean;
-  /** `http://127.0.0.1:<port>/attach?u=...` — 브라우저에 전달된 URL. */
+  /** `http://127.0.0.1:<port>/` — 브라우저에 전달되는 루트 URL (#595). */
   httpUrl: string;
   /** `http://127.0.0.1:<port>/qr.png?u=...` — PNG fallback URL. */
   pngUrl: string;
@@ -1002,7 +1002,7 @@ function isLaunchFailureStderr(stderr: string): boolean {
 }
 
 /**
- * 로컬 HTTP 서버 URL(`http://127.0.0.1:<port>/attach?u=...`)을 OS 기본 브라우저로 연다.
+ * 로컬 HTTP 서버 루트 URL(`http://127.0.0.1:<port>/`)을 OS 기본 브라우저로 연다 (#595).
  *
  * platform별 fallback chain으로 시도하며, 모두 실패하면 1회 retry를 수행한다
  * (ephemeral process launch 타이밍 문제 대응). retry까지 실패해도 `opened: false` +
@@ -1010,11 +1010,11 @@ function isLaunchFailureStderr(stderr: string): boolean {
  *
  * SECRET-HANDLING:
  *   - tmp 파일을 만들지 않는다 (HTML/PNG는 HTTP 서버가 메모리에서 응답).
- *   - httpUrl/pngUrl은 127.0.0.1 로컬 전용.
+ *   - httpUrl은 `http://127.0.0.1:<port>/`(루트, 시크릿 없음). pngUrl은 127.0.0.1 로컬 전용.
  *   - stderr 캡처 결과에서 at= 코드 값을 redact한 후 stderrSummary에 포함.
  *   - attachUrl, deploymentId, TOTP 코드를 stdout/stderr/로그에 직접 출력 금지.
  *
- * @param httpUrl - `http://127.0.0.1:<port>/attach?u=<encoded>` HTTP URL.
+ * @param httpUrl - `http://127.0.0.1:<port>/` 루트 URL (시크릿 없음, #595).
  * @param pngUrl  - `http://127.0.0.1:<port>/qr.png?u=<encoded>` PNG fallback URL.
  */
 export async function openQrInBrowser(
