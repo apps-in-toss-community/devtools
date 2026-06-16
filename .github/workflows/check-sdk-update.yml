@@ -45,16 +45,20 @@ jobs:
       - name: Create issue if update available
         if: steps.check.outcome == 'failure'
         uses: actions/github-script@v9
+        env:
+          NEW_EXPORTS: ${{ steps.exports.outputs.new_exports }}
+          REMOVED_EXPORTS: ${{ steps.exports.outputs.removed_exports }}
         with:
           script: |
+            try {
             const fs = require('fs');
             let typecheckOutput = '';
             try {
               typecheckOutput = fs.readFileSync('typecheck-output.txt', 'utf8');
             } catch {}
 
-            const newExports = `${{ steps.exports.outputs.new_exports }}`.trim();
-            const removedExports = `${{ steps.exports.outputs.removed_exports }}`.trim();
+            const newExports = (process.env.NEW_EXPORTS || '').trim();
+            const removedExports = (process.env.REMOVED_EXPORTS || '').trim();
             const newList = newExports ? newExports.split('\n').filter(Boolean) : [];
             const removedList = removedExports ? removedExports.split('\n').filter(Boolean) : [];
 
@@ -132,4 +136,7 @@ jobs:
                 body,
                 labels: ['sdk-update'],
               });
+            }
+            } catch (e) {
+              core.setFailed('Create issue step 실패: ' + (e instanceof Error ? e.message : String(e)));
             }
