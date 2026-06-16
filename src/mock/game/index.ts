@@ -2,18 +2,26 @@
  * 게임/프로모션 mock
  */
 
+import type {
+  ContactsViralEvent,
+  GrantPromotionRewardParams,
+  GrantPromotionRewardResponse,
+} from '@apps-in-toss/web-framework';
 import { aitState } from '../state.js';
 
-export async function grantPromotionReward(params: {
-  params: { promotionCode: string; amount: number };
-}): Promise<{ key: string } | { errorCode: string; message: string } | 'ERROR' | undefined> {
+// SDK: grantPromotionReward(params: GrantPromotionRewardParams): Promise<GrantPromotionRewardResponse>
+// 이전 mock의 sentinel('ERROR'|undefined) 리턴값은 실제 SDK 타입에 없는 것이었으므로 제거.
+export async function grantPromotionReward(
+  params: GrantPromotionRewardParams,
+): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionReward:', params.params);
   return { key: `mock-reward-${Date.now()}` };
 }
 
-export async function grantPromotionRewardForGame(params: {
-  params: { promotionCode: string; amount: number };
-}): Promise<{ key: string } | { errorCode: string; message: string } | 'ERROR' | undefined> {
+// SDK: grantPromotionRewardForGame = typeof grantPromotionReward
+export async function grantPromotionRewardForGame(
+  params: GrantPromotionRewardParams,
+): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionRewardForGame:', params.params);
   return { key: `mock-reward-${Date.now()}` };
 }
@@ -51,24 +59,17 @@ export async function openGameCenterLeaderboard(): Promise<void> {
   console.log('[@ait-co/devtools] openGameCenterLeaderboard (no-op in browser)');
 }
 
-interface ContactsViralEvent {
-  type: string;
-  data: Record<string, unknown>;
-}
-
 export function contactsViral(params: {
   options: { moduleId: string };
   onEvent: (event: ContactsViralEvent) => void;
   onError: (error: unknown) => void;
 }): () => void {
   setTimeout(() => {
-    params.onEvent({
+    const event: ContactsViralEvent = {
       type: 'close',
-      data: {
-        closeReason: 'noReward',
-        sentRewardsCount: 0,
-      },
-    });
+      data: { closeReason: 'noReward', sentRewardsCount: 0 },
+    };
+    params.onEvent(event);
   }, 500);
   return () => {};
 }

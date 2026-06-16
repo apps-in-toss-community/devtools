@@ -9,6 +9,16 @@
  * - 모든 호출 observe()로 sdkCallLog에 기록
  */
 
+import type {
+  LoadAdMobEvent,
+  LoadAdMobOptions,
+  LoadFullScreenAdEvent,
+  LoadFullScreenAdOptions,
+  ShowAdMobEvent,
+  ShowAdMobOptions,
+  ShowFullScreenAdEvent,
+  ShowFullScreenAdOptions,
+} from '@apps-in-toss/web-framework';
 import { observe } from '../observe.js';
 import { createMockProxy } from '../proxy.js';
 import { aitState } from '../state.js';
@@ -45,9 +55,9 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
       'GoogleAdMob.loadAppsInTossAdMob',
       'faithful',
       (args: {
-        onEvent: (data: { type: string; data?: unknown }) => void;
-        onError: (error: Error) => void;
-        options?: { adGroupId?: string };
+        options: LoadAdMobOptions;
+        onEvent: (event: LoadAdMobEvent) => void;
+        onError: (error: unknown) => void;
       }): (() => void) => {
         setTimeout(() => {
           if (aitState.state.ads.forceNoFill) {
@@ -55,7 +65,10 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
             return;
           }
           aitState.patch('ads', { isLoaded: true });
-          args.onEvent({ type: 'loaded', data: { adGroupId: args.options?.adGroupId } });
+          args.onEvent({
+            type: 'loaded',
+            data: { responseInfo: { responseId: `mock-response-${args.options.adGroupId}` } },
+          });
         }, 200);
         return () => {};
       },
@@ -67,24 +80,23 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
       'GoogleAdMob.showAppsInTossAdMob',
       'faithful',
       (args: {
-        onEvent: (data: { type: string; data?: unknown }) => void;
-        onError: (error: Error) => void;
-        options?: { adGroupId?: string };
+        options: ShowAdMobOptions;
+        onEvent: (event: ShowAdMobEvent) => void;
+        onError: (error: unknown) => void;
       }): (() => void) => {
         if (!aitState.state.ads.isLoaded) {
           args.onError(new Error('Ad not loaded'));
           return () => {};
         }
-        setTimeout(() => args.onEvent({ type: 'requested' }), 50);
-        setTimeout(() => args.onEvent({ type: 'show' }), 100);
-        setTimeout(() => args.onEvent({ type: 'impression' }), 150);
-        setTimeout(() => {
-          const { rewardUnitType, rewardAmount } = aitState.state.ads;
-          args.onEvent({
-            type: 'userEarnedReward',
-            data: { unitType: rewardUnitType, unitAmount: rewardAmount },
-          });
-        }, 1000);
+        const { rewardUnitType, rewardAmount } = aitState.state.ads;
+        setTimeout(
+          () =>
+            args.onEvent({
+              type: 'userEarnedReward',
+              data: { unitType: rewardUnitType, unitAmount: rewardAmount },
+            }),
+          1000,
+        );
         setTimeout(() => {
           args.onEvent({ type: 'dismissed' });
           aitState.patch('ads', { isLoaded: false });
@@ -279,9 +291,9 @@ export const loadFullScreenAd = withIsSupported(
     'loadFullScreenAd',
     'faithful',
     (args: {
-      onEvent: (data: { type: string; data?: unknown }) => void;
-      onError: (error: Error) => void;
-      options?: { adGroupId?: string };
+      options: LoadFullScreenAdOptions;
+      onEvent: (event: LoadFullScreenAdEvent) => void;
+      onError: (error: unknown) => void;
     }): (() => void) => {
       setTimeout(() => {
         if (aitState.state.ads.forceNoFill) {
@@ -289,7 +301,7 @@ export const loadFullScreenAd = withIsSupported(
           return;
         }
         aitState.patch('ads', { isLoaded: true });
-        args.onEvent({ type: 'loaded', data: { adGroupId: args.options?.adGroupId } });
+        args.onEvent({ type: 'loaded' });
       }, 200);
       return () => {};
     },
@@ -301,15 +313,15 @@ export const showFullScreenAd = withIsSupported(
     'showFullScreenAd',
     'faithful',
     (args: {
-      onEvent: (data: { type: string; data?: unknown }) => void;
-      onError: (error: Error) => void;
-      options?: { adGroupId?: string };
+      options: ShowFullScreenAdOptions;
+      onEvent: (event: ShowFullScreenAdEvent) => void;
+      onError: (error: unknown) => void;
     }): (() => void) => {
       if (!aitState.state.ads.isLoaded) {
         args.onError(new Error('Ad not loaded'));
         return () => {};
       }
-      setTimeout(() => args.onEvent({ type: 'show' }), 100);
+      setTimeout(() => args.onEvent({ type: 'clicked' }), 100);
       setTimeout(() => args.onEvent({ type: 'dismissed' }), 1500);
       return () => {};
     },

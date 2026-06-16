@@ -2,6 +2,7 @@
  * IAP (인앱결제) mock
  */
 
+import type { IapProductListItem, IapSubscriptionInfoResult } from '@apps-in-toss/web-framework';
 import { createMockProxy } from '../proxy.js';
 import { aitState } from '../state.js';
 
@@ -128,12 +129,12 @@ export const IAP = createMockProxy('IAP', {
     return () => {};
   },
 
-  async getProductItemList(): Promise<{ products: unknown[] }> {
+  async getProductItemList(): Promise<{ products: IapProductListItem[] }> {
     return {
       products: aitState.state.iap.products.map((p) => ({
         ...p,
         ...(p.type === 'SUBSCRIPTION' ? { renewalCycle: p.renewalCycle ?? 'MONTHLY' } : {}),
-      })),
+      })) as IapProductListItem[],
     };
   },
 
@@ -177,7 +178,9 @@ export const IAP = createMockProxy('IAP', {
     return true;
   },
 
-  async getSubscriptionInfo(_args: { params: { orderId: string } }) {
+  async getSubscriptionInfo(_args: {
+    params: { orderId: string };
+  }): Promise<{ subscription: IapSubscriptionInfoResult }> {
     return {
       subscription: {
         catalogId: 1,

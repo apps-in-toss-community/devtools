@@ -2,6 +2,7 @@
  * 화면/네비게이션/이벤트 mock
  */
 
+import type { GraniteEvent, TdsEvent } from '@apps-in-toss/web-framework';
 import { getNetworkStatusByMode } from '../device/index.js';
 import { observe } from '../observe.js';
 import { aitState } from '../state.js';
@@ -130,17 +131,13 @@ export async function getNetworkStatus(): Promise<NetworkStatus> {
   return aitState.state.networkStatus;
 }
 
-export async function getServerTime(): Promise<number | undefined> {
+const _getServerTimeImpl = async (): Promise<number | undefined> => {
   return Date.now();
-}
-(getServerTime as unknown as { isSupported: () => boolean }).isSupported = () => true;
+};
+export const getServerTime: (() => Promise<number | undefined>) & { isSupported: () => boolean } =
+  Object.assign(_getServerTimeImpl, { isSupported: () => true });
 
 // --- 이벤트 시스템 ---
-
-interface GraniteEventMap {
-  backEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: undefined };
-  homeEvent: { onEvent: () => void; onError?: (error: Error) => void; options?: undefined };
-}
 
 /**
  * 현재 backEvent 구독자 수. graniteEvent.addEventListener('backEvent', …)가
@@ -152,15 +149,15 @@ interface GraniteEventMap {
 let _backEventSubscriberCount = 0;
 
 export const graniteEvent = {
-  addEventListener<K extends keyof GraniteEventMap>(
+  addEventListener<K extends keyof GraniteEvent>(
     event: K,
     {
       onEvent,
       onError,
     }: {
-      onEvent: GraniteEventMap[K]['onEvent'];
-      onError?: GraniteEventMap[K]['onError'];
-      options?: GraniteEventMap[K]['options'];
+      onEvent: GraniteEvent[K]['onEvent'];
+      onError?: GraniteEvent[K]['onError'];
+      options?: GraniteEvent[K]['options'];
     },
   ): () => void {
     const handler = () => {
@@ -220,23 +217,15 @@ export const appsInTossEvent = {
   },
 };
 
-interface TdsEventMap {
-  navigationAccessoryEvent: {
-    onEvent: (data: { id: string }) => void;
-    onError?: (error: Error) => void;
-    options: undefined;
-  };
-}
-
 export const tdsEvent = {
-  addEventListener<K extends keyof TdsEventMap>(
+  addEventListener<K extends keyof TdsEvent>(
     event: K,
     {
       onEvent,
     }: {
-      onEvent: TdsEventMap[K]['onEvent'];
-      onError?: TdsEventMap[K]['onError'];
-      options?: TdsEventMap[K]['options'];
+      onEvent: TdsEvent[K]['onEvent'];
+      onError?: TdsEvent[K]['onError'];
+      options?: TdsEvent[K]['options'];
     },
   ): () => void {
     const handler = (e: Event) => {

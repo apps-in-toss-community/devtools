@@ -103,12 +103,24 @@ describe('fidelity-qa — mock runner smoke test', () => {
       ),
 
       // permissions (6)
-      runProbe('permissions.clipboard', async () => getPermission('clipboard')),
-      runProbe('permissions.contacts', async () => getPermission('contacts')),
-      runProbe('permissions.photos', async () => getPermission('photos')),
-      runProbe('permissions.geolocation', async () => getPermission('geolocation')),
-      runProbe('permissions.camera', async () => getPermission('camera')),
-      runProbe('permissions.microphone', async () => getPermission('microphone')),
+      runProbe('permissions.clipboard', async () =>
+        getPermission({ name: 'clipboard', access: 'access' }),
+      ),
+      runProbe('permissions.contacts', async () =>
+        getPermission({ name: 'contacts', access: 'access' }),
+      ),
+      runProbe('permissions.photos', async () =>
+        getPermission({ name: 'photos', access: 'access' }),
+      ),
+      runProbe('permissions.geolocation', async () =>
+        getPermission({ name: 'geolocation', access: 'access' }),
+      ),
+      runProbe('permissions.camera', async () =>
+        getPermission({ name: 'camera', access: 'access' }),
+      ),
+      runProbe('permissions.microphone', async () =>
+        getPermission({ name: 'microphone', access: 'access' }),
+      ),
 
       // analytics (4)
       runProbe('analytics.screenExists', async () => typeof Analytics.screen === 'function'),
@@ -185,7 +197,7 @@ describe('fidelity-qa — mock runner smoke test', () => {
       'microphone',
     ] as const;
     for (const name of names) {
-      const result = await getPermission(name);
+      const result = await getPermission({ name, access: 'access' });
       expect(['notDetermined', 'denied', 'allowed']).toContain(result);
     }
   });

@@ -20,9 +20,9 @@ interface RequestNotificationAgreementOptions {
   onError: (error: unknown) => void | Promise<void>;
 }
 
-export function requestNotificationAgreement(
+const _requestNotificationAgreementImpl = (
   params: RequestNotificationAgreementOptions,
-): () => void {
+): (() => void) => {
   let cancelled = false;
 
   Promise.resolve().then(async () => {
@@ -46,4 +46,10 @@ export function requestNotificationAgreement(
   return () => {
     cancelled = true;
   };
-}
+};
+export const requestNotificationAgreement: ((
+  params: RequestNotificationAgreementOptions,
+) => () => void) & { isSupported: () => boolean } = Object.assign(
+  _requestNotificationAgreementImpl,
+  { isSupported: () => true },
+);

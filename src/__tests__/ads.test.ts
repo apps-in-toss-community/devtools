@@ -28,7 +28,7 @@ describe('Ads mock', () => {
       const onEvent = vi.fn();
       const onError = vi.fn();
 
-      GoogleAdMob.loadAppsInTossAdMob({ onEvent, onError });
+      GoogleAdMob.loadAppsInTossAdMob({ options: { adGroupId: 'mock-group' }, onEvent, onError });
       await vi.advanceTimersByTimeAsync(200);
 
       expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'loaded' }));
@@ -39,32 +39,34 @@ describe('Ads mock', () => {
       const onEvent = vi.fn();
       const onError = vi.fn();
 
-      GoogleAdMob.showAppsInTossAdMob({ onEvent, onError });
+      GoogleAdMob.showAppsInTossAdMob({ options: { adGroupId: 'mock-group' }, onEvent, onError });
       expect(onError).toHaveBeenCalledWith(expect.any(Error));
     });
 
     // setTimeout 지연 값은 ads/index.ts의 showAppsInTossAdMob 구현과 일치해야 한다
-    // source delays: requested@50, show@100, impression@150, userEarnedReward@1000, dismissed@1500
+    // source delays: userEarnedReward@1000, dismissed@1500
     it('showAppsInTossAdMob: 로드 후 이벤트 시퀀스가 발생한다', async () => {
       // load first
       const loadEvent = vi.fn();
-      GoogleAdMob.loadAppsInTossAdMob({ onEvent: loadEvent, onError: vi.fn() });
+      GoogleAdMob.loadAppsInTossAdMob({
+        options: { adGroupId: 'mock-group' },
+        onEvent: loadEvent,
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(200);
       expect(aitState.state.ads.isLoaded).toBe(true);
 
       // show — advance to 1500ms to flush all events at once
       const showEvent = vi.fn();
-      GoogleAdMob.showAppsInTossAdMob({ onEvent: showEvent, onError: vi.fn() });
+      GoogleAdMob.showAppsInTossAdMob({
+        options: { adGroupId: 'mock-group' },
+        onEvent: showEvent,
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(1500);
 
       const eventTypes = extractEventTypes(showEvent);
-      expect(eventTypes).toEqual([
-        'requested',
-        'show',
-        'impression',
-        'userEarnedReward',
-        'dismissed',
-      ]);
+      expect(eventTypes).toEqual(['userEarnedReward', 'dismissed']);
       expect(aitState.state.ads.isLoaded).toBe(false);
     });
 
@@ -76,11 +78,19 @@ describe('Ads mock', () => {
       aitState.patch('ads', { rewardUnitType: 'gems', rewardAmount: 50 });
 
       const loadEvent = vi.fn();
-      GoogleAdMob.loadAppsInTossAdMob({ onEvent: loadEvent, onError: vi.fn() });
+      GoogleAdMob.loadAppsInTossAdMob({
+        options: { adGroupId: 'mock-group' },
+        onEvent: loadEvent,
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(200);
 
       const showEvent = vi.fn();
-      GoogleAdMob.showAppsInTossAdMob({ onEvent: showEvent, onError: vi.fn() });
+      GoogleAdMob.showAppsInTossAdMob({
+        options: { adGroupId: 'mock-group' },
+        onEvent: showEvent,
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(1500);
 
       const rewardCall = showEvent.mock.calls.find(
@@ -96,7 +106,11 @@ describe('Ads mock', () => {
     it('showAppsInTossAdMob: sdkCallLog에 기록된다', async () => {
       aitState.patch('ads', { isLoaded: true });
       const showEvent = vi.fn();
-      GoogleAdMob.showAppsInTossAdMob({ onEvent: showEvent, onError: vi.fn() });
+      GoogleAdMob.showAppsInTossAdMob({
+        options: { adGroupId: 'mock-group' },
+        onEvent: showEvent,
+        onError: vi.fn(),
+      });
 
       expect(
         aitState.state.sdkCallLog.some((e) => e.method === 'GoogleAdMob.showAppsInTossAdMob'),
@@ -290,31 +304,43 @@ describe('Ads mock', () => {
   });
 
   describe('loadFullScreenAd / showFullScreenAd', () => {
-    // source delays: show@100, dismissed@1500
+    // source delays: clicked@100, dismissed@1500
     it('loadFullScreenAd 후 showFullScreenAd 전체 이벤트 시퀀스', async () => {
       const loadEvent = vi.fn();
-      loadFullScreenAd({ onEvent: loadEvent, onError: vi.fn() });
+      loadFullScreenAd({
+        options: { adGroupId: 'mock-group' },
+        onEvent: loadEvent,
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(200);
       expect(loadEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'loaded' }));
 
       const showEvent = vi.fn();
-      showFullScreenAd({ onEvent: showEvent, onError: vi.fn() });
+      showFullScreenAd({
+        options: { adGroupId: 'mock-group' },
+        onEvent: showEvent,
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(1500);
 
       const eventTypes = extractEventTypes(showEvent);
-      expect(eventTypes).toEqual(['show', 'dismissed']);
+      expect(eventTypes).toEqual(['clicked', 'dismissed']);
     });
 
     it('showFullScreenAd: 로드되지 않았으면 에러를 반환한다', () => {
       const onEvent = vi.fn();
       const onError = vi.fn();
 
-      showFullScreenAd({ onEvent, onError });
+      showFullScreenAd({ options: { adGroupId: 'mock-group' }, onEvent, onError });
       expect(onError).toHaveBeenCalledWith(expect.any(Error));
     });
 
     it('loadFullScreenAd: sdkCallLog에 기록된다', async () => {
-      loadFullScreenAd({ onEvent: vi.fn(), onError: vi.fn() });
+      loadFullScreenAd({
+        options: { adGroupId: 'mock-group' },
+        onEvent: vi.fn(),
+        onError: vi.fn(),
+      });
       await vi.advanceTimersByTimeAsync(200);
       expect(aitState.state.sdkCallLog.some((e) => e.method === 'loadFullScreenAd')).toBe(true);
     });

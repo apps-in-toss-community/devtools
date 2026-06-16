@@ -36,10 +36,10 @@ describe('Auth mock', () => {
     expect(result).toEqual({ hash: 'mock-user-hash-abc123', type: 'HASH' });
   });
 
-  it('getUserKeyForGame: userKeyHash가 없으면 undefined', async () => {
+  it('getUserKeyForGame: userKeyHash가 없으면 빈 hash를 반환한다 (SDK 3.0: 항상 객체 반환)', async () => {
     aitState.patch('auth', { userKeyHash: '' });
     const result = await getUserKeyForGame();
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ hash: '', type: 'HASH' });
   });
 
   it('appsInTossSignTossCert: 에러 없이 실행된다', async () => {

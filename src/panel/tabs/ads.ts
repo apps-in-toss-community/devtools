@@ -184,14 +184,16 @@ export function renderAdsTab(): HTMLElement {
       t('ads.section.googleAdMob'),
       () => {
         GoogleAdMob.loadAppsInTossAdMob({
+          options: { adGroupId: 'mock-group' },
           onEvent: (e) => recordEvent(e.type),
-          onError: (err) => recordError(err.message),
+          onError: (err) => recordError(err instanceof Error ? err.message : String(err)),
         });
       },
       () => {
         GoogleAdMob.showAppsInTossAdMob({
+          options: { adGroupId: 'mock-group' },
           onEvent: (e) => recordEvent(e.type),
-          onError: (err) => recordError(err.message),
+          onError: (err) => recordError(err instanceof Error ? err.message : String(err)),
         });
       },
       disabled,
@@ -206,7 +208,8 @@ export function renderAdsTab(): HTMLElement {
               aitState.patch('ads', { isLoaded: true });
               recordEvent('loaded');
             },
-            onInitializationFailed: (err) => recordError(err.message),
+            onInitializationFailed: (err) =>
+              recordError(err instanceof Error ? err.message : String(err)),
           },
         });
       },
@@ -228,14 +231,16 @@ export function renderAdsTab(): HTMLElement {
       t('ads.section.fullScreenAd'),
       () => {
         loadFullScreenAd({
+          options: { adGroupId: 'mock-fullscreen-group' },
           onEvent: (e) => recordEvent(e.type),
-          onError: (err) => recordError(err.message),
+          onError: (err) => recordError(err instanceof Error ? err.message : String(err)),
         });
       },
       () => {
         showFullScreenAd({
+          options: { adGroupId: 'mock-fullscreen-group' },
           onEvent: (e) => recordEvent(e.type),
-          onError: (err) => recordError(err.message),
+          onError: (err) => recordError(err instanceof Error ? err.message : String(err)),
         });
       },
       disabled,

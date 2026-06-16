@@ -206,7 +206,7 @@
           }
         }
 
-        toggleBtn.addEventListener('click', function() {
+        toggleBtn.addEventListener('click', () => {
           pxfixOn = !pxfixOn;
           applyPxfix();
           update();
@@ -261,7 +261,7 @@
           ];
 
           var html = '';
-          rows.forEach(function(row, i) {
+          rows.forEach((row, i) => {
             var isShortfall = i === 5;
             var cls = '';
             if (isShortfall) {
@@ -276,14 +276,14 @@
         applyPxfix();
         update();
 
-        window.addEventListener('resize', function() {
+        window.addEventListener('resize', () => {
           // 보정 ON 상태에서 resize 시 screen.height도 갱신될 수 있으므로 재적용
           if (pxfixOn) applyPxfix();
           update();
         });
         window.addEventListener('scroll', update, { passive: true });
-        window.addEventListener('orientationchange', function() {
-          setTimeout(function() {
+        window.addEventListener('orientationchange', () => {
+          setTimeout(() => {
             if (pxfixOn) applyPxfix();
             update();
           }, 50);
