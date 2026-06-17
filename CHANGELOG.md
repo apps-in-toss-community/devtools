@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.98
+
+### Patch Changes
+
+- 3a2a75b: unplugin forceEnable 옵션 제거 — production 강제 활성화 패턴(boilerplate 청정성 위반) 폐기.
+
 ## 0.1.97
 
 ### Patch Changes
