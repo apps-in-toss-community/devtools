@@ -39,14 +39,12 @@ export default defineConfig({
   //   mock:  off — handled by resolve.alias above (bypasses rolldown resolveId bug)
   //   panel: off — handled by explicit import in main.tsx (unplugin transform
   //                is unreliable under Vite 8 production build with rolldown)
-  // The plugin is kept in the list so forceEnable=true is honoured if rolldown
-  // is fixed and these options are re-enabled in the future without other changes.
+  // The plugin is kept in the list for tunnel support (manual QA only).
   plugins: [
     react(),
     aitDevtools.vite({
       panel: false,
       mock: false,
-      forceEnable: true,
       // Manual QA toggles only — no effect on CI / normal builds.
       // AIT_TUNNEL=1       → plain HTTP tunnel only (env-2 screen preview)
       // AIT_TUNNEL_CDP=1   → HTTP tunnel + Chii relay + relay tunnel (env-2 CDP)

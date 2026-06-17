@@ -61,14 +61,6 @@ describe('unplugin: dev mode + mock:false', () => {
   });
 });
 
-describe('unplugin: dev mode + forceEnable:true', () => {
-  it('mock alias가 여전히 활성화되어야 한다', () => {
-    vi.stubEnv('NODE_ENV', 'development');
-    const hooks = getRawHooks({ forceEnable: true });
-    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
-  });
-});
-
 describe('unplugin: dev mode + panel:false', () => {
   it('mock alias는 활성화되어야 한다', () => {
     vi.stubEnv('NODE_ENV', 'development');
@@ -97,44 +89,23 @@ describe('unplugin: production default', () => {
   });
 });
 
-describe('unplugin: production + forceEnable:true', () => {
-  it('mock alias는 비활성화되어야 한다', () => {
+describe('unplugin: production — 항상 비활성화 (불변식)', () => {
+  it('production(NODE_ENV=production)에서 mock alias는 항상 비활성화된다', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ forceEnable: true });
+    const hooks = getRawHooks();
     expect(hooks.resolveId(FRAMEWORK_ID)).toBeNull();
   });
 
-  it('패널 주입은 활성화되어야 한다', () => {
+  it('production에서 mock:true를 명시해도 shouldEnable이 false라 mock alias는 비활성화된다', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ forceEnable: true });
-    expect(hooks.transformInclude('src/main.tsx')).toBeTruthy();
-  });
-});
-
-describe('unplugin: production + forceEnable:true + mock:true', () => {
-  it('mock alias가 활성화되어야 한다', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ forceEnable: true, mock: true });
-    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
+    const hooks = getRawHooks({ mock: true });
+    // shouldEnable=false이므로 shouldMock = false && true = false
+    expect(hooks.resolveId(FRAMEWORK_ID)).toBeNull();
   });
 
-  it('패널 주입이 활성화되어야 한다', () => {
+  it('production에서 패널 주입도 항상 비활성화된다', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ forceEnable: true, mock: true });
-    expect(hooks.transformInclude('src/main.tsx')).toBeTruthy();
-  });
-});
-
-describe('unplugin: production + forceEnable:true + mock:true + panel:false', () => {
-  it('mock alias가 활성화되어야 한다', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ forceEnable: true, mock: true, panel: false });
-    expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
-  });
-
-  it('패널 주입이 비활성화되어야 한다', () => {
-    vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ forceEnable: true, mock: true, panel: false });
+    const hooks = getRawHooks();
     expect(hooks.transformInclude('src/main.tsx')).toBeFalsy();
   });
 });
@@ -199,7 +170,7 @@ describe('unplugin: tunnel - vite.config()', () => {
 
   it('production + tunnel:true에서도 define만 주입하고 allowedHosts는 건드리지 않는다', () => {
     vi.stubEnv('NODE_ENV', 'production');
-    const hooks = getRawHooks({ tunnel: true, forceEnable: true });
+    const hooks = getRawHooks({ tunnel: true });
     expect(hooks.vite.config()).toEqual({ define: { __WEB_VIEW_TYPE__: '"partner"' } });
   });
 });

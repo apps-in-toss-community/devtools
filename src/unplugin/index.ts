@@ -58,11 +58,7 @@ export interface AitDevtoolsOptions {
    */
   panel?: boolean;
   /**
-   * production 환경에서도 devtools를 강제로 활성화 (default: false)
-   */
-  forceEnable?: boolean;
-  /**
-   * mock alias 활성화 여부. default: true (development), false (production + forceEnable)
+   * mock alias 활성화 여부. default: true (development), false (production)
    */
   mock?: boolean;
   /**
@@ -108,8 +104,8 @@ export interface AitDevtoolsOptions {
   navBarTheme?: 'light' | 'dark';
   /**
    * Vite dev 서버를 Cloudflare quick tunnel(`*.trycloudflare.com`, 계정 불필요)로
-   * 외부 노출해 실제 폰에서 미리보기. **Vite dev 모드 전용** — production은
-   * `forceEnable`이어도 터널을 띄우지 않는다 (의도치 않은 노출 방지). 다른 번들러는
+   * 외부 노출해 실제 폰에서 미리보기. **Vite dev 모드 전용** — production에서는
+   * 터널을 띄우지 않는다 (의도치 않은 노출 방지). 다른 번들러는
    * 무시. `true`면 기본 동작, 객체로 세부 설정 가능.
    */
   tunnel?:
@@ -181,7 +177,7 @@ export function resolveTunnelOption(
 
 const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   const isDev = process.env.NODE_ENV !== 'production';
-  const shouldEnable = isDev || (options?.forceEnable ?? false);
+  const shouldEnable = isDev;
   const shouldMock = shouldEnable && (options?.mock ?? isDev);
   const shouldPanel = shouldEnable && (options?.panel ?? true);
   const shouldMcp = shouldEnable && (options?.mcp ?? false);
@@ -190,8 +186,8 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   // Only allocated when mcp: true to avoid any overhead in the common case.
   let lastState: string | null = null;
 
-  // Tunnel is dev-only and Vite-only. Never under production — even with
-  // forceEnable — so a production build can't accidentally expose itself.
+  // Tunnel is dev-only and Vite-only. Never under production, so a production
+  // build can't accidentally expose itself.
   //
   // Tunnel toggle resolution (#425): an explicit `tunnel` option always wins;
   // when omitted, fall back to the AIT_TUNNEL / AIT_TUNNEL_CDP env vars so a
