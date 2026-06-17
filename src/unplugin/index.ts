@@ -58,6 +58,20 @@ export interface AitDevtoolsOptions {
    */
   panel?: boolean;
   /**
+   * In-app debug attach 자동 주입 여부 (default: true).
+   *
+   * true이면 진입점에 게이트된 dynamic import를 자동 추가한다:
+   * `?debug=1` + `relay` URL 파라미터가 모두 존재할 때만 런타임에
+   * `@ait-co/devtools/in-app`을 로드하고 `maybeAttach()`를 호출한다.
+   *
+   * gate가 통과하지 못하면 chunk 자체를 로드하지 않으므로 일반 production
+   * 로드에서 dormant하고, 번들러의 DCE 대상이 된다.
+   *
+   * 소비자가 이미 직접 배선한 경우 중복 주입을 방지하기 위해 파일에
+   * `@ait-co/devtools/in-app`이 이미 있으면 자동으로 스킵한다.
+   */
+  inApp?: boolean;
+  /**
    * mock alias 활성화 여부. default: true (development), false (production)
    */
   mock?: boolean;
@@ -180,6 +194,9 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
   const shouldEnable = isDev;
   const shouldMock = shouldEnable && (options?.mock ?? isDev);
   const shouldPanel = shouldEnable && (options?.panel ?? true);
+  // in-app attach 주입: shouldEnable과 동일하게 dev에서 자동.
+  // maybeAttach()가 런타임 gate(Layer B·C)를 자체 검증하므로 dev 항상 주입이 안전하다.
+  const shouldInApp = shouldEnable && (options?.inApp ?? true);
   const shouldMcp = shouldEnable && (options?.mcp ?? false);
 
   // In-memory store for the last state snapshot pushed by the browser panel.
@@ -227,8 +244,9 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
     },
 
     transformInclude(id: string) {
-      if (!shouldPanel) return false;
-      // 진입점 파일에만 패널 import를 주입
+      // panel 또는 inApp 주입 중 하나라도 필요하면 진입점 파일을 transform 대상으로 포함
+      if (!shouldPanel && !shouldInApp) return false;
+      // 진입점 파일에만 주입
       return (
         /\.(tsx?|jsx?)$/.test(id) &&
         /\/(main|index|entry|app)\.[tj]sx?$/i.test(id) &&
@@ -237,12 +255,35 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
     },
 
     transform(code: string) {
-      // transformInclude가 이미 shouldPanel을 확인하지만, 안전망으로 유지
-      if (!shouldPanel) return null;
-      // 이미 패널이 import 되어있으면 스킵
-      if (code.includes('@ait-co/devtools/panel')) return null;
-      // transformInclude가 진입점 파일만 통과시키므로 바로 prepend
-      return `import '@ait-co/devtools/panel';\n${code}`;
+      let result = code;
+      let changed = false;
+
+      // 패널 주입: shouldPanel이 활성화되어 있고 아직 import가 없으면 prepend
+      if (shouldPanel && !code.includes('@ait-co/devtools/panel')) {
+        result = `import '@ait-co/devtools/panel';\n${result}`;
+        changed = true;
+      }
+
+      // in-app attach 주입: shouldInApp이 활성화되어 있고 아직 배선이 없으면 prepend.
+      // 게이트된 dynamic import로 주입 — ?debug=1 + relay 파라미터가 모두 있을 때만
+      // 런타임에 @ait-co/devtools/in-app을 로드하고 maybeAttach()를 호출한다.
+      // production DCE: URLSearchParams gate가 조건을 false로 평가하면
+      // dynamic import 자체가 dead code — 번들러가 제거 가능.
+      if (shouldInApp && !code.includes('@ait-co/devtools/in-app')) {
+        const inAppSnippet = [
+          '// @ait-co/devtools: in-app attach auto-injected by unplugin — 수동 배선 불필요',
+          "if (typeof window !== 'undefined') {",
+          '  const __ait_p = new URLSearchParams(window.location.search);',
+          "  if (__ait_p.get('debug') === '1' && __ait_p.get('relay')) {",
+          "    void import('@ait-co/devtools/in-app').then((m) => m.maybeAttach());",
+          '  }',
+          '}',
+        ].join('\n');
+        result = `${inAppSnippet}\n${result}`;
+        changed = true;
+      }
+
+      return changed ? result : null;
     },
 
     // Vite-only: register the MCP state HTTP endpoint on the dev server, and
