@@ -311,6 +311,14 @@ export const ko = {
   'launcher.letterboxDetected': 'letterbox 보정 +{pt}pt 적용됨 — 화면 전체를 사용합니다.',
   'launcher.letterboxClipped':
     'iOS 뷰포트 버그로 화면 아래 {pt}pt를 쓸 수 없습니다 — 기기를 가로로 돌렸다 세로로 돌리면 복구될 수 있어요.',
+  // #536: verdict reason labels for diag panel
+  'launcher.diagVerdictLabel': '판정 사유',
+  'launcher.diagSafeAreaTrace': 'top 재측정 추이',
+  'launcher.diagVerdict.detected': '✓ letterbox 보정',
+  'launcher.diagVerdict.notStandalone': '홈 화면 앱 아님',
+  'launcher.diagVerdict.landscape': '가로 모드',
+  'launcher.diagVerdict.shortfallTooSmall': '높이 차이 미달',
+  'launcher.diagVerdict.safeAreaTopZero': 'top=0 (env() stale?)',
   // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': '미니앱',
   'launcher.navbar.back': '뒤로가기',

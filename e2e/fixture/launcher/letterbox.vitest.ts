@@ -11,11 +11,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   computeBridgeInsets,
   detectLetterbox,
+  detectLetterboxWithReason,
   isLetterboxResolved,
   LETTERBOX_MIN_SHORTFALL_PX,
   type LetterboxVerification,
   letterboxEpochKey,
+  type PollTimers,
   type SentinelObserver,
+  scheduleSafeAreaTopPolls,
   type VerificationTimers,
   type ViewportMetrics,
   verifyLetterboxCorrection,
@@ -536,6 +539,306 @@ describe('isLetterboxResolved (correction-aware)', () => {
     expect(detectLetterbox(partial).shortfallPx).toBe(24);
     expect(detectLetterbox(partial).detected).toBe(true); // 24 >= 24
     expect(isLetterboxResolved(partial, true)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectLetterboxWithReason — verdict gate reason surfacing (#536)
+// ---------------------------------------------------------------------------
+
+describe('detectLetterboxWithReason', () => {
+  it('detected=true → reason "detected"', () => {
+    const result = detectLetterboxWithReason(
+      base({ innerHeight: 797, visualViewportHeight: 797, safeAreaTop: 47 }),
+    );
+    expect(result.detected).toBe(true);
+    expect(result.reason).toBe('detected');
+    expect(result.shortfallPx).toBe(47);
+  });
+
+  it('not standalone → reason "notStandalone"', () => {
+    const result = detectLetterboxWithReason(
+      base({ innerHeight: 797, visualViewportHeight: 797, safeAreaTop: 47, standalone: false }),
+    );
+    expect(result.detected).toBe(false);
+    expect(result.reason).toBe('notStandalone');
+  });
+
+  it('landscape → reason "landscape"', () => {
+    const result = detectLetterboxWithReason(
+      base({ innerWidth: 844, innerHeight: 390, safeAreaTop: 0 }),
+    );
+    expect(result.detected).toBe(false);
+    expect(result.reason).toBe('landscape');
+  });
+
+  it('shortfall too small (20 < 24) → reason "shortfallTooSmall"', () => {
+    const result = detectLetterboxWithReason(
+      base({
+        innerWidth: 375,
+        innerHeight: 647,
+        screenWidth: 375,
+        screenHeight: 667,
+        visualViewportHeight: 647,
+        safeAreaTop: 20,
+      }),
+    );
+    expect(result.detected).toBe(false);
+    expect(result.reason).toBe('shortfallTooSmall');
+    expect(result.shortfallPx).toBe(20);
+  });
+
+  it('cold-start stale env(): shortfall 47 but safeAreaTop 0 → reason "safeAreaTopZero"', () => {
+    // The key cold-start case (#536): the window IS letterboxed (shortfall 47)
+    // but env(safe-area-inset-top) returned stale 0 so the verdict is false.
+    // 'safeAreaTopZero' in the diag panel tells the developer this is likely a
+    // transient WebKit cold-start stale reading (WebKit #274773), not a healthy
+    // stale web clip.
+    const result = detectLetterboxWithReason(
+      base({ innerHeight: 797, visualViewportHeight: 797, safeAreaTop: 0 }),
+    );
+    expect(result.detected).toBe(false);
+    expect(result.reason).toBe('safeAreaTopZero');
+    expect(result.shortfallPx).toBe(47);
+  });
+
+  it('healthy (shortfall 0, top 47) → reason "shortfallTooSmall"', () => {
+    // Healthy edge-to-edge window: shortfall 0 — the shortfall gate resolves
+    // before the top check (both are false, but the first gate wins).
+    const result = detectLetterboxWithReason(base());
+    expect(result.detected).toBe(false);
+    expect(result.reason).toBe('shortfallTooSmall');
+    expect(result.shortfallPx).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// scheduleSafeAreaTopPolls — multi-timeout env() re-read (#536)
+// ---------------------------------------------------------------------------
+//
+// The polling function is purely about scheduling: it accepts `read` (the
+// env() measurement) and timers (injectable) so the entire flow is testable
+// under vitest without a real DOM or real timers.
+
+describe('scheduleSafeAreaTopPolls', () => {
+  // Build a fake-timer pair that stores pending callbacks so tests can trip
+  // them manually (same pattern as VerificationTimers in the verify tests above).
+  function makeTimers(): {
+    timers: PollTimers<number>;
+    trip: (index: number) => void;
+    handleCount: () => number;
+    cleared: () => number[];
+  } {
+    const pending = new Map<number, () => void>();
+    let nextId = 1;
+    const clearedIds: number[] = [];
+    return {
+      timers: {
+        setTimeout: (fn, _ms) => {
+          const id = nextId++;
+          pending.set(id, fn);
+          return id;
+        },
+        clearTimeout: (id) => {
+          pending.delete(id);
+          clearedIds.push(id);
+        },
+      },
+      trip: (index) => {
+        // Trip the nth registered timer (0-indexed by registration order).
+        const keys = [...pending.keys()];
+        const key = keys[index];
+        if (key !== undefined) pending.get(key)?.();
+      },
+      handleCount: () => pending.size + clearedIds.length,
+      cleared: () => clearedIds,
+    };
+  }
+
+  it('first non-zero reading settles immediately and cancels remaining timers', () => {
+    const { timers, trip, cleared } = makeTimers();
+    const onSettled = vi.fn<(v: number) => void>();
+    // read() returns 47 on the first call (env() already settled)
+    const read = vi.fn().mockReturnValue(47);
+
+    scheduleSafeAreaTopPolls(read, onSettled, [100, 300, 600, 1000], timers);
+    trip(0); // fire first timer (100ms)
+
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledWith(47);
+    // All 4 handles are cleared (clearAll() clears all registered handles,
+    // including the one that just fired).
+    expect(cleared()).toHaveLength(4);
+  });
+
+  it('cold-start stale 0: polls fire 0/0/47 → settles on third checkpoint', () => {
+    const { timers, trip, cleared } = makeTimers();
+    const onSettled = vi.fn<(v: number) => void>();
+    // read() returns 0/0/47 on successive calls
+    const read = vi.fn().mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValueOnce(47);
+
+    scheduleSafeAreaTopPolls(read, onSettled, [100, 300, 600, 1000], timers);
+
+    trip(0); // 100ms: read()=0, continue
+    expect(onSettled).not.toHaveBeenCalled();
+
+    trip(1); // 300ms: read()=0, continue
+    expect(onSettled).not.toHaveBeenCalled();
+
+    trip(2); // 600ms: read()=47, settle
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledWith(47);
+    // The 4th timer (1000ms) must be cleared
+    expect(cleared()).toContain(4); // 4th handle registered = id 4
+  });
+
+  it('all polls return 0 → settles with 0 after the last delay', () => {
+    const { timers, trip } = makeTimers();
+    const onSettled = vi.fn<(v: number) => void>();
+    const read = vi.fn().mockReturnValue(0);
+
+    scheduleSafeAreaTopPolls(read, onSettled, [100, 300], timers);
+
+    trip(0); // 100ms: 0, not last → continue
+    expect(onSettled).not.toHaveBeenCalled();
+
+    trip(1); // 300ms: 0, is last → settle with 0
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledWith(0);
+  });
+
+  it('cancel before any timer fires → onSettled never called', () => {
+    const { timers, trip } = makeTimers();
+    const onSettled = vi.fn<(v: number) => void>();
+    const read = vi.fn().mockReturnValue(47);
+
+    const cancel = scheduleSafeAreaTopPolls(read, onSettled, [100, 300, 600], timers);
+    cancel();
+
+    // Trip all registered timers — callbacks are no-ops after cancel
+    trip(0);
+    trip(1);
+    trip(2);
+
+    expect(onSettled).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('cancel after partial progress → onSettled never called for remaining timers', () => {
+    const { timers, trip } = makeTimers();
+    const onSettled = vi.fn<(v: number) => void>();
+    const read = vi.fn().mockReturnValue(0); // stays 0
+
+    const cancel = scheduleSafeAreaTopPolls(read, onSettled, [100, 300, 600], timers);
+
+    trip(0); // 100ms: 0, continue
+    cancel(); // cancel mid-sequence
+
+    trip(1); // no-op
+    trip(2); // no-op
+
+    expect(onSettled).not.toHaveBeenCalled();
+  });
+
+  it('onSettled called exactly once even if both non-zero and isLast fire', () => {
+    // Edge: single-delay list — isLast AND value>0 at the same checkpoint.
+    const { timers, trip } = makeTimers();
+    const onSettled = vi.fn<(v: number) => void>();
+    const read = vi.fn().mockReturnValue(47);
+
+    scheduleSafeAreaTopPolls(read, onSettled, [100], timers);
+    trip(0);
+
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    expect(onSettled).toHaveBeenCalledWith(47);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cold-start integration scenario (#536)
+// ---------------------------------------------------------------------------
+//
+// Simulates the full cold-start sequence: initial snapshot has safeAreaTop=0
+// (stale env()), detectLetterboxWithReason flags 'safeAreaTopZero', then the
+// 300ms poll fires a settled value of 47 and the verdict flips to 'detected'.
+// This is a pure-function simulation — no DOM, no real timers.
+
+describe('cold-start stale-0 integration (#536)', () => {
+  it('stale-0 snapshot: verdict false + reason safeAreaTopZero; settled snapshot: verdict true', () => {
+    // Cold-start initial snapshot (safeAreaTop=0, shortfall 47).
+    const staleSnapshot = base({ innerHeight: 797, visualViewportHeight: 797, safeAreaTop: 0 });
+    const staleResult = detectLetterboxWithReason(staleSnapshot);
+    expect(staleResult.detected).toBe(false);
+    expect(staleResult.reason).toBe('safeAreaTopZero');
+    expect(staleResult.shortfallPx).toBe(47);
+
+    // After env() settles (safeAreaTop=47), re-measured snapshot flips.
+    const settledSnapshot = base({ innerHeight: 797, visualViewportHeight: 797, safeAreaTop: 47 });
+    const settledResult = detectLetterboxWithReason(settledSnapshot);
+    expect(settledResult.detected).toBe(true);
+    expect(settledResult.reason).toBe('detected');
+    expect(settledResult.shortfallPx).toBe(47);
+  });
+
+  it('poll sequence correctly drives the stale→settled transition', () => {
+    // Simulate: read() returns 0 at 100ms (still stale), 47 at 300ms (settled).
+    let snapshotSafeAreaTop = 0; // tracks the "current" measurement
+    const reads: number[] = [];
+    const snapshots: ViewportMetrics[] = [];
+
+    // Make a mock timer pair
+    const pending = new Map<number, () => void>();
+    let nextId = 1;
+    const timers: PollTimers<number> = {
+      setTimeout: (fn, _ms) => {
+        const id = nextId++;
+        pending.set(id, fn);
+        return id;
+      },
+      clearTimeout: (id) => pending.delete(id),
+    };
+
+    scheduleSafeAreaTopPolls(
+      () => {
+        reads.push(snapshotSafeAreaTop);
+        return snapshotSafeAreaTop;
+      },
+      (_value) => {
+        // Simulate what Launcher.tsx does: re-read full viewport metrics
+        const snap = base({
+          innerHeight: 797,
+          visualViewportHeight: 797,
+          safeAreaTop: snapshotSafeAreaTop,
+        });
+        snapshots.push(snap);
+      },
+      [100, 300, 600],
+      timers,
+    );
+
+    // 100ms: env() still stale
+    snapshotSafeAreaTop = 0;
+    pending.get(1)?.(); // trip first timer
+    expect(reads).toEqual([0]);
+    expect(snapshots).toHaveLength(0); // not settled yet
+
+    // 300ms: env() settled
+    snapshotSafeAreaTop = 47;
+    pending.get(2)?.(); // trip second timer
+    expect(reads).toEqual([0, 47]);
+    expect(snapshots).toHaveLength(1);
+
+    const finalSnapshot = snapshots[0];
+    expect(finalSnapshot).toBeDefined();
+    if (finalSnapshot) {
+      const verdict = detectLetterboxWithReason(finalSnapshot);
+      expect(verdict.detected).toBe(true);
+      expect(verdict.reason).toBe('detected');
+    }
+
+    // Third timer should be cleared (no longer pending)
+    expect(pending.has(3)).toBe(false);
   });
 });
 

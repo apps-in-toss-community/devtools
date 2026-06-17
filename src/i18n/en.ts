@@ -310,6 +310,14 @@ export const en: Record<StringKey, string> = {
   'launcher.letterboxDetected': 'Letterbox correction +{pt}pt applied — using full screen height.',
   'launcher.letterboxClipped':
     'An iOS viewport bug makes the bottom {pt}pt unusable — rotating to landscape and back to portrait may recover it.',
+  // #536: verdict reason labels for diag panel
+  'launcher.diagVerdictLabel': 'Verdict reason',
+  'launcher.diagSafeAreaTrace': 'top re-measure trace',
+  'launcher.diagVerdict.detected': '✓ letterbox correction',
+  'launcher.diagVerdict.notStandalone': 'not standalone',
+  'launcher.diagVerdict.landscape': 'landscape',
+  'launcher.diagVerdict.shortfallTooSmall': 'shortfall too small',
+  'launcher.diagVerdict.safeAreaTopZero': 'top=0 (env() stale?)',
   // Nav-bar emulation (#495/#510)
   'launcher.navbar.defaultTitle': 'Mini App',
   'launcher.navbar.back': 'Back',

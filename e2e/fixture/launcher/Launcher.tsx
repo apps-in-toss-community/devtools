@@ -16,9 +16,13 @@ import { useLocale, useT } from '../../../src/i18n/react.js';
 import { resolveLauncherEntry } from './entry.js';
 import {
   detectLetterbox,
+  detectLetterboxWithReason,
   isLetterboxResolved,
   letterboxEpochKey,
+  type PollTimers,
   type SafeAreaInsets,
+  scheduleSafeAreaTopPolls,
+  type VerdictGateReason,
   type ViewportMetrics,
   verifyLetterboxCorrection,
 } from './letterbox.js';
@@ -764,6 +768,9 @@ export function Launcher(): React.JSX.Element {
   const [diagOpen, setDiagOpen] = useState(false);
   const [metrics, setMetrics] = useState<ViewportMetrics | null>(null);
   const [chromeDeltaPx, setChromeDeltaPx] = useState<number | null>(null);
+  // #536: tracks the latest safeAreaTop readings from the multi-timeout poll
+  // so the diag panel can show the measurement trace (cold-start stale 0 → settled value).
+  const [safeAreaTopTrace, setSafeAreaTopTrace] = useState<number[]>([]);
 
   // #561/#566 lifecycle machine (geometry-epoch latch). The reverted #563 force
   // was a React-state-derived effect, so the resize it induced (797→844) flipped
@@ -1056,19 +1063,55 @@ export function Launcher(): React.JSX.Element {
     return () => window.removeEventListener('message', onMessage);
   }, []);
 
-  // Viewport diagnostics (#469): keep a live geometry snapshot so the letterbox
-  // verdict and the diag panel stay current across rotation / resize. iOS
-  // standalone cold start can settle the final window geometry late, so one
-  // delayed re-measure runs even when no resize event ever fires.
+  // Viewport diagnostics (#469, #536): keep a live geometry snapshot so the
+  // letterbox verdict and the diag panel stay current across rotation / resize.
+  //
+  // #536 cold-start env() stale-0 workaround: iOS standalone WebKit returns 0
+  // for env(safe-area-inset-top) immediately after cold start (WebKit #274773).
+  // A single 600ms settle was insufficient — if env() is still 0 at 600ms the
+  // safeAreaTop>0 gate blocks detection for the entire session (until rotation).
+  //
+  // Fix: schedule multi-timeout polls (100/300/600/1000 ms) that re-read env()
+  // and update the snapshot as soon as a non-zero value arrives. The resize/
+  // orientationchange listeners remain for rotation-induced geometry changes.
   useEffect(() => {
     const measure = () => setMetrics(readViewportMetrics());
-    measure();
-    const settle = window.setTimeout(measure, 600);
+    measure(); // immediate snapshot (safeAreaTop may be stale 0 at this point)
+
+    // Poll env(safe-area-inset-top) at multiple checkpoints. The first non-zero
+    // reading triggers a full snapshot re-measure and cancels remaining timers.
+    // On a healthy window (env() already settled) the 100ms poll fires and
+    // immediately cancels the rest — negligible overhead.
+    //
+    // Each reading is appended to safeAreaTopTrace so the diag panel can show
+    // the measurement history (helps identify the cold-start stale-0 case).
+    const cancelPolls = scheduleSafeAreaTopPolls(
+      () => {
+        const probe = document.createElement('div');
+        probe.style.cssText =
+          'position:fixed;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top)';
+        document.body.appendChild(probe);
+        const v = Number.parseFloat(getComputedStyle(probe).paddingTop) || 0;
+        probe.remove();
+        return v;
+      },
+      (value) => {
+        // Append the settled value to the trace and re-measure the full snapshot.
+        setSafeAreaTopTrace((prev) => [...prev, value]);
+        measure();
+      },
+      [100, 300, 600, 1000] as const,
+      {
+        setTimeout: window.setTimeout.bind(window),
+        clearTimeout: window.clearTimeout.bind(window),
+      },
+    );
+
     window.addEventListener('resize', measure);
     window.addEventListener('orientationchange', measure);
     window.visualViewport?.addEventListener('resize', measure);
     return () => {
-      window.clearTimeout(settle);
+      cancelPolls();
       window.removeEventListener('resize', measure);
       window.removeEventListener('orientationchange', measure);
       window.visualViewport?.removeEventListener('resize', measure);
@@ -1082,6 +1125,11 @@ export function Launcher(): React.JSX.Element {
   // Correction-aware: stays detected while the force HOLDS (shortfall→0 absorbed)
   // so the verdict the layout reads never flip-flops on the force's own resize.
   const letterboxDetected = metrics ? isLetterboxResolved(metrics, correctionActive) : false;
+  // #536: verdict reason for diag panel — identifies which gate blocked detection.
+  // 'safeAreaTopZero' during a cold-start stale env() window is the key signal.
+  const letterboxVerdictReason: VerdictGateReason = metrics
+    ? detectLetterboxWithReason(metrics).reason
+    : 'notStandalone';
   // The force is the LATCH, not a live shortfall derivation.
   const applyPxCorrection = correctionActive;
   const letterboxCorrected = correctionPhase === 'held';
@@ -1767,6 +1815,25 @@ export function Launcher(): React.JSX.Element {
                   ],
                   ['shortfall', 'shortfall', `${letterbox?.shortfallPx ?? 0}px`],
                   ['chromedelta', 'chrome Δ', chromeDeltaPx === null ? '–' : `${chromeDeltaPx}px`],
+                  // #536: verdict reason — surfaces the cold-start stale-env() case.
+                  // Static key map avoids dynamic StringKey construction.
+                  [
+                    'verdict',
+                    t('launcher.diagVerdictLabel'),
+                    {
+                      detected: t('launcher.diagVerdict.detected'),
+                      notStandalone: t('launcher.diagVerdict.notStandalone'),
+                      landscape: t('launcher.diagVerdict.landscape'),
+                      shortfallTooSmall: t('launcher.diagVerdict.shortfallTooSmall'),
+                      safeAreaTopZero: t('launcher.diagVerdict.safeAreaTopZero'),
+                    }[letterboxVerdictReason],
+                  ],
+                  // #536: safeAreaTop poll trace — shows 0→47 settlement during cold-start
+                  [
+                    'satrace',
+                    t('launcher.diagSafeAreaTrace'),
+                    safeAreaTopTrace.length > 0 ? safeAreaTopTrace.join('→') : '–',
+                  ],
                 ] as const
               ).map(([id, label, value]) => (
                 <div
