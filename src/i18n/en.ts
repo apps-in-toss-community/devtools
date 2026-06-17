@@ -307,7 +307,8 @@ export const en: Record<StringKey, string> = {
   'launcher.diagTitle': 'Viewport diagnostics',
   'launcher.diagYes': 'yes',
   'launcher.diagNo': 'no',
-  'launcher.letterboxDetected': 'Letterbox correction +{pt}pt applied — using full screen height.',
+  'launcher.letterboxDetected':
+    'An iOS viewport constraint may clip the bottom {pt}pt — rotating to landscape and back to portrait may resolve it.',
   'launcher.letterboxClipped':
     'An iOS viewport bug makes the bottom {pt}pt unusable — rotating to landscape and back to portrait may recover it.',
   // #536: verdict reason labels for diag panel
