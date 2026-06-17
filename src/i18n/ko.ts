@@ -308,7 +308,8 @@ export const ko = {
   'launcher.diagTitle': '뷰포트 진단',
   'launcher.diagYes': '예',
   'launcher.diagNo': '아니요',
-  'launcher.letterboxDetected': 'letterbox 보정 +{pt}pt 적용됨 — 화면 전체를 사용합니다.',
+  'launcher.letterboxDetected':
+    'iOS 뷰포트 제약으로 화면 아래 {pt}pt가 잘릴 수 있습니다 — 기기를 가로로 돌렸다 세로로 복귀하면 해소될 수 있어요.',
   'launcher.letterboxClipped':
     'iOS 뷰포트 버그로 화면 아래 {pt}pt를 쓸 수 없습니다 — 기기를 가로로 돌렸다 세로로 돌리면 복구될 수 있어요.',
   // Nav-bar emulation (#495/#510)
