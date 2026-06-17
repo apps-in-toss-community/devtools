@@ -83,6 +83,157 @@
 //   - stale web clip (legacy meta) → top 0 (status bar below window, not under)
 //                                    → false even with shortfall 47–59.
 
+// ---------------------------------------------------------------------------
+// Cold-start env() stale-0 workaround (#536)
+// ---------------------------------------------------------------------------
+//
+// On iOS standalone (home-screen web clip) WebKit has a known defect where
+// env(safe-area-inset-*) returns 0 immediately after a cold start and only
+// settles to the real value after orientationchange (WebKit #274773). The
+// measurement is done via a throwaway element's computed padding — the stale
+// reading means safeAreaTop=0 at t=0 ms even though the window IS under the
+// status bar. This causes detectLetterbox() to miss the event: shortfall ≥ 24
+// fires, but the safeAreaTop>0 guard blocks it.
+//
+// The fix: the Launcher polls env() at multiple checkpoints after mount
+// (100/300/500/1000 ms) and re-evaluates the letterbox verdict at each point.
+// Once safeAreaTop leaves 0 (real value arrived) the first non-stale snapshot
+// is used and subsequent polls are cancelled. The poll times are deliberately
+// sparse — the WebKit bug usually settles within the first second, and the
+// timer overhead is negligible (four short-lived closures, no DOM mutation).
+//
+// This module exposes two pure functions so the polling logic is unit-testable
+// with fake timers under vitest (jsdom never has real env() values anyway):
+//
+//   scheduleSafeAreaTopPolls(read, onSettled, delays, timers)
+//     — schedules successive reads; calls onSettled once at the first non-zero
+//       reading or after all delays have fired (even if still zero).
+//
+//   detectLetterboxWithReason(metrics)
+//     — extends detectLetterbox() with a `reason` field that names the first
+//       gate condition that blocked detection (or 'detected').
+//
+// The Launcher wires these in its viewport-measure effect: the initial
+// readViewportMetrics() snapshot is passed to the verdict immediately, and the
+// polls update the snapshot as env() settles.
+
+/**
+ * Possible reasons that detectLetterboxWithReason() returns detected=false.
+ * Useful for diagnostics: "shortfall 47, top 0" reads as 'safeAreaTopZero',
+ * which during cold-start unambiguously identifies the stale-env() case rather
+ * than the intentional gate (stale web clip healthy, safeAreaTop 0 by design).
+ */
+export type VerdictGateReason =
+  | 'detected'
+  | 'notStandalone'
+  | 'landscape'
+  | 'shortfallTooSmall'
+  | 'safeAreaTopZero';
+
+export interface LetterboxVerdictWithReason {
+  detected: boolean;
+  shortfallPx: number;
+  /**
+   * The first gate condition that resolved the verdict.
+   * - 'detected': all gates passed — letterbox confirmed.
+   * - 'notStandalone': `standalone` is false.
+   * - 'landscape': `innerWidth > screenWidth` (landscape guard).
+   * - 'shortfallTooSmall': `shortfall < LETTERBOX_MIN_SHORTFALL_PX`.
+   * - 'safeAreaTopZero': shortfall is sufficient but `safeAreaTop === 0`.
+   *   In a cold-start scenario this is the stale env() reading (WebKit #274773).
+   */
+  reason: VerdictGateReason;
+}
+
+/**
+ * Like detectLetterbox() but also returns the first gate condition that decided
+ * the verdict, for diagnostics and cold-start stale-env() surfacing (#536).
+ */
+export function detectLetterboxWithReason(metrics: ViewportMetrics): LetterboxVerdictWithReason {
+  const effectiveHeight = Math.max(metrics.innerHeight, metrics.visualViewportHeight ?? 0);
+  const shortfallPx = Math.round(metrics.screenHeight - effectiveHeight);
+  const portrait = metrics.innerWidth <= metrics.screenWidth;
+
+  if (!metrics.standalone) {
+    return { detected: false, shortfallPx, reason: 'notStandalone' };
+  }
+  if (!portrait) {
+    return { detected: false, shortfallPx, reason: 'landscape' };
+  }
+  if (shortfallPx < LETTERBOX_MIN_SHORTFALL_PX) {
+    return { detected: false, shortfallPx, reason: 'shortfallTooSmall' };
+  }
+  if (metrics.safeAreaTop <= 0) {
+    return { detected: false, shortfallPx, reason: 'safeAreaTopZero' };
+  }
+  return { detected: true, shortfallPx, reason: 'detected' };
+}
+
+/**
+ * Injectable timer pair for scheduleSafeAreaTopPolls — same shape as
+ * VerificationTimers (defined later in this file for the correction verify path)
+ * so tests can inject the same kind of fake-timer pair.
+ */
+export interface PollTimers<H = unknown> {
+  setTimeout: (fn: () => void, ms: number) => H;
+  clearTimeout: (handle: H) => void;
+}
+
+/**
+ * Schedule successive env(safe-area-inset-top) reads at `delaysMs` checkpoints
+ * after call time. At each checkpoint `read()` is called; if the result is > 0
+ * (env() has settled beyond the cold-start stale-0) `onSettled` is invoked
+ * immediately and all remaining timers are cancelled. If all checkpoints fire
+ * and the value is still 0, `onSettled` is called once with 0 after the last.
+ *
+ * This is a pure scheduling function: it never touches the DOM itself — the
+ * caller supplies `read` (the actual CSS measurement or a test stub).
+ *
+ * Returns a cancel function that clears all pending timers and suppresses the
+ * `onSettled` call (for React cleanup on unmount).
+ *
+ * @param read       — reads `env(safe-area-inset-top)` in px (0 if stale).
+ * @param onSettled  — called once with the first non-zero reading, or with 0
+ *                     after all delays have fired.
+ * @param delaysMs   — ascending checkpoint offsets in milliseconds.
+ * @param timers     — injectable setTimeout/clearTimeout pair.
+ */
+export function scheduleSafeAreaTopPolls<H>(
+  read: () => number,
+  onSettled: (value: number) => void,
+  delaysMs: readonly number[],
+  timers: PollTimers<H>,
+): () => void {
+  let settled = false;
+  const handles: H[] = [];
+
+  const clearAll = (): void => {
+    for (const h of handles) timers.clearTimeout(h);
+  };
+
+  for (let i = 0; i < delaysMs.length; i++) {
+    const isLast = i === delaysMs.length - 1;
+    const delay = delaysMs[i];
+    handles.push(
+      timers.setTimeout(() => {
+        if (settled) return;
+        const value = read();
+        if (value > 0 || isLast) {
+          settled = true;
+          clearAll();
+          onSettled(value);
+        }
+      }, delay as number),
+    );
+  }
+
+  // Cancel: suppress the onSettled call (React cleanup on unmount).
+  return () => {
+    settled = true;
+    clearAll();
+  };
+}
+
 /** A snapshot of the page-visible viewport geometry. */
 export interface ViewportMetrics {
   innerWidth: number;
