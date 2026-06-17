@@ -15,9 +15,10 @@
 //     a full-bleed canvas (viewport.ts: game nav bar is a transparent overlay
 //     INSIDE the WebView).
 //
-// `←` (back) is intentionally omitted in v1: the framed page is cross-origin
-// (*.trycloudflare.com), so the launcher has no trustworthy way to drive its
-// history. Tracked as a follow-up.
+// `←` (back) is rendered as `.ait-navbar-back` (glyph `‹`) and drives the framed
+// iframe via `{ type: 'ait:navigate-back' }` postMessage — same-protocol opt-in,
+// cross-origin history is not directly accessible (SecurityError). Implemented in
+// #510/#511; safe-area-bridge.ts handles the receiving side.
 
 import {
   computeBridgeInsets as computeLetterboxBridgeInsets,
