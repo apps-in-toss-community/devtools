@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.1.99
+
+### Patch Changes
+
+- f6fc956: fix(launcher): letterbox 보정 전파 누수 2건 수정 (#541)
+
+  1. setup 화면 `minHeight: '100dvh'` ICB 갇힘: `100%`로 교체해 parent fixed div(inset:0)를 통해 html/body force(screen.height)가 전파되도록 수정.
+  2. 배너 게이트 비대칭: `|| letterboxShortfallPx > 0` 의존을 `correctionPhase !== 'held'`로 대체해 `letterboxDetected` 기반으로 게이트 통일.
+
+- 80b78cb: fix(launcher): letterbox 배너 `letterboxDetected` 문구 — 반증된 '재설치' 권고 제거 후 실측 부합하는 문구로 교체 (#499)
+
+  iOS 18.7 실기기에서 홈 화면 제거 후 재설치해도 letterbox가 재현됨을 확인(#499). `launcher.letterboxDetected`의 "화면 전체를 사용합니다" 문구는 shortfall이 여전히 남는 상태에서 표시될 수 있어 misleading이었다. OS 제약으로 하단 밴드가 남을 수 있음을 담담히 안내하고 회전 트릭(가로→세로)을 해소책으로 제시하는 문구로 교체. ko/en 둘 다 갱신.
+
+- 5be8019: fix(launcher): letterbox cold-start env() stale-0 보정 게이트 누락 수정 + verdict 사유 노출 (#536)
+
+  iOS standalone cold start에서 env(safe-area-inset-top)가 0/stale을 반환해
+  letterbox 보정이 발동하지 않던 WebKit 결함(WebKit #274773)에 대응한다.
+
+  - `scheduleSafeAreaTopPolls()` 순수 함수 추가: 100/300/600/1000ms 4-checkpoint
+    multi-timeout으로 env()를 재측정해 stale-0을 벗어난 값이 도착하면 즉시
+    보정 게이트를 재평가한다.
+  - `detectLetterboxWithReason()` 함수 추가: 판정 사유(detected / notStandalone /
+    landscape / shortfallTooSmall / safeAreaTopZero)를 반환해 cold-start 중
+    `safeAreaTopZero` 상태를 diag 패널에서 식별 가능하게 한다.
+  - Launcher.tsx 뷰포트 측정 effect를 multi-timeout 방식으로 교체, diag 패널에
+    판정 사유(`verdict`) + safeAreaTop 재측정 추이(`top re-measure trace`) 행 추가.
+  - letterbox.vitest.ts에 cold-start stale-0 → 재측정 후 정정 시나리오 테스트 추가.
+
+- 88575fc: unplugin: in-app attach(`@ait-co/devtools/in-app` → `maybeAttach()`)를 panel 주입과 같은 transform 지점에서 게이트된 dynamic import로 자동 주입한다. 소비자가 `main.tsx`에 수동으로 배선하지 않아도 `?debug=1&relay=` 파라미터 존재 시 relay attach가 동작한다(#465, sdk-example#162 silent seam break 재발 방지). `inApp: false`로 비활성화 가능.
+
 ## 0.1.98
 
 ### Patch Changes
