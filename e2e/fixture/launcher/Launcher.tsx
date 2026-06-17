@@ -1332,7 +1332,11 @@ export function Launcher(): React.JSX.Element {
         data-testid="launcher-setup"
         style={{
           display: screen === 'setup' ? 'flex' : 'none',
-          minHeight: '100dvh',
+          // #541 결함 1: `100dvh`는 letterbox 상태에서 mis-reported ICB(≈797)
+          // 기준으로 해소된다. root div는 `inset:0`으로 ICB를 추종하고
+          // html/body force(applyDocumentFlowForce)가 ICB를 screen.height로 확장하므로,
+          // `100%`로 parent(root fixed div)를 추종하면 보정값이 그대로 전파된다.
+          minHeight: '100%',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
@@ -1697,7 +1701,15 @@ export function Launcher(): React.JSX.Element {
           the limit honestly and points to the known manual recovery (rotate
           landscape → portrait).
         */}
-          {letterboxDetected && (correctionPhase === 'clipped' || letterboxShortfallPx > 0) && (
+          {/* #541 결함 2: 게이트를 `letterboxDetected` 기반으로 통일. 기존의
+              `|| letterboxShortfallPx > 0`은 `letterboxDetected`와 의미가
+              중복되면서 shortfallPx 의존이 생겨 분기가 갈라질 위험이 있었다.
+              `correctionPhase !== 'held'`로 대체해 shortfallPx 독립성을 확보:
+              - idle   → letterboxDetected=false → 배너 없음
+              - applying → letterboxDetected=true, force 진행 중 → 배너 있음
+              - held + shortfall 0 (force 흡수) → 배너 없음 (#574 노이즈 방지)
+              - clipped → letterboxDetected=true, 제한 경고 → 배너 있음      */}
+          {letterboxDetected && correctionPhase !== 'held' && (
             <div
               role="status"
               data-testid="launcher-letterbox-label"
