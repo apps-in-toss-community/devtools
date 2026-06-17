@@ -13,10 +13,9 @@ import '@ait-co/devtools/panel';
 import '@ait-co/polyfill/auto';
 
 // ENV-2 CDP gate (issue #378 — gap #1):
-// When the page is loaded with ?debug=1&relay=<wss> (the launcher deep-link
-// forwarded from env-2 QR), dynamically import the in-app attach module so
-// the Chii target.js injection runs without statically bundling the in-app
-// code into every fixture build.
+// 일반 소비자에서는 unplugin이 진입점에 in-app attach를 자동 주입한다 (devtools#465).
+// 이 fixture는 rolldown(Vite 8) 우회책으로 unplugin transform을 비활성화하므로
+// (vite.config.ts: inApp: false) 여기에 명시 배선을 유지한다 — panel 명시 import와 동일한 패턴.
 //
 // NOTE: the in-app gate (Layer B1 in src/in-app/gate.ts) BLOCKS localhost — it
 // only allows *.trycloudflare.com and *.private-apps.tossmini.com hostnames.

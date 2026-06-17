@@ -68,9 +68,20 @@ describe('unplugin: dev mode + panel:false', () => {
     expect(isMockTarget(hooks.resolveId(FRAMEWORK_ID))).toBe(true);
   });
 
-  it('패널 주입이 비활성화되어야 한다', () => {
+  it('패널 import는 주입되지 않는다 (inApp은 여전히 주입됨)', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks({ panel: false });
+    // inApp이 기본 활성이므로 transformInclude는 true (inApp snippet을 위해)
+    expect(hooks.transformInclude('src/main.tsx')).toBeTruthy();
+    // 하지만 실제 transform 결과에 panel import가 없다
+    const result = hooks.transform('console.log("hello");');
+    expect(result).not.toContain("import '@ait-co/devtools/panel'");
+    expect(result).toContain('@ait-co/devtools/in-app');
+  });
+
+  it('panel: false + inApp: false이면 transformInclude가 false이다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ panel: false, inApp: false });
     expect(hooks.transformInclude('src/main.tsx')).toBeFalsy();
   });
 });
@@ -200,21 +211,88 @@ describe('unplugin: transform', () => {
     vi.stubEnv('NODE_ENV', 'development');
     const hooks = getRawHooks();
     const result = hooks.transform('console.log("hello");');
-    expect(result).toBe('import \'@ait-co/devtools/panel\';\nconsole.log("hello");');
+    expect(result).toContain("import '@ait-co/devtools/panel'");
+    expect(result).toContain('console.log("hello");');
   });
 
-  it('이미 패널 import가 있으면 스킵한다', () => {
+  it('이미 패널 import가 있으면 패널 주입을 스킵한다 (in-app은 별도)', () => {
     vi.stubEnv('NODE_ENV', 'development');
-    const hooks = getRawHooks();
+    const hooks = getRawHooks({ inApp: false });
     const code = "import '@ait-co/devtools/panel';\nconsole.log('hello');";
     const result = hooks.transform(code);
     expect(result).toBeNull();
   });
 
-  it('shouldPanel이 false이면 null을 반환한다', () => {
+  it('production에서는 패널 주입이 null을 반환한다', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const hooks = getRawHooks();
+    const result = hooks.transform('console.log("hello");');
+    // production 기본에서는 shouldEnable=false이므로 inApp도 false → null
+    expect(result).toBeNull();
+  });
+});
+
+describe('unplugin: in-app attach 자동 주입 (#465)', () => {
+  it('dev 모드에서 in-app snippet을 자동 주입한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    const result = hooks.transform('console.log("hello");');
+    expect(result).toContain('@ait-co/devtools/in-app');
+    expect(result).toContain('maybeAttach');
+    expect(result).toContain("get('debug') === '1'");
+    expect(result).toContain("get('relay')");
+  });
+
+  it('panel + in-app snippet이 모두 주입된다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks();
+    const result = hooks.transform('console.log("hello");');
+    expect(result).toContain("import '@ait-co/devtools/panel'");
+    expect(result).toContain('@ait-co/devtools/in-app');
+  });
+
+  it('이미 in-app import가 있으면 스킵한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ panel: false });
+    const code =
+      "import('@ait-co/devtools/in-app').then((m) => m.maybeAttach());\nconsole.log('hello');";
+    const result = hooks.transform(code);
+    // in-app이 이미 있으므로 변경 없음 (panel도 false이므로 null)
+    expect(result).toBeNull();
+  });
+
+  it('inApp: false로 명시하면 in-app snippet을 주입하지 않는다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ inApp: false });
+    const result = hooks.transform('console.log("hello");');
+    expect(result).not.toContain('@ait-co/devtools/in-app');
+    // panel은 여전히 주입된다
+    expect(result).toContain("import '@ait-co/devtools/panel'");
+  });
+
+  it('panel: false + inApp: false이면 null을 반환한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ panel: false, inApp: false });
+    const result = hooks.transform('console.log("hello");');
+    expect(result).toBeNull();
+  });
+
+  it('production 기본에서 in-app snippet을 주입하지 않는다', () => {
     vi.stubEnv('NODE_ENV', 'production');
     const hooks = getRawHooks();
     const result = hooks.transform('console.log("hello");');
     expect(result).toBeNull();
+  });
+
+  it('transformInclude는 panel 또는 inApp 중 하나라도 활성이면 true를 반환한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooksInAppOnly = getRawHooks({ panel: false, inApp: true });
+    expect(hooksInAppOnly.transformInclude('src/main.tsx')).toBeTruthy();
+  });
+
+  it('transformInclude는 panel과 inApp 모두 false이면 false를 반환한다', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const hooks = getRawHooks({ panel: false, inApp: false });
+    expect(hooks.transformInclude('src/main.tsx')).toBeFalsy();
   });
 });

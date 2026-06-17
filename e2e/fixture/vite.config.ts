@@ -35,16 +35,18 @@ export default defineConfig({
       '@apps-in-toss/web-framework': mockDist,
     },
   },
-  // Both mock and panel are disabled so the unplugin does NO active work here:
+  // mock, panel, inApp are all disabled — active transform work is handled
+  // explicitly in main.tsx (bypasses rolldown/Vite 8 transform reliability issue).
   //   mock:  off — handled by resolve.alias above (bypasses rolldown resolveId bug)
-  //   panel: off — handled by explicit import in main.tsx (unplugin transform
-  //                is unreliable under Vite 8 production build with rolldown)
+  //   panel: off — handled by explicit import in main.tsx
+  //   inApp: off — handled by explicit in-app snippet in main.tsx
   // The plugin is kept in the list for tunnel support (manual QA only).
   plugins: [
     react(),
     aitDevtools.vite({
       panel: false,
       mock: false,
+      inApp: false,
       // Manual QA toggles only — no effect on CI / normal builds.
       // AIT_TUNNEL=1       → plain HTTP tunnel only (env-2 screen preview)
       // AIT_TUNNEL_CDP=1   → HTTP tunnel + Chii relay + relay tunnel (env-2 CDP)
