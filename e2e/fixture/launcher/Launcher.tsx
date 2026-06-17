@@ -19,7 +19,6 @@ import {
   detectLetterboxWithReason,
   isLetterboxResolved,
   letterboxEpochKey,
-  type PollTimers,
   type SafeAreaInsets,
   scheduleSafeAreaTopPolls,
   type VerdictGateReason,
