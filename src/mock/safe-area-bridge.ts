@@ -147,6 +147,92 @@ export function applyForwardedSafeAreaInsets(insets: SafeAreaInsets): void {
   aitState.update({ safeAreaInsets: insets });
 }
 
+/**
+ * The `id` attribute of the `<style>` element injected by
+ * {@link applyEnv2Compensation}. Using a stable id makes the injection
+ * idempotent — the element is reused on every subsequent message rather than
+ * accumulating multiple `<style>` nodes.
+ */
+export const ENV2_COMPENSATION_STYLE_ID = 'ait-env2-safe-area-compensation';
+
+/**
+ * The CSS text injected when the launcher forwards partner-mode insets
+ * (`top === 0`). The negative margin pulls the mini-app document up by exactly
+ * the device's status-bar inset so the launcher's own bar offset is not
+ * double-counted.
+ *
+ * jsdom cannot evaluate `env()` expressions, so unit tests assert on this
+ * string literal rather than computed geometry.
+ */
+export const ENV2_COMPENSATION_CSS = 'body { margin-top: calc(-1 * env(safe-area-inset-top)); }';
+
+/**
+ * Inject or remove the env-2 safe-area compensation `<style>` based on the
+ * forwarded insets received from the launcher.
+ *
+ * ### Why this is needed
+ *
+ * In env 2 (AITC Sandbox PWA) the launcher frames the mini-app in a
+ * full-bleed `<iframe>` whose top edge is already positioned BELOW the
+ * launcher's partner bar (at `env(safe-area-inset-top) + 54px`). However,
+ * inside the cross-origin child iframe, CSS `env(safe-area-inset-top)` STILL
+ * reports the full device status-bar inset (e.g. 62 px on an iPhone 15). Any
+ * mini-app that pads itself by that CSS `env()` value ends up double-counting
+ * the status-bar, producing a ≈62 px white dead-band between the partner bar
+ * and the first content.
+ *
+ * The fix is a compensating negative margin on `body` inside the iframe. When
+ * the launcher forwards partner insets (`top === 0`, meaning "the iframe
+ * already starts below the bar"), we inject:
+ *
+ * ```css
+ * body { margin-top: calc(-1 * env(safe-area-inset-top)); }
+ * ```
+ *
+ * This cancels the duplicate padding without knowing the app's internal DOM
+ * structure. The launcher's html/body `screen.height` force (#527) lives in the
+ * LAUNCHER document (cross-origin) and never touches the mini-app document, so
+ * margin and height force compose independently — they cannot interfere.
+ *
+ * ### Gating
+ *
+ * - **`top === 0`** (partner mode) → install the style (dead-band compensation).
+ * - **`top > 0`** (game mode — launcher forwards the raw device inset for the
+ *   floating status-bar capsule) → remove any previously installed style so
+ *   `env()` is the authoritative clearance and nothing is double-removed.
+ *
+ * On every insets message (resize/orientation re-post) this function is called
+ * so the gate is re-evaluated and the style toggled accordingly.
+ *
+ * ### env 1 / env 3 / env 4 no-regression
+ *
+ * This function is only called from the `message` listener installed by
+ * {@link installSafeAreaInsetsBridge}. That listener fires only when the
+ * launcher posts an `ait:safe-area-insets` message, which never happens in
+ * env 1 (desktop browser, no launcher), env 3 (intoss-private WebView), or
+ * env 4 (live relay) — they have no launcher posting to the iframe.
+ *
+ * @param top - The forwarded `top` inset value from the launcher message.
+ */
+export function applyEnv2Compensation(top: number): void {
+  if (typeof document === 'undefined') return;
+
+  const existing = document.getElementById(ENV2_COMPENSATION_STYLE_ID);
+
+  if (top === 0) {
+    // Partner mode: install the compensation style (idempotent — reuse if present).
+    if (existing !== null) return; // already installed, nothing to do
+    const style = document.createElement('style');
+    style.id = ENV2_COMPENSATION_STYLE_ID;
+    style.textContent = ENV2_COMPENSATION_CSS;
+    document.head.appendChild(style);
+  } else {
+    // Game mode (or any non-zero top): remove the compensation if it was
+    // previously installed so env() remains the authoritative clearance.
+    if (existing !== null) existing.remove();
+  }
+}
+
 let installed = false;
 
 /**
@@ -154,13 +240,24 @@ let installed = false;
  * call multiple times (idempotent) and a no-op outside a browser (SSR/jsdom
  * without a window). Imported for its side effect by the mock barrel so any
  * consumer that aliases `@apps-in-toss/web-framework` to the mock gets it wired.
+ *
+ * On each valid `ait:safe-area-insets` message:
+ * 1. Writes the corrected insets into the mock `SafeAreaInsets` state
+ *    (existing #484 behaviour — for apps that still read SDK insets).
+ * 2. Drives the env-2 dead-band compensation style via
+ *    {@link applyEnv2Compensation} — injects a `body { margin-top: calc(-1 *
+ *    env(safe-area-inset-top)) }` style when `top === 0` (partner mode) and
+ *    removes it when `top > 0` (game / full-bleed mode).
  */
 export function installSafeAreaInsetsBridge(): void {
   if (installed || typeof window === 'undefined') return;
   installed = true;
   window.addEventListener('message', (event: MessageEvent) => {
     const insets = parseSafeAreaInsetsMessage(event.data);
-    if (insets) applyForwardedSafeAreaInsets(insets);
+    if (insets) {
+      applyForwardedSafeAreaInsets(insets);
+      applyEnv2Compensation(insets.top);
+    }
   });
 }
 

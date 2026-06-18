@@ -5,7 +5,10 @@ import {
   SafeAreaInsets,
 } from '../mock/navigation/index.js';
 import {
+  applyEnv2Compensation,
   applyForwardedSafeAreaInsets,
+  ENV2_COMPENSATION_CSS,
+  ENV2_COMPENSATION_STYLE_ID,
   installNavigateBackBridge,
   installSafeAreaInsetsBridge,
   isNavigateBackMessage,
@@ -179,6 +182,138 @@ describe('safe-area-bridge', () => {
       installSafeAreaInsetsBridge();
       expect(addSpy).not.toHaveBeenCalledWith('message', expect.anything());
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// env-2 dead-band compensation (#611)
+// ---------------------------------------------------------------------------
+
+describe('applyEnv2Compensation', () => {
+  // Remove any leftover compensation style element between tests.
+  afterEach(() => {
+    document.getElementById(ENV2_COMPENSATION_STYLE_ID)?.remove();
+  });
+
+  it('top=0 (partner mode) → compensation <style> 삽입됨', () => {
+    applyEnv2Compensation(0);
+    const style = document.getElementById(ENV2_COMPENSATION_STYLE_ID);
+    expect(style).not.toBeNull();
+    expect(style?.tagName.toLowerCase()).toBe('style');
+    expect(style?.textContent).toBe(ENV2_COMPENSATION_CSS);
+  });
+
+  it('top=0 → style 텍스트가 calc(-1 * env(safe-area-inset-top)) 포함', () => {
+    applyEnv2Compensation(0);
+    const style = document.getElementById(ENV2_COMPENSATION_STYLE_ID);
+    expect(style?.textContent).toContain('calc(-1 * env(safe-area-inset-top))');
+  });
+
+  it('top>0 (game mode) → compensation style 삽입 안 됨', () => {
+    applyEnv2Compensation(62);
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).toBeNull();
+  });
+
+  it('top>0 → 이전에 설치된 style 제거됨 (게임 모드 전환)', () => {
+    // partner forward → install
+    applyEnv2Compensation(0);
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).not.toBeNull();
+
+    // game forward → remove
+    applyEnv2Compensation(62);
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).toBeNull();
+  });
+
+  it('top=0 idempotent — 반복 호출해도 <style> 중복 삽입 안 됨', () => {
+    applyEnv2Compensation(0);
+    applyEnv2Compensation(0);
+    applyEnv2Compensation(0);
+    const styles = document.querySelectorAll(`#${ENV2_COMPENSATION_STYLE_ID}`);
+    expect(styles.length).toBe(1);
+  });
+
+  it('top=0 → top=0 → top>0 → top=0 토글 사이클', () => {
+    applyEnv2Compensation(0); // install
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).not.toBeNull();
+
+    applyEnv2Compensation(0); // no-op (already installed)
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).not.toBeNull();
+
+    applyEnv2Compensation(62); // remove
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).toBeNull();
+
+    applyEnv2Compensation(0); // re-install
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).not.toBeNull();
+  });
+});
+
+describe('installSafeAreaInsetsBridge + env-2 compensation (#611 통합)', () => {
+  afterEach(() => {
+    document.getElementById(ENV2_COMPENSATION_STYLE_ID)?.remove();
+  });
+
+  it('top=0 메시지 → compensation style 삽입됨', () => {
+    installSafeAreaInsetsBridge();
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: SAFE_AREA_INSETS_MESSAGE_TYPE,
+          insets: { top: 0, bottom: 34, left: 0, right: 0 },
+        },
+      }),
+    );
+    const style = document.getElementById(ENV2_COMPENSATION_STYLE_ID);
+    expect(style).not.toBeNull();
+    expect(style?.textContent).toContain('calc(-1 * env(safe-area-inset-top))');
+  });
+
+  it('top=62 (raw device inset) 메시지 → compensation style 없음', () => {
+    installSafeAreaInsetsBridge();
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: SAFE_AREA_INSETS_MESSAGE_TYPE,
+          insets: { top: 62, bottom: 34, left: 0, right: 0 },
+        },
+      }),
+    );
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).toBeNull();
+  });
+
+  it('top=0 후 top=62 메시지 → compensation style 제거됨', () => {
+    installSafeAreaInsetsBridge();
+
+    // partner forward → install
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: SAFE_AREA_INSETS_MESSAGE_TYPE,
+          insets: { top: 0, bottom: 34, left: 0, right: 0 },
+        },
+      }),
+    );
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).not.toBeNull();
+
+    // game/raw forward → remove
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: SAFE_AREA_INSETS_MESSAGE_TYPE,
+          insets: { top: 62, bottom: 34, left: 0, right: 0 },
+        },
+      }),
+    );
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).toBeNull();
+  });
+
+  it('shape-invalid 메시지 → compensation style 변화 없음 (preset 보호)', () => {
+    installSafeAreaInsetsBridge();
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: SAFE_AREA_INSETS_MESSAGE_TYPE, insets: { top: 'oops' } },
+      }),
+    );
+    expect(document.getElementById(ENV2_COMPENSATION_STYLE_ID)).toBeNull();
   });
 });
 
