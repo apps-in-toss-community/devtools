@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.100
+
+### Patch Changes
+
+- 1119e43: env-2 launcher iframe에서 CSS env(safe-area-inset-top) 이중 패딩(dead band)을 in-app 보정 스타일로 수정 (#611)
+
 ## 0.1.99
 
 ### Patch Changes
