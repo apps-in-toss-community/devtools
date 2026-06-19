@@ -781,15 +781,25 @@ export async function startQrHttpServer(
     }
 
     // ── GET /inspector — 안정 인스펙터 진입점 (issue #530) ───────────────────
-    // 클릭 시점에 getDirectInspectorUrl()로 직접 chii front_end URL을 조립해 302 redirect.
-    // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프 → 분리됨.
+    // ── GET /devtools/ — chii DevTools UI 진입로 (issue #248 옵션 A) ──────────
+    //
+    // 두 라우트는 동일한 핸들러를 공유한다:
+    //   - relay 연결 active + attached target 있음 → chii front_end/chii_app.html?ws=… 302.
+    //   - relay down 또는 target 없음 → 502 (사용자에게 원인 + 다음 단계 안내).
+    //   - getDirectInspectorUrl 미주입 (relay 연결 없는 server mode) → 503.
+    //
+    // /inspector: dashboard의 "디버그 툴 열기" 링크가 이 URL을 가리키며, qrServer.inspectorStableUrl로 노출된다.
+    // /devtools/: `/ait debug` 문서·가이드에서 직접 참조 가능한 고정 경로 (issue #248).
+    //   이 경로가 존재함으로써 사용자가 dashboard를 열지 않고도 직접 DevTools UI에 접근할 수 있다.
+    //
+    // getDashboardState().inspectorUrl(= /inspector 자기 자신)을 쓰면 무한 루프 → getDirectInspectorUrl로 분리.
     // SECRET-HANDLING: redirect Location(relay host + at=)은 HTTP 응답으로만 전달.
     // 로그에 Location 값 출력 금지.
-    if (path === '/inspector') {
+    if (path === '/inspector' || path === '/devtools' || path === '/devtools/') {
       const getDirectInspectorUrl = options?.getDirectInspectorUrl;
       if (!getDirectInspectorUrl) {
         res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Inspector endpoint is not available in this server mode.');
+        res.end('relay 연결 세션에서만 DevTools UI를 열 수 있습니다.');
         return;
       }
       // 매 요청마다 getter 호출 — TOTP를 요청 시점에 mint.
