@@ -131,6 +131,60 @@ import {
 } from './tunnel.js';
 
 /**
+ * Maximum age (ms) of a page's `lastSeenAt` before it is treated as a ghost
+ * and excluded from the `wait_for_attach` short-circuit in `build_attach_url`
+ * (issue #610).
+ *
+ * Rationale: the env-2 relay is owned by the dev server (unplugin), so every
+ * `dev:phone:cdp` restart produces a new quick-tunnel. The old relay goes
+ * offline immediately, but the daemon's warm `ChiiCdpConnection` still lists
+ * the last-seen target — its `lastSeenAt` freezes at the moment the old relay
+ * died. A 5-minute threshold is large enough to be invisible in normal usage
+ * (active CDP sessions see a message every few seconds) while being small
+ * enough to catch a relay that went down before the daemon was re-entered.
+ *
+ * Injectable for tests via {@link DebugServerDeps.stalePageThresholdMs}.
+ */
+export const RELAY_SANDBOX_STALE_PAGE_MS = 5 * 60 * 1_000; // 5 minutes
+
+/**
+ * Predicate used by `build_attach_url`'s `wait_for_attach` loop to decide
+ * whether the relay-sandbox connection has a genuinely fresh page attached.
+ *
+ * Stale-ghost gating (issue #610): when the dev server restarts with a new
+ * quick-tunnel, the warm `ChiiCdpConnection` still lists the last-seen target
+ * but its `lastSeenAt` is frozen. A page whose `lastSeenAt` exceeds
+ * `stalePageThresholdMs` is a ghost from the dead relay — it must NOT
+ * short-circuit `wait_for_attach`.
+ *
+ * Rules:
+ * - `pages.length === 0` → false (nothing attached).
+ * - Connection has no `getLastSeenAt` (test fakes, local-browser) → falls back
+ *   to `pages.length > 0` (regression-safe).
+ * - `seenMs === null` → treat as fresh (no CDP message received yet, first
+ *   message pending — the connection is alive).
+ * - Otherwise: at least one page must satisfy `nowMs - seenMs <=
+ *   stalePageThresholdMs`.
+ *
+ * Exported for unit testing.
+ */
+export function isSandboxPageFresh(
+  pages: ReadonlyArray<{ id: string }>,
+  getLastSeenAt: ((id: string) => number | null) | null,
+  nowMs: number,
+  stalePageThresholdMs: number,
+): boolean {
+  if (pages.length === 0) return false;
+  if (getLastSeenAt === null) return true;
+  return pages.some((p) => {
+    const seenMs = getLastSeenAt(p.id);
+    // null = no CDP message yet (fresh attach, first message pending) → fresh.
+    if (seenMs === null) return true;
+    return nowMs - seenMs <= stalePageThresholdMs;
+  });
+}
+
+/**
  * Parses `_deploymentId` from the query string of a scheme URL.
  *
  * Returns `null` when the param is absent or empty — callers treat that as
@@ -396,6 +450,20 @@ export interface DebugServerDeps {
    * need to simulate a stale lock with a dead tunnelChildPid.
    */
   readLock?: () => import('./server-lock.js').LockData | null;
+  /**
+   * Maximum age (ms) of a page's `lastSeenAt` before it is treated as a
+   * ghost and excluded from `wait_for_attach` short-circuit logic (issue #610).
+   *
+   * Default: {@link RELAY_SANDBOX_STALE_PAGE_MS} (5 minutes).
+   * Injectable for tests so they can use a small value without fake timers.
+   */
+  stalePageThresholdMs?: number;
+  /**
+   * Monotonic clock for stale-page checks (issue #610). Defaults to
+   * `Date.now`. Injectable for tests so they can freeze time without fake
+   * timers (which conflict with MCP SDK's own timeouts).
+   */
+  nowMs?: () => number;
 }
 
 /**
@@ -479,6 +547,8 @@ export function createDebugServer(deps: DebugServerDeps): Server {
     onAttachUrlBuilt,
     getTunnelChildPid,
     readLock: readLockDep,
+    stalePageThresholdMs = RELAY_SANDBOX_STALE_PAGE_MS,
+    nowMs = () => Date.now(),
   } = deps;
 
   // Late-bound TOTP secret accessor (issue #396): production injects
@@ -801,9 +871,33 @@ export function createDebugServer(deps: DebugServerDeps): Server {
 
         // In mobile mode, deploymentId filtering is not applicable —
         // the launcher attach is not tied to a specific bundle deployment.
-        // match on presence only (any page that attaches is the target).
+        // match on presence only — but with a stale-ghost guard (issue #610).
+        //
+        // env-2 relay is owned by the dev server (unplugin): every `dev:phone:cdp`
+        // restart produces a new quick-tunnel and the old relay goes offline. The
+        // warm ChiiCdpConnection still lists the last-seen target, but its
+        // `lastSeenAt` is frozen. A ghost page (lastSeenAt older than
+        // `stalePageThresholdMs`) must NOT short-circuit wait_for_attach — doing
+        // so would return a dead WS target immediately and block all MCP tools
+        // until the daemon is fully restarted. We treat such pages as "not yet
+        // attached" so the caller polls until a genuinely fresh page appears.
+        //
+        // Duck-type guard: only `ChiiCdpConnection` exposes `getTargetLastSeenAt`.
+        // For connections that don't (test fakes, local), the check is skipped
+        // (pages.length > 0 is the full predicate) — regression-safe.
+        // Duck-type: only ChiiCdpConnection exposes getTargetLastSeenAt.
+        // Cast via unknown to satisfy the compiler — we guard with typeof first.
+        const connAsAny = conn as unknown as {
+          getTargetLastSeenAt?: (id: string) => number | null;
+        };
+        const getLastSeenAt =
+          typeof connAsAny.getTargetLastSeenAt === 'function'
+            ? (id: string) => (connAsAny.getTargetLastSeenAt as (id: string) => number | null)(id)
+            : null;
+        const callNow = nowMs();
+        // Delegate to the exported pure function so it can be unit-tested (#610).
         const isMatchingPage = (pages: ReturnType<CdpConnection['listTargets']>): boolean =>
-          pages.length > 0;
+          isSandboxPageFresh(pages, getLastSeenAt, callNow, stalePageThresholdMs);
         const buildTimeoutError = (
           baseText: string,
           timeoutSec: number,
@@ -2165,6 +2259,26 @@ export interface DualRouterDeps {
    * `AIT_RELAY_BASE_URL` is not set.
    */
   bootLazyFor: (key: FamilyKey, projectRoot?: string) => Promise<BootedFamily>;
+  /**
+   * Reads the current relay base URL for the `relay-sandbox` family (issue #610).
+   *
+   * Called on every `relay-sandbox` re-entry when a warm family is already
+   * cached — the result is compared against the cached family's `relayHttpUrl`.
+   * When they differ the stale family is torn down and a fresh one is booted.
+   * When they match the warm family is reused (no unnecessary teardown).
+   *
+   * Returns `null` on any failure (missing file, missing env var) — the caller
+   * keeps the warm family on null (fail-open: better a stale connection than a
+   * surprise disconnect).
+   *
+   * SECRET-HANDLING: the returned URL carries the relay host. Callers MUST NOT
+   * log it. Only boolean same/different is safe to surface.
+   *
+   * Production: injected by the run functions as
+   * `(pr) => readMobileRelayBaseUrl(process.env, pr).catch(() => null)`.
+   * Tests inject a controlled function.
+   */
+  readSandboxRelayUrl?: (projectRoot?: string) => Promise<string | null>;
   /** Diagnostics collector (re-armed watcher records attach there). */
   diagnosticsCollector: DiagnosticsCollector;
   /** Auto-opens Chrome DevTools on the first relay attach (env 3/4 only). */
@@ -2382,10 +2496,49 @@ export class DualConnectionRouter implements ConnectionRouter {
    * `projectRoot` is forwarded to `bootLazyFor` so `relay-sandbox` boot can
    * fall back to `.ait_urls` file discovery (#424) when `AIT_RELAY_BASE_URL` is
    * not set in the environment.
+   *
+   * **Relay-sandbox stale-URL rebuild (issue #610):** when the `relay-sandbox`
+   * family is already warm, reads the current relay URL via
+   * `deps.readSandboxRelayUrl` and compares it against the cached
+   * `relayHttpUrl`. If they differ (dev server was restarted → new tunnel),
+   * the stale family is torn down, evicted from the map, and a fresh one is
+   * booted. If they match, or if the URL cannot be read, the warm family is
+   * reused (fail-open — no unnecessary teardown on transient read errors).
+   *
+   * SECRET-HANDLING: fresh and cached relay URLs carry the tunnel host. The
+   * comparison result (same/different) is the only thing surfaced — URLs are
+   * never logged.
    */
   private async familyFor(key: FamilyKey, projectRoot?: string): Promise<BootedFamily> {
     const warm = this.lazyFamilies.get(key);
-    if (warm) return warm;
+    if (warm) {
+      // (#610) relay-sandbox re-entry: check whether the relay host has rotated.
+      // env-2 relay is owned by the dev server (unplugin), so every `dev:phone:cdp`
+      // restart produces a new quick-tunnel URL. If the cached family still points
+      // at the old tunnel, teardown and rebuild with the fresh URL.
+      if (key === 'relay-sandbox' && this.deps.readSandboxRelayUrl !== undefined) {
+        let freshUrl: string | null = null;
+        try {
+          freshUrl = await this.deps.readSandboxRelayUrl(projectRoot);
+        } catch {
+          // Treat any read error as "URL unchanged" — fail-open to avoid
+          // dropping a working connection on a transient FS error.
+          freshUrl = null;
+        }
+        // SECRET-HANDLING: only compare; never log the URL values.
+        const changed = freshUrl !== null && freshUrl !== warm.relayHttpUrl;
+        if (changed) {
+          // Stale relay: close only the CDP client (the unplugin owns the relay
+          // + tunnel — exactly what bootExternalRelayFamily's stop() does).
+          warm.stop();
+          this.lazyFamilies.delete(key);
+          const booted = await this.deps.bootLazyFor(key, projectRoot);
+          this.lazyFamilies.set(key, booted);
+          return booted;
+        }
+      }
+      return warm;
+    }
     const booted = await this.deps.bootLazyFor(key, projectRoot);
     this.lazyFamilies.set(key, booted);
     return booted;
@@ -2538,6 +2691,11 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // the router is created but before armWatcher fires, so the closure safely
     // captures it by reference.
     getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
+    // (#610) Stale relay-sandbox rebuild: re-read the relay URL on every
+    // relay-sandbox re-entry so the router can detect when the dev server was
+    // restarted (new quick-tunnel) and rebuild the CDP client accordingly.
+    // SECRET-HANDLING: readMobileRelayBaseUrl never logs the URL value.
+    readSandboxRelayUrl: (pr) => readMobileRelayBaseUrl(process.env, pr).catch(() => null),
   });
 
   // AIT.* methods ride the *active* connection's command channel (relay Chii or
@@ -2914,6 +3072,11 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     onPageAttach: () => qrServer?.notifyStateChange(),
     // Stable /inspector URL for auto-open (issue #530).
     getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
+    // (#610) Stale relay-sandbox rebuild: re-read the relay URL on every
+    // relay-sandbox re-entry so the router can detect when the dev server was
+    // restarted (new quick-tunnel) and rebuild the CDP client accordingly.
+    // SECRET-HANDLING: readMobileRelayBaseUrl never logs the URL value.
+    readSandboxRelayUrl: (pr) => readMobileRelayBaseUrl(process.env, pr).catch(() => null),
   });
 
   // AIT.* methods ride the *active* connection's command channel (local CDP or,
@@ -3239,6 +3402,14 @@ export async function runMobileDebugServer(
     onPageAttach: () => qrServer?.notifyStateChange(),
     // Stable /inspector URL for auto-open (issue #530).
     getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
+    // (#610) Stale relay-sandbox rebuild: re-read the relay URL on every
+    // relay-sandbox re-entry so the router can detect when the dev server was
+    // restarted (new quick-tunnel) and rebuild the CDP client accordingly.
+    // SECRET-HANDLING: readMobileRelayBaseUrl never logs the URL value.
+    readSandboxRelayUrl: (pr) =>
+      readMobileRelayBaseUrl(process.env, pr ?? options.projectRoot ?? process.cwd()).catch(
+        () => null,
+      ),
   });
 
   // AIT.* methods ride the *active* connection's command channel (external relay
