@@ -1598,10 +1598,16 @@ export function Launcher(): React.JSX.Element {
           // resolves wider than the visual viewport.
           //
           // #495: the partner nav bar is launcher chrome, so the iframe starts
-          // BELOW it — top = status-bar inset + 54px bar. The framed app's own
-          // env(safe-area-inset-top) then reads 0, matching the real partner
-          // WebView coordinate system (#190). The game variant stays full-bleed
-          // (top: 0) — its floating capsule overlays the canvas.
+          // BELOW it — top = status-bar inset + 54px bar. The game variant
+          // stays full-bleed (top: 0) — its floating capsule overlays the canvas.
+          //
+          // NOTE (#597): inside this cross-origin child iframe WebKit STILL reports
+          // the full device safe-area-inset-top (e.g. 62 px on iPhone 15) — the
+          // launcher cannot reset the child's CSS env() from the parent origin.
+          // The in-app bridge (src/mock/safe-area-bridge.ts applyEnv2Compensation)
+          // compensates by injecting `body { margin-top: calc(-1 * env(…-top)) }`
+          // when the launcher forwards partner insets (top=0), cancelling the
+          // double-count without touching the child's viewport.
           // #587: partner+transparent → bar is a transparent overlay, so the
           // iframe is full-bleed like game (UNVERIFIED HYPOTHESIS — see navbar.ts).
           position: 'fixed',
