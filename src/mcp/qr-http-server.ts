@@ -196,6 +196,16 @@ function buildDashboardHtml(
   locale: 'ko' | 'en',
   path = '/',
   params = new URLSearchParams(),
+  /**
+   * /devtools/ 진입로 URL (issue #248).
+   *
+   * 주입 시: relay 연결 active + pagesAttached 이면 이 URL로 가는 "DevTools 열기" 링크를 렌더한다.
+   * null: getDirectInspectorUrl 미주입 (relay 세션 없는 mode) → 링크를 숨기고 hint 표시.
+   *
+   * /devtools/ 는 relay host + TOTP at= 가 없는 안정 경로이므로 href 노출 가능.
+   * SECRET-HANDLING: 링크 클릭 후 302 응답의 Location에만 relay host·TOTP가 담긴다.
+   */
+  devtoolsEntryUrl: string | null = null,
 ): string {
   const s = resolveLocaleStrings(locale);
   const now = new Date().toISOString();
@@ -219,18 +229,21 @@ function buildDashboardHtml(
     attachSection = `<p class="hint">${escapeHtml(s('dashboard.attach.hint'))}</p>`;
   }
 
-  // inspectorSection — 인스펙터 열기 링크 (#503, gate 보정 #544).
-  // 게이트: pages.length > 0 (페이지가 attach돼 있을 때만 활성).
-  // #530 이후 inspectorUrl은 안정 /inspector URL이라 항상 non-null이지만,
-  // 미attach 상태에서 버튼을 클릭하면 502 noTarget을 반환할 뿐이다.
-  // 게이트를 pages.length > 0으로 바꿔 미attach 시 대기 힌트를 표시하고
-  // /과 /attach 양쪽에서 동일한 동작을 보장한다.
-  // SECRET-HANDLING: inspectorUrl에 relay host + TOTP at= 코드가 담길 수 있으나
-  // 대시보드 HTML 본문 렌더는 의도된 transport — 단 stdout/로그로 출력 금지.
+  // inspectorSection — "DevTools 열기" 링크 또는 대기 힌트 (#503, gate 보정 #544, #248).
+  //
+  // 게이트: relay active(devtoolsEntryUrl 주입됨) + pages.length > 0 양쪽 모두 true 일 때만 링크 활성.
+  //   - devtoolsEntryUrl null → getDirectInspectorUrl 미주입(relay 세션 없는 server mode) → hint 표시.
+  //   - relay active이지만 pages 미attach → 버튼을 보여봤자 502 noTarget — hint로 대기 안내.
+  //
+  // href는 /devtools/ 안정 경로 (issue #248) — relay host·TOTP at= 를 담지 않아 노출 가능.
+  // 클릭 시 302 → Location에만 relay host·TOTP가 담긴다(의도된 transport).
+  //
+  // SSE push 시 inspectorUrl 필드를 기반으로 #inspector-link를 갱신하는 스크립트는 그대로 유지.
+  // (SSE에서 inspectorUrl이 null → hint로, non-null + pages > 0 → /devtools/ 링크로 갱신.)
   const pagesAttached = Array.isArray(state.pages) && state.pages.length > 0;
   let inspectorSection: string;
-  if (pagesAttached && state.inspectorUrl) {
-    const safeUrl = escapeHtml(state.inspectorUrl);
+  if (pagesAttached && devtoolsEntryUrl) {
+    const safeUrl = escapeHtml(devtoolsEntryUrl);
     const label = escapeHtml(s('dashboard.inspector.open'));
     inspectorSection = `<a class="inspector-link" id="inspector-link" href="${safeUrl}" target="_blank" rel="noopener noreferrer">${label}</a>`;
   } else {
@@ -677,7 +690,16 @@ export async function startQrHttpServer(
           // QR 생성 실패 시 null 유지 — dashboard는 텍스트 fallback 표시
         }
       }
-      const html = buildDashboardHtml(state, qrDataUrl, locale, path, params);
+      // devtoolsEntryUrl — getDirectInspectorUrl 주입 시만 /devtools/ 링크를 활성화.
+      // 미주입이면 /devtools/ → 503이므로 dashboard에서 링크를 숨긴다.
+      // /devtools/ 는 안정 경로 (relay host·TOTP 없음) — stdout/로그 출력 가능.
+      const devtoolsEntryUrl: string | null = (() => {
+        if (!options?.getDirectInspectorUrl) return null;
+        const addr = server.address();
+        if (!addr || typeof addr === 'string') return null;
+        return `http://127.0.0.1:${addr.port}/devtools/`;
+      })();
+      const html = buildDashboardHtml(state, qrDataUrl, locale, path, params, devtoolsEntryUrl);
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -798,8 +820,16 @@ export async function startQrHttpServer(
     if (path === '/inspector' || path === '/devtools' || path === '/devtools/') {
       const getDirectInspectorUrl = options?.getDirectInspectorUrl;
       if (!getDirectInspectorUrl) {
+        // /inspector: 기존 영문 메시지를 유지한다.
+        //   이 경로는 공개 안정 경로(#530)이고 외부 스크립트가 메시지를 파싱할 수 있어
+        //   계약을 깨지 않도록 원문 그대로 유지한다.
+        // /devtools[/]: issue #248에서 새로 추가된 경로. 한국어 안내를 반환한다.
+        const body =
+          path === '/inspector'
+            ? 'Inspector endpoint is not available in this server mode.'
+            : 'relay 연결 세션에서만 DevTools UI를 열 수 있습니다.';
         res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('relay 연결 세션에서만 DevTools UI를 열 수 있습니다.');
+        res.end(body);
         return;
       }
       // 매 요청마다 getter 호출 — TOTP를 요청 시점에 mint.
