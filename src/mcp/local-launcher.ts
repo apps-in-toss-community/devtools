@@ -81,7 +81,12 @@ export function findFreePort(): Promise<number> {
         }
       });
     });
-    server.once('error', reject);
+    // net.Server는 EventEmitter를 상속하므로 런타임에 on/once가 있다.
+    // TypeScript 6 + @types/node 없는 환경에서 타입 해석이 누락되므로 unknown cast로 우회.
+    (server as unknown as { on: (ev: string, fn: (err: unknown) => void) => void }).on(
+      'error',
+      reject,
+    );
   });
 }
 

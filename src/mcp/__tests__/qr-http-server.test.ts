@@ -208,41 +208,51 @@ describe('startQrHttpServer — GET / dashboard HTML', () => {
 // ---------------------------------------------------------------------------
 
 describe('startQrHttpServer — 인스펙터 열기 링크 (#503)', () => {
-  // gate 보정 (#544): pages.length > 0 일 때만 활성 링크를 표시한다 (inspectorUrl 존재 여부 아님).
-  it('pages.length > 0 + inspectorUrl 있으면 "디버그 툴 열기" 링크(ko)가 target="_blank"로 렌더된다 (#544)', async () => {
-    const INSPECTOR_URL =
-      'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1%26at%3D123456&panel=console';
-    const srv = await startQrHttpServer(() => ({
-      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
-      pages: [{ id: 'page-1', url: 'https://example.com/app' }],
-      attachUrl: null,
-      inspectorUrl: INSPECTOR_URL,
-    }));
+  // gate 보정 (#544, #248):
+  //   pages.length > 0 + getDirectInspectorUrl 주입 → /devtools/ 경로 링크 활성.
+  //   (구 동작: inspectorUrl state 값을 href로 사용. #248 이후: /devtools/ 안정 경로로 변경.)
+  it('pages.length > 0 + getDirectInspectorUrl 주입 → "디버그 툴 열기" 링크(ko)가 target="_blank"로 렌더된다 (#544)', async () => {
+    const DUMMY_CHII_URL =
+      'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1';
+    const srv = await startQrHttpServer(
+      () => ({
+        // wss://relay.test — .test TLD, 실제 trycloudflare.com host 아님.
+        tunnel: { up: true, wssUrl: 'wss://relay.test' },
+        pages: [{ id: 'page-1', url: 'https://example.com/app' }],
+        attachUrl: null,
+        inspectorUrl: DUMMY_CHII_URL,
+      }),
+      { getDirectInspectorUrl: () => ({ ok: true, url: DUMMY_CHII_URL }) },
+    );
     try {
       const html = await (
         await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
       ).text();
       // "디버그 툴 열기" 링크 존재 확인 (i18n 카피 갱신 #544)
       expect(html).toContain('디버그 툴 열기');
-      // inspector-link anchor로 렌더됨
+      // inspector-link anchor로 렌더됨 (#248: href는 /devtools/ 안정 경로)
       expect(html).toContain('class="inspector-link"');
       expect(html).toContain('target="_blank"');
-      // URL이 href에 포함됨 (HTML-escaped)
-      expect(html).toContain('chii_app.html');
+      // href가 /devtools/ 경로를 포함한다 (issue #248)
+      expect(html).toContain('/devtools/');
     } finally {
       await srv.close();
     }
   });
 
-  it('pages.length > 0 + inspectorUrl 있으면 "Open DevTools" 링크(en)가 렌더된다 (#544)', async () => {
-    const INSPECTOR_URL =
-      'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1&panel=console';
-    const srv = await startQrHttpServer(() => ({
-      tunnel: { up: true, wssUrl: 'wss://relay.trycloudflare.com' },
-      pages: [{ id: 'page-1', url: 'https://example.com/app' }],
-      attachUrl: null,
-      inspectorUrl: INSPECTOR_URL,
-    }));
+  it('pages.length > 0 + getDirectInspectorUrl 주입 → "Open DevTools" 링크(en)가 렌더된다 (#544)', async () => {
+    const DUMMY_CHII_URL =
+      'http://127.0.0.1:9100/front_end/chii_app.html?ws=127.0.0.1%3A9100%2Fclient%2Fabc%3Ftarget%3Dpage-1';
+    const srv = await startQrHttpServer(
+      () => ({
+        // wss://relay.test — .test TLD, 실제 trycloudflare.com host 아님.
+        tunnel: { up: true, wssUrl: 'wss://relay.test' },
+        pages: [{ id: 'page-1', url: 'https://example.com/app' }],
+        attachUrl: null,
+        inspectorUrl: DUMMY_CHII_URL,
+      }),
+      { getDirectInspectorUrl: () => ({ ok: true, url: DUMMY_CHII_URL }) },
+    );
     try {
       const html = await (
         await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'en' } })
@@ -1664,14 +1674,17 @@ describe('startQrHttpServer — dashboard inspector gate 보정 (#544)', () => {
     }
   });
 
-  it('pages: [목록] + inspectorUrl 있으면 활성 버튼 표시', async () => {
-    const INSPECTOR_URL = 'http://127.0.0.1:9999/inspector';
-    const srv = await startQrHttpServer(() => ({
-      tunnel: { up: true, wssUrl: null },
-      pages: [{ id: 'p1', url: 'https://example.com' }],
-      attachUrl: null,
-      inspectorUrl: INSPECTOR_URL,
-    }));
+  it('pages: [목록] + getDirectInspectorUrl 주입 → 활성 버튼 표시 (#248)', async () => {
+    // #248: getDirectInspectorUrl 주입 시 /devtools/ 경로 링크 활성 (inspectorUrl state 값 사용 X).
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: null },
+        pages: [{ id: 'p1', url: 'https://example.com' }],
+        attachUrl: null,
+        inspectorUrl: null,
+      }),
+      { getDirectInspectorUrl: () => ({ ok: false, reason: 'noTarget' }) },
+    );
     try {
       const html = await (
         await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
@@ -1756,12 +1769,14 @@ describe('startQrHttpServer — GET /devtools/ → chii 302 redirect (#248)', ()
   });
 
   it('getDirectInspectorUrl ok:true → GET /devtools/ 302 + Location이 chii front_end URL', async () => {
-    // SECRET-HANDLING: 테스트는 dummy URL만 사용 — 실제 relay host/TOTP 없음.
+    // SECRET-HANDLING: 테스트는 dummy 값만 사용 — 실제 relay host/TOTP 없음.
+    // at=000000 은 placeholder — 실제 TOTP 코드가 아니다 (/* at= 는 TOTP 코드 — 이 테스트는 dummy 값 */).
     const DUMMY_CHII_URL =
       'http://127.0.0.1:9999/front_end/chii_app.html?ws=127.0.0.1%3A9999%2Fclient%2Fabc%3Ftarget%3Dpage-1%26at%3D000000';
     const srv = await startQrHttpServer(
       () => ({
-        tunnel: { up: true, wssUrl: 'wss://dummy.trycloudflare.com' },
+        // wss://relay.test — .test TLD, 실제 trycloudflare.com host 아님.
+        tunnel: { up: true, wssUrl: 'wss://relay.test' },
         pages: [{ id: 'page-1', url: 'https://example.com/app' }],
         attachUrl: null,
       }),
@@ -1786,7 +1801,8 @@ describe('startQrHttpServer — GET /devtools/ → chii 302 redirect (#248)', ()
   it('getDirectInspectorUrl ok:false(noTarget) → GET /devtools/ 502 + 한국어 안내', async () => {
     const srv = await startQrHttpServer(
       () => ({
-        tunnel: { up: true, wssUrl: 'wss://dummy.trycloudflare.com' },
+        // wss://relay.test — .test TLD, 실제 trycloudflare.com host 아님.
+        tunnel: { up: true, wssUrl: 'wss://relay.test' },
         pages: [],
         attachUrl: null,
       }),
@@ -1841,6 +1857,105 @@ describe('startQrHttpServer — GET /devtools/ → chii 302 redirect (#248)', ()
       const res = await fetch(`http://127.0.0.1:${srv.port}/devtools/`, { redirect: 'manual' });
       expect(res.status).toBe(302);
       expect(res.headers.get('cache-control')).toBe('no-store');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('/inspector 503 → 영문 메시지 (기존 계약 유지)', async () => {
+    // /inspector 는 공개 안정 경로 — 영문 메시지를 그대로 유지한다.
+    // /devtools/ 와 달리 기존 스크립트가 이 메시지를 파싱할 수 있어 변경하지 않는다.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/inspector`);
+      expect(res.status).toBe(503);
+      const body = await res.text();
+      expect(body).toContain('Inspector endpoint is not available');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET / dashboard — "DevTools 열기" 진입로 (#248)
+//
+// getDirectInspectorUrl 주입 + pagesAttached true → /devtools/ 링크 포함.
+// getDirectInspectorUrl 미주입 → 링크 없음 (hint 표시).
+// pagesAttached false → 링크 없음 (hint 표시).
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — dashboard GET / DevTools 진입로 (#248)', () => {
+  it('getDirectInspectorUrl 주입 + pages>0 → dashboard HTML에 /devtools/ 링크 포함', async () => {
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: 'wss://relay.test' },
+        pages: [{ id: 'p1', url: 'https://example.com' }],
+        attachUrl: null,
+        inspectorUrl: 'http://chii.example.com/front_end/chii_app.html?ws=dummy',
+      }),
+      {
+        getDirectInspectorUrl: () => ({
+          ok: true,
+          url: 'http://chii.example.com/front_end/chii_app.html?ws=dummy',
+        }),
+      },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // relay active + pages attached → /devtools/ 링크가 dashboard HTML에 포함.
+      expect(html).toContain('/devtools/');
+      expect(html).toContain('inspector-link');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('getDirectInspectorUrl 미주입 → dashboard HTML에 /devtools/ 링크 없음', async () => {
+    // getDirectInspectorUrl 없으면 /devtools/ → 503 이므로 링크를 숨긴다.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://relay.test' },
+      pages: [{ id: 'p1', url: 'https://example.com' }],
+      attachUrl: null,
+      inspectorUrl: null,
+    }));
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // /devtools/ 링크가 없어야 한다 — 사용자가 503 경로를 클릭하지 않게.
+      expect(html).not.toContain('href="/devtools/');
+      // 대기 힌트는 표시돼야 한다.
+      expect(html).toContain('inspector-hint');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('getDirectInspectorUrl 주입 + pages=[] → dashboard HTML에 /devtools/ 링크 없음', async () => {
+    // pages 미attach 시 버튼 클릭 → 502 noTarget 이므로 힌트로 대기.
+    const srv = await startQrHttpServer(
+      () => ({
+        tunnel: { up: true, wssUrl: 'wss://relay.test' },
+        pages: [],
+        attachUrl: null,
+        inspectorUrl: null,
+      }),
+      { getDirectInspectorUrl: () => ({ ok: false, reason: 'noTarget' }) },
+    );
+    try {
+      const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      // 페이지 미attach → 링크 없음.
+      expect(html).not.toContain('href="/devtools/');
+      expect(html).toContain('inspector-hint');
     } finally {
       await srv.close();
     }
