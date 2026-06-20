@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.102
+
+### Patch Changes
+
+- a5e3513: GET /devtools/ 경로로 chii DevTools UI 302 redirect 진입로 추가 — dashboard root에 relay active + pages attached 시 "DevTools 열기" 링크 표시 (#248 옵션 A)
+- 57bc10e: relay 시크릿: 환경 변수가 `.ait_relay`와 다를 때 불일치 경고 추가 (#620)
+
 ## 0.1.101
 
 ### Patch Changes
