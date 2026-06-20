@@ -311,16 +311,18 @@ function makeReadOnlyFs(files: Map<string, string>): RelaySecretReadOnlyFs {
 describe('loadRelaySecretReadOnly', () => {
   it('(a) is a no-op when env already holds a valid secret', async () => {
     const env: NodeJS.ProcessEnv = { AIT_DEBUG_TOTP_SECRET: VALID_SECRET };
-    const existsSyncSpy = vi.fn();
+    const existsSyncSpy = vi.fn().mockReturnValue(false); // .ait_relay absent
+    const warnings: string[] = [];
     await loadRelaySecretReadOnly({
       projectRoot: PROJECT_ROOT,
       env,
       fs: { existsSync: existsSyncSpy, readFileSync: vi.fn() },
       existsSync: existsSyncSpy,
+      log: (msg) => warnings.push(msg),
     });
     expect(env.AIT_DEBUG_TOTP_SECRET).toBe(VALID_SECRET);
-    // Must not even probe the filesystem.
-    expect(existsSyncSpy).not.toHaveBeenCalled();
+    // env value unchanged, no divergence warning emitted (file absent).
+    expect(warnings).toHaveLength(0);
   });
 
   it('(b) injects env from a valid <projectRoot>/.ait_relay file', async () => {
