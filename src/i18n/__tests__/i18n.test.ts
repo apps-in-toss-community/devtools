@@ -95,12 +95,12 @@ describe('i18n', () => {
   describe('t', () => {
     it('returns the ko translation when locale=ko', () => {
       setLocale('ko');
-      expect(t('toast.consent.title')).toBe('익명 사용 통계를 보낼까요?');
+      expect(t('panel.title')).toBe('AIT DevTools');
     });
 
     it('returns the en translation when locale=en', () => {
       setLocale('en');
-      expect(t('toast.consent.title')).toBe('Send anonymous usage stats?');
+      expect(t('panel.title')).toBe('AIT DevTools');
     });
 
     it('falls back to the key when missing', () => {

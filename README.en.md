@@ -1145,33 +1145,6 @@ Returns the full current mock state (permissions, location, auth, network, IAP, 
 | `@ait-co/devtools/in-app` | In-app debug attach — runtime gate (layers B/C) + Chii target.js injection. The consumer wraps the import in `if (__DEBUG_BUILD__)` so it is DCE'd from release builds — dogfood builds only |
 | `@ait-co/devtools/in-app/auto` | Self-gating side-effect entry — a single `import '@ait-co/devtools/in-app/auto'` line wires attach + SDK bridge. Active only when `?debug=1` / `?relay=` are in the URL or it is a DEV build; stays dormant on normal production loads. See the [section above](#on-device-debugging-in-one-line) |
 
-## Telemetry
-
-devtools uses a two-tier telemetry model.
-
-### Tier 0 — anonymous usage signal (ON by default, opt-out)
-
-Sends a one-time anonymous ping per calendar day when the panel is opened.
-
-Collected fields: `source`, `version`, `ts` — no PII, no `anon_id`. The server generates an IP+UA daily hash but never stores it.
-
-How to opt out:
-- Panel Environment tab → "Anonymous usage signal (Tier 0)" toggle OFF
-- `localStorage.setItem('__ait_telemetry:t0_off', '1')` (from the browser console)
-- Environment variable: `AITC_TELEMETRY=off`
-
-### Tier 1 — extended telemetry (OFF by default, opt-in)
-
-A consent toast appears on first panel use. Data is only collected if you accept.
-
-Collected fields: `panel_open`, `tab_view`, `session_duration` events + an anonymous UUID (`anon_id`).
-
-How to opt out:
-- Panel Environment tab → "Extended telemetry (Tier 1)" toggle OFF
-- Delete collected data: Panel Environment tab → "Delete my data"
-
-Privacy policy: <https://docs.aitc.dev/privacy>
-
 ## License
 
 BSD 3-Clause

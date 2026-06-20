@@ -31,14 +31,6 @@ export const en: Record<StringKey, string> = {
   // Common
   'common.readOnly': 'Read-only — mock responses are controlled at build time.',
 
-  // Consent toast
-  'toast.consent.title': 'Send anonymous usage stats?',
-  'toast.consent.body':
-    'We collect anonymous events only, to improve the tool. You can turn this off anytime in the Environment tab.',
-  'toast.consent.learnMore': 'Learn more',
-  'toast.consent.accept': 'Yes, send',
-  'toast.consent.deny': 'No, thanks',
-
   // Environment tab
   'env.section.platform': 'Platform',
   'env.row.os': 'OS',
@@ -58,32 +50,7 @@ export const en: Record<StringKey, string> = {
   'env.hint.iosSwipeGesture':
     'Last value passed to setIosSwipeGestureEnabled. Switching Environment to toss lets a toss-gated guard toggle this.',
 
-  // Environment > Telemetry section
-  'env.telemetry.section': 'Telemetry',
-  // Tier 0 — opt-out anonymous signal
-  'env.telemetry.t0Row': 'Anonymous usage signal (Tier 0)',
-  'env.telemetry.t0On': 'On',
-  'env.telemetry.t0Off': 'Off',
-  'env.telemetry.t0TurnOn': 'Turn on',
-  'env.telemetry.t0TurnOff': 'Turn off',
-  'env.telemetry.t0Desc': 'Version + date only, no PII. Once per day. Helps improve the package.',
-  // Tier 1 — opt-in extended telemetry
-  'env.telemetry.row': 'Extended telemetry (Tier 1)',
-  'env.telemetry.on': 'On',
-  'env.telemetry.off': 'Off',
-  'env.telemetry.turnOn': 'Turn on',
-  'env.telemetry.turnOff': 'Turn off',
-  'env.telemetry.anonIdLabel': 'anon_id: {value}',
-  'env.telemetry.anonIdNotSet': '(not yet set)',
-  'env.telemetry.anonIdCopyTitle': 'Click to copy full anon_id',
-  'env.telemetry.deleteBtn': 'Delete my data',
-  'env.telemetry.deleting': 'Deleting…',
-  'env.telemetry.deleted': 'Deleted',
-  'env.telemetry.deleteFailedRetry': 'Delete failed (please retry)',
-  'env.telemetry.deleteFailed': 'Delete failed',
-  'env.telemetry.privacyLink': 'Privacy policy →',
-
-  // Environment > Language toggle (new)
+  // Environment > Language toggle
   'env.section.language': 'Language',
   'env.language.row': 'Language',
   'env.language.ko': '한국어',

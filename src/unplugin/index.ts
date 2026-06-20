@@ -26,12 +26,6 @@
 import { fileURLToPath } from 'node:url';
 import { createUnplugin } from 'unplugin';
 import { startParentWatcher } from '../shared/parent-watcher.js';
-import {
-  ensureMachineConsent,
-  type MachineTelemetryState,
-  writeMachineState,
-} from '../telemetry/machine-state.js';
-import { CURRENT_POLICY_VERSION } from '../telemetry/state.js';
 
 /**
  * Resolve `@ait-co/devtools/mock` to its real file path at plugin-load time.
@@ -150,19 +144,6 @@ const WEBVIEW_BRIDGE_ID = '@apps-in-toss/webview-bridge'; // 3.0+
 
 /** MCP state endpoint path — browser panel POSTs here, MCP server GETs here */
 const MCP_STATE_PATH = '/api/ait-devtools/state';
-
-/**
- * Machine-level telemetry consent endpoint (#542).
- *
- * GET  → returns current machine consent state as JSON (for the panel to read
- *         and skip the toast when already decided).
- * POST → panel or environment-tab toggle writes new consent back to the machine
- *        file (body: { consent: 'granted' | 'denied', policy_version: string }).
- *
- * Always registered (not gated on `mcp: true`) — the panel needs this
- * unconditionally when the dev server is running.
- */
-const TELEMETRY_CONSENT_PATH = '/api/ait-devtools/telemetry-consent';
 
 /**
  * Resolves the effective tunnel option (#425).
@@ -306,113 +287,6 @@ const aitDevtoolsPlugin = createUnplugin((options?: AitDevtoolsOptions) => {
       },
 
       configureServer(server: import('vite').ViteDevServer) {
-        // Machine-level telemetry consent endpoint (#542): always registered when
-        // the dev server is enabled so the panel can read/write consent across
-        // origin rotations (tunnel host changes, port changes).
-        //
-        // We lazily initialise `machineConsent` once the server is ready. The
-        // TTY prompt runs synchronously inside the `listening` event so it
-        // appears in the same terminal window before any dev-server noise.
-        let machineConsent: MachineTelemetryState | null = null;
-
-        // Start the machine-consent bootstrap as soon as configureServer runs.
-        // Fire-and-forget; errors are caught and logged. The endpoint guards
-        // against `machineConsent === null` with a 503 during the brief boot.
-        if (shouldEnable) {
-          server.httpServer?.once('listening', () => {
-            ensureMachineConsent(CURRENT_POLICY_VERSION)
-              .then((state) => {
-                machineConsent = state;
-              })
-              .catch((err: unknown) => {
-                // Non-fatal — panel will fall back to localStorage behaviour.
-                console.warn(
-                  `[@ait-co/devtools] machine consent init failed: ${
-                    err instanceof Error ? err.message : String(err)
-                  }`,
-                );
-              });
-          });
-
-          // Telemetry consent endpoint — CORS open (localhost only in practice).
-          server.middlewares.use(TELEMETRY_CONSENT_PATH, (req, res) => {
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-            if (req.method === 'OPTIONS') {
-              res.writeHead(204);
-              res.end();
-              return;
-            }
-
-            if (req.method === 'GET') {
-              if (machineConsent === null) {
-                // Still booting — panel should fall back to localStorage.
-                res.writeHead(503, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Machine consent not yet initialised.' }));
-                return;
-              }
-              res.writeHead(200, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify(machineConsent));
-              return;
-            }
-
-            if (req.method === 'POST') {
-              const chunks: Buffer[] = [];
-              req.on('data', (chunk: Buffer) => chunks.push(chunk));
-              req.on('end', () => {
-                try {
-                  const body = Buffer.concat(chunks).toString('utf-8');
-                  const payload = JSON.parse(body) as {
-                    consent?: string;
-                    policy_version?: string;
-                  };
-
-                  const consent = payload.consent;
-                  if (consent !== 'granted' && consent !== 'denied' && consent !== 'undecided') {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(
-                      JSON.stringify({
-                        error: 'Invalid consent value. Expected granted | denied | undecided.',
-                      }),
-                    );
-                    return;
-                  }
-
-                  writeMachineState({
-                    consent,
-                    policy_version: payload.policy_version ?? CURRENT_POLICY_VERSION,
-                  })
-                    .then(async () => {
-                      // Update the in-memory cache.
-                      const { readMachineState } = await import('../telemetry/machine-state.js');
-                      machineConsent = await readMachineState();
-                      res.writeHead(204);
-                      res.end();
-                    })
-                    .catch((err: unknown) => {
-                      res.writeHead(500, { 'Content-Type': 'application/json' });
-                      res.end(
-                        JSON.stringify({
-                          error: `Write failed: ${err instanceof Error ? err.message : String(err)}`,
-                        }),
-                      );
-                    });
-                  return;
-                } catch {
-                  res.writeHead(400, { 'Content-Type': 'application/json' });
-                  res.end(JSON.stringify({ error: 'Invalid JSON body.' }));
-                }
-              });
-              return;
-            }
-
-            res.writeHead(405, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Method not allowed' }));
-          });
-        }
-
         // MCP state endpoint: browser panel POSTs state here, MCP stdio server GETs it.
         if (shouldMcp) {
           server.middlewares.use(MCP_STATE_PATH, (req, res) => {

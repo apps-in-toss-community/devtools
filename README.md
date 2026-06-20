@@ -1185,33 +1185,6 @@ export default {
 | `@ait-co/devtools/in-app` | In-app debug attach — 런타임 gate(layer B·C) + Chii target.js 주입. 소비자가 `if (__DEBUG_BUILD__)`로 import를 감싸 release 빌드에서 DCE — dogfood 빌드 전용 |
 | `@ait-co/devtools/in-app/auto` | Self-gating side-effect entry — `import '@ait-co/devtools/in-app/auto'` 한 줄로 attach + SDK 브리지 설치. URL 파라미터(`?debug=1` / `?relay=`) 또는 DEV 빌드에서만 활성화, 일반 프로덕션 로드는 dormant. [위 섹션](#on-device-디버깅-한-줄-설정) 참고 |
 
-## 텔레메트리
-
-devtools는 두 단계의 텔레메트리를 사용합니다.
-
-### Tier 0 — 익명 사용 신호 (기본 ON, opt-out)
-
-패널이 열릴 때 하루 1회 익명 ping을 전송합니다.
-
-수집 항목: `source`, `version`, `ts` — PII 없음, `anon_id` 없음. 서버가 IP+UA 기반 daily hash를 생성하지만 저장하지 않습니다.
-
-끄는 방법:
-- 패널 Environment 탭 → "익명 사용 신호 (Tier 0)" 토글 OFF
-- `localStorage.setItem('__ait_telemetry:t0_off', '1')` (콘솔에서 직접)
-- 환경 변수: `AITC_TELEMETRY=off`
-
-### Tier 1 — 확장 텔레메트리 (기본 OFF, opt-in)
-
-패널 최초 실행 시 동의 토스트로 묻습니다. 동의한 경우에만 수집됩니다.
-
-수집 항목: `panel_open`, `tab_view`, `session_duration` 이벤트 + 익명 UUID(`anon_id`).
-
-끄는 방법:
-- 패널 Environment 탭 → "확장 텔레메트리 (Tier 1)" 토글 OFF
-- 수집된 데이터 삭제: 패널 Environment 탭 → "내 데이터 삭제"
-
-개인정보 처리방침: <https://docs.aitc.dev/privacy>
-
 ## 라이센스
 
 BSD 3-Clause

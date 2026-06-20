@@ -33,13 +33,6 @@ export const ko = {
   // Common
   'common.readOnly': '읽기 전용 — mock 응답은 빌드 타임에 고정됩니다.',
 
-  // Consent toast
-  'toast.consent.title': '익명 사용 통계를 보낼까요?',
-  'toast.consent.body': '도구 개선을 위해 익명 이벤트만 수집해요. 언제든 환경 탭에서 끌 수 있어요.',
-  'toast.consent.learnMore': '더 알아보기',
-  'toast.consent.accept': '네, 보낼게요',
-  'toast.consent.deny': '아니요',
-
   // Environment tab
   'env.section.platform': 'Platform',
   'env.row.os': 'OS',
@@ -59,32 +52,7 @@ export const ko = {
   'env.hint.iosSwipeGesture':
     'setIosSwipeGestureEnabled의 마지막 호출값. Environment를 toss로 바꾸면 toss-gated 가드가 이 값을 토글합니다.',
 
-  // Environment > Telemetry section
-  'env.telemetry.section': 'Telemetry',
-  // Tier 0 — opt-out anonymous signal
-  'env.telemetry.t0Row': '익명 사용 신호 (Tier 0)',
-  'env.telemetry.t0On': 'On',
-  'env.telemetry.t0Off': 'Off',
-  'env.telemetry.t0TurnOn': 'Turn on',
-  'env.telemetry.t0TurnOff': 'Turn off',
-  'env.telemetry.t0Desc': '버전·날짜만 수집, PII 없음. 하루 1회. 패키지 개선에 사용됩니다.',
-  // Tier 1 — opt-in extended telemetry
-  'env.telemetry.row': '확장 텔레메트리 (Tier 1)',
-  'env.telemetry.on': 'On',
-  'env.telemetry.off': 'Off',
-  'env.telemetry.turnOn': 'Turn on',
-  'env.telemetry.turnOff': 'Turn off',
-  'env.telemetry.anonIdLabel': 'anon_id: {value}',
-  'env.telemetry.anonIdNotSet': '(not yet set)',
-  'env.telemetry.anonIdCopyTitle': '전체 anon_id 복사',
-  'env.telemetry.deleteBtn': '내 데이터 삭제',
-  'env.telemetry.deleting': '삭제 중…',
-  'env.telemetry.deleted': '삭제 완료',
-  'env.telemetry.deleteFailedRetry': '삭제 실패 (다시 시도해주세요)',
-  'env.telemetry.deleteFailed': '삭제 실패',
-  'env.telemetry.privacyLink': '개인정보 처리방침 →',
-
-  // Environment > Language toggle (new)
+  // Environment > Language toggle
   'env.section.language': 'Language',
   'env.language.row': 'Language',
   'env.language.ko': '한국어',

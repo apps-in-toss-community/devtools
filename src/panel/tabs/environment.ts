@@ -1,30 +1,6 @@
 import { getLocale, type Locale, setLocale, t } from '../../i18n/index.js';
 import { aitState } from '../../mock/state.js';
 import type { NetworkStatus, OperationalEnvironment, PlatformOS } from '../../mock/types.js';
-import { TELEMETRY_ENDPOINT } from '../../telemetry/index.js';
-import {
-  CURRENT_POLICY_VERSION,
-  deleteMyData,
-  isTier0Enabled,
-  readConsentState,
-  setConsentViaToggle,
-  setTier0Enabled,
-} from '../../telemetry/state.js';
-
-// Machine-level consent endpoint path (must match TELEMETRY_CONSENT_PATH in
-// the unplugin). Fire-and-forget POST to persist toggle changes to the
-// machine file via the dev server (#542).
-const MACHINE_CONSENT_ENDPOINT = '/api/ait-devtools/telemetry-consent';
-
-function postMachineConsent(consent: 'granted' | 'denied'): void {
-  fetch(MACHINE_CONSENT_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ consent, policy_version: CURRENT_POLICY_VERSION }),
-  }).catch(() => {
-    /* silently ignore — no dev server in static deployments */
-  });
-}
 
 import { h, inputRow, monitoringNotice, selectRow } from '../helpers.js';
 
@@ -93,7 +69,6 @@ export function renderEnvironmentTab(): HTMLElement {
     ),
     buildNavigationSection(),
     buildLanguageSection(),
-    buildTelemetrySection(),
   );
   return container;
 }
@@ -156,140 +131,5 @@ function buildLanguageSection(): HTMLElement {
     { className: 'ait-section' },
     h('div', { className: 'ait-section-title' }, t('env.section.language')),
     h('div', { className: 'ait-row' }, h('label', {}, t('env.language.row')), select),
-  );
-}
-
-function buildTelemetrySection(): HTMLElement {
-  // --- Tier 0 row ---
-  const t0Enabled = isTier0Enabled();
-  const t0StatusLabel = h(
-    'span',
-    {
-      style: `font-size:12px;font-weight:600;color:${t0Enabled ? '#4ade80' : '#888'}`,
-    },
-    t0Enabled ? t('env.telemetry.t0On') : t('env.telemetry.t0Off'),
-  );
-  const t0ToggleBtn = h(
-    'button',
-    { className: 'ait-btn ait-btn-sm', style: 'font-size:11px' },
-    t0Enabled ? t('env.telemetry.t0TurnOff') : t('env.telemetry.t0TurnOn'),
-  );
-  t0ToggleBtn.addEventListener('click', () => {
-    setTier0Enabled(!t0Enabled);
-    window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
-  });
-  const t0Row = h(
-    'div',
-    { className: 'ait-row' },
-    h('label', {}, t('env.telemetry.t0Row')),
-    h('span', { style: 'display:flex;align-items:center;gap:8px' }, t0StatusLabel, t0ToggleBtn),
-  );
-  const t0Desc = h(
-    'div',
-    { style: 'font-size:11px;color:#666;margin-bottom:6px' },
-    t('env.telemetry.t0Desc'),
-  );
-
-  // --- Tier 1 row ---
-  const consent = readConsentState();
-  const isGranted = consent === 'granted';
-
-  const statusLabel = h(
-    'span',
-    {
-      style: `font-size:12px;font-weight:600;color:${isGranted ? '#4ade80' : '#888'}`,
-    },
-    isGranted ? t('env.telemetry.on') : t('env.telemetry.off'),
-  );
-
-  const toggleBtn = h(
-    'button',
-    { className: 'ait-btn ait-btn-sm', style: 'font-size:11px' },
-    isGranted ? t('env.telemetry.turnOff') : t('env.telemetry.turnOn'),
-  );
-  toggleBtn.addEventListener('click', () => {
-    const newConsent = !isGranted;
-    setConsentViaToggle(newConsent);
-    // Persist the toggle change to the machine-level file via the dev server
-    // (#542). Fire-and-forget — no dev server in static deployments.
-    postMachineConsent(newConsent ? 'granted' : 'denied');
-    window.dispatchEvent(new CustomEvent('__ait:panel-switch-tab', { detail: { tab: 'env' } }));
-  });
-
-  const statusRow = h(
-    'div',
-    { className: 'ait-row' },
-    h('label', {}, t('env.telemetry.row')),
-    h('span', { style: 'display:flex;align-items:center;gap:8px' }, statusLabel, toggleBtn),
-  );
-
-  // anon_id display (truncated to 8 chars + ellipsis, click-to-copy)
-  const rawAnonId = localStorage.getItem('__ait_telemetry:anon_id');
-  const displayAnonId = rawAnonId ?? t('env.telemetry.anonIdNotSet');
-  const truncatedId = displayAnonId.length > 8 ? `${displayAnonId.slice(0, 8)}…` : displayAnonId;
-
-  const anonIdEl = h(
-    'span',
-    {
-      style: "font-family:'SF Mono','Menlo',monospace;font-size:11px;color:#95e6cb;cursor:pointer",
-      title: t('env.telemetry.anonIdCopyTitle'),
-    },
-    t('env.telemetry.anonIdLabel', { value: truncatedId }),
-  );
-  anonIdEl.addEventListener('click', () => {
-    if (!rawAnonId) return;
-    navigator.clipboard.writeText(rawAnonId).catch(() => {
-      /* clipboard unavailable — silently ignore */
-    });
-  });
-
-  // Delete my data button
-  const deleteBtn = h(
-    'button',
-    { className: 'ait-btn ait-btn-sm ait-btn-danger' },
-    t('env.telemetry.deleteBtn'),
-  );
-  const deleteStatus = h('span', { style: 'font-size:11px;color:#aaa' });
-
-  deleteBtn.addEventListener('click', () => {
-    deleteBtn.disabled = true;
-    deleteStatus.textContent = t('env.telemetry.deleting');
-    deleteMyData(TELEMETRY_ENDPOINT)
-      .then((ok) => {
-        deleteStatus.textContent = ok
-          ? t('env.telemetry.deleted')
-          : t('env.telemetry.deleteFailedRetry');
-        deleteBtn.disabled = false;
-      })
-      .catch(() => {
-        deleteStatus.textContent = t('env.telemetry.deleteFailed');
-        deleteBtn.disabled = false;
-      });
-  });
-
-  // Privacy link
-  const privacyLink = h('a', {
-    href: 'https://docs.aitc.dev/privacy',
-    target: '_blank',
-    rel: 'noopener noreferrer',
-    style: 'font-size:11px;color:#666;text-decoration:none',
-  });
-  privacyLink.textContent = t('env.telemetry.privacyLink');
-
-  return h(
-    'div',
-    { className: 'ait-section' },
-    h('div', { className: 'ait-section-title' }, t('env.telemetry.section')),
-    t0Row,
-    t0Desc,
-    statusRow,
-    h('div', { style: 'margin-bottom:6px' }, anonIdEl),
-    h(
-      'div',
-      { className: 'ait-btn-row', style: 'align-items:center;gap:8px;margin-top:6px' },
-      deleteBtn,
-      deleteStatus,
-    ),
-    h('div', { style: 'margin-top:8px' }, privacyLink),
   );
 }
