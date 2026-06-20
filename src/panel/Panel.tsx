@@ -26,7 +26,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n/react.js';
 import { type AitDevtoolsState, aitState } from '../mock/state.js';
-import { telemetry } from '../telemetry/index.js';
 import { TabErrorBoundary } from './tab-error-boundary.js';
 import { TabHost } from './tab-host.js';
 import { setDeviceRefreshPanel } from './tabs/device.js';
@@ -98,17 +97,7 @@ export function Panel(): React.ReactElement {
     getPanelEl: () => panelRef.current,
     isOpenRef,
     onClickOnly: () => {
-      setIsOpen((prev) => {
-        const next = !prev;
-        if (next) {
-          // Position the panel relative to the (possibly dragged) button before
-          // it becomes visible; runs after the open class lands via the effect.
-          telemetry.onPanelOpen();
-        } else {
-          telemetry.onPanelClose();
-        }
-        return next;
-      });
+      setIsOpen((prev) => !prev);
     },
   });
 
@@ -120,7 +109,7 @@ export function Panel(): React.ReactElement {
   }, [isOpen]);
 
   // --- One-time imperative wiring: viewport sim, device-tab refresh hook,
-  // mock-state subscription, panel-switch-tab event, telemetry init. ---
+  // mock-state subscription, panel-switch-tab event. ---
   // biome-ignore lint/correctness/useExhaustiveDependencies: stable singletons + refs; this effect intentionally runs once to set up imperative bridges (matches the old mount() lifecycle).
   useEffect(() => {
     setDeviceRefreshPanel(refresh);
@@ -138,7 +127,7 @@ export function Panel(): React.ReactElement {
       pushStateToMcpEndpoint(aitState.state);
     });
 
-    // Device tab (prompt auto-open) / telemetry toggles request a tab switch.
+    // Device tab (prompt auto-open) requests a tab switch.
     const onSwitchTab = (e: Event) => {
       const detail = (e as CustomEvent).detail as { tab: TabId };
       setCurrentTab(detail.tab);
@@ -146,8 +135,6 @@ export function Panel(): React.ReactElement {
       refresh();
     };
     window.addEventListener('__ait:panel-switch-tab', onSwitchTab);
-
-    telemetry.init();
 
     return () => {
       unsubscribe();
@@ -161,7 +148,6 @@ export function Panel(): React.ReactElement {
 
   const onTabClick = (id: TabId) => {
     setCurrentTab(id);
-    telemetry.onTabView(id);
     refresh();
   };
 
@@ -172,7 +158,6 @@ export function Panel(): React.ReactElement {
 
   const onClose = () => {
     setIsOpen(false);
-    telemetry.onPanelClose();
   };
 
   const activeRenderer = renderersRef.current[currentTab];
