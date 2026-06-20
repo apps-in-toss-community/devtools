@@ -189,7 +189,24 @@ export async function ensureRelaySecret(deps?: RelaySecretDeps): Promise<void> {
   const { isValidRelayAuthSecret } = await import('./totp.js');
 
   // 1. Already configured — no-op (operator export or earlier run wins).
+  //    But first check for a divergence between the env value and .ait_relay —
+  //    if they differ the relay will verify against the env value while QR/
+  //    deep-links carry codes derived from the file, causing silent 401s (#620).
   if (isValidRelayAuthSecret(env.AIT_DEBUG_TOTP_SECRET)) {
+    // We need fs to compare — resolve deps early just for the divergence check.
+    // This mirrors the lazy-resolve block below but is hoisted here so we can
+    // still early-return after the (possibly-emitted) warning.
+    const fsEarly: RelaySecretFs = fsDep ?? (await import('node:fs'));
+    const existsSyncEarly: (path: string) => boolean = existsSyncDep ?? fsEarly.existsSync;
+    const startEarly = projectRoot ?? (cwdFn ?? (() => process.cwd()))();
+    const secretPathEarly = relaySecretFilePath(startEarly, existsSyncEarly);
+    warnIfEnvDiffersFromFile(
+      env.AIT_DEBUG_TOTP_SECRET,
+      secretPathEarly,
+      fsEarly,
+      isValidRelayAuthSecret,
+      logFn,
+    );
     return;
   }
 
@@ -237,12 +254,29 @@ export async function ensureRelaySecret(deps?: RelaySecretDeps): Promise<void> {
  * @param deps - Optional dependency overrides for testing.
  */
 export async function loadRelaySecretReadOnly(deps?: RelaySecretReadOnlyDeps): Promise<void> {
-  const { projectRoot, env = process.env, fs: fsDep, existsSync: existsSyncDep } = deps ?? {};
+  const { projectRoot, env = process.env, fs: fsDep, existsSync: existsSyncDep, log } = deps ?? {};
+
+  const logFn: (msg: string) => void = log ?? ((msg: string) => process.stderr.write(msg));
 
   const { isValidRelayAuthSecret } = await import('./totp.js');
 
   // 1. Already configured — no-op (operator export or unplugin run wins).
+  //    But first check for a divergence between the env value and .ait_relay —
+  //    if they differ the relay will verify against the env value while QR/
+  //    deep-links carry codes derived from the file, causing silent 401s (#620).
   if (isValidRelayAuthSecret(env.AIT_DEBUG_TOTP_SECRET)) {
+    if (projectRoot !== undefined) {
+      const fsEarly: RelaySecretReadOnlyFs = fsDep ?? (await import('node:fs'));
+      const existsSyncEarly: (path: string) => boolean = existsSyncDep ?? fsEarly.existsSync;
+      const secretPathEarly = relaySecretFilePath(projectRoot, existsSyncEarly);
+      warnIfEnvDiffersFromFile(
+        env.AIT_DEBUG_TOTP_SECRET,
+        secretPathEarly,
+        fsEarly,
+        isValidRelayAuthSecret,
+        logFn,
+      );
+    }
     return;
   }
 
@@ -280,6 +314,66 @@ export async function loadRelaySecretReadOnly(deps?: RelaySecretReadOnlyDeps): P
 // ---------------------------------------------------------------------------
 // Internal helpers (not exported — single-use extracted for readability)
 // ---------------------------------------------------------------------------
+
+/**
+ * Compares `envSecret` against the contents of `secretPath` (if the file
+ * exists and contains a valid secret) and emits a single warning via `logFn`
+ * when they differ.
+ *
+ * SECRET-HANDLING (hard rules — do NOT relax):
+ *   - The warning MUST NOT include either secret value, its length, a hash of
+ *     it, or the resolved file path.
+ *   - Only an inequality boolean drives the warning; no secret-derived data
+ *     enters the log message.
+ *   - If the file is absent, unreadable, or its contents are invalid the
+ *     function returns silently — no spurious noise.
+ *
+ * This helper is intentionally synchronous-like (reads via the injected fs)
+ * so it can be called from within the async early-return guards without
+ * introducing additional async hops.
+ *
+ * @param envSecret - The validated env value (caller must have confirmed it is
+ *   valid before calling).
+ * @param secretPath - Absolute path to `.ait_relay` to read for comparison.
+ * @param fsDep - Injectable fs subset (at minimum `existsSync` + `readFileSync`).
+ * @param isValidRelayAuthSecret - Injectable predicate from totp.ts.
+ * @param logFn - Injectable log sink; never receives a secret value.
+ */
+function warnIfEnvDiffersFromFile(
+  envSecret: string,
+  secretPath: string,
+  fsDep: RelaySecretReadOnlyFs,
+  isValidRelayAuthSecret: (s: string | undefined) => s is string,
+  logFn: (msg: string) => void,
+): void {
+  // File absent → nothing to compare.
+  if (!fsDep.existsSync(secretPath)) {
+    return;
+  }
+
+  let stored: string;
+  try {
+    stored = fsDep.readFileSync(secretPath, 'utf8').trim();
+  } catch {
+    // Unreadable — skip silently. SECRET-HANDLING: error and path not surfaced.
+    return;
+  }
+
+  // Invalid stored contents → skip silently (no spurious noise).
+  if (!isValidRelayAuthSecret(stored)) {
+    return;
+  }
+
+  // Compare by equality only. Neither value nor path enters the log message.
+  if (envSecret !== stored) {
+    logFn(
+      `[@ait-co/devtools] AIT_DEBUG_TOTP_SECRET (from environment) differs from the project-local relay secret; ` +
+        `the relay will verify against the environment value. ` +
+        `Remove .env/.env.local/exported AIT_DEBUG_TOTP_SECRET, or sync the file, ` +
+        `so QR/deep-links and the relay agree.\n`,
+    );
+  }
+}
 
 async function readAndInject(
   secretPath: string,
