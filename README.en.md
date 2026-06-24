@@ -4,7 +4,7 @@
 
 [![npm](https://img.shields.io/npm/v/@ait-co/devtools)](https://www.npmjs.com/package/@ait-co/devtools) [![license](https://img.shields.io/badge/license-BSD--3--Clause-blue)](./LICENSE)
 
-![@ait-co/devtools — SDK mock + DevTools panel for Apps In Toss mini-apps](./assets/og/image.png)
+![@ait-co/devtools — mock SDK + DevTools panel for Apps in Toss mini-apps](./assets/og/image.png)
 
 A mock library for the `@apps-in-toss/web-framework` SDK. Imports of `@apps-in-toss/webview-bridge` are intercepted by the unplugin too (only the high-level SDK functions are exposed — bridge primitives are not). (2.x packages `@apps-in-toss/web-bridge` and `@apps-in-toss/web-analytics` are supported for back-compat.)
 
@@ -55,7 +55,7 @@ One-time prerequisite: add `https://devtools.aitc.dev/launcher/` to your phone's
 
 **Environment 3 — intoss-private** (Toss WebView, HMR off, debug only)
 
-Load a dogfood bundle in the real Toss app WebView and debug it via the MCP relay.
+Load a dog-food bundle in the real Toss app WebView and debug it via the MCP relay.
 
 ```bash
 devtools-mcp              # start MCP server → QR printed in terminal
@@ -100,7 +100,7 @@ What this single line does:
 
 For environments 3 and 4 (intoss-private relay), the relay QR deep-link carries `?debug=1&relay=<wss>` query params, so this one line is all the wiring you need. Environment 2 (PWA, `tunnel: { cdp: true }`) works the same way.
 
-> For dogfood builds with TOTP authentication, inject `__DEBUG_TOTP_SECRET__` via your build define and use `@ait-co/devtools/in-app` directly with `evaluateDebugGate({ verifyTotpCode })` + `maybeAttach()`. `in-app/auto` does not inject a TOTP verifier, so Layer C3 is disabled.
+> For dog-food builds with TOTP authentication, inject `__DEBUG_TOTP_SECRET__` via your build define and use `@ait-co/devtools/in-app` directly with `evaluateDebugGate({ verifyTotpCode })` + `maybeAttach()`. `in-app/auto` does not inject a TOTP verifier, so Layer C3 is disabled.
 
 ## Five common problems
 
@@ -144,7 +144,7 @@ devtools runs two npm dist-tags off the same code at once. Pick the channel that
 
 | Channel | Install | web-framework peer |
 |---|---|---|
-| **stable** (`latest`, default) | `pnpm add -D @ait-co/devtools` | `>=2.6.0 <2.7.0` (2.x) |
+| **stable** (`latest`, default) | `pnpm add -D @ait-co/devtools` | `>=2.6.0 <3.0.0` (2.x) |
 | **beta** | `pnpm add -D @ait-co/devtools@beta` | `>=3.0.0-beta <4.0.0` (3.0 line) |
 
 - On web-framework **2.x**, the default install (stable) is all you need.
@@ -978,7 +978,7 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 | Mode + target | Invocation | Env vars | Target | Tools |
 |---|---|---|---|---|
 | `--target=mobile` (env 2) | `devtools-mcp` → `start_debug({mode:'relay-sandbox'})` | `AIT_RELAY_BASE_URL`, `AIT_TUNNEL_BASE_URL` | Real-device Safari/WebKit PWA (external Chii relay + cloudflared tunnel, env 2) | console/network/page + DOM/snapshot/screenshot |
-| `--mode=debug --target=relay` (default, env 3) | `devtools-mcp` → `start_debug({mode: 'relay-staging'})` | — | Dogfood bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | same + `AIT.*` |
+| `--mode=debug --target=relay` (default, env 3) | `devtools-mcp` → `start_debug({mode: 'relay-staging'})` | — | Dog-food bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | same + `AIT.*` |
 | `--mode=debug --target=relay` LIVE (env 4) | `devtools-mcp` → `start_debug({mode: 'relay-live', confirm: true})` | — (env 4 LIVE guard) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
 | `--mode=debug --target=local` (env 1) | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
 | `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (auto) | Mock state from a running Vite dev server (AIT.* only, no CDP) | `AIT.*` (+ `devtools_get_mock_state` alias) |
@@ -1030,11 +1030,11 @@ Debug on a real phone using Safari/WebKit without Toss review. The Vite dev serv
 
 ### Debug mode (CDP via Chii)
 
-For a step-by-step walkthrough of the on-device relay debug loop (dogfood build → QR scan → relay attach) including common failure recovery, see **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** (Korean). For crash triage — `list_pages.crashDetectedAt`, iOS Console.app `.ips` analysis, and the redact procedure — see **[`docs/crash-triage.md`](./docs/crash-triage.md)** (Korean).
+For a step-by-step walkthrough of the on-device relay debug loop (dog-food build → QR scan → relay attach) including common failure recovery, see **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** (Korean). For crash triage — `list_pages.crashDetectedAt`, iOS Console.app `.ips` analysis, and the redact procedure — see **[`docs/crash-triage.md`](./docs/crash-triage.md)** (Korean).
 
 Read-only tools only. Tools are registered in two tiers based on attach state — before attach, only the bootstrap tools (`build_attach_url`, `list_pages`) are visible; once a relay/local page attaches, the attach-dependent tools are registered dynamically in the same session via `notifications/tools/list_changed` (no session restart needed). The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
 
-Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dogfood entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
+Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dog-food entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
 Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then enter via `start_debug(mode)`:
 
@@ -1049,7 +1049,7 @@ Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then
 }
 ```
 
-- Environment 3 (dogfood relay): `start_debug({mode: 'relay-staging'})`
+- Environment 3 (dog-food relay): `start_debug({mode: 'relay-staging'})`
 - Environment 4 (LIVE relay, LIVE guard enabled): `start_debug({mode: 'relay-live', confirm: true})`
 
 **`start_debug(mode)` is the single in-session entry path.** `MCP_ENV=relay-live` remains only as a deprecated alias that seeds `liveIntent` at boot — in a new session, enter via `start_debug({mode: 'relay-live', confirm: true})`.
@@ -1065,7 +1065,7 @@ Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then
 | `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |
 | `measure_safe_area` | `Runtime.evaluate` | Runs a safe-area probe on the attached page → returns normalized safe-area insets, viewport geometry, DPR, and User-Agent. Read-only. Use in a relay session to get ground-truth values for upgrading a viewport preset from extrapolated/placeholder to measured. Requires attach (`list_pages` first) |
 | `evaluate` | `Runtime.evaluate` | Evaluates an arbitrary JS expression on the attached page (returnByValue) and returns the result. **Not read-only** — the expression can have side effects (DOM mutations, SDK calls, state changes). Requires attach |
-| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dogfood SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 3/4, mock SDK on env 1. Env 2 (PWA) does not inject the SDK — not available there. On env 4, `confirm: true` is required (LIVE guard). Requires attach. Returns `{ok,value}` / `{ok,error}` |
+| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dog-food SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 3/4, mock SDK on env 1. Env 2 (PWA) does not inject the SDK — not available there. On env 4, `confirm: true` is required (LIVE guard). Requires attach. Returns `{ok,value}` / `{ok,error}` |
 | `AIT.getSdkCallHistory` | AIT domain | SDK call trace (method, args, result/error, timestamp) |
 | `AIT.getMockState` | AIT domain | Mock state snapshot (`window.__ait`) |
 | `AIT.getOperationalEnvironment` | AIT domain | `getOperationalEnvironment()` + SDK version |
@@ -1142,7 +1142,7 @@ Returns the full current mock state (permissions, location, auth, network, IAP, 
 | `@ait-co/devtools/unplugin` | Bundler plugin (.vite, .webpack, .rspack, .esbuild, .rollup) |
 | `@ait-co/devtools/mcp/server` | Dev-mode MCP stdio server function (Node.js) |
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin entry point (debug / dev mode, Node.js) |
-| `@ait-co/devtools/in-app` | In-app debug attach — runtime gate (layers B/C) + Chii target.js injection. The consumer wraps the import in `if (__DEBUG_BUILD__)` so it is DCE'd from release builds — dogfood builds only |
+| `@ait-co/devtools/in-app` | In-app debug attach — runtime gate (layers B/C) + Chii target.js injection. The consumer wraps the import in `if (__DEBUG_BUILD__)` so it is DCE'd from release builds — dog-food builds only |
 | `@ait-co/devtools/in-app/auto` | Self-gating side-effect entry — a single `import '@ait-co/devtools/in-app/auto'` line wires attach + SDK bridge. Active only when `?debug=1` / `?relay=` are in the URL or it is a DEV build; stays dormant on normal production loads. See the [section above](#on-device-debugging-in-one-line) |
 
 ## License

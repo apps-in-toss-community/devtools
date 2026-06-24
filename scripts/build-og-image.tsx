@@ -33,7 +33,7 @@ const FONTS_DIR = resolve(__dirname, 'og/fonts');
 const OG = {
   eyebrow: 'Open Source Community',
   title: '@ait-co/devtools',
-  subtitle: 'SDK mock + DevTools panel for Apps In Toss mini-apps.',
+  subtitle: 'mock SDK + DevTools panel for Apps in Toss mini-apps.',
   footer: 'aitc.dev · npmjs.com/package/@ait-co/devtools',
 };
 
