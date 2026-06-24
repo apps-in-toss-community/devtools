@@ -89,7 +89,7 @@
   "devDependencies": {
     "@ait-co/polyfill": "^0.1.17",
     "@apps-in-toss/web-framework": "3.0.0-beta.3051978",
-    "@apps-in-toss/web-framework-2x": "npm:@apps-in-toss/web-framework@2.8.0",
+    "@apps-in-toss/web-framework-2x": "npm:@apps-in-toss/web-framework@2.9.3",
     "@biomejs/biome": "2.4.15",
     "@changesets/cli": "^2.31.0",
     "@khmyznikov/pwa-install": "^0.6.3",
