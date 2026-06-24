@@ -69,7 +69,7 @@ jobs:
   #
   # `@ait-co/devtools` runs two PERMANENT channels off the same main commit:
   #
-  #   - `latest` (the `release` job above) — peer `>=2.6.0 <2.7.0` (web-framework
+  #   - `latest` (the `release` job above) — peer `>=2.6.0 <3.0.0` (web-framework
   #     2.x), Changesets Version-PR flow, 0.1.x patch stream. UNCHANGED.
   #   - `beta`   (this job)               — peer `>=3.0.0-beta <4.0.0` (the 3.0
   #     line), Changesets SNAPSHOT, version `0.0.0-beta-<datetime>-<sha>`.

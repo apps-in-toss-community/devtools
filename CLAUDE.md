@@ -57,7 +57,7 @@ git config core.hooksPath .githooks
 
 같은 코드에서 두 개의 dist-tag를 동시에 운영한다 (`.github/workflows/release.yml`):
 
-- **stable = `latest`** — peer `>=2.6.0 <2.7.0` (web-framework 2.x), 기존 Changesets Version-PR 흐름, `0.1.x` patch. `release` job이 담당하며 무변경.
+- **stable = `latest`** — peer `>=2.6.0 <3.0.0` (web-framework 2.x), 기존 Changesets Version-PR 흐름, `0.1.x` patch. `release` job이 담당하며 무변경.
 - **beta = `beta`** — peer `>=3.0.0-beta <4.0.0` (3.0 라인), Changesets **스냅샷**. main push마다 `release-beta` job이 pending changeset이 있을 때만 `0.0.0-beta-<datetime>-<sha>` 버전으로 자동 publish한다. peer range만 job-local로 3.0으로 덮어쓰고 같은 커밋을 publish한다 — `latest`는 2.x로 유지된다(GA flip 아님, #370).
 
 `release-beta`가 ship-safe한 핵심 불변식: ① 버전 base가 `0.0.0`이라 어떤 stable range도 만족하지 않음(`latest`로 새어나갈 수 없음), ② `--tag beta` 명시 + on-disk artifact를 publish 직전 assert(version/peer/optional), ③ pending changeset 없으면 clean no-op, ④ 같은 커밋 재실행은 SHA-동일 버전 → skip-if-exists로 idempotent. peer rewrite는 job-local ephemeral checkout에서만 일어나므로 3.0 peer가 `latest` artifact에 닿지 않는다. 스냅샷 템플릿(`{tag}-{datetime}-{commit}`)은 `.changeset/config.json`의 `snapshot.prereleaseTemplate`이 정본. AUTH는 npm OIDC trusted publishing (NPM_TOKEN 없음, #29에서 제거) — beta job이 release.yml 안에 있어야 trusted-publisher grant(workflow 파일명 바인딩)가 적용된다.
@@ -116,9 +116,9 @@ src/
 
 ## SDK 업데이트 대응
 
-devtools는 `@apps-in-toss/web-framework` **3.0.0-beta** 프리릴리즈를 추적. devDep은 `3.0.0-beta.3051978` exact pin. published `latest` 태그의 peer range는 `>=2.6.0 <2.7.0` (2.x 소비자 보호용 유지)이고, 3.0 라인 peer는 **`beta` dist-tag로 별도 자동 publish**한다 — `release-beta` job이 main push마다 같은 커밋을 job-local 3.0 peer로 덮어써 `0.0.0-beta-<datetime>-<sha>` 스냅샷으로 올린다(메커니즘 정본은 위 §배포). 3.0-beta를 쓰는 소비자는 `@ait-co/devtools@beta`로 설치한다. (후속 PR에서 CI matrix `compat-check`로 버전 typecheck 자동화 예정.)
+devtools는 `@apps-in-toss/web-framework` **3.0.0-beta** 프리릴리즈를 추적. devDep은 `3.0.0-beta.3051978` exact pin. published `latest` 태그의 peer range는 `>=2.6.0 <3.0.0` (2.x 소비자 보호용 유지)이고, 3.0 라인 peer는 **`beta` dist-tag로 별도 자동 publish**한다 — `release-beta` job이 main push마다 같은 커밋을 job-local 3.0 peer로 덮어써 `0.0.0-beta-<datetime>-<sha>` 스냅샷으로 올린다(메커니즘 정본은 위 §배포). 3.0-beta를 쓰는 소비자는 `@ait-co/devtools@beta`로 설치한다. (후속 PR에서 CI matrix `compat-check`로 버전 typecheck 자동화 예정.)
 
-**GA Flip 상태:** beta 채택 wave는 머지 완료, GA flip(exact pin→`^3.0.0`, `latest` peer를 3.0 라인으로, dist-tag flip)은 **미착수** — GA ETA 미정으로 대기. 트래킹 #370. GA용으로 비워뒀던 `0.1.54` 슬롯은 무관한 maintenance Version PR이 선점했고 이후 추가 maintenance로 `latest`가 더 올라갔다(현 `latest`는 `npm view @ait-co/devtools dist-tags.latest`로 확인, peer `>=2.6.0 <2.7.0` 불변) → flip은 그 시점 `latest` 다음 patch를 쓴다. `beta` dist-tag 자동 publish는 GA flip의 부분 선행이다(3.0 peer artifact를 미리 검증된 상태로 올려둠) — GA flip 시 그 검증된 peer를 `latest`로 승격하고 `release-beta` job은 정리 대상이 된다.
+**GA Flip 상태:** beta 채택 wave는 머지 완료, GA flip(exact pin→`^3.0.0`, `latest` peer를 3.0 라인으로, dist-tag flip)은 **미착수** — GA ETA 미정으로 대기. 트래킹 #370. GA용으로 비워뒀던 `0.1.54` 슬롯은 무관한 maintenance Version PR이 선점했고 이후 추가 maintenance로 `latest`가 더 올라갔다(현 `latest`는 `npm view @ait-co/devtools dist-tags.latest`로 확인, peer `>=2.6.0 <3.0.0`) → flip은 그 시점 `latest` 다음 patch를 쓴다. `beta` dist-tag 자동 publish는 GA flip의 부분 선행이다(3.0 peer artifact를 미리 검증된 상태로 올려둠) — GA flip 시 그 검증된 peer를 `latest`로 승격하고 `release-beta` job은 정리 대상이 된다.
 
 - peer는 `peerDependenciesMeta.optional: true`. devDep은 고정.
   - **이유**: 이 패키지는 두 사용자 그룹을 함께 다룬다 — (a) mock SDK 사용자(번들러 alias로 unplugin), (b) MCP-only 사용자(`.mcp.json`의 `npx -y @ait-co/devtools devtools-mcp` 진입). (b)는 mock SDK를 절대 import하지 않으므로 peer를 required로 두면 SDK + 그 RN/Babel/Metro 트랜지티브 거대 트리(~분 단위 install)가 강제 설치되어 MCP server spawn이 timeout. (a)는 본인 프로젝트에서 SDK를 직접 import하므로 누락은 빌드 단계에서 명시적으로 깨진다 (vite/webpack resolve fail) — npm missing peer warning에 의존할 필요가 없다. optional로 두어도 (a)의 신뢰성은 손상되지 않는다.

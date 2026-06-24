@@ -375,7 +375,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
   {
     name: 'AIT.getSdkCallHistory',
     description:
-      'Returns the recent Apps In Toss SDK call trace (method, args, result/error, timestamp) that ' +
+      'Returns the recent Apps in Toss SDK call trace (method, args, result/error, timestamp) that ' +
       'raw CDP cannot observe. Read-only. Use to confirm an SDK call fired and how it resolved ' +
       '(e.g. a saveBase64Data permission regression).',
     inputSchema: { type: 'object', properties: {}, required: [] },
