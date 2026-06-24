@@ -218,6 +218,27 @@ function killAndWait(pid: number, graceMs = 2_000): void {
   }
 }
 
+/**
+ * Reaps an orphaned cloudflared tunnel child left behind by a previous session
+ * (issue #628). The normal shutdown path TERM-cascades to the child, but a
+ * SIGKILL'd or crashed Node process can't run cleanup — its cloudflared child
+ * keeps the (now stale) quick tunnel alive. When `acquireLock` reclaims such a
+ * lock, this kills the still-alive `tunnelChildPid` so the new session starts
+ * from a clean slate (companion to the #347/#571 zombie-daemon defenses).
+ *
+ * No-op when the lock carries no `tunnelChildPid` (older lock files) or the
+ * child is already gone. SECRET-HANDLING: logs the PID only — never the tunnel
+ * host/wss (those never enter the lock file or this path).
+ */
+function reapOrphanTunnelChild(existing: LockData): void {
+  const childPid = existing.tunnelChildPid;
+  if (typeof childPid !== 'number' || !isPidAlive(childPid)) return;
+  process.stderr.write(
+    `[ait-debug] reaping orphaned tunnel child PID=${childPid} from previous session.\n`,
+  );
+  killAndWait(childPid);
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -281,6 +302,10 @@ export function acquireLock(options: AcquireLockOptions = {}): LockHandle {
           `[ait-debug] --force: terminating existing session PID=${existing.pid} …\n`,
         );
         killAndWait(existing.pid);
+        // Issue #628: killing the Node holder doesn't reliably cascade to a
+        // detached cloudflared child — reap it explicitly so --force leaves no
+        // orphaned tunnel.
+        reapOrphanTunnelChild(existing);
         process.stderr.write(`[ait-debug] --force: PID=${existing.pid} stopped, taking over.\n`);
       } else {
         // Emit a user-actionable message before throwing so the MCP host can
@@ -299,6 +324,10 @@ export function acquireLock(options: AcquireLockOptions = {}): LockHandle {
       process.stderr.write(
         `[ait-debug] stale lock from PID ${existing.pid} recovered — starting fresh.\n`,
       );
+      // Issue #628: a SIGKILL'd/crashed Node couldn't TERM-cascade to its
+      // cloudflared child, so that child may still be holding a stale tunnel.
+      // Reap it before the new session boots its own tunnel.
+      reapOrphanTunnelChild(existing);
     }
   }
 

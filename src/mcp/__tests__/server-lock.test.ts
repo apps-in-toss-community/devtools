@@ -309,6 +309,140 @@ describe('acquireLock — force takeover', () => {
   });
 });
 
+describe('acquireLock — orphan tunnel reap (#628)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    ({ dir } = setupTmpLockDir());
+  });
+
+  afterEach(() => {
+    teardownTmpLockDir(dir);
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Spies on `process.kill` so the test never signals a real process:
+   *   - signal 0 (liveness probe) → `true` while `childPid` is in `alive`,
+   *     `false` once it has been "killed" (so killAndWait's busy-wait exits at
+   *     once and isPidAlive reports the holder PID as dead/alive as configured).
+   *   - SIGTERM/SIGKILL → record the call and drop the target from `alive`.
+   * Returns the list of (pid, signal) kill calls for assertions.
+   */
+  function spyKill(alivePids: number[]): Array<{ pid: number; signal: unknown }> {
+    const alive = new Set(alivePids);
+    const calls: Array<{ pid: number; signal: unknown }> = [];
+    vi.spyOn(process, 'kill').mockImplementation((pid: number, signal?: unknown) => {
+      if (signal === 0) {
+        if (!alive.has(pid)) {
+          const err = new Error('ESRCH') as NodeJS.ErrnoException;
+          err.code = 'ESRCH';
+          throw err;
+        }
+        return true;
+      }
+      // Termination signal — record and mark dead so subsequent probes fail.
+      calls.push({ pid, signal });
+      alive.delete(pid);
+      return true;
+    });
+    return calls;
+  }
+
+  it('reaps an alive tunnel child when reclaiming a stale (dead-Node) lock', () => {
+    const lockPath = lockFilePath();
+    const deadNode = 999001;
+    const aliveChild = 999002;
+    // Node holder dead, cloudflared child orphaned but still alive.
+    const kills = spyKill([aliveChild]);
+    writeLockFile(lockPath, {
+      pid: deadNode,
+      wssUrl: 'wss://old.trycloudflare.com',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      tunnelChildPid: aliveChild,
+    });
+
+    const handle = acquireLock();
+    try {
+      // The orphaned child received a termination signal.
+      expect(kills.some((c) => c.pid === aliveChild && c.signal === 'SIGTERM')).toBe(true);
+      // Lock taken over by this process.
+      const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
+      expect(raw.pid).toBe(process.pid);
+    } finally {
+      handle.release();
+    }
+  });
+
+  it('reaps an alive tunnel child during --force takeover', () => {
+    const lockPath = lockFilePath();
+    const liveNode = 999010;
+    const aliveChild = 999011;
+    // Node holder alive (so --force is the reclaim path) + child alive.
+    const kills = spyKill([liveNode, aliveChild]);
+    writeLockFile(lockPath, {
+      pid: liveNode,
+      wssUrl: 'wss://old.trycloudflare.com',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      tunnelChildPid: aliveChild,
+    });
+
+    const handle = acquireLock({ force: true });
+    try {
+      // Both the Node holder and the orphaned child were terminated.
+      expect(kills.some((c) => c.pid === liveNode && c.signal === 'SIGTERM')).toBe(true);
+      expect(kills.some((c) => c.pid === aliveChild && c.signal === 'SIGTERM')).toBe(true);
+      const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
+      expect(raw.pid).toBe(process.pid);
+    } finally {
+      handle.release();
+    }
+  });
+
+  it('is a no-op when the stale lock carries no tunnelChildPid (older lock files)', () => {
+    const lockPath = lockFilePath();
+    const deadNode = 999020;
+    const kills = spyKill([]); // nothing alive
+    writeLockFile(lockPath, {
+      pid: deadNode,
+      wssUrl: 'wss://old.trycloudflare.com',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      // no tunnelChildPid field
+    });
+
+    const handle = acquireLock();
+    try {
+      // No termination signal sent — nothing to reap.
+      expect(kills.length).toBe(0);
+      const raw = JSON.parse(readFileSync(lockPath, 'utf8'));
+      expect(raw.pid).toBe(process.pid);
+    } finally {
+      handle.release();
+    }
+  });
+
+  it('does not signal an already-dead tunnel child', () => {
+    const lockPath = lockFilePath();
+    const deadNode = 999030;
+    const deadChild = 999031;
+    const kills = spyKill([]); // both dead
+    writeLockFile(lockPath, {
+      pid: deadNode,
+      wssUrl: 'wss://old.trycloudflare.com',
+      startedAt: '2020-01-01T00:00:00.000Z',
+      tunnelChildPid: deadChild,
+    });
+
+    const handle = acquireLock();
+    try {
+      // isPidAlive(deadChild) is false → reap is skipped, no kill issued.
+      expect(kills.length).toBe(0);
+    } finally {
+      handle.release();
+    }
+  });
+});
+
 describe('LockHandle.updateWssUrl', () => {
   let dir: string;
 
