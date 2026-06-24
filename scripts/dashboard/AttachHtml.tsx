@@ -107,6 +107,8 @@ img.qr {
   display: block; margin: 0 auto;
 }
 section { width: 100%; max-width: 480px; }
+.hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
+.hint.error { color: #f85149; opacity: 1; font-weight: 600; }
 h2 { font-size: 1rem; font-weight: 600; color: #e6edf3; margin: 0 0 0.5rem; }
 ol, ul { margin: 0; padding-left: 1.25rem; }
 li { margin-bottom: 0.4rem; font-size: 0.9rem; line-height: 1.5; }
