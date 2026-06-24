@@ -193,6 +193,8 @@ export const en: Record<StringKey, string> = {
   'dashboard.tunnel.down': 'Disconnected',
   'dashboard.attach.section': 'Attach QR',
   'dashboard.attach.hint': 'Call the build_attach_url MCP tool to show the QR here.',
+  'dashboard.attach.tunnelDown':
+    'Relay disconnected — call build_attach_url again to regenerate the QR.',
   'dashboard.pages.section': 'Connected Pages',
   'dashboard.pages.empty': 'No attached pages',
 

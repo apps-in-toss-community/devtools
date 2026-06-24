@@ -1939,6 +1939,17 @@ export interface BootRelayFamilyOptions {
    * process alive, tunnel child dead) without requiring `--force`.
    */
   onTunnelChildPid?: (pid: number) => void;
+  /**
+   * Called when the tunnel permanently drops (all reissue attempts exhausted,
+   * issue #631). Run functions wire this to `qrServer?.notifyStateChange()` so
+   * open SSE subscribers are pushed the down state immediately — preventing the
+   * QR page from keeping a scannable-but-dead QR visible after the relay drops.
+   *
+   * Called AFTER `tunnelStatus` is set to `makeTunnelStatus(false, null, …)`,
+   * so `getDashboardState()` already reflects the downed tunnel when subscribers
+   * receive the push.
+   */
+  onPermanentDrop?: () => void;
 }
 
 /**
@@ -2034,6 +2045,10 @@ export async function bootRelayFamily(options: BootRelayFamilyOptions = {}): Pro
           logError('tunnel.down', {
             msg: `tunnel permanently dropped (${droppedAt}). Restart: npx @ait-co/devtools devtools-mcp`,
           });
+          // Fix #631 (Layer 1): notify SSE subscribers immediately so the QR
+          // page replaces the dead QR with an error state. Called AFTER
+          // tunnelStatus is set to down so getDashboardState() reflects it.
+          options.onPermanentDrop?.();
         },
       });
 
@@ -2683,6 +2698,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
               // get_debug_status can distinguish "phone never arrived" from
               // "phone arrived but was rejected".
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
+              // Fix #631 (Layer 1): push tunnel-down state to SSE subscribers
+              // immediately on permanent drop so the QR page replaces the dead
+              // QR with an error state without waiting for the TOTP-refresh timer.
+              onPermanentDrop: () => qrServer?.notifyStateChange(),
             }),
     diagnosticsCollector,
     devtoolsOpener,
@@ -3066,6 +3085,10 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
+              // Fix #631 (Layer 1): push tunnel-down state to SSE subscribers
+              // immediately on permanent drop so the QR page replaces the dead
+              // QR with an error state without waiting for the TOTP-refresh timer.
+              onPermanentDrop: () => qrServer?.notifyStateChange(),
             }),
     diagnosticsCollector,
     devtoolsOpener,
@@ -3396,6 +3419,10 @@ export async function runMobileDebugServer(
               },
               // Issue #467: secret-free relay TOTP 401 counter for get_debug_status.
               onAuthReject: () => diagnosticsCollector.recordAuthReject(),
+              // Fix #631 (Layer 1): push tunnel-down state to SSE subscribers
+              // immediately on permanent drop so the QR page replaces the dead
+              // QR with an error state without waiting for the TOTP-refresh timer.
+              onPermanentDrop: () => qrServer?.notifyStateChange(),
             }),
     diagnosticsCollector,
     devtoolsOpener,

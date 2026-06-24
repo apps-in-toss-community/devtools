@@ -1961,3 +1961,200 @@ describe('startQrHttpServer — dashboard GET / DevTools 진입로 (#248)', () =
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 터널 드롭 시 QR → 에러 상태 교체 (issue #631)
+//
+// Layer 2: buildDashboardHtml / buildSseScript 이 tunnel.up=false + attachUrl
+// 조합일 때 죽은 QR 대신 에러 상태를 렌더하는지 검증한다.
+// Layer 1(onPermanentDrop 콜백)은 debug-server.test.ts 에서 따로 커버된다.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — 터널 드롭 시 QR 에러 상태 (#631)', () => {
+  const DEAD_ATTACH_URL =
+    'intoss-private://aitc-sdk-example?_deploymentId=dead-id&debug=1&relay=wss%3A%2F%2Fdead.trycloudflare.com';
+
+  it('터널 DOWN + attachUrl 존재 → QR 대신 에러 메시지 렌더 (ko)', async () => {
+    // tunnel.up=false이지만 attachUrl은 남아 있는 상태(relay 드롭 직후 전형적 상태).
+    // QR을 렌더하면 사용자가 스캔 후 silent 실패하므로 에러 메시지여야 한다.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: DEAD_ATTACH_URL,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // 에러 상태: hint error 클래스 + 재생성 안내 텍스트가 있어야 한다.
+      expect(html).toContain('hint error');
+      expect(html).toContain('relay 연결이 끊겼습니다');
+      // 죽은 QR img 는 attach-section 안에 없어야 한다.
+      // 주의: SSE 클라이언트 인라인 JS에는 '<img class="qr"'가 JS 문자열 리터럴로 존재하므로
+      // 단순 html.includes()로는 구분 불가 — 실제 렌더된 img src(base64 data URL)가 없음을 검증한다.
+      expect(html).not.toContain('src="data:image');
+      // #attach-section 내에 <img 태그가 없음을 구조적으로 확인.
+      const attachSection = html.match(/id="attach-section">(.+?)<\/div>/s)?.[1] ?? '';
+      expect(attachSection).not.toContain('<img');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('터널 DOWN + attachUrl 존재 → QR 대신 에러 메시지 렌더 (en)', async () => {
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: DEAD_ATTACH_URL,
+    }));
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'en' } })
+      ).text();
+      expect(html).toContain('hint error');
+      expect(html).toContain('Relay disconnected');
+      expect(html).not.toContain('src="data:image');
+      const attachSection = html.match(/id="attach-section">(.+?)<\/div>/s)?.[1] ?? '';
+      expect(attachSection).not.toContain('<img');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('터널 UP + attachUrl 존재 → 정상 QR 렌더 (에러 상태 아님)', async () => {
+    // 터널이 살아 있으면 기존 동작: QR img 렌더. (jsdom 환경 포함)
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: true, wssUrl: 'wss://live.trycloudflare.com' },
+      pages: [],
+      attachUrl: DEAD_ATTACH_URL,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // #attach-section 내에 에러 메시지가 없음을 구조적으로 확인.
+      // 주의: SSE 인라인 JS에도 "hint error" 리터럴이 포함되므로 html.includes()가 아니라
+      // attach-section HTML 절편만 추출해 검사한다.
+      const attachSection = html.match(/id="attach-section">(.+?)<\/div>/s)?.[1] ?? '';
+      expect(attachSection).not.toContain('hint error');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('터널 DOWN + attachUrl 존재 → SSE script에 ATTACH_TUNNEL_DOWN 변수와 터널-다운 게이트 포함', async () => {
+    // SSE 클라이언트 인라인 JS가 런타임 상태 변경을 처리하는 코드도 같은 조건을 적용한다.
+    // buildSseScript 가 생성한 JS에 필요한 심볼이 존재하는지 검증한다.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: DEAD_ATTACH_URL,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // 인라인 JS에 ATTACH_TUNNEL_DOWN 변수 선언이 있어야 한다.
+      expect(html).toContain('ATTACH_TUNNEL_DOWN');
+      // 터널-다운 브랜치를 표현하는 로직 마커 포함.
+      expect(html).toContain('tunnelUp');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('SECRET: 터널 DOWN 에러 HTML에 relay URL/host 값이 평문 노출되지 않음 (#631)', async () => {
+    // 에러 메시지는 "연결 끊김, 재생성" 문자열만 — dead relay URL 자체를 출력하면 안 됨.
+    const DEAD_WSS_HOST = 'dead-secret-relay.trycloudflare.com';
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: `wss://${DEAD_WSS_HOST}` },
+      pages: [],
+      attachUrl: DEAD_ATTACH_URL,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // dead relay host가 에러 상태 HTML에 평문으로 드러나면 안 된다.
+      expect(html).not.toContain(DEAD_WSS_HOST);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('터널 DOWN + attachUrl=null → hint(빌드 안내) 렌더 (에러 상태 아님)', async () => {
+    // attachUrl이 없으면 드롭 케이스 자체가 아님 — 기존 "build_attach_url 호출" 힌트 표시.
+    const srv = await startQrHttpServer(() => ({
+      tunnel: { up: false, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+    }));
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      // 에러 상태가 아니라 일반 hint — #attach-section 절편으로 확인한다.
+      // (SSE 인라인 JS에도 "hint error" 리터럴이 있어 html.includes() 전체 검색은 부적절)
+      const attachSection = html.match(/id="attach-section">(.+?)<\/div>/s)?.[1] ?? '';
+      expect(attachSection).not.toContain('hint error');
+      expect(html).toContain('build_attach_url');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('notifyStateChange() 호출 → SSE 구독자가 tunnel.up=false 페이로드를 수신', async () => {
+    // onPermanentDrop이 notifyStateChange()를 호출할 때 구독자가 실제로 down 상태를 받는지 검증.
+    const state: DashboardState = {
+      tunnel: { up: true, wssUrl: 'wss://live.trycloudflare.com' },
+      pages: [],
+      attachUrl: DEAD_ATTACH_URL,
+    };
+    const srv = await startQrHttpServer(() => state);
+    try {
+      // SSE 연결 후 터널 상태를 down으로 전환하고 notifyStateChange().
+      const ctrl = new AbortController();
+      const frames: unknown[] = [];
+
+      // 비동기로 SSE 스트림을 수집한다.
+      const streamDone = (async () => {
+        const res = await fetch(`http://127.0.0.1:${srv.port}/events`, { signal: ctrl.signal });
+        const reader = res.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buf = '';
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop() ?? '';
+            for (const part of parts) {
+              const dataLine = part.split('\n').find((l) => l.startsWith('data:'));
+              if (dataLine) {
+                frames.push(JSON.parse(dataLine.slice(5).trim()));
+              }
+            }
+            // 2 프레임 이상 수집하면 중단.
+            if (frames.length >= 2) break;
+          }
+        } catch {
+          // AbortError는 정상 종료
+        }
+      })();
+
+      // 연결이 서버에 도달해 초기 push가 일어날 시간을 준다.
+      await new Promise<void>((r) => setTimeout(r, 40));
+
+      // 상태를 down으로 전환 후 notify.
+      state.tunnel = { up: false, wssUrl: null };
+      srv.notifyStateChange();
+
+      // 두 번째 프레임을 수신할 시간.
+      await new Promise<void>((r) => setTimeout(r, 40));
+
+      ctrl.abort();
+      await streamDone;
+
+      // 두 번째 프레임에서 tunnel.up이 false여야 한다.
+      expect(frames.length).toBeGreaterThanOrEqual(2);
+      const lastFrame = frames.at(-1) as { tunnel: { up: boolean } };
+      expect(lastFrame.tunnel.up).toBe(false);
+    } finally {
+      await srv.close();
+    }
+  }, 3_000);
+});

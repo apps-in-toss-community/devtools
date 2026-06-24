@@ -213,10 +213,16 @@ function buildDashboardHtml(
   const tunnelStatus = state.tunnel.up ? s('dashboard.tunnel.up') : s('dashboard.tunnel.down');
   const tunnelClass = state.tunnel.up ? 'status-up' : 'status-down';
 
-  // attachSection: QR img + url-row(url-box + 복사 버튼), or hint.
+  // attachSection: QR img + url-row(url-box + 복사 버튼), tunnel-down 에러 상태, or hint.
+  // 터널이 내려가 있으면 (tunnel.up=false) 스캔 불가 QR을 보여주는 대신 에러 상태를 렌더한다.
   // dashboard 표면에서 SSE 재렌더 시에도 동일 구조를 유지해 복사 버튼이 생존한다.
   let attachSection: string;
-  if (qrDataUrl && state.attachUrl) {
+  if (!state.tunnel.up && state.attachUrl) {
+    // 터널 드롭 상태 — 죽은 relay URL이 담긴 QR을 보여주면 사용자가 스캔 후 silent 실패.
+    // QR 대신 에러 메시지를 렌더해 재생성을 안내한다.
+    // SECRET-HANDLING: relay URL/wssUrl 값은 절대 이 메시지에 포함하지 않는다.
+    attachSection = `<p class="hint error">${escapeHtml(s('dashboard.attach.tunnelDown'))}</p>`;
+  } else if (qrDataUrl && state.attachUrl) {
     const safeAttachUrl = escapeHtml(state.attachUrl);
     const copyLabel = escapeHtml(s('dashboard.url.copy'));
     attachSection =
@@ -275,6 +281,7 @@ function buildDashboardHtml(
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
     pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
+    attachTunnelDown: JSON.stringify(s('dashboard.attach.tunnelDown')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
     inspectorOpenLabel: JSON.stringify(s('dashboard.inspector.open')),
@@ -309,6 +316,8 @@ interface SseScriptStrings {
   tunnelDown: string;
   pagesEmpty: string;
   attachHint: string;
+  /** 터널 드롭 시 QR 대신 보여줄 에러 메시지 (JSON.stringify로 이미 escape됨, #631). */
+  attachTunnelDown: string;
   /** 복사 버튼 기본 라벨 (JSON.stringify로 이미 escape됨). */
   copyLabel: string;
   /** 복사 완료 피드백 라벨 (JSON.stringify로 이미 escape됨). */
@@ -358,6 +367,7 @@ function buildSseScript(strings: SseScriptStrings): string {
       var TUNNEL_DOWN = ${strings.tunnelDown};
       var PAGES_EMPTY = ${strings.pagesEmpty};
       var ATTACH_HINT = ${strings.attachHint};
+      var ATTACH_TUNNEL_DOWN = ${strings.attachTunnelDown};
       var COPY_LABEL = ${strings.copyLabel};
       var COPIED_LABEL = ${strings.copiedLabel};
       var INSPECTOR_OPEN_LABEL = ${strings.inspectorOpenLabel};
@@ -446,10 +456,17 @@ function buildSseScript(strings: SseScriptStrings): string {
             }
           }
           // attachUrl QR + url-box 갱신
+          // 터널 드롭 시 (#631): tunnel.up=false이면 죽은 relay URL이 담긴 QR을 보여주지 않는다.
+          //   대신 에러 상태(ATTACH_TUNNEL_DOWN)를 렌더해 사용자에게 재생성을 안내한다.
           // SECRET-HANDLING: URL 값을 로그로 출력하지 않는다.
           var sec = document.getElementById('attach-section');
           if (sec) {
-            if (s.attachUrl) {
+            var tunnelUp = s.tunnel && s.tunnel.up;
+            if (!tunnelUp && s.attachUrl) {
+              // 터널 드롭 — 스캔하면 silent 실패하는 죽은 QR 대신 에러 상태 표시.
+              // SECRET-HANDLING: relay URL/wssUrl 값은 절대 노출하지 않는다.
+              sec.innerHTML = '<p class=\\"hint error\\">' + ATTACH_TUNNEL_DOWN + '</p>';
+            } else if (s.attachUrl) {
               var encoded = encodeURIComponent(s.attachUrl);
               var safeUrl = String(s.attachUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
               ${
@@ -580,6 +597,7 @@ function buildAttachHtml(
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
     pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
+    attachTunnelDown: JSON.stringify(s('dashboard.attach.tunnelDown')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
     // /attach 페이지의 #inspector-link SSE 갱신에 쓰인다 (#544).
