@@ -179,6 +179,43 @@ describe('startQrHttpServer — GET / dashboard HTML', () => {
     }
   });
 
+  it('터널 DOWN이면 attachUrl이 있어도 QR을 그리지 않고 에러 상태를 표시한다 (#631)', async () => {
+    // attachUrl은 남아 있으나 터널이 죽은 상태 — 죽은 QR이 스캔되면 안 된다.
+    state.tunnel = { up: false, wssUrl: null };
+    state.attachUrl =
+      'intoss-private://aitc-sdk-example?_deploymentId=test-id&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+    const srv = await startQrHttpServer(() => state);
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // 정적 렌더의 인라인 QR(`<img class="qr" src="data:image...">`)을 그리면 안 된다.
+      // (SSE 스크립트 템플릿 문자열에는 `/qr.png` QR 마크업이 항상 들어 있으므로,
+      //  죽은 QR 노출 여부는 인라인 base64 data-URL QR로 판별한다.)
+      expect(html).not.toContain('src="data:image');
+      // 에러 카피가 표시돼야 한다.
+      expect(html).toContain('relay 연결이 끊겼습니다');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('터널 DOWN 에러 상태에서도 attachUrl(또는 그 안의 TOTP)이 HTML 본문에 노출되지 않는다 (#631)', async () => {
+    state.tunnel = { up: false, wssUrl: null };
+    state.attachUrl =
+      'intoss-private://aitc-sdk-example?_deploymentId=test-id&debug=1&relay=wss%3A%2F%2Fx.tc.com&at=123456';
+    const srv = await startQrHttpServer(() => state);
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // 죽은 attachUrl(TOTP at= 포함)을 url-box로 노출하지 않는다.
+      expect(html).not.toContain('intoss-private://');
+    } finally {
+      await srv.close();
+    }
+  });
+
   it('SECRET: dashboard HTML에 wssUrl host 값이 평문 노출되지 않음', async () => {
     state.tunnel = { up: true, wssUrl: 'wss://secret-host.trycloudflare.com' };
     const srv = await startQrHttpServer(() => state);

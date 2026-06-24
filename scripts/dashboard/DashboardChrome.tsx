@@ -97,6 +97,7 @@ img.qr {
 }
 .copy-btn:hover { background: #30363d; }
 .hint { font-size: 0.85rem; opacity: 0.5; margin: 0.25rem 0 0; }
+.hint.error { color: #f85149; opacity: 1; font-weight: 600; }
 .inspector-link {
   display: inline-block; margin-top: 0.5rem;
   padding: 0.45rem 1rem; border-radius: 6px;

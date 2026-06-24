@@ -213,10 +213,17 @@ function buildDashboardHtml(
   const tunnelStatus = state.tunnel.up ? s('dashboard.tunnel.up') : s('dashboard.tunnel.down');
   const tunnelClass = state.tunnel.up ? 'status-up' : 'status-down';
 
-  // attachSection: QR img + url-row(url-box + 복사 버튼), or hint.
+  // attachSection: QR img + url-row(url-box + 복사 버튼), tunnel-down 에러, or hint.
   // dashboard 표면에서 SSE 재렌더 시에도 동일 구조를 유지해 복사 버튼이 생존한다.
+  //
+  // 렌더 게이트는 attachUrl 유무 외에 tunnel.up도 본다 (issue #631): 터널이
+  // 죽으면 attachUrl/QR이 인코딩한 wss·TOTP가 이미 무효이므로, 스캔 가능한
+  // 죽은 QR을 계속 그리는 대신 에러 상태로 교체한다. attachUrl이 남아 있어도
+  // tunnel.up=false면 QR을 그리지 않는다.
   let attachSection: string;
-  if (qrDataUrl && state.attachUrl) {
+  if (!state.tunnel.up) {
+    attachSection = `<p class="hint error">${escapeHtml(s('dashboard.attach.tunnelDown'))}</p>`;
+  } else if (qrDataUrl && state.attachUrl) {
     const safeAttachUrl = escapeHtml(state.attachUrl);
     const copyLabel = escapeHtml(s('dashboard.url.copy'));
     attachSection =
@@ -275,6 +282,7 @@ function buildDashboardHtml(
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
     pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
+    attachTunnelDown: JSON.stringify(s('dashboard.attach.tunnelDown')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
     inspectorOpenLabel: JSON.stringify(s('dashboard.inspector.open')),
@@ -309,6 +317,8 @@ interface SseScriptStrings {
   tunnelDown: string;
   pagesEmpty: string;
   attachHint: string;
+  /** 터널 드롭 시 attach-section에 표시할 에러 카피 (JSON.stringify로 이미 escape됨, #631). */
+  attachTunnelDown: string;
   /** 복사 버튼 기본 라벨 (JSON.stringify로 이미 escape됨). */
   copyLabel: string;
   /** 복사 완료 피드백 라벨 (JSON.stringify로 이미 escape됨). */
@@ -358,6 +368,7 @@ function buildSseScript(strings: SseScriptStrings): string {
       var TUNNEL_DOWN = ${strings.tunnelDown};
       var PAGES_EMPTY = ${strings.pagesEmpty};
       var ATTACH_HINT = ${strings.attachHint};
+      var ATTACH_TUNNEL_DOWN = ${strings.attachTunnelDown};
       var COPY_LABEL = ${strings.copyLabel};
       var COPIED_LABEL = ${strings.copiedLabel};
       var INSPECTOR_OPEN_LABEL = ${strings.inspectorOpenLabel};
@@ -447,9 +458,13 @@ function buildSseScript(strings: SseScriptStrings): string {
           }
           // attachUrl QR + url-box 갱신
           // SECRET-HANDLING: URL 값을 로그로 출력하지 않는다.
+          // 터널이 죽으면(s.tunnel.up=false) attachUrl이 남아 있어도 QR을
+          // 그리지 않고 에러 상태로 교체한다 — 죽은 QR이 스캔되는 것을 막는다(#631).
           var sec = document.getElementById('attach-section');
           if (sec) {
-            if (s.attachUrl) {
+            if (!(s.tunnel && s.tunnel.up)) {
+              sec.innerHTML = '<p class=\\"hint error\\">' + ATTACH_TUNNEL_DOWN + '</p>';
+            } else if (s.attachUrl) {
               var encoded = encodeURIComponent(s.attachUrl);
               var safeUrl = String(s.attachUrl).slice(0, 2000).replace(/[<>&"']/g, function (c) { return '&#' + c.charCodeAt(0) + ';'; });
               ${
@@ -580,6 +595,7 @@ function buildAttachHtml(
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
     pagesEmpty: JSON.stringify(s('dashboard.pages.empty')),
     attachHint: JSON.stringify(s('dashboard.attach.hint')),
+    attachTunnelDown: JSON.stringify(s('dashboard.attach.tunnelDown')),
     copyLabel: JSON.stringify(s('dashboard.url.copy')),
     copiedLabel: JSON.stringify(s('dashboard.url.copied')),
     // /attach 페이지의 #inspector-link SSE 갱신에 쓰인다 (#544).
