@@ -460,6 +460,6 @@ async function mintAndPersist(
     `[@ait-co/devtools] relay 인증 시크릿을 생성해 프로젝트의 ${RELAY_SECRET_FILE_NAME} 파일에 저장했습니다 (권한 0600).\n` +
       `다음 실행부터 자동으로 사용됩니다. 직접 export할 필요 없습니다.\n` +
       `팀이 같은 relay를 공유하려면 이 파일을 repo에 커밋하세요(비공개 repo 권장).\n` +
-      `자세히: https://docs.aitc.dev/guides/auth-flow\n`,
+      `자세히: https://docs.aitc.dev/guides/relay-auth-totp\n`,
   );
 }
