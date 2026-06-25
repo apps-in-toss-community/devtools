@@ -97,6 +97,8 @@ describe('buildRunTestsExpression', () => {
     expect(expr).toContain('var x = 1;');
     expect(expr).toContain('__testBundle');
     expect(expr).toContain('runTestModule');
+    // Factory must be passed so globals are installed before test registration.
+    expect(expr).toContain('__userFactory');
   });
 
   it('returns JSON.stringify-wrapped result', () => {
