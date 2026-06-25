@@ -307,6 +307,28 @@ const DEV_TOOL_DEFINITIONS = [
     },
     availableIn: 'both' as ToolAvailability,
   },
+  {
+    name: 'run_tests',
+    description:
+      'Runs mini-app test files on the attached page over CDP (Runtime.evaluate). ' +
+      'NOT available in dev-mode (no CDP connection). ' +
+      'Switch to `--mode=local` or `--mode=debug`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Glob patterns or file paths to run.',
+        },
+        projectRoot: { type: 'string', description: 'Glob base directory.' },
+        timeout_ms: { type: 'number', description: 'Per-file evaluate timeout in ms.' },
+        confirm: { type: 'boolean', description: 'Required in relay-live sessions.' },
+      },
+      required: ['files'],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
 ] as const;
 
 /** All tool names served in dev-mode (including tier-filter stubs). */
@@ -321,6 +343,7 @@ const CDP_ONLY_TOOL_NAMES = new Set<string>([
   'list_console_messages',
   'list_network_requests',
   'list_exceptions',
+  'run_tests',
 ]);
 
 /**

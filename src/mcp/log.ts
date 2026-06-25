@@ -42,7 +42,11 @@ export type LogEvent =
   | 'page.detached'
   | 'page.crashed'
   | 'tool.call'
-  | 'tool.error';
+  | 'tool.error'
+  // run_tests progress (#646) — operator-visible in the daemon log, never in
+  // the agent response. Carries only counts (secret-free, redact-safe numbers).
+  | 'run_tests.start'
+  | 'run_tests.done';
 
 /**
  * Allowed field keys that may pass through to a log line.
@@ -62,6 +66,11 @@ const ALLOWED_KEYS = new Set([
   'reason',
   'prevTargetId',
   'mode',
+  // run_tests progress counts (#646) — numbers, redact-safe.
+  'fileCount',
+  'passed',
+  'failed',
+  'skipped',
 ]);
 
 /**

@@ -15,6 +15,7 @@
 
 import { parseArgs } from 'node:util';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
+import { discoverTestFiles } from './discover.js';
 import type { RelayRunOptions, RelayRunReport } from './relay-worker.js';
 import { runTestFilesOverRelay } from './relay-worker.js';
 
@@ -116,13 +117,24 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  // MVP: relay wiring is not yet implemented. Print a clear next-step message.
-  // TODO (#645): resolve relay URL from devtools-mcp, attach CdpConnection,
-  //              resolve glob patterns, call runWithConnection, print report.
+  // Discovery is shared with the `run_tests` MCP tool (#646) via
+  // `discoverTestFiles`, so both expand patterns identically. We resolve the
+  // matched files here to give the operator concrete feedback before the
+  // (still-pending) relay attach wiring.
+  const files = await discoverTestFiles(parsed.positionals, process.cwd());
+  if (files.length === 0) {
+    process.stderr.write(`devtools-test: no test files matched ${parsed.positionals.join(', ')}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // Relay attach lifecycle (resolve CDP URL, attach, close) is tracked in #645;
+  // until then the CLI cannot run on its own. The `run_tests` MCP tool (#646)
+  // already runs these files against the daemon's attached connection.
   process.stderr.write(
-    `devtools-test: relay attach is required but not yet wired in this MVP.\n` +
+    `devtools-test: matched ${files.length} test file(s), but direct CLI relay attach is not yet wired.\n` +
       `  Use the devtools-mcp server (\`devtools-mcp\`) to start a debug session,\n` +
-      `  then the \`run_tests\` MCP tool (issue #646) to trigger a run.\n` +
+      `  then the \`run_tests\` MCP tool to run these files against the attached page.\n` +
       `  Direct CLI relay wiring is tracked in issue #645.\n`,
   );
   process.exitCode = 1;

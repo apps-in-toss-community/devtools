@@ -12,7 +12,14 @@
  */
 
 import * as path from 'node:path';
-import * as esbuild from 'esbuild';
+// esbuild is imported for TYPES only at module scope; the runtime module is
+// loaded lazily inside `bundleTestFile` via dynamic import. esbuild runs a
+// startup invariant check (`TextEncoder().encode('') instanceof Uint8Array`)
+// that fails in a jsdom realm — a static import would break every MCP/test
+// module that merely *imports* this file's transitive graph (e.g. debug-server →
+// run_tests). Lazy load keeps esbuild off the import graph until a bundle is
+// actually built, and mirrors the cloudflared/chii dynamic-import precedent.
+import type * as esbuild from 'esbuild';
 
 /** Options accepted by `bundleTestFile`. */
 export interface BundleOptions {
@@ -106,6 +113,9 @@ module.exports = __proxy;
 export async function bundleTestFile(absPath: string, opts?: BundleOptions): Promise<BundleResult> {
   const globalName = opts?.globalName ?? '__testBundle';
   const extraExternals = opts?.extraExternals ?? [];
+
+  // Lazy load esbuild at call time (see the module-scope import note).
+  const esbuild = await import('esbuild');
 
   const result = await esbuild.build({
     entryPoints: [absPath],
