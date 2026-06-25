@@ -19,6 +19,14 @@
 #      them — proves the toggle is alive (guards against a dead grep that would
 #      pass even if the build guard silently stopped including anything).
 #
+# The fixture used for checks 2/3 is the dedicated minimal release consumer in
+# scripts/debug-absence-fixture/ — NOT the e2e panel fixture. The panel fixture
+# aliases @apps-in-toss/web-framework back at the mock (a self-referential
+# alias) and keeps a live dynamic in-app import for chunking reasons; DCE-ing
+# that import there duplicates the mock graph. The minimal fixture isolates the
+# only thing under test: the if(__DEBUG_BUILD__) guard on a real consumer's
+# dynamic in-app import.
+#
 # IMPORTANT: the release build MUST be minified. With minify off, a dead
 # `if(false){ … }` husk survives as text and its identifier strings (e.g.
 # `eruda`) match the grep — a false positive. Vite production builds minify by
@@ -32,8 +40,8 @@ cd "$(dirname "$0")/.."
 # into a bundle only if the in-app graph was included.
 PATTERN="eruda|deriveTargetScriptUrl|installRelayWsObserver|maybeAttach"
 
-FIXTURE_CONFIG="e2e/fixture/vite.config.ts"
-OUT_DIR="e2e/fixture/dist/assets"
+FIXTURE_CONFIG="scripts/debug-absence-fixture/vite.config.ts"
+OUT_DIR="scripts/debug-absence-fixture/dist/assets"
 
 fail=0
 

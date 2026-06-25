@@ -17,23 +17,12 @@ import '@ait-co/polyfill/auto';
 // 이 fixture는 rolldown(Vite 8) 우회책으로 unplugin transform을 비활성화하므로
 // (vite.config.ts: inApp: false) 여기에 명시 배선을 유지한다 — panel 명시 import와 동일한 패턴.
 //
-// BUILD-TIME ABSENCE (issue #647): the `import('@ait-co/devtools/in-app')` call
-// site is wrapped in `if (__DEBUG_BUILD__)`. vite.config.ts defines this to the
-// boolean value of AIT_DEBUG_BUILD, so a release fixture build
-// (AIT_DEBUG_BUILD unset → `false`) dead-code-eliminates the whole in-app graph
-// — Chii target.js injection AND the eruda console it pulls in are 0 bytes in
-// the bundle. This fixture is the REFERENCE for scripts/check-debug-surface-absent.sh:
-// it must use the build guard (not a bare runtime gate) so the CI grep is
-// meaningful. A debug build (AIT_DEBUG_BUILD=1) keeps the branch, and the inner
-// runtime gate (`debug=1` + `relay`) + the Layer B/C gate inside maybeAttach()
-// still apply.
-//
 // NOTE: the in-app gate (Layer B1 in src/in-app/gate.ts) BLOCKS localhost — it
 // only allows *.trycloudflare.com and *.private-apps.tossmini.com hostnames.
 // In a real env-2 session the fixture is served from a trycloudflare.com tunnel
 // and the gate passes. In local development / Playwright e2e, localhost is
 // blocked — see e2e/launcher-cdp.test.ts for the documented manual residue.
-if (__DEBUG_BUILD__ && typeof window !== 'undefined') {
+if (typeof window !== 'undefined') {
   const _p = new URLSearchParams(window.location.search);
   if (_p.get('debug') === '1' && _p.get('relay')) {
     import('@ait-co/devtools/in-app').then(({ maybeAttach }) => {
