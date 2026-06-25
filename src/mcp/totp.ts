@@ -139,7 +139,7 @@ export const RELAY_AUTH_SECRET_MISSING_MESSAGE = [
   '[ait-debug] AIT_DEBUG_TOTP_SECRET이 필수입니다. 32자 이상 16진수(hex) 문자열을 설정하세요.',
   '발급: openssl rand -hex 32',
   '데몬은 start_debug의 projectRoot 인자로 받은 디렉토리에서 .ait_relay 파일을 읽어 이 시크릿을 채웁니다.',
-  '프로젝트에서 pnpm dev를 한 번 띄우면 unplugin이 .ait_relay를 자동 생성하니, projectRoot를 전달하세요.',
+  '프로젝트에서 pnpm dev:phone:cdp를 한 번 띄우면 unplugin이 .ait_relay를 자동 생성하니(tunnel.cdp 옵션 필요), projectRoot를 전달하세요.',
   '자세히: https://docs.aitc.dev/guides/relay-auth-totp',
 ].join('\n');
 
