@@ -35,6 +35,33 @@ vi.mock('../../test-runner/bundle.js', () => ({
   bundleTestFile: vi.fn(async () => ({ code: '/* mocked bundle */', warnings: [] })),
 }));
 
+// Spy on the run core + discovery while delegating to the real implementations,
+// so boundary tests can assert the exact `timeoutMs` / `cwd` the handler passes
+// (the canned report is identical regardless, so "no error" alone is too weak).
+const runWithConnectionSpy = vi.fn();
+vi.mock('../../test-runner/cli.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../test-runner/cli.js')>();
+  return {
+    ...actual,
+    runWithConnection: (...args: Parameters<typeof actual.runWithConnection>) => {
+      runWithConnectionSpy(...args);
+      return actual.runWithConnection(...args);
+    },
+  };
+});
+
+const discoverTestFilesSpy = vi.fn();
+vi.mock('../../test-runner/discover.js', async (importActual) => {
+  const actual = await importActual<typeof import('../../test-runner/discover.js')>();
+  return {
+    ...actual,
+    discoverTestFiles: (...args: Parameters<typeof actual.discoverTestFiles>) => {
+      discoverTestFilesSpy(...args);
+      return actual.discoverTestFiles(...args);
+    },
+  };
+});
+
 /* -------------------------------------------------------------------------- */
 /* Fakes                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -152,8 +179,13 @@ afterAll(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-// Reset the module-level liveIntent bit so it never leaks across tests/files.
-afterEach(() => setLiveIntent(false));
+// Reset the module-level liveIntent bit so it never leaks across tests/files,
+// and clear the run-core / discovery spies' captured calls.
+afterEach(() => {
+  setLiveIntent(false);
+  runWithConnectionSpy.mockClear();
+  discoverTestFilesSpy.mockClear();
+});
 
 /* -------------------------------------------------------------------------- */
 /* Tests                                                                       */
@@ -176,6 +208,9 @@ describe('run_tests tool', () => {
     expect(files).toHaveLength(1);
     expect(String(files[0].file)).toContain('sample.phone.test.ts');
     expect(files[0].passed).toBe(1);
+    // Per-file wall-clock from the in-page RunReport is surfaced (regression
+    // guard: toRunTestsResult once dropped it).
+    expect(files[0].duration).toBe(12);
     const tests = files[0].tests as Array<Record<string, unknown>>;
     expect(tests[0].name).toBe('grp > works');
   });
@@ -257,6 +292,83 @@ describe('run_tests tool', () => {
     });
 
     expect(result.isError).toBeFalsy();
+  });
+
+  // Boundary table for the 1000–600000 clamp: in-range values are forwarded
+  // verbatim; out-of-range/invalid fall back to undefined (relay-worker default).
+  // `timeoutMs` is the 3rd arg of runWithConnection (conn, files, { timeoutMs }).
+  it.each([
+    { timeout_ms: 999, expected: undefined, why: 'below min → default' },
+    { timeout_ms: 1000, expected: 1000, why: 'min boundary → forwarded' },
+    { timeout_ms: 600_000, expected: 600_000, why: 'max boundary → forwarded' },
+    { timeout_ms: 600_001, expected: undefined, why: 'above max → default' },
+    { timeout_ms: 'nope' as unknown as number, expected: undefined, why: 'non-number → default' },
+  ])('timeout boundary: $timeout_ms ($why)', async ({ timeout_ms, expected }) => {
+    const conn = new FakeCdpConnection({ raw: cannedRunReport() });
+    const client = await makeClient({ connection: conn });
+
+    const result = await client.callTool({
+      name: 'run_tests',
+      arguments: { files: ['*.phone.test.ts'], projectRoot, timeout_ms },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(runWithConnectionSpy).toHaveBeenCalledTimes(1);
+    const opts = runWithConnectionSpy.mock.calls[0]?.[2] as { timeoutMs?: number };
+    expect(opts.timeoutMs).toBe(expected);
+  });
+
+  it('falls back to process.cwd() as the glob base when projectRoot is omitted', async () => {
+    const conn = new FakeCdpConnection({ raw: cannedRunReport() });
+    const client = await makeClient({ connection: conn });
+
+    // No projectRoot → no match in cwd (fine), but discovery must be called
+    // with process.cwd() as its base.
+    await client.callTool({
+      name: 'run_tests',
+      arguments: { files: ['*.no-such-file.phone.test.ts'] },
+    });
+
+    expect(discoverTestFilesSpy).toHaveBeenCalledTimes(1);
+    expect(discoverTestFilesSpy.mock.calls[0]?.[1]).toBe(process.cwd());
+  });
+
+  it('releases the in-flight lock after an erroring run (next run is not blocked)', async () => {
+    // First run errors per-file (no canned raw → send() rejects). The finally
+    // block must still release runTestsInFlight so a second run proceeds rather
+    // than hitting the "already in progress" guard.
+    const conn = new FakeCdpConnection({ targets: [ONE_TARGET] });
+    const client = await makeClient({ connection: conn });
+
+    const first = await client.callTool({
+      name: 'run_tests',
+      arguments: { files: ['*.phone.test.ts'], projectRoot },
+    });
+    expect(first.isError).toBeFalsy(); // run returns with the file marked failed
+
+    const second = await client.callTool({
+      name: 'run_tests',
+      arguments: { files: ['*.phone.test.ts'], projectRoot },
+    });
+    // Must NOT be the concurrency rejection — the lock was released.
+    expect(getText(second)).not.toContain('이미 다른 테스트 실행이 진행 중');
+  });
+
+  it('LIVE guard is exempt for a local-kind connection even with liveIntent armed', async () => {
+    // The guard is `conn.kind === 'relay' && getLiveIntent() && !confirm`. A
+    // local-kind connection is never blocked, so a local session with the
+    // liveIntent bit set must still run without confirm (kind-check exemption).
+    const conn = new FakeCdpConnection({ kind: 'local', raw: cannedRunReport() });
+    const client = await makeClient({ connection: conn, env: 'relay-live' }); // arms liveIntent
+
+    const result = await client.callTool({
+      name: 'run_tests',
+      arguments: { files: ['*.phone.test.ts'], projectRoot },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const data = getEnvelopeData(getText(result));
+    expect((data.totals as Record<string, unknown>).passed).toBe(1);
   });
 
   it('does not leak the bundle code or relay URL in the result', async () => {

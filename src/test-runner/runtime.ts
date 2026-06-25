@@ -12,8 +12,8 @@
  *
  * @vitest/runner and @vitest/expect are listed as dependencies so that the
  * package's type contracts are available and so the browser-compatible subsets
- * can be referenced. Full pool integration (PoolRunnerInitializer) is tracked
- * in issue #645.
+ * can be referenced. The Vitest custom pool that drives this runtime through
+ * Vitest's `PoolRunnerInitializer` lives in `pool.ts`.
  *
  * NOTE: this file is imported by type from Node-side code (rpc.ts / relay-worker.ts)
  * for the RunReport / TestResult type shapes. The runtime ITSELF is not imported
