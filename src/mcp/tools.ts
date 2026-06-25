@@ -508,6 +508,55 @@ export const DEBUG_TOOL_DEFINITIONS = [
     },
     availableIn: 'both' as ToolAvailability,
   },
+  {
+    name: 'run_tests',
+    description:
+      'Runs mini-app test files on the attached page over CDP (Runtime.evaluate). ' +
+      'Each matched file is bundled with esbuild (SDK imports redirected to the live mock/SDK), ' +
+      'injected into the attached WebView, and executed; returns per-file results plus flattened ' +
+      'totals (passed/failed/skipped/total). Requires an attached page — call list_pages first to ' +
+      'confirm one is attached. Files run SEQUENTIALLY (single-attach model: the relay/local target ' +
+      'serves one page), and one run_tests call runs at a time (a concurrent call is rejected). ' +
+      'Test verification (assert/snapshot) is delegated to the in-page Vitest runtime; this tool is ' +
+      'the transport + report. The per-file results array is the progress record — on partial failure ' +
+      'you see exactly which files passed/failed/timed-out. ' +
+      'In a relay-live session this is a state-mutating injection and is blocked unless confirm=true ' +
+      '(ignored in mock/local/relay-dev/relay-mobile). ' +
+      'debug-mode only — dev-mode (--mode=dev) has no CDP. ' +
+      'Tier C (both mock/local and relay). Use the test-runner CLI (devtools-test) for the same run outside MCP.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Glob patterns or file paths to run (e.g. ["src/**/*.phone.test.ts"]). ' +
+            'Resolved relative to projectRoot when given, else the daemon cwd. Required, non-empty.',
+        },
+        projectRoot: {
+          type: 'string',
+          description:
+            'Absolute path to the mini-app project root used as the glob base. ' +
+            "Pass this because the daemon's cwd is fixed at launch. Optional.",
+        },
+        timeout_ms: {
+          type: 'number',
+          description:
+            'Per-file evaluate timeout in ms (default 30000, range 1000–600000). ' +
+            'Out-of-range/invalid values fall back to the default.',
+        },
+        confirm: {
+          type: 'boolean',
+          description:
+            'Required (true) to run in a relay-live session — test injection mutates page state. ' +
+            'Ignored in mock/local/relay-dev/relay-mobile sessions.',
+        },
+      },
+      required: ['files'],
+    },
+    availableIn: 'both' as ToolAvailability,
+  },
 ] as const;
 
 export type DebugToolName = (typeof DEBUG_TOOL_DEFINITIONS)[number]['name'];

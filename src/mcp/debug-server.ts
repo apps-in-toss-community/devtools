@@ -46,6 +46,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watcher.js';
+// Test-runner core (#646): run_tests reuses the same orchestration the
+// `devtools-test` CLI uses. These imports are react-free (node:* + esbuild),
+// so they do not break the MCP-daemon react-free invariant.
+import { runWithConnection } from '../test-runner/cli.js';
+import { discoverTestFiles } from '../test-runner/discover.js';
+import type { RelayRunReport } from '../test-runner/relay-worker.js';
 import { ChiiAitSource } from './ait-chii-source.js';
 import type { AitSource } from './ait-source.js';
 import type { CdpConnection } from './cdp-connection.js';
@@ -465,6 +471,17 @@ export interface DebugServerDeps {
    */
   nowMs?: () => number;
 }
+
+/**
+ * Single-attach guard for `run_tests` (#646). Two concurrent runs injecting
+ * into the same single-attach page would interleave `Runtime.evaluate` and
+ * corrupt each other's `globalThis.__testBundle`. The model is "reject the
+ * second", not "queue" — a module-level flag is process-wide, which matches the
+ * single physical attached page (only one target is live at a time). The
+ * entry-time `conn` snapshot ensures a run finishes on the connection it started
+ * on even if `router.active` flips mid-run.
+ */
+let runTestsInFlight = false;
 
 /**
  * Waits for the first target matching `filterFn` to attach, using the
@@ -1495,6 +1512,82 @@ export function createDebugServer(deps: DebugServerDeps): Server {
           const callSdkAttached = conn.listTargets().length > 0;
           return envelopeResult(sdkResult, name, env, callSdkAttached);
         }
+        case 'run_tests': {
+          const rawFiles = request.params.arguments?.files;
+          if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
+            return mcpError(
+              'run_tests: files 인자가 비어 있습니다. 실행할 테스트 파일 glob을 배열로 전달하세요.',
+            );
+          }
+          const patterns = rawFiles.filter((p): p is string => typeof p === 'string' && p !== '');
+          if (patterns.length === 0) {
+            return mcpError('run_tests: files 인자에 유효한 문자열 glob이 없습니다.');
+          }
+          const rawRoot = request.params.arguments?.projectRoot;
+          const projectRoot = typeof rawRoot === 'string' ? rawRoot : process.cwd();
+          const rawTimeout = request.params.arguments?.timeout_ms;
+          const timeoutMs =
+            typeof rawTimeout === 'number' && rawTimeout >= 1000 && rawTimeout <= 600_000
+              ? rawTimeout
+              : undefined; // undefined → relay-worker default (30 000)
+
+          // LIVE guard (issue #348, race fix #354): see `evaluate`/`call_sdk` —
+          // snapshot `conn.kind` + fresh `getLiveIntent()`. Test injection runs
+          // arbitrary code via Runtime.evaluate, so it is a state-mutating action
+          // on a live target.
+          if (
+            conn.kind === 'relay' &&
+            getLiveIntent() &&
+            request.params.arguments?.confirm !== true
+          ) {
+            return liveGuardError('run_tests');
+          }
+
+          // Single-attach guard — reject a concurrent run (no queue). The flag
+          // MUST be set SYNCHRONOUSLY (no await between the check and the set),
+          // or two concurrent calls both read `false` before either suspends and
+          // both proceed — a TOCTOU race in JS's cooperative async model. So we
+          // claim the lock here and do discovery/fail-fast inside the try, with
+          // `finally` always releasing it (covers the no-match/page-missing
+          // early returns too).
+          if (runTestsInFlight) {
+            return mcpError(
+              'run_tests: 이미 다른 테스트 실행이 진행 중입니다 ' +
+                '(single-attach 모델: 페이지는 한 번에 하나의 실행만 처리). 완료 후 다시 시도하세요.',
+            );
+          }
+          runTestsInFlight = true;
+          try {
+            const files = await discoverTestFiles(patterns, projectRoot);
+            if (files.length === 0) {
+              return mcpError(
+                `run_tests: 매칭된 테스트 파일이 없습니다 (patterns: ${patterns.join(', ')}).`,
+              );
+            }
+
+            // Fail-fast: if the page was evicted between the enableDomains gate
+            // and here, surface the re-attach hint instead of bundling N files.
+            if (conn.listTargets().length === 0) {
+              return pageMissingError('run_tests');
+            }
+
+            // Progress is the per-file results array (MCP is request/response —
+            // no mid-call streaming). Log only counts, never file content/paths
+            // as secrets / relay URLs. SECRET-HANDLING: do not log bundle code,
+            // expression, or result values.
+            logInfo('run_tests.start', { fileCount: files.length });
+            const report = await runWithConnection(conn, files, { timeoutMs });
+            logInfo('run_tests.done', {
+              passed: report.totals.passed,
+              failed: report.totals.failed,
+              skipped: report.totals.skipped,
+            });
+            const runAttached = conn.listTargets().length > 0;
+            return envelopeResult(toRunTestsResult(report), name, env, runAttached);
+          } finally {
+            runTestsInFlight = false;
+          }
+        }
         default:
           return unknownTool(name);
       }
@@ -1634,6 +1727,32 @@ function jsonResult(value: unknown) {
 function envelopeResult(value: unknown, tool: string, env: McpEnvironment, attached: boolean) {
   const wrapped = wrapEnvelope(value, { tool, env, attached });
   return { content: [{ type: 'text' as const, text: JSON.stringify(wrapped, null, 2) }] };
+}
+
+/**
+ * Maps a {@link RelayRunReport} to a flat, agent-friendly object for the
+ * `run_tests` tool result. SECRET-HANDLING: a RelayRunReport carries only
+ * startedAt/duration/totals and per-file `{file, result}` — file paths are
+ * surfaced (allowed), relay wss/TOTP URLs never appear in it. No stripping
+ * needed; this only reshapes for readability.
+ */
+function toRunTestsResult(report: RelayRunReport) {
+  return {
+    startedAt: report.startedAt,
+    duration: report.duration,
+    totals: report.totals,
+    files: report.files.map((f) =>
+      'error' in f.result
+        ? { file: f.file, error: f.result.error }
+        : {
+            file: f.file,
+            passed: f.result.passed,
+            failed: f.result.failed,
+            skipped: f.result.skipped,
+            tests: f.result.tests,
+          },
+    ),
+  };
 }
 
 function unknownTool(name: string) {
