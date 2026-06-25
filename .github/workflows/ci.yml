@@ -36,6 +36,12 @@ jobs:
       # daemon bundles must never import them (see scripts/check-mcp-react-free.sh).
       - run: pnpm check:mcp-react-free
 
+      # Build-time absence invariant (#647): the in-app debug surface (Chii
+      # injection + eruda console) must DCE to 0 bytes in a release consumer
+      # build and never leak into the MCP daemon bundles. Builds the fixture in
+      # release + debug modes and greps (see scripts/check-debug-surface-absent.sh).
+      - run: pnpm check:debug-surface-absent
+
       # The dashboard/attach HTML is precompiled from scripts/dashboard/*.tsx to
       # src/mcp/dashboard.generated.ts at build time. This guard fails if a JSX
       # template was edited without regenerating the committed string module.

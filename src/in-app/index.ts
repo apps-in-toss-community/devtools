@@ -25,6 +25,7 @@
 import { evaluateDebugGate, type GateResult } from './gate.js';
 
 export { deriveTargetScriptUrl, maybeAttach, reportWebViewType } from './attach.js';
+export { mountEruda } from './eruda-overlay.js';
 export type { GateInput, GateResult, GateResultAttach, GateResultBlocked } from './gate.js';
 export { evaluateDebugGate, isPrivateAppsHost, isTrycloudflareHost } from './gate.js';
 

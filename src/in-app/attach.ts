@@ -15,6 +15,7 @@ import {
   RELAY_AUTH_REJECT_CLOSE_CODE,
   RELAY_AUTH_REJECT_REASON,
 } from '../shared/relay-auth-close.js';
+import { mountEruda } from './eruda-overlay.js';
 import { checkDebugGate, type GateResult } from './index.js';
 
 /**
@@ -397,6 +398,14 @@ export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
   (document.head ?? document.documentElement).appendChild(script);
 
   attached = true;
+
+  // Mount the eruda in-page console alongside the Chii remote transport. Same
+  // post-gate point, same debug session — Chii relays CDP to the PC frontend,
+  // eruda shows the console on the phone itself. Fire-and-forget: eruda loads
+  // lazily and fail-silent, so a slow or absent eruda never blocks the Chii
+  // attach or the keepAwake step below. See eruda-overlay.ts for the build-time
+  // absence + gate-inheritance contract.
+  void mountEruda();
 
   // keepAwake — keep phone screen on during the debug session.
   // Opt out via noKeepAwake=1 in the URL (consistent with direct window reads
