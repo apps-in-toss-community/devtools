@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.1.108
+
+### Patch Changes
+
+- d1c4328: feat(test-runner): MVP relay transport (#644)
+
+  Adds `src/test-runner/` — the first phase of running mini-app Vitest tests on
+  a real device WebView via the CDP relay.
+
+  - `bundle.ts` — esbuild bundles a user test file into a self-contained IIFE;
+    SDK imports (`@apps-in-toss/web-framework`) are intercepted by a plugin and
+    redirected to `window.__sdk` at runtime (2.x/3.x-agnostic).
+  - `runtime.ts` — lightweight browser-compatible describe/it/test/expect
+    runtime; collects results into a JSON-safe `RunReport`.
+  - `rpc.ts` — Node-side helper that injects the bundle via `Runtime.evaluate`
+    and parses the JSON envelope response.
+  - `relay-worker.ts` — orchestrates bundle→inject→run→collect sequentially
+    across multiple test files over a `CdpConnection`.
+  - `config.ts` — `definePhoneTestConfig` helper for consumer configuration.
+  - `cli.ts` — `devtools-test` bin skeleton (relay wiring in issue #645).
+
+  New package.json entries: `bin.devtools-test`, `exports["./test-runner"]`,
+  `dependencies` for `@vitest/runner`, `@vitest/expect`, and `esbuild`.
+  Full Vitest pool integration is tracked in #645; `run_tests` MCP tool in #646.
+
+- e1a1e98: feat(test-runner): Vitest 4.x custom pool integration (#645)
+
+  Builds on #644's relay transport with a full Vitest custom pool, so mini-app
+  tests run on a real device WebView through Vitest's own runner — reporters,
+  watch, UI, and snapshot all work.
+
+  - `pool.ts` — `createRelayPool()` returns a `PoolRunnerInitializer` whose
+    in-process `PoolWorker` (modelled on Vitest's `TypecheckPoolWorker`) bundles +
+    injects + collects each file over the CDP relay, then reports results through
+    `vitest.state`. Single long-lived worker (`isolate: false`) honouring the
+    relay's single-attach constraint; the connection opens lazily on first run and
+    closes on `stop`.
+  - `task-graph.ts` — synthesises a Vitest `File`/`Suite`/`Test` task graph from
+    the flat page `RunReport`, rebuilding nested suites from `>`-joined names and
+    assigning Vitest-stable ids via `@vitest/runner/utils` (`createFileTask` /
+    `calculateSuiteHash`) so reruns and reporter lookups line up. Emits the
+    `TaskResultPack`/`TaskEventPack` tuples `state.updateTasks` consumes.
+  - `config.ts` — `definePhoneVitestConfig({ connection })` produces the Vitest
+    `test` config slice (`pool`/`include`/`testTimeout`) to spread into a project's
+    config; files matching `include` route to the relay pool.
+
+  All Vitest packages aligned to 4.1.9 (vitest devDep, `@vitest/runner`,
+  `@vitest/expect`) so the custom pool matches the core worker protocol. The
+  `run_tests` MCP tool is tracked in #646; real-device reporter verification rides
+  on the comparison dog-food run.
+
+- 8c8d9ed: feat(mcp): add run_tests tool — run mini-app tests on the attached page (#646)
+
+  Completes the phone test-runner trio (#644 transport, #645 Vitest pool) with the
+  agent-facing entry point: a `run_tests` MCP tool that bundles, injects, and
+  executes test files on the attached WebView over CDP, then returns per-file
+  results plus flattened totals.
+
+  - `run_tests` tool (Tier C, `availableIn: 'both'`) — registered in
+    `debug-server.ts`, NOT in the bootstrap set, so it only appears once a page is
+    attached. Reuses the attached connection (single-attach model) rather than
+    opening a second relay connection. Args: `files` (globs/paths), `projectRoot`
+    (glob base, defaults to daemon cwd), `timeout_ms` (per-file, default 30000,
+    clamped to 1000–600000), `confirm` (required in relay-live). Dev-mode
+    (`--mode=dev`) returns a clean CDP-unavailable hand-off (added to
+    `CDP_ONLY_TOOL_NAMES`).
+  - `discoverTestFiles(patterns, cwd)` (`test-runner/discover.ts`) — shared file
+    discovery (Node built-in `fs/promises` glob, no new dep) used by both the
+    `devtools-test` CLI and the MCP tool so expansion semantics are identical.
+  - Robustness: single-attach guard (a concurrent `run_tests` is rejected, not
+    queued), fail-fast page-missing re-check before bundling, per-file timeout
+    passthrough, and per-file results as the progress record (one start/done log
+    with counts — no secrets).
+  - esbuild is now loaded via dynamic import inside `bundleTestFile` so the
+    test-runner graph no longer pulls esbuild's jsdom-incompatible startup
+    invariant into every module that imports it (and keeps it off the MCP-only
+    install path until a bundle is actually built).
+
+  Unit-tested with a fake CdpConnection through the full MCP request/response path
+  (no phone): mapping, empty/no-match/timeout/live-guard/concurrency guards, and
+  the secret-non-leak invariant. Real-device relay (real WebKit) remains manual QA.
+
+- 6092012: env 2·3·4 폰 화면 in-page 콘솔 추가 — eruda를 `maybeAttach()`의 gate 통과 직후 Chii target.js 주입과 나란히 마운트한다. 데스크톱 F12가 없는 모바일(env 2 PWA WebKit, env 3·4 토스 WebView)에서 폰 화면의 console/network/DOM/storage를 직접 본다. 디버그 코드는 소비자의 `if (__DEBUG_BUILD__)` 가드로 release 빌드에서 DCE되어 0 bytes로 사라지고(Vite/rolldown 검증), 들어간 디버그 빌드에서도 host allowlist + `debug=1` + relay + TOTP 4겹 gate를 그대로 상속한다 (#647)
+
 ## 0.1.107
 
 ### Patch Changes
