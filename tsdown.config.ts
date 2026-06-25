@@ -136,22 +136,21 @@ export default defineConfig([
   },
   {
     ...common,
-    // test-runner public API: `definePhoneTestConfig` for mini-app developers.
-    // Browser-compatible subset (no Node APIs) — the runtime.ts side is bundled
-    // into the user's test bundle by bundleTestFile, not imported from here.
-    entry: { 'test-runner/config': 'src/test-runner/config.ts' },
-    format: ['esm'],
-  },
-  {
-    ...common,
-    // test-runner Node-side helpers: bundleTestFile, rpc, relay-worker.
+    // test-runner Node-side public API + helpers. `config.ts` is the package
+    // entry (`definePhoneTestConfig`/`definePhoneVitestConfig`); it imports the
+    // Vitest custom pool, so it is Node-side (Vitest config is evaluated in
+    // Node) — NOT a browser subset. The page-side runtime.ts is bundled into the
+    // user's test bundle by bundleTestFile, never imported from here.
     // esbuild is a runtime dependency used at bundle-time (bundleTestFile spawns
     // the esbuild child process) — keep it external so it resolves from node_modules.
     platform: 'node',
     entry: {
+      'test-runner/config': 'src/test-runner/config.ts',
       'test-runner/bundle': 'src/test-runner/bundle.ts',
       'test-runner/rpc': 'src/test-runner/rpc.ts',
       'test-runner/relay-worker': 'src/test-runner/relay-worker.ts',
+      'test-runner/pool': 'src/test-runner/pool.ts',
+      'test-runner/task-graph': 'src/test-runner/task-graph.ts',
     },
     format: ['esm'],
     external: ['esbuild'],
