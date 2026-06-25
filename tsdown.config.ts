@@ -134,4 +134,37 @@ export default defineConfig([
     // src/mcp/cli.ts must not carry its own shebang or the build doubles it.
     banner: { js: '#!/usr/bin/env node' },
   },
+  {
+    ...common,
+    // test-runner public API: `definePhoneTestConfig` for mini-app developers.
+    // Browser-compatible subset (no Node APIs) — the runtime.ts side is bundled
+    // into the user's test bundle by bundleTestFile, not imported from here.
+    entry: { 'test-runner/config': 'src/test-runner/config.ts' },
+    format: ['esm'],
+  },
+  {
+    ...common,
+    // test-runner Node-side helpers: bundleTestFile, rpc, relay-worker.
+    // esbuild is a runtime dependency used at bundle-time (bundleTestFile spawns
+    // the esbuild child process) — keep it external so it resolves from node_modules.
+    platform: 'node',
+    entry: {
+      'test-runner/bundle': 'src/test-runner/bundle.ts',
+      'test-runner/rpc': 'src/test-runner/rpc.ts',
+      'test-runner/relay-worker': 'src/test-runner/relay-worker.ts',
+    },
+    format: ['esm'],
+    external: ['esbuild'],
+  },
+  {
+    ...common,
+    // `devtools-test` bin: CLI entry point for running phone-relay tests.
+    // Node-only. esbuild is external (resolved at runtime from node_modules).
+    // Shebang via banner only — source must not carry its own shebang.
+    platform: 'node',
+    entry: { 'test-runner/cli': 'src/test-runner/cli.ts' },
+    format: ['esm'],
+    external: ['esbuild'],
+    banner: { js: '#!/usr/bin/env node' },
+  },
 ]);
