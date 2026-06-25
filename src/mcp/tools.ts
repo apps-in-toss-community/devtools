@@ -521,9 +521,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'the transport + report. The per-file results array is the progress record — on partial failure ' +
       'you see exactly which files passed/failed/timed-out. ' +
       'In a relay-live session this is a state-mutating injection and is blocked unless confirm=true ' +
-      '(ignored in mock/local/relay-dev/relay-mobile). ' +
+      '(confirm is ignored in every non-live session: mock/local, relay-dev, relay-mobile). ' +
       'debug-mode only — dev-mode (--mode=dev) has no CDP. ' +
-      'Tier C (both mock/local and relay). Use the test-runner CLI (devtools-test) for the same run outside MCP.',
+      'Tier C (both mock/local and relay). The devtools-test CLI shares this run core and file ' +
+      'discovery, but its standalone relay attach is not wired yet — run via this tool for now.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -550,7 +551,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'boolean',
           description:
             'Required (true) to run in a relay-live session — test injection mutates page state. ' +
-            'Ignored in mock/local/relay-dev/relay-mobile sessions.',
+            'Ignored in every non-live session (mock/local, relay-dev, relay-mobile).',
         },
       },
       required: ['files'],

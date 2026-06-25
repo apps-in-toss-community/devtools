@@ -1746,6 +1746,11 @@ function toRunTestsResult(report: RelayRunReport) {
         ? { file: f.file, error: f.result.error }
         : {
             file: f.file,
+            // Per-file in-page run time (from the runtime's RunReport) helps
+            // an agent triage which file is slow — the top-level `duration` is
+            // the whole-run wall-clock (bundling + sequential injection), not
+            // this per-file figure.
+            duration: f.result.duration,
             passed: f.result.passed,
             failed: f.result.failed,
             skipped: f.result.skipped,

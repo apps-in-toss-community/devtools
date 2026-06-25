@@ -2,11 +2,12 @@
  * Orchestrator: runs a list of test files sequentially over a CDP relay.
  *
  * Each file goes through: bundle → inject → run → collect.
- * This is the MVP transport layer. Full Vitest pool integration (issue #645)
- * and `run_tests` MCP tool (issue #646) are NOT implemented here.
+ * This is the transport layer: it does NOT integrate with Vitest's pool or the
+ * MCP surface. The Vitest custom pool (`pool.ts`) and the `run_tests` MCP tool
+ * are separate callers that build on this orchestrator.
  *
  * Single-attach constraint: only one page is active at a time. Files run
- * sequentially; parallel execution across targets is a post-MVP concern.
+ * sequentially; parallel execution across targets is out of scope.
  *
  * The 30-second per-file timeout is inherited from `injectAndRunBundle`.
  * For suites that exceed it, split the file into smaller pieces.

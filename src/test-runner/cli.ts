@@ -1,12 +1,13 @@
 /**
- * `devtools-test` CLI — MVP skeleton.
+ * `devtools-test` CLI.
  *
- * Parses argv, prints usage, and delegates to `runTestFilesOverRelay` when
- * a live CDP connection is provided. The relay connection wiring
- * (attach → run → detach) is tracked in issue #645 / #646.
- *
- * MVP contract: `--help` works, `runWithConnection` is a testable pure
- * function, and the binary entry exists in package.json.
+ * Shares test-file discovery with the `run_tests` MCP tool (`discoverTestFiles`)
+ * and exposes `runWithConnection` — the pure run core that bundles, injects, and
+ * collects each file over a CDP connection. Today the run path that has a live
+ * connection is the `run_tests` MCP tool (it runs these files against the
+ * daemon's attached page); the CLI's own standalone relay attach (resolve CDP
+ * URL → attach → run → close) is not wired yet, so `main()` resolves the matched
+ * files and points the operator at the MCP tool.
  *
  * NOTE: no shebang in this source file — the tsdown entry's `banner` option
  * injects `#!/usr/bin/env node` into the compiled output (same pattern as
@@ -38,12 +39,10 @@ DESCRIPTION
   window.__sdk), injects the bundle into the attached WebView via
   Runtime.evaluate, and returns a RunReport.
 
-  A live CDP relay connection must be active before running tests.
-  Use \`/ait debug\` (devtools-mcp) to attach and then call this CLI from
-  the same process context.
-
-  Full Vitest pool integration and the \`run_tests\` MCP tool are tracked in
-  issues #645 and #646 respectively. This MVP provides the transport layer.
+  A live CDP relay connection must be active before running tests. Use the
+  \`run_tests\` MCP tool (via \`devtools-mcp\` / \`/ait debug\`) to run these files
+  against an attached page — the CLI's own standalone relay attach is not wired
+  yet (it currently resolves the matched files and defers to that tool).
 
 EXAMPLE
   devtools-test 'src/**/*.phone.test.ts' --timeout 60000
@@ -62,11 +61,12 @@ export interface RunWithConnectionOptions extends RelayRunOptions {
 
 /**
  * Runs `files` over `connection` and returns the aggregate report.
- * This pure function is the testable core of the CLI; it is separate from
- * `main()` so tests can call it without spawning a subprocess.
+ * This pure function is the testable core of the CLI (and is what the
+ * `run_tests` MCP tool calls against the daemon's attached connection); it is
+ * separate from `main()` so tests can call it without spawning a subprocess.
  *
- * TODO (#645): add real relay attach/detach lifecycle here (connect via
- * Chii relay URL, call enableDomains, run, then close).
+ * A standalone CLI relay attach/detach lifecycle (connect via Chii relay URL,
+ * `enableDomains`, run, then close) is not wired into `main()` yet.
  */
 export async function runWithConnection(
   connection: CdpConnection,
@@ -92,8 +92,10 @@ export async function runWithConnection(
 /**
  * CLI entry point.
  *
- * MVP: prints usage and a "relay attach required" notice. Real relay wiring
- * (resolve CDP URL, attach, run, close) is tracked in issues #645 / #646.
+ * Resolves the matched test files and prints a "relay attach required" notice:
+ * the CLI's own standalone relay attach (resolve CDP URL, attach, run, close) is
+ * not wired yet, so today these files run via the `run_tests` MCP tool against
+ * the daemon's attached page.
  */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   let parsed: ReturnType<typeof parseArgs>;
@@ -117,10 +119,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  // Discovery is shared with the `run_tests` MCP tool (#646) via
-  // `discoverTestFiles`, so both expand patterns identically. We resolve the
-  // matched files here to give the operator concrete feedback before the
-  // (still-pending) relay attach wiring.
+  // Discovery is shared with the `run_tests` MCP tool via `discoverTestFiles`,
+  // so both expand patterns identically. We resolve the matched files here to
+  // give the operator concrete feedback before deferring to the MCP run path.
   const files = await discoverTestFiles(parsed.positionals, process.cwd());
   if (files.length === 0) {
     process.stderr.write(`devtools-test: no test files matched ${parsed.positionals.join(', ')}\n`);
@@ -128,14 +129,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  // Relay attach lifecycle (resolve CDP URL, attach, close) is tracked in #645;
-  // until then the CLI cannot run on its own. The `run_tests` MCP tool (#646)
-  // already runs these files against the daemon's attached connection.
+  // The CLI's standalone relay attach (resolve CDP URL, attach, close) is not
+  // wired yet, so it cannot run on its own. The `run_tests` MCP tool already
+  // runs these files against the daemon's attached connection.
   process.stderr.write(
     `devtools-test: matched ${files.length} test file(s), but direct CLI relay attach is not yet wired.\n` +
       `  Use the devtools-mcp server (\`devtools-mcp\`) to start a debug session,\n` +
-      `  then the \`run_tests\` MCP tool to run these files against the attached page.\n` +
-      `  Direct CLI relay wiring is tracked in issue #645.\n`,
+      `  then the \`run_tests\` MCP tool to run these files against the attached page.\n`,
   );
   process.exitCode = 1;
 }
