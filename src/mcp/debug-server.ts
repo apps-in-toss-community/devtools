@@ -494,6 +494,12 @@ let runTestsInFlight = false;
  * to resolve before the relay had observed the first inbound CDP message from
  * the phone.
  *
+ * Timeout note: callers (e.g. the `build_attach_url` path) always pass an
+ * explicit `timeoutMs`, sourced from the factory's `waitForAttachTimeoutMs`
+ * (default 60 000). That value is forwarded to `waitForFirstTarget`, so it
+ * overrides that method's own 90 000 signature default — the effective
+ * wait on the tool path is 60 s, not 90 s.
+ *
  * @param connection - The CDP connection (production or fake).
  * @param filterFn   - Resolves when this predicate is satisfied.
  * @param timeoutMs  - Maximum wait time in ms.
@@ -1165,6 +1171,11 @@ export function createDebugServer(deps: DebugServerDeps): Server {
         }
       }
       try {
+        // TOTP minting differs from the env-2 (relay-mobile) branch above: there
+        // we mint `totpCode` inline (generateTotp) and pass the code to
+        // buildLauncherAttachUrl; here we pass the raw secret to buildAttachUrl,
+        // which mints the code internally before splicing it into the scheme URL.
+        // Both mint at call time so the `at=` code is always within its window.
         // SECRET-HANDLING: the secret is passed to buildAttachUrl only; it is
         // never logged or included in output other than the at= param in attachUrl.
         // Read at call time (#396) so the project-local .ait_relay secret loaded
