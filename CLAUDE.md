@@ -160,7 +160,15 @@ issue #309의 dead-lock(빈 세션 첫 `tools/list`에서 Tier B `build_attach_u
 | `@ait-co/devtools/unplugin` | 번들러 플러그인 (.vite/.webpack/.rspack/.esbuild/.rollup) |
 | `@ait-co/devtools/mcp/server` | dev-mode MCP stdio server 함수 (Node.js) |
 | `@ait-co/devtools/mcp/cli` | `devtools-mcp` bin 진입점 (debug / dev 모드, Node.js) |
-| `@ait-co/devtools/in-app` | In-app debug attach — 런타임 gate(layer B·C) + Chii target.js 주입. 소비자가 `if (__DEBUG_BUILD__)`로 import를 감싸 release 빌드에서 DCE — dogfood 빌드 전용 |
+| `@ait-co/devtools/in-app` | In-app debug attach — 런타임 gate(layer B·C) + Chii target.js 주입 + eruda 인-페이지 콘솔. 소비자가 `if (__DEBUG_BUILD__)`로 import를 감싸 release 빌드에서 DCE — dogfood 빌드 전용 |
+
+### in-app eruda 콘솔 + 빌드타임 부재 불변식 (#647)
+
+`maybeAttach()`는 gate 통과(`gateResult.attach`) 직후 Chii `target.js` `<script>` 주입과 **나란히** `mountEruda()`(`src/in-app/eruda-overlay.ts`)를 호출해 [eruda](https://github.com/liriliri/eruda) 인-페이지 콘솔을 폰 화면에 띄운다. Chii는 **원격 CDP transport**(폰→relay→PC frontend), eruda는 **폰 화면 로컬 view**라 직교한다 — eruda는 WS를 안 열고(Shadow DOM `#eruda` 격리) chii는 DOM 미마운트라 충돌 없이 공존한다. env 1(데스크톱)은 host allowlist 미통과로 자연 제외(F12 사용), env 2(`*.trycloudflare.com`)·env 3·4(`*.private-apps.tossmini.com`)만 마운트된다 — eruda용 새 host 분기 코드는 없고 `evaluateDebugGate` 결과를 그대로 탄다.
+
+- **`eruda`는 `dependencies`** (devDep/optionalDep 아님): 소비자가 `__DEBUG_BUILD__` 디버그 빌드 시 eruda를 번들에 넣으므로 resolve할 수 있어야 한다. install 그래프엔 있되 release 번들엔 0 bytes(아래) — cloudflared/qrcode-terminal과 같은 "런타임 코드 경로 필요" 예외. `import('eruda')`는 **dynamic import**라 dead branch에서 청크 자체가 emit 안 됨.
+- **빌드타임 부재 (zero bytes)**: in-app 디버그 표면(Chii 주입 + eruda)은 release 빌드에 **물리적으로 존재하지 않아야** 한다. 소비자가 `if (__DEBUG_BUILD__) { import('@ait-co/devtools/in-app')... }`로 감싸고 release가 `__DEBUG_BUILD__:false`로 define하면 in-app 그래프 전체가 DCE된다(Vite 8/rolldown 검증). 런타임 gate는 코드가 번들에 남아 추출·재주입 여지가 있지만, 빌드 부재는 표면이 0. `/in-app/auto`는 런타임 self-gate라 dormant chunk가 잔존하므로 "빌드 부재"가 필요하면 쓰지 않는다(deprecated 주석).
+- **CI 강제**: `check:debug-surface-absent`(`scripts/check-debug-surface-absent.sh`, ci.yml 배선)가 ① MCP 데몬 번들(`dist/mcp/*.js`)에 eruda 0건(브라우저 UI 미렌더), ② release 모드 fixture 빌드(minify ON — minify 끄면 `if(false){}` husk 식별자 false-positive)에 디버그 표면 0건, ③ positive control(`AIT_DEBUG_BUILD=1` 빌드엔 존재 → 토글 사망 방지)을 강제한다. `e2e/fixture/main.tsx`가 빌드 가드 패턴의 reference다.
 
 ## 실기기 미리보기 — 환경 2 (AITC Sandbox App (PWA), tunnel + launcher)
 

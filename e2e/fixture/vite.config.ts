@@ -21,6 +21,15 @@ for (const p of [mockDist, panelDist]) {
 
 export default defineConfig({
   root: __dirname,
+  // Build-time debug-surface gate (issue #647). main.tsx wraps its
+  // `import('@ait-co/devtools/in-app')` in `if (__DEBUG_BUILD__)`. A release
+  // fixture build leaves AIT_DEBUG_BUILD unset → `false` → the bundler
+  // dead-code-eliminates the in-app graph (Chii target.js + eruda = 0 bytes).
+  // A debug build sets AIT_DEBUG_BUILD=1 to keep it. This is the reference
+  // wiring that scripts/check-debug-surface-absent.sh verifies.
+  define: {
+    __DEBUG_BUILD__: JSON.stringify(process.env.AIT_DEBUG_BUILD === '1'),
+  },
   resolve: {
     alias: {
       // Bypass rolldown resolveId limitation: alias directly to built mock file.

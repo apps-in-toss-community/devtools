@@ -10,6 +10,23 @@
  * imported chunk stays dormant and `window.__sdk` / `window.__sdkCall` are
  * never installed on a normal production load.
  *
+ * DEPRECATED for builds that require debug code to be PHYSICALLY ABSENT from
+ * the release bundle. This entry is a RUNTIME self-gate, not a build-time one:
+ * the imported chunk (Chii target.js injection, the SDK bridge, and the eruda
+ * console it pulls in via `maybeAttach()`) stays in the production bundle as a
+ * dormant chunk and is only kept asleep at runtime. If your threat model needs
+ * "zero bytes of debug surface in release" (no dormant chunk to extract or
+ * re-enable), do NOT use this entry. Instead guard the call site yourself:
+ *
+ *   if (__DEBUG_BUILD__) {
+ *     import('@ait-co/devtools/in-app').then((m) => m.maybeAttach());
+ *   }
+ *
+ * with `define: { __DEBUG_BUILD__: 'false' }` in your release build — the
+ * bundler then dead-code-eliminates the whole `@ait-co/devtools/in-app` graph
+ * (verified on Vite 8/rolldown). This entry stays for the convenience case
+ * where a dormant chunk gated at runtime is acceptable.
+ *
  * When the gate passes it:
  *  1. Calls `maybeAttach()` — runs the full Layer B/C gate (host allowlist,
  *     opt-in params, relay URL, TOTP) and injects the Chii `target.js` script.
