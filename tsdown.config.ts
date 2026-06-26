@@ -129,7 +129,7 @@ export default defineConfig([
     // Keep heavy/native Node deps external so they resolve from node_modules at
     // runtime rather than being bundled (chii ships CJS + Koa; cloudflared spawns
     // a downloaded binary).
-    external: ['chii', 'cloudflared', 'ws'],
+    deps: { neverBundle: ['chii', 'cloudflared', 'ws'] },
     // Shebang via banner only — see the mcp/server entry's note. The source
     // src/mcp/cli.ts must not carry its own shebang or the build doubles it.
     banner: { js: '#!/usr/bin/env node' },
@@ -153,7 +153,7 @@ export default defineConfig([
       'test-runner/task-graph': 'src/test-runner/task-graph.ts',
     },
     format: ['esm'],
-    external: ['esbuild'],
+    deps: { neverBundle: ['esbuild'] },
   },
   {
     ...common,
@@ -163,7 +163,7 @@ export default defineConfig([
     platform: 'node',
     entry: { 'test-runner/cli': 'src/test-runner/cli.ts' },
     format: ['esm'],
-    external: ['esbuild'],
+    deps: { neverBundle: ['esbuild'] },
     banner: { js: '#!/usr/bin/env node' },
   },
 ]);

@@ -2,7 +2,7 @@
  * 타입 호환성 검증 파일 — 2.x stable 라인 (web-framework-2x alias)
  *
  * `__typecheck.ts`(3.0-beta 라인)와 같은 본체를, devDep alias
- * `@apps-in-toss/web-framework-2x`(= `npm:@apps-in-toss/web-framework@2.8.0`)
+ * `@apps-in-toss/web-framework-2x`(= `npm:@apps-in-toss/web-framework@2.9.3`)
  * 대상으로 한 번 더 컴파일한다 — mock이 2.x stable·3.0-beta 두 라인 모두와
  * 호환됨을 CI에서 증명한다(`tsconfig.2x.json`이 이 파일만 include).
  *
