@@ -79,6 +79,14 @@ describe('bundleTestFile', () => {
     expect(result.code).toContain('__testBundle');
   });
 
+  it('exports runTestModule and __userFactory on the IIFE global', async () => {
+    // The bundle must expose both symbols so that rpc.ts can call
+    // runTestModule(__userFactory) to install globals before running tests.
+    const result = await bundleTestFile(fixtureFile, { globalName: '__testBundle' });
+    expect(result.code).toContain('runTestModule');
+    expect(result.code).toContain('__userFactory');
+  });
+
   it('contains the fixture function token', async () => {
     const result = await bundleTestFile(fixtureFile);
     // The `hello` function body should survive bundling

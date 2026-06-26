@@ -36,13 +36,14 @@ export function buildRunTestsExpression(bundleCode: string): string {
     `  try { ${bundleCode} } catch(e) {` +
     `    return JSON.stringify({ok:false,error:'bundle-eval: ' + String(e && e.message || e)});` +
     `  }` +
-    // Step 2: check that the expected export is present
-    `  if (typeof globalThis.__testBundle !== 'object' || typeof globalThis.__testBundle.runTestModule !== 'function') {` +
-    `    return JSON.stringify({ok:false,error:'bundle-missing-export: __testBundle.runTestModule is not a function'});` +
+    // Step 2: check that the expected exports are present
+    `  if (typeof globalThis.__testBundle !== 'object' || typeof globalThis.__testBundle.runTestModule !== 'function' || typeof globalThis.__testBundle.__userFactory !== 'function') {` +
+    `    return JSON.stringify({ok:false,error:'bundle-missing-export: __testBundle.runTestModule or __userFactory is not a function'});` +
     `  }` +
-    // Step 3: run tests
+    // Step 3: run tests — pass the factory so runTestModule installs globals
+    // first, then invokes the factory to register describe/it/test blocks.
     `  try {` +
-    `    const report = await globalThis.__testBundle.runTestModule();` +
+    `    const report = await globalThis.__testBundle.runTestModule(globalThis.__testBundle.__userFactory);` +
     `    return JSON.stringify({ok:true,value:report});` +
     `  } catch(e) {` +
     `    return JSON.stringify({ok:false,error:'test-run: ' + String(e && e.message || e)});` +

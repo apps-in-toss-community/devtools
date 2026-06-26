@@ -2,16 +2,61 @@
  * esbuild-based bundler for user test files.
  *
  * Bundles a single test file into a self-contained IIFE string that can be
- * injected into a WebView via `Runtime.evaluate`. The user's SDK imports
- * (`@apps-in-toss/web-framework` and sub-paths) are intercepted via an
- * esbuild plugin that redirects them to `window.__sdk`, which the in-app
- * debug gate (`src/in-app/auto.ts`) installs as a namespace mirror of the
- * SDK exports (works for both 2.x and 3.x SDK).
+ * injected into a WebView via `Runtime.evaluate`. The bundle includes the
+ * test runtime (`runtime.ts`), which provides `describe/it/test/expect` and
+ * the `runTestModule(factory)` entry point.
+ *
+ * ## How the wiring works
+ *
+ * The bundle exposes two exports on `globalThis.__testBundle`:
+ *   - `runTestModule` — the runtime's entry function.
+ *   - `__userFactory`  — an async function whose body is the user's top-level
+ *     test registration code (describe/it/test calls).
+ *
+ * The Node-side RPC (`rpc.ts`) calls:
+ *   `globalThis.__testBundle.runTestModule(globalThis.__testBundle.__userFactory)`
+ *
+ * `runTestModule` then installs `describe/it/test/expect` as globals, invokes
+ * the factory (which registers all tests), runs them, and returns a `RunReport`.
+ *
+ * ## Why a factory wrapper is needed
+ *
+ * Naively adding the runtime to `entryPoints` and bundling the user file would
+ * fail for two reasons:
+ *   1. `describe/it/test/expect` from the runtime are module-local in the IIFE
+ *      scope. The user's top-level `describe(...)` calls expect them as globals —
+ *      they are not globals until `runTestModule` installs them.
+ *   2. Even with globals pre-installed, the user file runs at IIFE-evaluation
+ *      time, before the RPC layer calls `runTestModule` to reset state and start
+ *      the test clock.
+ *
+ * The factory approach solves both: the user's registration code is deferred
+ * into a function that `runTestModule` calls AFTER installing the globals.
+ *
+ * ## Factory extraction algorithm
+ *
+ * The `userFactoryPlugin` reads the user file and splits lines into:
+ *   - **top-level**: `import …` and re-export lines — kept at module scope
+ *     (the only valid position for static `import` in ESM).
+ *   - **body**: all other statements — moved into the body of the exported
+ *     `__userFactory` async function.
+ *
+ * esbuild processes the re-generated module, following each static import
+ * through the normal dependency graph (including the SDK-redirect plugin).
+ *
+ * ## SDK redirect
+ *
+ * Imports of `@apps-in-toss/web-framework` (and sub-paths) are intercepted via
+ * the `sdkRedirectPlugin` and replaced with a virtual `window.__sdk` proxy that
+ * `src/in-app/auto.ts` installs at runtime. This works for both 2.x and 3.x SDK.
  *
  * SECRET-HANDLING: the returned bundle code is caller-managed; never log it.
  */
 
+import { accessSync } from 'node:fs';
+import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 // esbuild is imported for TYPES only at module scope; the runtime module is
 // loaded lazily inside `bundleTestFile` via dynamic import. esbuild runs a
 // startup invariant check (`TextEncoder().encode('') instanceof Uint8Array`)
@@ -32,7 +77,7 @@ export interface BundleOptions {
   extraExternals?: string[];
   /**
    * Global name for the IIFE output object. Defaults to `__testBundle`.
-   * The runtime entry uses this to call `__testBundle.runTestModule()`.
+   * The runtime entry uses this to call `__testBundle.runTestModule(__userFactory)`.
    */
   globalName?: string;
 }
@@ -102,10 +147,128 @@ module.exports = __proxy;
 }
 
 /**
+ * esbuild plugin that transforms the user test file into a module that exports
+ * an async `__userFactory` function. The factory defers the user's top-level
+ * test registration code (describe/it/test calls) so it only runs when
+ * `runTestModule(__userFactory)` explicitly invokes it — AFTER the runtime has
+ * installed describe/it/test/expect as globals.
+ *
+ * Algorithm:
+ *   - Lines matching import declarations or re-export statements are kept at
+ *     module top-level (the only valid ESM position for static `import`).
+ *   - All other lines (describe/it/test calls, local declarations, etc.) are
+ *     moved into the body of the exported async factory function.
+ *
+ * This preserves SDK import resolution (the sdk-redirect plugin processes
+ * top-level imports normally) while deferring test registration to the factory.
+ */
+function userFactoryPlugin(absPath: string): esbuild.Plugin {
+  const NAMESPACE = 'user-test-factory';
+  return {
+    name: 'user-test-factory',
+    setup(build) {
+      // Resolve the virtual "user-test-factory" specifier to our namespace.
+      build.onResolve({ filter: /^user-test-factory$/ }, () => ({
+        path: absPath,
+        namespace: NAMESPACE,
+      }));
+
+      // Load the user file, split imports from body, wrap body in the factory.
+      build.onLoad({ filter: /.*/, namespace: NAMESPACE }, async (args) => {
+        const source = await fs.readFile(args.path, 'utf8');
+        const lines = source.split('\n');
+
+        const topLevelLines: string[] = [];
+        const bodyLines: string[] = [];
+
+        // Matches `export` value declarations that cannot appear inside a
+        // function body. We strip the `export` keyword so they become plain
+        // declarations inside the factory.
+        const EXPORT_DECLARATION_RE =
+          /^(export\s+)(default\s+|async\s+function\s+|function\s+|class\s+|const\s+|let\s+|var\s+)/;
+
+        for (const line of lines) {
+          const trimmed = line.trimStart();
+          const indent = line.slice(0, line.length - trimmed.length);
+
+          // Static import declarations must stay at module top level
+          // (the ESM spec forbids `import` inside a function body).
+          if (
+            trimmed.startsWith('import ') ||
+            trimmed.startsWith('import{') ||
+            trimmed.startsWith("import'") ||
+            trimmed.startsWith('import"')
+          ) {
+            topLevelLines.push(line);
+          } else if (trimmed.startsWith('export ')) {
+            // Determine whether this is a re-export (stays top-level) or a value
+            // declaration (goes into the factory, export keyword stripped).
+            const m = trimmed.match(EXPORT_DECLARATION_RE);
+            if (m) {
+              // Value declaration — strip `export ` and move into factory body.
+              // e.g. `export function hello()` → `function hello()`
+              //       `export const x = 1`     → `const x = 1`
+              bodyLines.push(indent + trimmed.slice('export '.length));
+            } else {
+              // Re-export or `export type { … }` — stays at top level.
+              topLevelLines.push(line);
+            }
+          } else {
+            bodyLines.push(line);
+          }
+        }
+
+        const factoryContent = [
+          ...topLevelLines,
+          '',
+          '// biome-ignore lint: generated factory wrapper',
+          'export default async function __userFactory(): Promise<void> {',
+          ...bodyLines.map((l) => `  ${l}`),
+          '}',
+        ].join('\n');
+
+        return {
+          contents: factoryContent,
+          loader: 'ts',
+          resolveDir: path.dirname(absPath),
+        };
+      });
+    },
+  };
+}
+
+/**
+ * Returns the absolute path to the co-located runtime module.
+ *
+ * In the source tree (running via tsx / ts-node) the file is `runtime.ts`.
+ * After `tsdown` compiles to `dist/test-runner/`, it becomes `runtime.js`.
+ * We try both extensions to support both environments.
+ */
+function getRuntimePath(): string {
+  const dir = path.dirname(fileURLToPath(import.meta.url));
+  for (const ext of ['.ts', '.js']) {
+    const candidate = path.join(dir, `runtime${ext}`);
+    try {
+      accessSync(candidate);
+      return candidate;
+    } catch {
+      // try next extension
+    }
+  }
+  // Let esbuild produce a "file not found" error with a clear path.
+  return path.join(dir, 'runtime.js');
+}
+
+/**
  * Bundles `absPath` into a single IIFE string suitable for `Runtime.evaluate`.
  *
- * The IIFE installs `window.__testBundle` (or the custom `globalName`) with
- * `runTestModule` as the callable entry point.
+ * The IIFE installs `window.__testBundle` (or the custom `globalName`) with:
+ *   - `runTestModule` — the runtime entry (from `runtime.ts`).
+ *   - `__userFactory` — an async function wrapping the user's test registration
+ *     code so it runs AFTER `runTestModule` installs the globals.
+ *
+ * Callers (rpc.ts) invoke:
+ *   `globalThis.__testBundle.runTestModule(globalThis.__testBundle.__userFactory)`
  *
  * @param absPath - Absolute path to the user test file.
  * @param opts    - Optional bundling overrides.
@@ -116,21 +279,46 @@ export async function bundleTestFile(absPath: string, opts?: BundleOptions): Pro
 
   // Lazy load esbuild at call time (see the module-scope import note).
   const esbuild = await import('esbuild');
+  const runtimePath = getRuntimePath();
+
+  // Stdin wrapper: import the runtime and the user factory, re-export both.
+  // esbuild follows the static imports to include runtime.ts and the user file
+  // (via the userFactoryPlugin) in the single IIFE output.
+  const wrapperContent = [
+    `import { runTestModule } from ${JSON.stringify(runtimePath)};`,
+    `import __userFactory from "user-test-factory";`,
+    `export { runTestModule, __userFactory };`,
+  ].join('\n');
 
   const result = await esbuild.build({
-    entryPoints: [absPath],
+    stdin: {
+      contents: wrapperContent,
+      loader: 'ts',
+      // resolveDir is used for relative imports from the wrapper. Since the
+      // wrapper only imports absolute paths (runtimePath) and the virtual
+      // "user-test-factory" specifier (resolved by plugin), the directory
+      // doesn't matter — but we still provide a sensible default.
+      resolveDir: path.dirname(absPath),
+    },
     bundle: true,
     format: 'iife',
     globalName,
     platform: 'browser',
     target: 'es2022',
     write: false,
-    plugins: [sdkRedirectPlugin()],
-    // Extra externals are left as global references (caller's responsibility
-    // to ensure they exist in the WebView context).
+    plugins: [userFactoryPlugin(absPath), sdkRedirectPlugin()],
     external: extraExternals,
-    // Keep bundle self-contained; no dynamic require/import at runtime.
     treeShaking: true,
+    // Ensure the IIFE result is always reachable via globalThis regardless of
+    // the evaluation context.  esbuild's `globalName` emits:
+    //   var __testBundle = (() => { ... })();
+    // When `Runtime.evaluate` runs this bundle code inside an outer wrapper
+    // (rpc.ts's async IIFE), `var` creates a local variable — NOT a global
+    // property — so `globalThis.__testBundle` stays `undefined`.  The footer
+    // explicitly assigns the local variable to `globalThis` to close that gap.
+    footer: {
+      js: `globalThis[${JSON.stringify(globalName)}] = ${globalName};`,
+    },
   });
 
   const warnings = result.warnings.map(
