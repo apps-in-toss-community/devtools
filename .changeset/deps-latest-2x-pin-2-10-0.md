@@ -21,4 +21,6 @@
 
 `tsdown`은 0.21.7을 유지한다 — 0.22.3은 rolldown-plugin-dts 0.26으로 올라가면서 트랜지티브 CJS .d.ts(postcss via web-framework) 처리를 warning에서 error로 격상시켜 빌드가 실패한다.
 
-런타임 동작 변화 없음. 모든 검증 게이트(build·typecheck·test·lint·check:mcp-react-free·check:debug-surface-absent·check:dashboard-html-fresh) 통과.
+**`haptic.ts` e2e 회귀 수정 (이번 deps bump로 발생)**: `@ait-co/polyfill/auto`와 함께 사용할 때 `generateHapticFeedback`이 브라우저를 hang시키는 무한 재귀를 수정한다. polyfill이 `navigator.vibrate`를 shim으로 교체하는데 그 shim이 내부적으로 mock의 `generateHapticFeedback`을 호출하고, mock은 다시 `navigator.vibrate`(= shim)를 호출해 무한 async 재귀가 발생했다. Vite 8의 번들 분할 방식이 deps bump 이후 바뀌면서 dynamic import가 즉시 resolve되어 재귀가 발현됐다. 수정: mock이 `Symbol.for('@ait-co/polyfill/vibrate.original')`에 저장된 원본 vibrate를 우선 사용해 재귀를 끊는다.
+
+런타임 동작 변화 없음. 모든 검증 게이트(build·typecheck·test·lint·check:mcp-react-free·check:debug-surface-absent·check:dashboard-html-fresh·test:e2e) 통과.
