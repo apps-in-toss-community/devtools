@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.109
+
+### Patch Changes
+
+- 9decf3d: fix(test-runner): bundle.ts에 runtime.ts 포함 — describe is not defined 수정 (#656)
+
+  `bundleTestFile`이 사용자 테스트 파일만 번들링하고 `runtime.ts`를 포함하지 않아 WebView에서 `describe is not defined` 오류가 발생하는 버그를 수정한다.
+
+  - `userFactoryPlugin` 추가: 사용자의 최상위 테스트 등록 코드(`describe/it/test` 호출)를 `__userFactory` async 함수로 래핑해 `runTestModule`이 글로벌을 설치한 뒤 실행되도록 함.
+  - esbuild `stdin` 래퍼로 runtime.ts와 사용자 팩토리를 단일 IIFE에 함께 번들링.
+  - `footer` 옵션으로 `globalThis[globalName]` 명시 할당 — rpc.ts의 async IIFE 래퍼 안에서도 globalThis 접근 가능.
+  - `rpc.ts`: `runTestModule(globalThis.__testBundle.__userFactory)` 호출로 팩토리 전달.
+  - `e2e/run-tests-integration.test.ts`: 실제 Chromium + 실제 LocalCdpConnection으로 전체 파이프라인을 검증하는 회귀 방지 테스트 추가 (mock 없음).
+
+- d19d3b3: run_tests: add per-file `duration` to results and correct tool/CLI docs
+
+  The `run_tests` result now carries a per-file `duration` (the in-page run
+  time) alongside each file's pass/fail/skip counts, so an agent can triage
+  which file is slow without conflating it with the top-level whole-run
+  wall-clock.
+
+  Documentation accuracy pass: the tool description and the `devtools-test`
+  CLI no longer claim the CLI can run the same suite standalone (its relay
+  attach is not wired yet — run via the MCP tool for now), the `confirm`
+  field is described as ignored in every non-live session, and stale
+  issue-tracker references in the test-runner internals were removed.
+
 ## 0.1.108
 
 ### Patch Changes
