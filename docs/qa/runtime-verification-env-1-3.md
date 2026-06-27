@@ -46,7 +46,6 @@ start_debug({mode: 'local-browser'})
 - [ ] **`start_debug({mode: 'local-browser'})` 응답**
   - `mode: "local-browser"`
   - `kind: "local"`
-  - `liveGuardActive: false`
   - `nextStep`에 "list_pages로 로컬 Chromium 페이지 attach를 확인하세요" 포함
 
 - [ ] **`list_pages` 응답**
@@ -54,7 +53,7 @@ start_debug({mode: 'local-browser'})
   - `tunnel.up: false` — local-target에서 tunnel이 없는 것이 **정상** (restart 권장 아님)
 
 - [ ] **`start_debug({mode: 'relay-staging'})`로 swap (같은 MCP 세션)** — `relay-staging`은 입력 mode; 출력 env.kind는 `"relay-dev"` 유지
-  - 응답: `kind: "relay"`, `liveGuardActive: false`
+  - 응답: `kind: "relay"`
   - 재핸드셰이크·재시작 없음 — 같은 MCP stdio 세션 유지
 
 - [ ] **`get_debug_status` — relay-staging(env.kind=relay-dev) 상태 확인**
@@ -62,17 +61,15 @@ start_debug({mode: 'local-browser'})
   {
     "environment": {
       "kind": "relay-dev",
-      "env": "relay",
-      "liveGuardActive": false
+      "env": "relay"
     }
   }
   ```
-  - `kind: "relay-dev"` (출력 env.kind 불변), `liveGuardActive: false`
+  - `kind: "relay-dev"` (출력 env.kind 불변)
   - `tunnel.up: false` 도 가능 — relay lazy-boot됐지만 `build_attach_url` 호출 전에는 tunnel 미부팅 상태 정상
 
 - [ ] **다시 local-browser로 전환: `start_debug({mode: 'local-browser'})`**
-  - `kind: "local"`, `liveGuardActive: false`
-  - `liveGuardActive: false` 유지 확인
+  - `kind: "local"` 확인
 
 **PASS 판정**: 모든 체크 통과, 재시작 없이 local-browser↔relay 전환이 한 세션에서 완료됨.
 
@@ -115,7 +112,6 @@ start_debug({mode: 'relay-staging'})
 {
   "mode": "relay-staging",
   "kind": "relay",
-  "liveGuardActive": false,
   "nextStep": "build_attach_url로 attach QR을 생성하세요 (relay 세션)."
 }
 ```

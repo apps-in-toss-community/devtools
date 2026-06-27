@@ -75,14 +75,13 @@ npx @ait-co/devtools devtools-mcp --force
 {
   "kind": "relay-dev",
   "env": "relay",
-  "reason": "derived:kind=relay,liveIntent=false",
-  "liveGuardActive": false
+  "reason": "derived:kind=relay"
 }
 ```
 
 - `kind`: 두 값(`mock` | `relay-dev`).
 - `env`: backward-compat 두 값(`mock` | `relay`). 기존 코드가 이 필드를 읽더라도 동작.
-- `liveGuardActive`: relay-dev에서는 `false` — side-effect 도구(`call_sdk`, `evaluate`) 자유롭게 호출 가능.
+- relay-dev에서는 positive-allowlist kill-switch(#665)가 side-effect 도구(`call_sdk`, `evaluate`)를 허용한다.
 
 
 ## 환경 3 한계
