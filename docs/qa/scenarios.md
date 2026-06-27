@@ -1,8 +1,8 @@
-# 4 시나리오 수동 QA 체크리스트
+# 3 시나리오 수동 QA 체크리스트
 
-M1 acceptance 기준: 환경 1(로컬 브라우저), 환경 3(intoss relay dev), 환경 4(live relay)에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 MCP 도구 호출이 동일 JSON envelope(schema 평행성)로 응답해야 한다. 환경 2(AITC Sandbox PWA)는 MCP relay 대상이 아니므로 별도 acceptance 기준을 따른다 — cloudflared 터널 기동 + 실기기 Safari/WebKit에서 `env(safe-area-inset-*)` 실값 관측.
+M1 acceptance 기준: 환경 1(로컬 브라우저), 환경 3(intoss relay dev)에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 MCP 도구 호출이 동일 JSON envelope(schema 평행성)로 응답해야 한다. 환경 2(AITC Sandbox PWA)는 MCP relay 대상이 아니므로 별도 acceptance 기준을 따른다 — cloudflared 터널 기동 + 실기기 Safari/WebKit에서 `env(safe-area-inset-*)` 실값 관측.
 
-이 문서는 각 환경 진입 절차, 검증 명령, 예상 응답, 실패 처리를 체크리스트로 정리한다. 각 시나리오의 상세 절차는 `docs/scenarios/env-{1,2,3,4}.md`를 함께 참조한다.
+이 문서는 각 환경 진입 절차, 검증 명령, 예상 응답, 실패 처리를 체크리스트로 정리한다. 각 시나리오의 상세 절차는 `docs/scenarios/env-{1,2,3}.md`를 함께 참조한다.
 
 ---
 
@@ -309,96 +309,7 @@ ait deploy --scheme-only
 
 ---
 
-## 시나리오 4 — 배포된 앱 live relay debug (환경 4)
-
-상세 절차: [`docs/scenarios/env-4.md`](../scenarios/env-4.md)
-
-### 진입 절차
-
-```bash
-# 1. devtools MCP 실행 (debug 모드)
-npx -y @ait-co/devtools devtools-mcp
-
-# 2. relay-live(env 4)로 진입 — confirm:true 필수 (1차 LIVE gate)
-# start_debug({mode: 'relay-live', confirm: true})
-# confirm 없이 호출하면 거부됨
-
-# 3. 검수 통과 + OPENED 상태의 앱 필요 (miniAppId: 31146)
-# aitcc app status 31146 으로 OPENED 확인
-
-# 3. live bundle scheme URL 획득
-ait deploy --scheme-only
-# → intoss-private://aitc-sdk-example?_deploymentId=<live-uuid>
-
-# 4. build_attach_url로 deep-link 생성 후 QR 스캔
-```
-
-### 검증 명령
-
-```
-1. build_attach_url(scheme_url, wait_for_attach=true)
-2. list_pages
-3. measure_safe_area
-4. call_sdk("getOperationalEnvironment", [], confirm: true)
-```
-
-`call_sdk`에 `confirm: true` 필수 — LIVE guard가 없으면 side-effect 호출을 거부한다.
-
-### 예상 응답
-
-#### `list_pages`
-
-```json
-{
-  "pages": [{ "url": "intoss-private://aitc-sdk-example?_deploymentId=<live-uuid>", "lastSeenAt": "<iso8601>" }],
-  "tunnel": { "up": true },
-  "singleAttachModel": true,
-  "crashDetectedAt": null
-}
-```
-
-#### `measure_safe_area`
-
-```json
-{
-  "source": "relay-live",
-  "sdkInsetsSource": "window.__sdk",
-  "sdkInsets": { "top": 44, "bottom": 34, "left": 0, "right": 0 },
-  "userAgent": "<Toss WebView UA>"
-}
-```
-
-#### `call_sdk("getOperationalEnvironment", [], confirm: true)`
-
-```json
-{ "ok": true, "value": "toss" }
-```
-
-- `ok`: `true`
-- `value`: scalar string (`'toss' | 'sandbox'` — 실기기 검증 후 확정 필요)
-- 참고: `value`는 scalar이며 `{environment, sdkVersion}` 객체가 아니다
-
-### 체크리스트
-
-- [ ] `list_pages` — live `_deploymentId` 포함, `tunnel.up: true`, `crashDetectedAt: null`
-- [ ] `measure_safe_area` — `source: "relay-live"`, `sdkInsetsSource: "window.__sdk"`
-- [ ] `call_sdk` — `ok: true`, `value` scalar string 존재 (`confirm: true`로 호출)
-- [ ] 3종 응답 모두 JSON envelope 완전
-- [ ] read-only 모드 준수 — side-effect 있는 SDK 호출(navigate, IAP 등)은 `confirm: true` 후 호출
-
-### 실패 처리
-
-| 증상 | 원인 | 처리 |
-|---|---|---|
-| `call_sdk` LIVE guard 거부 | `confirm: true` 누락 | `call_sdk("getOperationalEnvironment", [], confirm: true)`로 재호출 |
-| `call_sdk` `value: "sandbox"` 또는 dev 토큰 | dogfood(dev) bundle로 진입 | live bundle `_deploymentId` 확인 |
-| `list_pages` `crashDetectedAt` non-null | 앱 크래시 | crash report 분리 후 환경 3에서 디버깅 |
-| 앱이 OPENED 상태 아님 | 검수 미완료 | `aitcc app status 31146` 확인 |
-| `measure_safe_area` `source: "relay-dev"` | `start_debug(relay-live)` 미호출 | `start_debug({mode: 'relay-live', confirm: true})`로 진입 후 재시도 |
-
----
-
-## 4 시나리오 acceptance 매트릭스
+## 3 시나리오 acceptance 매트릭스
 
 아래 표는 한 번의 QA 세션에서 모든 체크리스트를 통과하면 "M1 평행성 검증 완료"로 마킹할 수 있는 기준이다.
 
@@ -408,7 +319,6 @@ ait deploy --scheme-only
 | 1b (로컬 브라우저, `--target=local`) | `pages[]`, `tunnel.up: false` | `source: "mock"` | non-dogfood fixture: `ok: false` 예상 / dogfood fixture: `ok: true`, `value` scalar | — |
 | 2 (AITC Sandbox PWA) | cloudflared 터널 URL + QR 출력 | `env(safe-area-inset-*)` 실값이 양수 (실기기 WebKit 검증) | `getOperationalEnvironment()` mock 응답 반환 (`'toss' \| 'sandbox'`) | — |
 | 3 (intoss dev relay) | `pages[]`, `tunnel.up: true`, intoss-private URL | `source: "relay-dev"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `value` scalar string | — |
-| 4 (live relay) | `pages[]`, `tunnel.up: true`, live deploymentId | `source: "relay-live"`, `sdkInsetsSource: "window.__sdk"` | `ok: true`, `value` scalar string (`confirm: true`로 호출) | — |
 
 통과 후 이 표의 "통과 일자"를 채우고, [#291](https://github.com/apps-in-toss-community/devtools/issues/291)의 체크리스트 항목을 닫는다.
 

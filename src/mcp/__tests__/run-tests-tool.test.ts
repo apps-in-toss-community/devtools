@@ -27,7 +27,7 @@ import type {
   CdpTarget,
 } from '../cdp-connection.js';
 import { createDebugServer } from '../debug-server.js';
-import { type McpEnvironment, setLiveIntent } from '../environment.js';
+import type { McpEnvironment } from '../environment.js';
 import type { TunnelStatus } from '../tools.js';
 
 // Mock bundleTestFile so esbuild is not needed (same as test-runner-relay-worker).
@@ -135,9 +135,7 @@ async function makeClient(opts: {
   connection: CdpConnection;
   env?: McpEnvironment;
 }): Promise<Client> {
-  // The LIVE guard reads the module-level liveIntent bit (race fix #354), not
-  // the injected env — arm it to match the env under test. Reset in afterEach.
-  setLiveIntent((opts.env ?? 'relay-dev') === 'relay-live');
+  // liveIntent / LIVE guard removed (#665). env is only used for tier filtering.
   const server = createDebugServer({
     connection: opts.connection,
     aitSource: new FakeAitSource(),
@@ -179,10 +177,9 @@ afterAll(async () => {
   await rm(projectRoot, { recursive: true, force: true });
 });
 
-// Reset the module-level liveIntent bit so it never leaks across tests/files,
-// and clear the run-core / discovery spies' captured calls.
+// Clear the run-core / discovery spies' captured calls.
+// liveIntent reset removed (#665 — bit no longer exists).
 afterEach(() => {
-  setLiveIntent(false);
   runWithConnectionSpy.mockClear();
   discoverTestFilesSpy.mockClear();
 });
@@ -255,32 +252,8 @@ describe('run_tests tool', () => {
     expect(getText(result).length).toBeGreaterThan(0);
   });
 
-  it('blocks on relay-live without confirm (LIVE guard)', async () => {
-    const conn = new FakeCdpConnection({ raw: cannedRunReport() });
-    const client = await makeClient({ connection: conn, env: 'relay-live' });
-
-    const result = await client.callTool({
-      name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
-    });
-
-    expect(result.isError).toBe(true);
-    expect(getText(result)).toContain('LIVE relay guard');
-  });
-
-  it('runs on relay-live when confirm: true', async () => {
-    const conn = new FakeCdpConnection({ raw: cannedRunReport() });
-    const client = await makeClient({ connection: conn, env: 'relay-live' });
-
-    const result = await client.callTool({
-      name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot, confirm: true },
-    });
-
-    expect(result.isError).toBeFalsy();
-    const data = getEnvelopeData(getText(result));
-    expect((data.totals as Record<string, unknown>).passed).toBe(1);
-  });
+  // relay-live LIVE guard tests removed (#665) — relay-live env is gone.
+  // Host allowlist kill-switch tests are in in-app-gate.test.ts.
 
   it('clamps an out-of-range timeout to the default (no error)', async () => {
     const conn = new FakeCdpConnection({ raw: cannedRunReport() });
@@ -352,23 +325,6 @@ describe('run_tests tool', () => {
     });
     // Must NOT be the concurrency rejection — the lock was released.
     expect(getText(second)).not.toContain('이미 다른 테스트 실행이 진행 중');
-  });
-
-  it('LIVE guard is exempt for a local-kind connection even with liveIntent armed', async () => {
-    // The guard is `conn.kind === 'relay' && getLiveIntent() && !confirm`. A
-    // local-kind connection is never blocked, so a local session with the
-    // liveIntent bit set must still run without confirm (kind-check exemption).
-    const conn = new FakeCdpConnection({ kind: 'local', raw: cannedRunReport() });
-    const client = await makeClient({ connection: conn, env: 'relay-live' }); // arms liveIntent
-
-    const result = await client.callTool({
-      name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
-    });
-
-    expect(result.isError).toBeFalsy();
-    const data = getEnvelopeData(getText(result));
-    expect((data.totals as Record<string, unknown>).passed).toBe(1);
   });
 
   it('does not leak the bundle code or relay URL in the result', async () => {

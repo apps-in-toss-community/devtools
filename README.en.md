@@ -67,24 +67,9 @@ No HMR (Toss WebView cold-load only). Details: [`docs/scenarios/env-3.md`](./doc
 
 ---
 
-**Environment 4 — Live deployed app** (passed review, HMR off, read-only debug)
-
-Attach a relay to a live OPENED app to observe runtime behavior.
-
-```bash
-devtools-mcp   # start MCP server
-# In Claude Code: start_debug({mode: 'relay-live', confirm: true})  ← arms LIVE guard
-# call build_attach_url → scan QR → live app loads + relay attaches
-# call_sdk / evaluate: confirm: true required (LIVE guard — real users affected)
-```
-
-`start_debug({mode: 'relay-live', confirm: true})` arms the LIVE guard in-session. Details: [`docs/scenarios/env-4.md`](./docs/scenarios/env-4.md)
-
----
-
 ## On-device debugging in one line
 
-To enable on-device CDP debugging in environments 2, 3, and 4, add **one line** to your mini-app entry (`main.tsx` or equivalent):
+To enable on-device CDP debugging in environments 2 and 3, add **one line** to your mini-app entry (`main.tsx` or equivalent):
 
 ```ts
 // main.tsx (or the top of your mini-app entry)
@@ -979,11 +964,10 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 |---|---|---|---|---|
 | `--target=mobile` (env 2) | `devtools-mcp` → `start_debug({mode:'relay-sandbox'})` | `AIT_RELAY_BASE_URL`, `AIT_TUNNEL_BASE_URL` | Real-device Safari/WebKit PWA (external Chii relay + cloudflared tunnel, env 2) | console/network/page + DOM/snapshot/screenshot |
 | `--mode=debug --target=relay` (default, env 3) | `devtools-mcp` → `start_debug({mode: 'relay-staging'})` | — | Dog-food bundle on a phone (CDP/Chii relay + cloudflared tunnel, env 3) | same + `AIT.*` |
-| `--mode=debug --target=relay` LIVE (env 4) | `devtools-mcp` → `start_debug({mode: 'relay-live', confirm: true})` | — (env 4 LIVE guard) | Live deployed app (env 4) — `call_sdk`/`evaluate` require `confirm: true` | same |
 | `--mode=debug --target=local` (env 1) | `devtools-mcp --target=local` | `MCP_ENV=mock` (auto) | Local Chromium launched by the MCP server (CDP direct-attach, no relay needed, env 1) | same |
 | `--mode=dev` | `devtools-mcp --mode=dev` | `MCP_ENV=mock` (auto) | Mock state from a running Vite dev server (AIT.* only, no CDP) | `AIT.*` (+ `devtools_get_mock_state` alias) |
 
-`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. Switch environments in-session with `start_debug(mode)`: `relay-sandbox` (env 2 PWA), `relay-staging` (env 3 dogfood), `relay-live` (env 4, arms LIVE guard — `confirm: true` required), `local-browser` (env 1).
+`--target=local` opens `AIT_DEVTOOLS_URL` (default `http://localhost:5173`) and attaches directly to a local Chromium — no relay or tunnel required. `--mode=dev` reads the mock-state HTTP endpoint of the Vite dev server and does not provide CDP tools. Switch environments in-session with `start_debug(mode)`: `relay-sandbox` (env 2 PWA), `relay-staging` (env 3 dogfood), `local-browser` (env 1).
 
 #### Environment 2 (real-device PWA CDP) — `--target=mobile`
 
@@ -1050,22 +1034,20 @@ Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then
 ```
 
 - Environment 3 (dog-food relay): `start_debug({mode: 'relay-staging'})`
-- Environment 4 (LIVE relay, LIVE guard enabled): `start_debug({mode: 'relay-live', confirm: true})`
-
-**`start_debug(mode)` is the single in-session entry path.** `MCP_ENV=relay-live` remains only as a deprecated alias that seeds `liveIntent` at boot — in a new session, enter via `start_debug({mode: 'relay-live', confirm: true})`.
+**`start_debug(mode)` is the single in-session entry path.**
 
 | Tool | CDP / AIT backing | Description |
 |---|---|---|
 | `list_console_messages` | `Runtime.consoleAPICalled` | Recent console.log/warn/error messages (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | Recent XHR/fetch requests (url, method, status, timing) |
 | `list_pages` | Chii relay target list | Attached pages + tunnel status + wss URL |
-| `build_attach_url` | (pure synthesis) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL, prints a QR. Scanning the QR with the phone camera is the single entry path for env 2/3 (requires `list_pages` first) |
+| `build_attach_url` | (pure synthesis) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL, prints a QR. Scanning the QR with the phone camera is the single entry path for env 2 and 3 (requires `list_pages` first) |
 | `get_dom_document` | `DOM.getDocument` | DOM tree read (structural/layout regression diagnosis) |
 | `take_snapshot` | `DOMSnapshot.captureSnapshot` | Page snapshot (documents + interned strings, visual regression) |
 | `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |
 | `measure_safe_area` | `Runtime.evaluate` | Runs a safe-area probe on the attached page → returns normalized safe-area insets, viewport geometry, DPR, and User-Agent. Read-only. Use in a relay session to get ground-truth values for upgrading a viewport preset from extrapolated/placeholder to measured. Requires attach (`list_pages` first) |
 | `evaluate` | `Runtime.evaluate` | Evaluates an arbitrary JS expression on the attached page (returnByValue) and returns the result. **Not read-only** — the expression can have side effects (DOM mutations, SDK calls, state changes). Requires attach |
-| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dog-food SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 3/4, mock SDK on env 1. Env 2 (PWA) does not inject the SDK — not available there. On env 4, `confirm: true` is required (LIVE guard). Requires attach. Returns `{ok,value}` / `{ok,error}` |
+| `call_sdk` | `window.__sdkCall` bridge (via `Runtime.evaluate`) | Calls a dog-food SDK method via the `window.__sdkCall` bridge (exported by `@apps-in-toss/web-framework` in `__DEBUG_BUILD__` bundles only). **Not read-only** — SDK calls have side effects (navigation, payments, permissions, etc.). Hits the real SDK on env 3, mock SDK on env 1. Env 2 (PWA) does not inject the SDK — not available there. Requires attach. Returns `{ok,value}` / `{ok,error}` |
 | `AIT.getSdkCallHistory` | AIT domain | SDK call trace (method, args, result/error, timestamp) |
 | `AIT.getMockState` | AIT domain | Mock state snapshot (`window.__ait`) |
 | `AIT.getOperationalEnvironment` | AIT domain | `getOperationalEnvironment()` + SDK version |

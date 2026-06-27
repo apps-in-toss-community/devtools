@@ -118,7 +118,7 @@ interface MakeClientOptions {
   /**
    * Pin the env reported by `getEnvironment()` for this server. Defaults to
    * `'relay-dev'` because this test file exercises relay-only tools (build_attach_url).
-   * Set to `'mock'` for env-mismatch tests, `'relay-live'` for LIVE guard tests.
+   * Set to `'mock'` for env-mismatch tests.
    */
   env?: McpEnvironment;
   /**

@@ -1,17 +1,13 @@
 /**
- * `start_debug` dual-connection router tests (issue #348, renamed #382).
+ * `start_debug` dual-connection router tests (issue #348, renamed #382, #665).
  *
  * Verifies the DUAL-CONNECTION-COEXIST design:
  *   - `start_debug` is a bootstrap tool — visible before any attach, in every env.
  *   - Switching mode flips the active connection underneath the SAME MCP
  *     `Server` (no re-handshake): tools read through `router.active` per call.
- *   - The mode-switch report reflects the now-active env + LIVE guard state.
- *   - `relay-live` requires `confirm: true` on the `start_debug` call itself.
- *   - The LIVE guard matrix over (connection.kind × liveIntent):
- *       relay + liveIntent + no confirm   → reject
- *       relay + liveIntent + confirm:true → pass
- *       local + liveIntent (stale bit)    → pass (inert against local)
- *       relay + liveIntent=false          → pass
+ *   - The mode-switch report reflects the now-active env.
+ *   - `relay-live` (env 4) is removed (#665) — confirm gate and LIVE guard matrix
+ *     are removed. The positive-allowlist kill-switch in gate.ts replaces them.
  *   - `normalizeStartDebugMode` / `isRelayMode` / `makeSingleConnectionRouter`
  *     pure helpers.
  *
@@ -20,7 +16,7 @@
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { AitMethodMap, AitMethodName, AitSource } from '../ait-source.js';
 import type {
   CdpCommandMap,
@@ -32,6 +28,7 @@ import type {
 } from '../cdp-connection.js';
 import {
   type ConnectionRouter,
+  connectionHostsAllowed,
   createDebugServer,
   isRelayMode,
   type ModeSwitchReport,
@@ -39,7 +36,7 @@ import {
   normalizeStartDebugMode,
   type StartDebugMode,
 } from '../debug-server.js';
-import { deriveEnvironment, getLiveIntent, setLiveIntent } from '../environment.js';
+import { deriveEnvironment } from '../environment.js';
 import type { TunnelStatus } from '../tools.js';
 
 // ---- Fakes -----------------------------------------------------------------
@@ -82,8 +79,8 @@ class FakeAitSource implements AitSource {
 
 /**
  * Minimal dual router for tests: holds a relay + a local fake connection and
- * flips `active` like the production `DualConnectionRouter`, including the
- * `liveIntent` arm/disarm and the relay-live confirm gate. No watcher / infra.
+ * flips `active` like the production `DualConnectionRouter`.
+ * `relay-live` gate and `liveIntent` removed (#665).
  */
 class TestRouter implements ConnectionRouter {
   readonly relay: FakeConn;
@@ -97,7 +94,9 @@ class TestRouter implements ConnectionRouter {
   constructor(initial: 'relay' | 'local' = 'relay', relayAttached = true) {
     this.relay = new FakeConn(
       'relay',
-      relayAttached ? [{ id: 'r1', title: 'app', url: 'intoss-private://app' }] : [],
+      relayAttached
+        ? [{ id: 'r1', title: 'app', url: 'https://r1.private-apps.tossmini.com/app' }]
+        : [],
     );
     this.current = initial === 'relay' ? this.relay : this.local;
   }
@@ -106,20 +105,15 @@ class TestRouter implements ConnectionRouter {
     return this.current;
   }
 
-  switchMode(mode: StartDebugMode, confirm: boolean): Promise<ModeSwitchReport> {
-    if (mode === 'relay-live' && !confirm) {
-      return Promise.reject(new Error('start_debug: relay-live는 confirm: true가 필요합니다'));
-    }
+  switchMode(mode: StartDebugMode): Promise<ModeSwitchReport> {
     const target = isRelayMode(mode) ? this.relay : this.local;
     this.current = target;
-    setLiveIntent(mode === 'relay-live');
     this.listChangedCount++;
-    const environment = deriveEnvironment(target.kind, getLiveIntent());
+    const environment = deriveEnvironment(target.kind);
     return Promise.resolve({
       mode,
       environment,
       kind: target.kind,
-      liveGuardActive: target.kind === 'relay' && getLiveIntent(),
       nextStep: 'next',
     });
   }
@@ -149,17 +143,15 @@ function parseReport(result: Awaited<ReturnType<Client['callTool']>>): ModeSwitc
   return JSON.parse(getText(result)) as ModeSwitchReport;
 }
 
-// Each test resets liveIntent so the module-level bit does not leak.
-afterEach(() => setLiveIntent(false));
-
 // ---- pure helpers ----------------------------------------------------------
 
 describe('normalizeStartDebugMode', () => {
-  it('accepts the four canonical modes (identity)', () => {
+  it('accepts the three canonical modes (relay-live removed #665)', () => {
     expect(normalizeStartDebugMode('local-browser')).toBe('local-browser');
     expect(normalizeStartDebugMode('relay-sandbox')).toBe('relay-sandbox');
     expect(normalizeStartDebugMode('relay-staging')).toBe('relay-staging');
-    expect(normalizeStartDebugMode('relay-live')).toBe('relay-live');
+    // relay-live no longer accepted
+    expect(normalizeStartDebugMode('relay-live')).toBeNull();
   });
   it('rejects the old pre-#398 names — hard rename, no back-compat aliases', () => {
     // #398 dropped the deprecated aliases entirely (devtools is pre-1.0, 0.1.x).
@@ -180,10 +172,9 @@ describe('normalizeStartDebugMode', () => {
 });
 
 describe('isRelayMode', () => {
-  it('relay-sandbox / relay-staging / relay-live are relay; local-browser is not', () => {
+  it('relay-sandbox / relay-staging are relay; local-browser is not (relay-live removed #665)', () => {
     expect(isRelayMode('relay-sandbox')).toBe(true);
     expect(isRelayMode('relay-staging')).toBe(true);
-    expect(isRelayMode('relay-live')).toBe(true);
     expect(isRelayMode('local-browser')).toBe(false);
   });
 });
@@ -226,26 +217,26 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
     expect(report.mode).toBe('local-browser');
     expect(report.environment).toBe('mock');
     expect(report.kind).toBe('local');
-    expect(report.liveGuardActive).toBe(false);
+    // liveGuardActive removed from ModeSwitchReport (#665)
     // The active pointer actually flipped (no re-handshake — same server/client).
     expect(router.active.kind).toBe('local');
     // A list_changed notification was emitted on the switch.
     expect(router.listChangedCount).toBe(1);
   });
 
-  it('local-browser → relay-staging switch reports relay-dev (output env), guard off', async () => {
+  it('local-browser → relay-staging switch reports relay-dev (output env), no guard', async () => {
     const router = new TestRouter('local');
     const client = await makeClient(router);
     const report = parseReport(
       await client.callTool({ name: 'start_debug', arguments: { mode: 'relay-staging' } }),
     );
-    // Output env layer is unchanged ('relay-dev' from deriveEnvironment).
+    // Output env layer is 'relay-dev' from deriveEnvironment.
     expect(report.environment).toBe('relay-dev');
     expect(report.kind).toBe('relay');
-    expect(report.liveGuardActive).toBe(false);
+    // liveGuardActive removed from ModeSwitchReport (#665)
   });
 
-  it('relay-live requires confirm:true on the start_debug call itself', async () => {
+  it('relay-live is rejected (env 4 removed #665)', async () => {
     const router = new TestRouter('relay');
     const client = await makeClient(router);
     const rejected = await client.callTool({
@@ -253,24 +244,7 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
       arguments: { mode: 'relay-live' },
     });
     expect(rejected.isError).toBe(true);
-    // Still on relay but guard unset — the unconfirmed relay-live switch did not take.
-    expect(router.active.kind).toBe('relay');
-    expect(getLiveIntent()).toBe(false);
-  });
-
-  it('relay-live with confirm:true arms the LIVE guard', async () => {
-    const router = new TestRouter('relay');
-    const client = await makeClient(router);
-    const report = parseReport(
-      await client.callTool({
-        name: 'start_debug',
-        arguments: { mode: 'relay-live', confirm: true },
-      }),
-    );
-    // Output env layer is unchanged ('relay-live' from deriveEnvironment).
-    expect(report.environment).toBe('relay-live');
-    expect(report.liveGuardActive).toBe(true);
-    expect(getLiveIntent()).toBe(true);
+    expect(getText(rejected)).toContain('#665');
   });
 
   it('an unknown mode is rejected with a clear error', async () => {
@@ -294,121 +268,98 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
   });
 });
 
-// ---- LIVE guard matrix: (connection.kind × liveIntent) ---------------------
+// ---- positive-allowlist kill-switch (replaces LIVE guard) ------------------
+// The LIVE guard matrix (relay × liveIntent × confirm) is removed (#665).
+// The allowlist kill-switch is tested in src/__tests__/in-app-gate.test.ts
+// (isDebugAllowedHost) and in the connectionHostsAllowed integration.
 
-describe('LIVE guard matrix — (active connection.kind × liveIntent)', () => {
-  it('relay + liveIntent + no confirm → reject', async () => {
-    const router = new TestRouter('relay');
-    const client = await makeClient(router);
-    await client.callTool({
-      name: 'start_debug',
-      arguments: { mode: 'relay-live', confirm: true },
-    });
-    const result = await client.callTool({
-      name: 'call_sdk',
-      arguments: { name: 'getOperationalEnvironment' },
-    });
-    expect(result.isError).toBe(true);
-    expect(getText(result)).toContain('LIVE relay guard');
-  });
-
-  it('relay + liveIntent + confirm:true → pass', async () => {
-    const router = new TestRouter('relay');
-    const client = await makeClient(router);
-    await client.callTool({
-      name: 'start_debug',
-      arguments: { mode: 'relay-live', confirm: true },
-    });
-    const result = await client.callTool({
-      name: 'evaluate',
-      arguments: { expression: '1 + 1', confirm: true },
-    });
-    expect(getText(result)).not.toContain('LIVE relay guard');
-  });
-
-  it('local + stale liveIntent → pass (guard inert against local target)', async () => {
-    const router = new TestRouter('relay');
-    const client = await makeClient(router);
-    // Arm liveIntent on live...
-    await client.callTool({
-      name: 'start_debug',
-      arguments: { mode: 'relay-live', confirm: true },
-    });
-    expect(getLiveIntent()).toBe(true);
-    // ...then switch to local. The bit stays true but is inert against local.
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'local-browser' } });
-    // (TestRouter disarms on any non-relay-live switch; assert guard is inert either way.)
-    const result = await client.callTool({
-      name: 'evaluate',
-      arguments: { expression: '1 + 1' },
-    });
-    expect(getText(result)).not.toContain('LIVE relay guard');
-    expect(router.active.kind).toBe('local');
-  });
-
-  it('relay + liveIntent=false (relay-staging) → pass unguarded', async () => {
+describe('positive-allowlist: relay-staging on allowed host passes side-effect tools', () => {
+  it('evaluate/call_sdk succeed on private-apps relay (allowed host)', async () => {
     const router = new TestRouter('relay');
     const client = await makeClient(router);
     await client.callTool({ name: 'start_debug', arguments: { mode: 'relay-staging' } });
     const result = await client.callTool({
-      name: 'call_sdk',
-      arguments: { name: 'getOperationalEnvironment' },
+      name: 'evaluate',
+      arguments: { expression: '1 + 1' },
     });
-    expect(getText(result)).not.toContain('LIVE relay guard');
+    // Should not return host-allowlist error
+    expect(getText(result)).not.toContain('#665');
+    expect(getText(result)).not.toContain('허용 호스트');
+  });
+});
+
+// ---- connectionHostsAllowed unit tests (#665 작업 B) ------------------------
+// 지시서 §작업 B.1: (b) apps.tossmini.com → false/거부, (c) 0 targets → true,
+// (d) 빈 URL → false (파싱 불가 → fail-closed, 작업 A 수정 후 검증)
+
+describe('connectionHostsAllowed — positive-allowlist kill-switch unit', () => {
+  it('(a) private-apps target → 허용', () => {
+    const conn = new FakeConn('relay', [
+      { id: 'r1', title: 'app', url: 'https://r1.private-apps.tossmini.com/app' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(true);
   });
 
-  it('DISARM: relay-live → local-browser disarms liveIntent', async () => {
-    const router = new TestRouter('relay');
-    const client = await makeClient(router);
-    await client.callTool({
-      name: 'start_debug',
-      arguments: { mode: 'relay-live', confirm: true },
-    });
-    expect(getLiveIntent()).toBe(true);
-    await client.callTool({ name: 'start_debug', arguments: { mode: 'local-browser' } });
-    expect(getLiveIntent()).toBe(false);
+  it('(b) apps.tossmini.com target → 거부 (production host not in allowlist)', () => {
+    const conn = new FakeConn('relay', [
+      { id: 'p1', title: 'prod', url: 'https://apps.tossmini.com/app' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(false);
+  });
+
+  it('(c) 0 targets → true (attach 전 판정 보류)', () => {
+    const conn = new FakeConn('relay', []);
+    expect(connectionHostsAllowed(conn)).toBe(true);
+  });
+
+  it('(d) 파싱 불가 URL → false (fail-closed, 작업 A 수정 필요)', () => {
+    // 작업 A 수정 전: catch { return true } → 현재 이 케이스는 true.
+    // 작업 A 수정 후: catch { return false } → fail-closed.
+    const conn = new FakeConn('relay', [{ id: 'bad', title: 'bad', url: '' }]);
+    expect(connectionHostsAllowed(conn)).toBe(false);
+  });
+
+  it('local connection → 항상 허용 (local은 체크 대상 아님)', () => {
+    const conn = new FakeConn('local', [
+      { id: 'l1', title: 'local', url: 'http://localhost:5173/' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(true);
   });
 });
 
 // ---- single-connection router (back-compat) --------------------------------
 
 describe('makeSingleConnectionRouter — single-connection back-compat', () => {
-  it('switching to a same-kind mode succeeds and arms/disarms liveIntent', async () => {
-    const conn = new FakeConn('relay', [{ id: 'r1', title: 'app', url: 'intoss-private://app' }]);
+  it('switching to a same-kind mode succeeds (relay-live removed #665)', async () => {
+    const conn = new FakeConn('relay', [
+      { id: 'r1', title: 'app', url: 'https://r1.private-apps.tossmini.com/app' },
+    ]);
     const router = makeSingleConnectionRouter(conn);
-    const dev = await router.switchMode('relay-staging', false);
-    // Output env layer unchanged ('relay-dev' from deriveEnvironment).
+    const dev = await router.switchMode('relay-staging');
+    // Output env layer is 'relay-dev' from deriveEnvironment.
     expect(dev.environment).toBe('relay-dev');
-    expect(getLiveIntent()).toBe(false);
-    const live = await router.switchMode('relay-live', true);
-    // Output env layer unchanged ('relay-live' from deriveEnvironment).
-    expect(live.environment).toBe('relay-live');
-    expect(live.liveGuardActive).toBe(true);
-    expect(getLiveIntent()).toBe(true);
+    // liveGuardActive removed from ModeSwitchReport (#665)
   });
 
-  it('relay-live without confirm is rejected', async () => {
-    const conn = new FakeConn('relay');
-    const router = makeSingleConnectionRouter(conn);
-    await expect(router.switchMode('relay-live', false)).rejects.toThrow(/confirm: true/);
+  it('relay-live is not a valid mode any more (#665)', async () => {
+    // normalizeStartDebugMode rejects relay-live before switchMode is called.
+    expect(normalizeStartDebugMode('relay-live')).toBeNull();
   });
 
   it('cross-family switch is rejected (single connection cannot lazy-boot the other)', async () => {
     const conn = new FakeConn('relay');
     const router = makeSingleConnectionRouter(conn);
-    await expect(router.switchMode('local-browser', false)).rejects.toThrow(
-      /동적 전환할 수 없습니다/,
-    );
+    await expect(router.switchMode('local-browser')).rejects.toThrow(/동적 전환할 수 없습니다/);
   });
 
   it('relay-sandbox switch is rejected — cannot synthesize the env-2 external relay (#378)', async () => {
     // Even from a relay connection, `relay-sandbox` needs a DISTINCT external-PWA relay
     // family this single-connection router cannot boot.
-    const conn = new FakeConn('relay', [{ id: 'r1', title: 'app', url: 'intoss-private://app' }]);
+    const conn = new FakeConn('relay', [
+      { id: 'r1', title: 'app', url: 'https://r1.private-apps.tossmini.com/app' },
+    ]);
     const router = makeSingleConnectionRouter(conn);
-    await expect(router.switchMode('relay-sandbox', false)).rejects.toThrow(
-      /동적 전환할 수 없습니다/,
-    );
+    await expect(router.switchMode('relay-sandbox')).rejects.toThrow(/동적 전환할 수 없습니다/);
     // The discriminator is absent on a single-connection router.
     expect(router.activeRelayOrigin).toBeUndefined();
   });
@@ -416,10 +367,8 @@ describe('makeSingleConnectionRouter — single-connection back-compat', () => {
   it('local connection accepts local-browser mode but rejects relay modes', async () => {
     const conn = new FakeConn('local');
     const router = makeSingleConnectionRouter(conn);
-    const report = await router.switchMode('local-browser', false);
+    const report = await router.switchMode('local-browser');
     expect(report.environment).toBe('mock');
-    await expect(router.switchMode('relay-staging', false)).rejects.toThrow(
-      /동적 전환할 수 없습니다/,
-    );
+    await expect(router.switchMode('relay-staging')).rejects.toThrow(/동적 전환할 수 없습니다/);
   });
 });

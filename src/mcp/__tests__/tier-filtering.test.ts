@@ -103,15 +103,13 @@ describe('tool-registry — pure helpers', () => {
     expect(getToolAvailability('unknown_tool')).toBeUndefined();
   });
 
-  it('isToolAvailableIn respects the env decision', () => {
-    // Tier B → relay only (relay-dev, relay-live, and relay-mobile all satisfy it).
+  it('isToolAvailableIn respects the env decision (relay-live removed #665)', () => {
+    // Tier B → relay only (relay-dev and relay-mobile all satisfy it).
     expect(isToolAvailableIn('build_attach_url', 'relay-dev')).toBe(true);
-    expect(isToolAvailableIn('build_attach_url', 'relay-live')).toBe(true);
     expect(isToolAvailableIn('build_attach_url', 'relay-mobile')).toBe(true);
     expect(isToolAvailableIn('build_attach_url', 'mock')).toBe(false);
     // Tier C → both.
     expect(isToolAvailableIn('measure_safe_area', 'relay-dev')).toBe(true);
-    expect(isToolAvailableIn('measure_safe_area', 'relay-live')).toBe(true);
     expect(isToolAvailableIn('measure_safe_area', 'relay-mobile')).toBe(true);
     expect(isToolAvailableIn('measure_safe_area', 'mock')).toBe(true);
     expect(isToolAvailableIn('list_console_messages', 'mock')).toBe(true);
@@ -136,12 +134,7 @@ describe('tool-registry — pure helpers', () => {
     expect(relayNames).toContain('measure_safe_area');
   });
 
-  it('filterToolsByEnvironment keeps Tier B in relay-live', () => {
-    const relayLiveTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay-live');
-    const relayLiveNames = relayLiveTools.map((t) => t.name);
-    expect(relayLiveNames).toContain('build_attach_url');
-    expect(relayLiveNames).toContain('measure_safe_area');
-  });
+  // relay-live removed (#665) — no filterToolsByEnvironment test for relay-live.
 
   it('filterToolsByEnvironment keeps Tier B in relay-mobile (#378)', () => {
     const relayMobileTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay-mobile');
@@ -170,13 +163,7 @@ describe('tools/list — env filtering integration', () => {
     expect(names).toContain('measure_safe_area');
   });
 
-  it('relay-live env exposes build_attach_url (Tier B)', async () => {
-    const client = await makeClient('relay-live', /*attached*/ true);
-    const list = await client.listTools();
-    const names = list.tools.map((t) => t.name);
-    expect(names).toContain('build_attach_url');
-    expect(names).toContain('measure_safe_area');
-  });
+  // relay-live removed (#665) — no tools/list test for relay-live.
 
   it('relay-mobile env exposes build_attach_url (Tier B) — same surface as relay-dev (#378)', async () => {
     const client = await makeClient('relay-mobile', /*attached*/ true);
@@ -231,7 +218,7 @@ describe('tools/list — env derived from connection.kind (issue #348)', () => {
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnel,
       // NOTE: no `getEnvironment`/`getEnvironmentReason` injection — exercise
-      // the real `deriveEnvironment(connection.kind, liveIntent)` path.
+      // the real `deriveEnvironment(connection.kind, relayOrigin)` path.
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -313,20 +300,34 @@ describe('tools/call — env mismatch rejection', () => {
     expect(text).not.toContain('available only in');
   });
 
-  it('does NOT trip the LIVE side-effect guard in relay-mobile (#378)', async () => {
-    // relay-mobile is a dev-intent env (env-2 PWA) — liveIntent is never armed,
-    // so `evaluate`/`call_sdk` must NOT require `confirm: true`. The default
-    // module-level liveIntent is false; the guard reads conn.kind=='relay' &&
-    // getLiveIntent(), so mobile (relay kind, liveIntent off) is un-guarded.
-    const client = await makeClient('relay-mobile', /*attached*/ true);
+  it('relay-mobile passes side-effect tools without any confirm gate (#378, #665)', async () => {
+    // relay-mobile is a dev-intent env (env-2 PWA) — the LIVE guard is removed
+    // (#665). evaluate/call_sdk must NOT require confirm: true on any relay env.
+    // Use a trycloudflare.com URL — the positive-allowlist allows it for env 2.
+    const targets: CdpTarget[] = [
+      { id: 't1', title: 'app', url: 'https://test.trycloudflare.com/app' },
+    ];
+    const connection = new FakeCdpConnection(targets);
+    const server = createDebugServer({
+      connection,
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => ({ up: true, wssUrl: 'wss://test.trycloudflare.com' }),
+      getEnvironment: () => 'relay-mobile',
+      getEnvironmentReason: () => 'test-pinned-relay-mobile',
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'tier-test', version: '0.0.0' });
+    await client.connect(clientTransport);
     const result = await client.callTool({
       name: 'evaluate',
       arguments: { expression: '1 + 1' },
     });
     // It errors (FakeCdpConnection has no canned Runtime.evaluate result), but
-    // the failure must NOT be the LIVE confirm guard.
+    // the failure must NOT be the allowlist guard (#665).
     const text = (result.content as Array<{ text?: string }>)[0]?.text ?? '';
     expect(text).not.toContain('confirm: true');
     expect(text).not.toContain('LIVE');
+    expect(text).not.toContain('허용 호스트가 아닙니다');
   });
 });

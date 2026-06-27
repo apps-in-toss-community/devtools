@@ -26,8 +26,7 @@
  *   The attach chrome is additionally precompiled per copy family — 'sandbox'
  *   (env 2: launcher PWA flow) and 'intoss' (env 3/4: Toss app deep-link flow).
  *   qr-http-server.ts selects `attachChromeByLocale[locale][family]` from the
- *   session mode carried in DashboardState. Env 4 reuses the intoss chrome and
- *   fills the `__LIVE_FAQ__` token at runtime.
+ *   session mode carried in DashboardState. relay-live (env 4) 제거 (#665).
  *
  * SECRET-HANDLING:
  *   - No per-request values are baked into the generated strings.
@@ -91,7 +90,7 @@ function renderDashboardChrome(locale: Locale): string {
  * The `deployment:` label and several step/FAQ strings include inline HTML
  * (strong/code) which renderToStaticMarkup emits verbatim from
  * dangerouslySetInnerHTML. Placeholders (`__QR_DATA_URL__`, `__SAFE_LABEL__`,
- * `__SAFE_ATTACH_URL__`, `__MODE_LABEL__`, `__LIVE_FAQ__`) survive because
+ * `__SAFE_ATTACH_URL__`, `__MODE_LABEL__`) survive because
  * they are plain text nodes, not HTML.
  *
  * NOTE on step / FAQ HTML:
@@ -189,7 +188,6 @@ async function main(): Promise<void> {
     ' *   __SAFE_LABEL__      HTML-escaped deploymentId label (intoss family only)',
     ' *   __SAFE_ATTACH_URL__ HTML-escaped attach URL',
     ' *   __MODE_LABEL__      environment badge (<p class="mode-label">…</p>), or empty',
-    ' *   __LIVE_FAQ__        env-4 LIVE read-only <li>, or empty (intoss family only)',
     ' *   __LANG_SWITCHER__   ko/en toggle links (href preserves existing query params)',
     ' *',
     " * SECRET-HANDLING: wssUrl MUST NOT appear here. If it does, the build script's",

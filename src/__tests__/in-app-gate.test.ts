@@ -11,7 +11,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { evaluateDebugGate, isPrivateAppsHost, isTrycloudflareHost } from '../in-app/gate.js';
+import {
+  evaluateDebugGate,
+  isDebugAllowedHost,
+  isLocalhostHost,
+  isPrivateAppsHost,
+  isTrycloudflareHost,
+} from '../in-app/gate.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -534,5 +540,122 @@ describe('Full decision matrix', () => {
     const result = gate(params('relay=wss://r.example.com/'), VALID_TC_HOST);
     expect(result.attach).toBe(false);
     if (!result.attach) expect(result.reason).toBe('opt-in');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Positive-allowlist kill-switch: isDebugAllowedHost (#665)
+// ---------------------------------------------------------------------------
+
+describe('isDebugAllowedHost — positive-allowlist kill-switch (#665)', () => {
+  // ── Allowed hosts ──────────────────────────────────────────────────────────
+
+  it('allows localhost', () => {
+    expect(isDebugAllowedHost('localhost')).toBe(true);
+  });
+
+  it('allows 127.0.0.1', () => {
+    expect(isDebugAllowedHost('127.0.0.1')).toBe(true);
+  });
+
+  it('allows [::1] (bracketed IPv6 loopback — as URL parser produces)', () => {
+    // URL parser converts http://[::1]:3000 → hostname = '[::1]' (with brackets).
+    expect(isDebugAllowedHost('[::1]')).toBe(true);
+  });
+
+  it('allows *.trycloudflare.com (env 2 tunnel)', () => {
+    expect(isDebugAllowedHost('abc-def-ghi.trycloudflare.com')).toBe(true);
+    expect(isDebugAllowedHost('test.trycloudflare.com')).toBe(true);
+  });
+
+  it('allows *.private-apps.tossmini.com (env 3 dogfood)', () => {
+    expect(isDebugAllowedHost('aitc-sdk-example.private-apps.tossmini.com')).toBe(true);
+    expect(isDebugAllowedHost('my-app.private-apps.tossmini.com')).toBe(true);
+  });
+
+  // ── Blocked hosts — env 4 / production ────────────────────────────────────
+
+  it('blocks apps.tossmini.com (production host, env 4 removed #665)', () => {
+    expect(isDebugAllowedHost('apps.tossmini.com')).toBe(false);
+  });
+
+  it('blocks subdomain of apps.tossmini.com', () => {
+    expect(isDebugAllowedHost('aitc-sdk-example.apps.tossmini.com')).toBe(false);
+  });
+
+  it('blocks arbitrary external host', () => {
+    expect(isDebugAllowedHost('example.com')).toBe(false);
+    expect(isDebugAllowedHost('evil.trycloudflare.com.attacker.com')).toBe(false);
+  });
+
+  it('blocks bare tossmini.com (not private-apps or trycloudflare)', () => {
+    expect(isDebugAllowedHost('tossmini.com')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isLocalhostHost — 127.x spoofing guard (#665 작업 A)
+// ---------------------------------------------------------------------------
+
+describe('isLocalhostHost — 127.x spoofing resistance', () => {
+  // ── 허용 케이스 ─────────────────────────────────────────────────────────────
+  it('allows 127.0.0.1', () => {
+    expect(isLocalhostHost('127.0.0.1')).toBe(true);
+  });
+
+  it('allows 127.x.x.x (full 127/8 loopback block)', () => {
+    expect(isLocalhostHost('127.1.2.3')).toBe(true);
+    expect(isLocalhostHost('127.255.255.255')).toBe(true);
+  });
+
+  it('allows localhost', () => {
+    expect(isLocalhostHost('localhost')).toBe(true);
+  });
+
+  it('allows *.localhost subdomain', () => {
+    expect(isLocalhostHost('app.localhost')).toBe(true);
+  });
+
+  it('allows [::1]', () => {
+    expect(isLocalhostHost('[::1]')).toBe(true);
+  });
+
+  // ── 스푸핑 차단 ─────────────────────────────────────────────────────────────
+  it('blocks 127.evil.com (startsWith 취약점 — 수정 후 차단되어야 함)', () => {
+    // 작업 A 수정 전: startsWith('127.')이라 true를 반환하는 취약점.
+    // 수정 후: 정규식 /^127\.\d+\.\d+\.\d+$/ 로 차단해야 함.
+    expect(isLocalhostHost('127.evil.com')).toBe(false);
+  });
+
+  it('blocks 127.0.0.1.evil.com (suffix spoof)', () => {
+    expect(isLocalhostHost('127.0.0.1.evil.com')).toBe(false);
+  });
+
+  it('blocks arbitrary host that starts with "127." but is not loopback', () => {
+    expect(isLocalhostHost('127.not-loopback.example')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Positive-allowlist kill-switch: localhost attach path (#665)
+// ---------------------------------------------------------------------------
+
+describe('evaluateDebugGate — localhost (env 1) attach path', () => {
+  it('attaches on localhost with debug=1 and valid relay (no _deploymentId required)', () => {
+    const result = evaluateDebugGate({
+      hostname: 'localhost',
+      searchParams: params('debug=1&relay=wss://r.example.com/'),
+    });
+    expect(result.attach).toBe(true);
+    if (result.attach) expect(result.deploymentId).toBe('');
+  });
+
+  it('attaches on 127.0.0.1 with debug=1 and valid relay', () => {
+    const result = evaluateDebugGate({
+      hostname: '127.0.0.1',
+      searchParams: params('debug=1&relay=wss://r.example.com/'),
+    });
+    expect(result.attach).toBe(true);
+    if (result.attach) expect(result.deploymentId).toBe('');
   });
 });

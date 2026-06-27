@@ -7,63 +7,50 @@
  * could not express a daemon that holds two live connections at once and swaps
  * the active one without a restart — the dual-connection design (#348).
  *
- * The 4-value `McpEnvironment` is now *derived* from cheap signals rather
- * than detected:
+ * The 3-value `McpEnvironment` is now *derived* from cheap signals rather
+ * than detected (env 4 / relay-live removed in #665):
  *
  *   1. `mock` vs `relay-*`  — free from `connection.kind` (`'local'` | `'relay'`,
  *      see `cdp-connection.ts`). Authoritative, known before any target
  *      attaches, and swappable at runtime by pointing at a different connection.
  *
- *   2. `relay-dev` vs `relay-live` — physically underivable (dog-food and
- *      production relays are byte-identical on the wire), so it is a single
- *      operator-supplied bit, `liveIntent`. It is armed only by
- *      `start_debug({ mode: 'relay-live' })` and is inert whenever the active
- *      connection is local.
- *
- *   3. `relay-dev` vs `relay-mobile` — both are `kind: 'relay'`, !liveIntent
- *      relays, so they are distinguished by the booted family's `relayOrigin`
- *      discriminator (`'intoss-webview'` → relay-dev, `'external-pwa'` →
- *      relay-mobile, issue #378). NOT sniffed from the relay URL.
+ *   2. `relay-dev` vs `relay-mobile` — both are `kind: 'relay'` relays,
+ *      distinguished by the booted family's `relayOrigin` discriminator
+ *      (`'intoss-webview'` → relay-dev, `'external-pwa'` → relay-mobile,
+ *      issue #378). NOT sniffed from the relay URL.
  *
  * `McpEnvironment` survives as an OUTPUT-BOUNDARY type — `get_debug_status` and
  * the envelope `meta.env` field still surface the precise three-value string —
- * but it is reconstructed from `(connection.kind, liveIntent)` via
+ * but it is reconstructed from `(connection.kind, relayOrigin)` via
  * {@link deriveEnvironment}, never sniffed.
  *
- * LIVE side-effect guard (relay-live, env 4): the `call_sdk` / `evaluate` tools
- * require an explicit `confirm: true`. The guard now reads to a single line in
- * `debug-server.ts`: `connection.kind === 'relay' && liveIntent && !confirm`.
- * `relay && liveIntent` together means a stale `liveIntent` bit is inert
- * against a local target (it only fires when the active connection is relay).
- *
- * Backward compatibility:
- *   - `MCP_ENV=relay-live` is a deprecated alias that seeds `liveIntent=true`
- *     at boot (see `cli.ts`). `MCP_ENV=mock|relay|relay-dev` are accepted and
- *     ignored for env derivation (kind is authoritative) — they only matter for
- *     `relay-live`'s liveIntent seed.
- *   - `isRelayEnv()` / `isLiveRelayEnv()` / `toLegacyEnv()` are unchanged.
+ * Positive-allowlist kill-switch (#665): `relay-live` (env 4) is removed.
+ * The debug surface is now only active on localhost/trycloudflare/private-apps
+ * hosts. `relay-live`/`liveIntent`/LIVE guard are fully removed.
  *
  * SECRET-HANDLING: this module never reads the TOTP secret, deploy key, or any
- * URL. It deals only in the connection kind and a single boolean.
+ * URL. It deals only in the connection kind and optional relay origin.
  */
 
 /**
- * The four environments the MCP server can surface in its output (issues #307,
- * #378).
+ * The three environments the MCP server can surface in its output (issues #307,
+ * #378, #665).
  *
  *   - `mock`         — local Chromium + mock SDK (env 1) — active connection is local.
- *   - `relay-dev`    — real-device dog-food relay (env 3) — relay connection, liveIntent off,
+ *   - `relay-dev`    — real-device dog-food relay (env 3) — relay connection,
  *                      intoss-private WebView (the relay devtools started).
- *   - `relay-live`   — real-device live/production relay (env 4) — relay connection,
- *                      liveIntent on, read-only LIVE guard active.
  *   - `relay-mobile` — real-device PWA over an EXTERNAL relay (env 2, issue #378) —
- *                      relay connection, liveIntent off, an external-PWA relay
+ *                      relay connection, an external-PWA relay
  *                      (the unplugin started it; the MCP only attaches a CDP client).
+ *
+ * `relay-live` (env 4) has been removed (#665) — the debug surface is now gated
+ * by a positive allowlist (localhost/trycloudflare/private-apps) at the in-app
+ * entry and the MCP server no longer tracks a LIVE intent bit.
  *
  * This is a derived OUTPUT string (see module docstring) — not a detected,
  * sticky decision.
  */
-export type McpEnvironment = 'mock' | 'relay-dev' | 'relay-live' | 'relay-mobile';
+export type McpEnvironment = 'mock' | 'relay-dev' | 'relay-mobile';
 
 /** Connection kind — the authoritative `mock` vs `relay` signal (issue #348). */
 export type ConnectionKind = 'relay' | 'local';
@@ -84,9 +71,9 @@ export type ConnectionKind = 'relay' | 'local';
 export type RelayOrigin = 'intoss-webview' | 'external-pwa';
 
 /**
- * Returns `true` when the environment is any relay variant (`relay-dev`,
- * `relay-live`, or `relay-mobile`). Use this instead of `env === 'relay'` for
- * tier checks — every relay env surfaces the Tier B / relay-only tool set.
+ * Returns `true` when the environment is any relay variant (`relay-dev` or
+ * `relay-mobile`). Use this instead of `env === 'relay'` for tier checks —
+ * every relay env surfaces the Tier B / relay-only tool set.
  *
  * Written as an exhaustive switch so a future `McpEnvironment` member that is
  * missing an arm is a TS compile error rather than a silent `false`.
@@ -94,7 +81,6 @@ export type RelayOrigin = 'intoss-webview' | 'external-pwa';
 export function isRelayEnv(env: McpEnvironment): boolean {
   switch (env) {
     case 'relay-dev':
-    case 'relay-live':
     case 'relay-mobile':
       return true;
     case 'mock':
@@ -103,36 +89,34 @@ export function isRelayEnv(env: McpEnvironment): boolean {
 }
 
 /**
- * Returns `true` when the environment is the LIVE relay (`relay-live`).
- * This is the guard condition for side-effect tool protection. `relay-mobile`
- * is a dev-intent env (env 2 PWA) and is NOT live.
- */
-export function isLiveRelayEnv(env: McpEnvironment): boolean {
-  return env === 'relay-live';
-}
-
-/**
  * Maps the `McpEnvironment` union to the legacy two-value union
  * (`'mock' | 'relay'`) for backward-compatible fields in diagnostics output.
- * Every relay variant (incl. `relay-mobile`) collapses to `'relay'`.
+ * Every relay variant (`relay-dev`, `relay-mobile`) collapses to `'relay'`.
+ * Written as an exhaustive switch so a missing arm is a TS compile error.
  */
 export function toLegacyEnv(env: McpEnvironment): 'mock' | 'relay' {
-  if (env === 'mock') return 'mock';
-  return 'relay';
+  switch (env) {
+    case 'mock':
+      return 'mock';
+    case 'relay-dev':
+    case 'relay-mobile':
+      return 'relay';
+  }
 }
 
 /**
- * Reconstructs the four-value `McpEnvironment` output string from the
- * orthogonal signals (issues #348, #378):
+ * Reconstructs the three-value `McpEnvironment` output string from the
+ * orthogonal signals (issues #348, #378, #665):
  *
- *   - `kind === 'local'`                                          → `'mock'`
- *   - `kind === 'relay'` &&  liveIntent                           → `'relay-live'`
- *   - `kind === 'relay'` && !liveIntent && origin 'external-pwa'  → `'relay-mobile'`
- *   - `kind === 'relay'` && !liveIntent && origin intoss/undefined → `'relay-dev'`
+ *   - `kind === 'local'`                                         → `'mock'`
+ *   - `kind === 'relay'` && origin 'external-pwa'                → `'relay-mobile'`
+ *   - `kind === 'relay'` && origin intoss/undefined              → `'relay-dev'`
  *
  * `relayOrigin` is the booted-family discriminator (NOT sniffed from the URL)
  * that distinguishes the env-2 external-PWA relay (`relay-mobile`) from the
  * intoss-private dog-food relay (`relay-dev`); both are `kind: 'relay'`.
+ *
+ * `relay-live` (env 4) has been removed (#665). `liveIntent` parameter is gone.
  *
  * Pure — used at every output boundary (envelope `meta.env`, `get_debug_status`,
  * `measure_safe_area` provenance) so the surface never sniffs a URL again.
@@ -140,48 +124,13 @@ export function toLegacyEnv(env: McpEnvironment): 'mock' | 'relay' {
  * Written switch-style so a missing arm is a TS compile error (never falls
  * through to a default).
  */
-export function deriveEnvironment(
-  kind: ConnectionKind,
-  liveIntent: boolean,
-  relayOrigin?: RelayOrigin,
-): McpEnvironment {
+export function deriveEnvironment(kind: ConnectionKind, relayOrigin?: RelayOrigin): McpEnvironment {
   switch (kind) {
     case 'local':
       return 'mock';
     case 'relay':
-      if (liveIntent) return 'relay-live';
       return relayOrigin === 'external-pwa' ? 'relay-mobile' : 'relay-dev';
   }
-}
-
-/* -------------------------------------------------------------------------- */
-/* liveIntent — the single operator-supplied bit (relay-dev vs relay-live)    */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Module-level `relay-dev` vs `relay-live` intent bit (issue #348).
- *
- * Armed by `start_debug({ mode: 'relay-live' })` (and seeded at boot by the
- * deprecated `MCP_ENV=relay-live` alias). Disarming is implicit: when the
- * active connection becomes local, the LIVE guard reads
- * `connection.kind === 'relay' && liveIntent`, so a stale `true` bit is inert.
- *
- * SECRET-HANDLING: this is a boolean — never a secret. Safe to read in logs.
- */
-let liveIntent = false;
-
-/** Returns the current `liveIntent` bit. */
-export function getLiveIntent(): boolean {
-  return liveIntent;
-}
-
-/**
- * Sets the `liveIntent` bit. Called by `start_debug` (true for `relay-live`,
- * false for every other mode) and once at boot by the `MCP_ENV=relay-live`
- * deprecated alias.
- */
-export function setLiveIntent(value: boolean): void {
-  liveIntent = value;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -195,7 +144,7 @@ export function setLiveIntent(value: boolean): void {
  * pin a precise `McpEnvironment` without constructing a real connection.
  *
  * This is intentionally NARROW: it no longer drives a precedence chain. The
- * authoritative production signal is `connection.kind` + `liveIntent`; this
+ * authoritative production signal is `connection.kind` + `relayOrigin`; this
  * override is a pure test affordance.
  */
 let envOverride: McpEnvironment | null = null;

@@ -124,12 +124,7 @@ describe('measure_safe_area Tier C parity (RFC #277)', () => {
     expect(result.sdkInsetsSource).toBe('window.__sdk');
   });
 
-  it('attaches source: "relay-live" when caller env is relay-live', async () => {
-    const conn = new RecordingCdpConnection(relayPayload());
-    const result = await measureSafeArea(conn, 'relay-live');
-    expect(result.source).toBe('relay-live');
-    expect(result.sdkInsetsSource).toBe('window.__sdk');
-  });
+  // relay-live source case removed (#665) — relay-live env removed.
 
   it('preserves identical payload shape across envs', async () => {
     // The two payloads differ in values but the schema (key set) must match.

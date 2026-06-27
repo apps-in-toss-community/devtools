@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { parseForce, parseMode, parseTarget, seedLiveIntentFromEnv } from '../cli.js';
-import { getLiveIntent, setLiveIntent } from '../environment.js';
+import { describe, expect, it } from 'vitest';
+import { parseForce, parseMode, parseTarget } from '../cli.js';
 
 describe('parseMode', () => {
   it('defaults to debug mode with no flag', () => {
@@ -88,26 +87,5 @@ describe('parseForce', () => {
   });
 });
 
-describe('seedLiveIntentFromEnv — MCP_ENV back-compat (issue #348)', () => {
-  afterEach(() => setLiveIntent(false));
-
-  it('MCP_ENV=relay-live seeds liveIntent=true', () => {
-    setLiveIntent(false);
-    seedLiveIntentFromEnv({ MCP_ENV: 'relay-live' });
-    expect(getLiveIntent()).toBe(true);
-  });
-
-  it('MCP_ENV=relay-dev / relay / mock do NOT arm liveIntent', () => {
-    for (const v of ['relay-dev', 'relay', 'mock'] as const) {
-      setLiveIntent(false);
-      seedLiveIntentFromEnv({ MCP_ENV: v });
-      expect(getLiveIntent()).toBe(false);
-    }
-  });
-
-  it('absent MCP_ENV leaves liveIntent untouched', () => {
-    setLiveIntent(false);
-    seedLiveIntentFromEnv({});
-    expect(getLiveIntent()).toBe(false);
-  });
-});
+// seedLiveIntentFromEnv / liveIntent tests removed — relay-live (env 4) and
+// the liveIntent bit are fully removed in #665.

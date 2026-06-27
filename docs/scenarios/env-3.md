@@ -75,14 +75,13 @@ npx @ait-co/devtools devtools-mcp --force
 {
   "kind": "relay-dev",
   "env": "relay",
-  "reason": "derived:kind=relay,liveIntent=false",
-  "liveGuardActive": false
+  "reason": "derived:kind=relay"
 }
 ```
 
-- `kind`: 정밀 세 값(`mock` | `relay-dev` | `relay-live`).
+- `kind`: 두 값(`mock` | `relay-dev`).
 - `env`: backward-compat 두 값(`mock` | `relay`). 기존 코드가 이 필드를 읽더라도 동작.
-- `liveGuardActive`: relay-dev에서는 `false` — side-effect 도구(`call_sdk`, `evaluate`) 자유롭게 호출 가능.
+- relay-dev에서는 positive-allowlist kill-switch(#665)가 side-effect 도구(`call_sdk`, `evaluate`)를 허용한다.
 
 
 ## 환경 3 한계
@@ -91,4 +90,3 @@ npx @ait-co/devtools devtools-mcp --force
 - OPENED 전환 전 `PREPARE` 상태 cold-load: 가능
 - dev-mode (`--mode=dev`) 미지원 — 이 환경은 debug-mode 전용
 
-다음 단계: live(OPENED) 앱 디버깅이 필요하면 환경 4(`docs/scenarios/env-4.md`)로 진입.

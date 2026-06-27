@@ -284,40 +284,40 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 
 ---
 
-## 시나리오별 MCP tool 응답 diff snapshot (4겹 fidelity — #281)
+## 시나리오별 MCP tool 응답 diff snapshot (환경 1·2·3 fidelity — #281)
 
-M1 acceptance 기준: 4 시나리오에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 호출이 동일 schema 응답.
+M1 acceptance 기준: 3 시나리오(환경 1·2·3)에서 `list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)` 3종 호출이 동일 schema 응답.
 
 ### `list_pages` — 시나리오별 예상 shape
 
-| 필드 | 환경 1 (로컬) | 환경 2 (PWA relay) | 환경 3 (intoss dev relay) | 환경 4 (live relay) |
-|---|---|---|---|---|
-| `pages` 길이 | 1 | 1 | 1 | 1 |
-| `pages[0].url` | `http://localhost:517x/` | `https://*.trycloudflare.com/` | `intoss-private://…?_deploymentId=<uuid>` | `intoss-private://…?_deploymentId=<uuid>` |
-| `tunnel.up` | false | true | true | true |
-| `source` (env) | mock | relay | relay-dev | relay-live |
-| `lastSeenAt` | 현재 시각 | 현재 시각 | 현재 시각 | 현재 시각 |
-| `crashDetectedAt` | null | null | null | null |
-| `singleAttachModel` | true | true | true | true |
+| 필드 | 환경 1 (로컬) | 환경 2 (PWA relay) | 환경 3 (intoss dev relay) |
+|---|---|---|---|
+| `pages` 길이 | 1 | 1 | 1 |
+| `pages[0].url` | `http://localhost:517x/` | `https://*.trycloudflare.com/` | `intoss-private://…?_deploymentId=<uuid>` |
+| `tunnel.up` | false | true | true |
+| `source` (env) | mock | relay | relay-dev |
+| `lastSeenAt` | 현재 시각 | 현재 시각 | 현재 시각 |
+| `crashDetectedAt` | null | null | null |
+| `singleAttachModel` | true | true | true |
 
 ### `measure_safe_area` — 시나리오별 예상 shape
 
-| 필드 | 환경 1 (로컬) | 환경 2 (PWA) | 환경 3 (relay-dev) | 환경 4 (relay-live) |
-|---|---|---|---|---|
-| `source` | `"mock"` | `"relay"` (토큰 확정 미정) | `"relay-dev"` | `"relay-live"` |
-| `sdkInsetsSource` | `"window.__ait"` | `"window.__ait"` | `"window.__sdk"` | `"window.__sdk"` |
-| `sdkInsets.top` | 패널 설정값 (예: 47) | 실기기 측정값 | 실기기 측정값 (예: 44–54) | 실기기 측정값 (예: 44–54) |
-| `cssEnv.top` | CSS env var (panel context) | 실기기 측정값 | 0 (Toss host WebView override) | 0 (Toss host WebView override) |
-| `userAgent` | desktop Chrome UA | iOS/Android Safari UA | iOS/Android Toss WebView UA | iOS/Android Toss WebView UA |
-| `devicePixelRatio` | 1–2 (desktop) | 2–3 (실기기) | 2–3 (실기기) | 2–3 (실기기) |
+| 필드 | 환경 1 (로컬) | 환경 2 (PWA) | 환경 3 (relay-dev) |
+|---|---|---|---|
+| `source` | `"mock"` | `"relay"` (토큰 확정 미정) | `"relay-dev"` |
+| `sdkInsetsSource` | `"window.__ait"` | `"window.__ait"` | `"window.__sdk"` |
+| `sdkInsets.top` | 패널 설정값 (예: 47) | 실기기 측정값 | 실기기 측정값 (예: 44–54) |
+| `cssEnv.top` | CSS env var (panel context) | 실기기 측정값 | 0 (Toss host WebView override) |
+| `userAgent` | desktop Chrome UA | iOS/Android Safari UA | iOS/Android Toss WebView UA |
+| `devicePixelRatio` | 1–2 (desktop) | 2–3 (실기기) | 2–3 (실기기) |
 
 ### `call_sdk("getOperationalEnvironment", [])` — 시나리오별 예상 shape
 
-| 필드 | 환경 1 (mock) | 환경 2 (PWA non-dogfood) | 환경 3 (intoss dev dogfood) | 환경 4 (live dogfood) |
-|---|---|---|---|---|
-| `ok` | true | false | true | true |
-| `error` | — | `"window.__sdkCall is not available"` | — | — |
-| `value` | `"sandbox"` (scalar) 또는 패널 설정값 | — | scalar string (`'toss' \| 'sandbox'`) | scalar string (`'toss' \| 'sandbox'`) |
+| 필드 | 환경 1 (mock) | 환경 2 (PWA non-dogfood) | 환경 3 (intoss dev dogfood) |
+|---|---|---|---|
+| `ok` | true | false | true |
+| `error` | — | `"window.__sdkCall is not available"` | — |
+| `value` | `"sandbox"` (scalar) 또는 패널 설정값 | — | scalar string (`'toss' \| 'sandbox'`) |
 
 `value`는 scalar string(`'toss' | 'sandbox'`)이다 — `{environment, sdkVersion}` 객체 형태는 `AIT.getOperationalEnvironment`(mock-only)의 응답이며 `call_sdk` envelope과 다르다. 실기기 실측 토큰은 검증 후 확정.
 
