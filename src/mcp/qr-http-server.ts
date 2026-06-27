@@ -531,7 +531,6 @@ function buildSseScript(strings: SseScriptStrings): string {
  *   - __SAFE_LABEL__        : HTML-escaped deploymentId label (intoss family에만 존재)
  *   - __SAFE_ATTACH_URL__   : HTML-escaped attach URL (TOTP at= 코드 포함 — 의도된 전달)
  *   - __MODE_LABEL__        : 환경 배지 (`<p class="mode-label">…</p>` 또는 빈 문자열, #468)
- *   - __LIVE_FAQ__          : 환경 4 LIVE read-only `<li>` 또는 빈 문자열 (intoss family에만 존재)
  *   - __INSPECTOR_SECTION__ : "디버그 툴 열기" 버튼 또는 대기 힌트 (#544)
  *
  * mode-aware 분기 (#468): mode가 `relay-mobile`이면 sandbox family chrome(launcher
@@ -559,8 +558,6 @@ function buildAttachHtml(
   const s = resolveLocaleStrings(locale);
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
   const family = attachFamilyForMode(mode);
-  // relay-live (env 4) LIVE read-only 라인 제거 (#665) — positive-allowlist kill-switch.
-  const liveFaq = '';
 
   // inspector 섹션 — pages.length > 0 게이트 (#544).
   // inspectorStableUrl은 /inspector 안정 URL (시크릿 없음) — href 노출 가능.
@@ -578,7 +575,6 @@ function buildAttachHtml(
   const filled = chrome
     .replaceAll('__LANG_SWITCHER__', langSwitcher)
     .replaceAll('__MODE_LABEL__', buildModeLabel(mode, s))
-    .replaceAll('__LIVE_FAQ__', liveFaq)
     .replaceAll('__QR_DATA_URL__', qrDataUrl)
     .replaceAll('__SAFE_LABEL__', safeLabel)
     .replaceAll('__SAFE_ATTACH_URL__', safeAttachUrl)

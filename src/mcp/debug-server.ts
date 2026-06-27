@@ -1626,8 +1626,10 @@ export function connectionHostsAllowed(conn: CdpConnection): boolean {
       const url = new URL(p.url ?? '');
       return isDebugAllowedHost(url.hostname);
     } catch {
-      // Unparseable URL — treat as allowed (relay page-missing guard will fire).
-      return true;
+      // Unparseable URL — fail-closed (#665 positive-allowlist).
+      // A relay target with an unparseable URL cannot have a known-good host;
+      // blocking it preserves the positive-allowlist invariant.
+      return false;
     }
   });
 }

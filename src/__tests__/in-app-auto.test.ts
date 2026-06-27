@@ -226,6 +226,84 @@ describe('maybeAttach() — called when gate activates', () => {
 });
 
 // ---------------------------------------------------------------------------
+// host-gate kill-switch (#665) — allowlist 밖 host에서 dormant
+//
+// auto.ts는 shouldActivate() 통과 후 window.location.hostname을 isDebugAllowedHost()로
+// 확인한다. 비허용 host에서는 maybeAttach()를 호출하지 않고 브리지도 설치하지 않는다.
+// ---------------------------------------------------------------------------
+
+describe('host-gate kill-switch (#665)', () => {
+  afterEach(() => {
+    delete window.__sdk;
+    delete window.__sdkCall;
+  });
+
+  it('비허용 host(apps.tossmini.com)에서 maybeAttach 미호출 + window.__sdk 미설치', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    // window.location.hostname을 비허용 host로 설정
+    Object.defineProperty(window, 'location', {
+      value: {
+        hostname: 'apps.tossmini.com',
+        search: '?debug=1&relay=wss://r.example.com/',
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    await import('../in-app/auto.js');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const attachMod = (await import('../in-app/attach.js')) as unknown as {
+      maybeAttach: ReturnType<typeof vi.fn>;
+    };
+    // 비허용 host → maybeAttach 호출 없음
+    expect(attachMod.maybeAttach).not.toHaveBeenCalled();
+    // window.__sdk 미설치
+    expect(window.__sdk).toBeUndefined();
+    expect(window.__sdkCall).toBeUndefined();
+
+    // 복구
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', search: '' },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('허용 host(localhost)에서 maybeAttach 호출됨', async () => {
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    Object.defineProperty(window, 'location', {
+      value: {
+        hostname: 'localhost',
+        search: '?debug=1&relay=wss://r.example.com/',
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    await import('../in-app/auto.js');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const attachMod = (await import('../in-app/attach.js')) as unknown as {
+      maybeAttach: ReturnType<typeof vi.fn>;
+    };
+    // 허용 host → maybeAttach 호출됨
+    expect(attachMod.maybeAttach).toHaveBeenCalledTimes(1);
+
+    // 복구
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', search: '' },
+      writable: true,
+      configurable: true,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Optional peer — fail-silent when @apps-in-toss/web-framework is absent
 // ---------------------------------------------------------------------------
 

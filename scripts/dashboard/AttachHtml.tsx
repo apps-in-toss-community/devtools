@@ -8,15 +8,14 @@
  *   - `sandbox` — env 2 (relay-mobile, AITC Sandbox PWA): launcher PWA flow.
  *     No Toss app / `_deploymentId` concepts — the deployment label row is
  *     omitted entirely.
- *   - `intoss`  — env 3/4 (relay-dev / relay-live): Toss app deep-link flow.
- *     Env 4 appends one LIVE read-only line at runtime via `__LIVE_FAQ__`.
+ *   - `intoss`  — env 3 (relay-dev): Toss app deep-link flow.
  *
  * Token-fill vs runtime assembly:
  *   - `attachChromeByLocale[locale][family]` (exported from the generated
  *     module): full static HTML rendered at build time. Contains NO
  *     per-request values.
  *   - Per-request tokens (`__QR_DATA_URL__`, `__SAFE_LABEL__`,
- *     `__SAFE_ATTACH_URL__`, `__MODE_LABEL__`, `__LIVE_FAQ__`) are replaced by
+ *     `__SAFE_ATTACH_URL__`, `__MODE_LABEL__`, `__INSPECTOR_SECTION__`) are replaced by
  *     qr-http-server.ts at runtime.
  *   - The steps/FAQ list items contain HTML tags (strong/code). They are
  *     rendered as literal HTML in the precompiled chrome. qr-http-server.ts
@@ -32,7 +31,7 @@ export type AttachChromeFamily = 'sandbox' | 'intoss';
 interface AttachHtmlProps {
   /** ko or en — used in <html lang="…"> */
   lang: string;
-  /** Which copy family this chrome carries (env 2 vs env 3/4). */
+  /** Which copy family this chrome carries (env 2 vs env 3). */
   family: AttachChromeFamily;
   /** Resolved strings for all static labels on the attach page. */
   strings: {
@@ -72,7 +71,6 @@ interface AttachHtmlProps {
  *   - `__SAFE_LABEL__`        — HTML-escaped deploymentId label (intoss family only)
  *   - `__SAFE_ATTACH_URL__`   — HTML-escaped attach URL (TOTP at= inside, intentional)
  *   - `__MODE_LABEL__`        — environment badge (`<p class="mode-label">…</p>`), or ''
- *   - `__LIVE_FAQ__`          — env-4 LIVE read-only `<li>`, or '' (intoss family only)
  *   - `__INSPECTOR_SECTION__` — "디버그 툴 열기" button or waiting hint (#544)
  */
 export function AttachHtml({ lang, family, strings }: AttachHtmlProps) {
@@ -182,8 +180,7 @@ hr { border: none; border-top: 1px solid #21262d; width: 100%; margin: 0.5rem 0;
             {strings.faqItems.map((item) => (
               <li key={item} dangerouslySetInnerHTML={{ __html: item }} />
             ))}
-            {/* __LIVE_FAQ__ — env-4 read-only line filled at runtime ('' on env 3) */}
-            {family === 'intoss' ? '__LIVE_FAQ__' : null}
+            {/* relay-live (env 4) LIVE FAQ 항목 제거됨 (#665) */}
           </ul>
         </section>
 

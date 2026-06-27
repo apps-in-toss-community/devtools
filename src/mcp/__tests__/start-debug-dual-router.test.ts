@@ -28,6 +28,7 @@ import type {
 } from '../cdp-connection.js';
 import {
   type ConnectionRouter,
+  connectionHostsAllowed,
   createDebugServer,
   isRelayMode,
   type ModeSwitchReport,
@@ -284,6 +285,45 @@ describe('positive-allowlist: relay-staging on allowed host passes side-effect t
     // Should not return host-allowlist error
     expect(getText(result)).not.toContain('#665');
     expect(getText(result)).not.toContain('허용 호스트');
+  });
+});
+
+// ---- connectionHostsAllowed unit tests (#665 작업 B) ------------------------
+// 지시서 §작업 B.1: (b) apps.tossmini.com → false/거부, (c) 0 targets → true,
+// (d) 빈 URL → false (파싱 불가 → fail-closed, 작업 A 수정 후 검증)
+
+describe('connectionHostsAllowed — positive-allowlist kill-switch unit', () => {
+  it('(a) private-apps target → 허용', () => {
+    const conn = new FakeConn('relay', [
+      { id: 'r1', title: 'app', url: 'https://r1.private-apps.tossmini.com/app' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(true);
+  });
+
+  it('(b) apps.tossmini.com target → 거부 (production host not in allowlist)', () => {
+    const conn = new FakeConn('relay', [
+      { id: 'p1', title: 'prod', url: 'https://apps.tossmini.com/app' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(false);
+  });
+
+  it('(c) 0 targets → true (attach 전 판정 보류)', () => {
+    const conn = new FakeConn('relay', []);
+    expect(connectionHostsAllowed(conn)).toBe(true);
+  });
+
+  it('(d) 파싱 불가 URL → false (fail-closed, 작업 A 수정 필요)', () => {
+    // 작업 A 수정 전: catch { return true } → 현재 이 케이스는 true.
+    // 작업 A 수정 후: catch { return false } → fail-closed.
+    const conn = new FakeConn('relay', [{ id: 'bad', title: 'bad', url: '' }]);
+    expect(connectionHostsAllowed(conn)).toBe(false);
+  });
+
+  it('local connection → 항상 허용 (local은 체크 대상 아님)', () => {
+    const conn = new FakeConn('local', [
+      { id: 'l1', title: 'local', url: 'http://localhost:5173/' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(true);
   });
 });
 

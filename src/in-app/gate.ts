@@ -217,12 +217,22 @@ export function isTrycloudflareHost(hostname: string): boolean {
 
 /**
  * Returns true when the hostname is a localhost/loopback address.
- * Allowed: `localhost`, `127.x.x.x`, `[::1]`, `0.0.0.0`, `*.localhost`
+ * Allowed: `localhost`, `127.x.x.x` (full RFC 5735 loopback block), `[::1]`,
+ * `0.0.0.0`, `*.localhost`.
+ *
+ * Security note: `hostname.startsWith('127.')` is intentionally NOT used —
+ * that pattern would accept `127.evil.com`, which starts with "127." but is an
+ * attacker-controlled hostname, not a loopback address. Instead, the 127/8
+ * loopback block is matched with a strict numeric-quad regex so only valid
+ * dotted-decimal IPv4 in the 127.x.x.x range pass (#665 작업 A fix).
  */
 export function isLocalhostHost(hostname: string): boolean {
   if (hostname === 'localhost' || hostname === '0.0.0.0') return true;
   if (hostname === '[::1]') return true;
-  if (hostname.startsWith('127.')) return true;
+  // Match the entire 127/8 loopback block (127.0.0.0 – 127.255.255.255).
+  // Each octet is one or more digits — no hostname label can look like this, so
+  // the regex unambiguously selects IPv4 loopback addresses only.
+  if (/^127\.\d+\.\d+\.\d+$/.test(hostname)) return true;
   if (hostname.endsWith('.localhost')) return true;
   return false;
 }
