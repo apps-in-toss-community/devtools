@@ -79,9 +79,9 @@ export interface DashboardState {
    *
    * - `'relay-mobile'` → sandbox family (환경 2: launcher PWA 절차, 토스 앱·_deploymentId 없음)
    * - `'relay-dev'`    → intoss family (환경 3: 토스 앱 deep-link 절차)
-   * - `'relay-live'`   → intoss family + LIVE read-only 한 줄 (환경 4)
    * - `'mock'` / 미지정 → intoss family, 환경 라벨 없음 (환경 1은 /attach 표면이
    *   없어 사실상 도달 불가 — legacy 카피 유지 fallback)
+   * - `relay-live` (환경 4) 제거 (#665) — positive-allowlist kill-switch.
    *
    * 호출처는 자기 mode를 명시적으로 전달한다: debug-server는 active connection에서
    * `deriveEnvironment(...)`로 파생, unplugin tunnel 대시보드는 `'relay-mobile'` 고정.
@@ -111,9 +111,7 @@ function buildModeLabel(
     case 'relay-dev':
       label = s('attach.mode.intossDev');
       break;
-    case 'relay-live':
-      label = s('attach.mode.intossLive');
-      break;
+    // relay-live (env 4) removed (#665) — positive-allowlist kill-switch.
     case 'mock':
     case undefined:
       return '';
@@ -537,8 +535,8 @@ function buildSseScript(strings: SseScriptStrings): string {
  *   - __INSPECTOR_SECTION__ : "디버그 툴 열기" 버튼 또는 대기 힌트 (#544)
  *
  * mode-aware 분기 (#468): mode가 `relay-mobile`이면 sandbox family chrome(launcher
- * PWA 절차), 그 외는 intoss family chrome(토스 앱 절차)을 선택한다. `relay-live`는
- * intoss chrome에 LIVE read-only 라인을 추가한다.
+ * PWA 절차), 그 외는 intoss family chrome(토스 앱 절차)을 선택한다.
+ * relay-live (env 4) 제거 (#665) — positive-allowlist kill-switch.
  *
  * SSE 스크립트도 주입 — `#attach-section` hook이 있으면 `/events` push 때 QR이
  * `/qr.png?u=<fresh attachUrl>`로 자동 갱신된다. `#inspector-link`도 SSE push로
@@ -561,9 +559,8 @@ function buildAttachHtml(
   const s = resolveLocaleStrings(locale);
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
   const family = attachFamilyForMode(mode);
-  // 환경 4 전용 LIVE read-only 라인 — i18n 문자열은 신뢰된 빌드타임 카피(strong/code
-  // 인라인 HTML 포함)라 verbatim 주입한다 (다른 FAQ 항목과 동일한 취급).
-  const liveFaq = mode === 'relay-live' ? `<li>${s('attach.intoss.faq.liveReadOnly')}</li>` : '';
+  // relay-live (env 4) LIVE read-only 라인 제거 (#665) — positive-allowlist kill-switch.
+  const liveFaq = '';
 
   // inspector 섹션 — pages.length > 0 게이트 (#544).
   // inspectorStableUrl은 /inspector 안정 URL (시크릿 없음) — href 노출 가능.

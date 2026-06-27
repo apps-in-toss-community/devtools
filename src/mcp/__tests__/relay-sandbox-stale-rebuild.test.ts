@@ -37,7 +37,6 @@ import {
   RELAY_SANDBOX_STALE_PAGE_MS,
 } from '../debug-server.js';
 import { AutoDevtoolsOpener } from '../devtools-opener.js';
-import { setLiveIntent } from '../environment.js';
 import { InMemoryDiagnosticsCollector } from '../tools.js';
 
 // ---- Fakes -----------------------------------------------------------------
@@ -80,7 +79,7 @@ function makeFamily(
   return family;
 }
 
-afterEach(() => setLiveIntent(false));
+// liveIntent / setLiveIntent removed (#665) — no afterEach cleanup needed.
 
 // ============================================================================
 // 1. relay-sandbox URL diff → rebuild (issue #610 fix A)
@@ -124,12 +123,12 @@ describe('DualConnectionRouter — relay-sandbox URL diff triggers rebuild (#610
     // readSandboxRelayUrl always returns the SAME URL as the cached family.
     const { router, sandboxFamilies, getBootCount } = makeKeyedRouter(async () => URL_A);
 
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(getBootCount()).toBe(1);
     const first = sandboxFamilies[0];
 
     // Re-enter relay-sandbox — URL unchanged, so warm family must be reused.
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(getBootCount()).toBe(1); // no new boot
     expect(first.stopped).toBe(0); // no teardown
   });
@@ -170,12 +169,12 @@ describe('DualConnectionRouter — relay-sandbox URL diff triggers rebuild (#610
       readSandboxRelayUrl: readUrl,
     });
 
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(bootCount).toBe(1);
     expect(relayUrls[0]).toBe(URL_A);
 
     // Re-enter with rotated URL (URL_B ≠ URL_A) → teardown stale, boot fresh.
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(bootCount).toBe(2);
     expect(stopCounts[0]).toBe(1); // first (stale) family torn down
     expect(relayUrls[1]).toBe(URL_B);
@@ -185,12 +184,12 @@ describe('DualConnectionRouter — relay-sandbox URL diff triggers rebuild (#610
   it('null from readSandboxRelayUrl (read error) — warm family is kept (fail-open)', async () => {
     const { router, sandboxFamilies, getBootCount } = makeKeyedRouter(async () => null);
 
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(getBootCount()).toBe(1);
     const first = sandboxFamilies[0];
 
     // readSandboxRelayUrl returns null (FS error) — must NOT drop working connection.
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(getBootCount()).toBe(1); // no re-boot
     expect(first.stopped).toBe(0); // no teardown
   });
@@ -200,12 +199,12 @@ describe('DualConnectionRouter — relay-sandbox URL diff triggers rebuild (#610
       throw new Error('ENOENT');
     });
 
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(getBootCount()).toBe(1);
     const first = sandboxFamilies[0];
 
     // Thrown error → same fail-open: keep warm family.
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(getBootCount()).toBe(1);
     expect(first.stopped).toBe(0);
   });
@@ -231,8 +230,8 @@ describe('DualConnectionRouter — relay-sandbox URL diff triggers rebuild (#610
       // readSandboxRelayUrl intentionally omitted.
     });
 
-    await router.switchMode('relay-sandbox', false);
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
+    await router.switchMode('relay-sandbox');
     expect(bootCount).toBe(1); // always reuses warm family
     expect(sandboxFamilies[0].stopped).toBe(0);
   });
@@ -262,8 +261,8 @@ describe('DualConnectionRouter — relay-sandbox URL diff triggers rebuild (#610
       readSandboxRelayUrl: async () => URL_B,
     });
 
-    await router.switchMode('relay-staging', false); // boots relay-intoss
-    await router.switchMode('relay-staging', false); // re-entry: URL check skipped for non-sandbox
+    await router.switchMode('relay-staging'); // boots relay-intoss
+    await router.switchMode('relay-staging'); // re-entry: URL check skipped for non-sandbox
     expect(intossBootCount).toBe(1); // warm reuse, no rebuild
     expect(intoss.stopped).toBe(0);
     expect(sandboxBootCount).toBe(0);

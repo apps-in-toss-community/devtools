@@ -70,6 +70,7 @@
  */
 
 import { maybeAttach } from './attach.js';
+import { isDebugAllowedHost } from './gate.js';
 
 // ---------------------------------------------------------------------------
 // Global type augmentation
@@ -184,6 +185,10 @@ export function shouldActivate(
 
 if (!shouldActivate()) {
   // Dormant — no-op. Normal production load exits here.
+} else if (typeof window === 'undefined' || !isDebugAllowedHost(window.location.hostname)) {
+  // Dormant — host not in debug allowlist (#665). env 4 / apps.tossmini.com
+  // and any non-allowlisted host stay dormant even when URL params signal
+  // debug intent. SECRET-HANDLING: hostname is never logged here.
 } else {
   // ---------------------------------------------------------------------------
   // Step 1: attach (runs the full Layer B/C gate — zero semantics change).

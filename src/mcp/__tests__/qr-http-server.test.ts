@@ -1233,8 +1233,8 @@ describe('startQrHttpServer — url-box click-to-copy + 복사 버튼 (#458)', (
 //   - relay-mobile (환경 2) → sandbox family: launcher PWA 카피,
 //     토스 앱/_deploymentId 문구 0건, "환경 2" 라벨
 //   - relay-dev   (환경 3) → intoss family: 기존 카피 그대로 + "환경 3" 라벨
-//   - relay-live  (환경 4) → intoss family + LIVE read-only 라인 + "환경 4" 라벨
 //   - mode 미설정/mock     → intoss family, 환경 라벨 없음 (기존 동작 보존)
+//   - relay-live (환경 4) 제거 (#665) — positive-allowlist kill-switch.
 //
 // SECRET-HANDLING: placeholder URL만 사용 — 실제 터널/relay/TOTP 값 없음.
 // ---------------------------------------------------------------------------
@@ -1335,25 +1335,7 @@ describe('startQrHttpServer — /attach mode-aware chrome 분기 (#468)', () => 
     expect(html).not.toContain('__LIVE_FAQ__');
   });
 
-  // ── 환경 4 (relay-live → intoss family + LIVE read-only 라인) ────────────
-
-  it('mode=relay-live (ko) — intoss 카피 + LIVE read-only 라인 + 환경 4 라벨', async () => {
-    const html = await fetchAttachHtml('relay-live', intossAttachUrl, 'ko');
-    expect(html).toContain('토스 앱을 실행하세요');
-    expect(html).toContain('환경 4 — intoss live relay debug');
-    // LIVE read-only 체크리스트 라인 (confirm 게이트 안내)
-    expect(html).toContain('LIVE 세션은 read-only입니다');
-    expect(html).toContain('confirm');
-    expect(html).not.toContain('__LIVE_FAQ__');
-  });
-
-  it('mode=relay-live (en) — LIVE read-only 라인 + env 4 라벨', async () => {
-    const html = await fetchAttachHtml('relay-live', intossAttachUrl, 'en');
-    expect(html).toContain('env 4 — intoss live relay debug');
-    expect(html).toContain('LIVE session is read-only');
-    expect(html).toContain('confirm');
-    expect(html).not.toContain('__LIVE_FAQ__');
-  });
+  // 환경 4 (relay-live) tests removed — relay-live and LIVE guard removed (#665).
 
   // ── mode 미설정 / mock — 기존 동작 보존 (intoss 카피, 라벨 없음) ─────────
 

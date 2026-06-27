@@ -323,7 +323,7 @@ const DEV_TOOL_DEFINITIONS = [
         },
         projectRoot: { type: 'string', description: 'Glob base directory.' },
         timeout_ms: { type: 'number', description: 'Per-file evaluate timeout in ms.' },
-        confirm: { type: 'boolean', description: 'Required in relay-live sessions.' },
+        // confirm removed (#665) — relay-live and LIVE guard removed.
       },
       required: ['files'],
     },

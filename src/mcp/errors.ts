@@ -9,6 +9,9 @@
  *   - page-missing : 페이지가 attach 안 됨 — build_attach_url → QR 스캔
  *   - page-crash   : 페이지 crash 감지 — 앱 재실행 후 재attach
  *   - sdk-absent   : window.__sdkCall 미주입 — dog-food 채널로 재배포
+ *
+ * `liveGuardError` (relay-live env 4 guard)는 #665에서 제거됨.
+ * relay-live / LIVE guard 전체가 positive-allowlist kill-switch로 대체됐다.
  */
 
 /** MCP tool-result 에러 응답 형식. */
@@ -135,30 +138,6 @@ export function sdkAbsentError(toolName?: string, isLocal = false): McpErrorResu
       'dog-food 채널(intoss-private)로 재배포 후 QR을 다시 스캔하세요: ' +
       '`ait build && aitcc app deploy`.',
   );
-}
-
-/* -------------------------------------------------------------------------- */
-/* LIVE side-effect guard 메시지 (relay-live env)                              */
-/* -------------------------------------------------------------------------- */
-
-/**
- * relay-live 환경에서 side-effect 도구(`call_sdk`, `evaluate`)를 `confirm: true`
- * 없이 호출했을 때 반환하는 거부 메시지.
- *
- * 다음 행동을 두 가지로 제시한다:
- *   1. 같은 호출에 `confirm: true` 인자를 추가해 재시도.
- *   2. 읽기 전용 환경(relay-dev, mock)으로 전환.
- */
-export function liveGuardError(toolName: string): McpErrorResult {
-  const text =
-    `[LIVE relay guard] ${toolName}은 현재 relay-live(실 출시 런타임) 세션에서 ` +
-    'side-effect 호출입니다. 실유저에게 영향을 줄 수 있어 명시적 동의가 필요합니다.\n\n' +
-    '다음 중 하나를 선택하세요:\n' +
-    `  1. \`confirm: true\` 인자를 추가해 재호출: ${toolName}(…, confirm: true)\n` +
-    '  2. 읽기 전용 도구(list_pages, list_console_messages, take_screenshot 등)를 사용하세요.\n' +
-    '  3. dog-food 빌드(relay-dev 환경)에서 먼저 검증 후 live에 적용하세요.\n\n' +
-    'live-guard: MCP_ENV=relay-live + confirm: true missing';
-  return mcpError(text);
 }
 
 /* -------------------------------------------------------------------------- */

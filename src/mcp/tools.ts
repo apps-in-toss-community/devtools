@@ -41,7 +41,7 @@ import type {
 } from './cdp-connection.js';
 import { buildDeepLinkAttachUrl, validateSchemeAuthority } from './deeplink.js';
 import type { McpEnvironment } from './environment.js';
-import { isLiveRelayEnv, isRelayEnv, toLegacyEnv } from './environment.js';
+import { isRelayEnv, toLegacyEnv } from './environment.js';
 import { lookupSignature, warnPassthrough } from './sdk-signatures.js';
 import { isPidAlive } from './server-lock.js';
 import { generateTotp, RELAY_VERIFY_SKEW_STEPS } from './totp.js';
@@ -158,8 +158,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'launcher deep-link. The launcher PWA then registers its own document as the CDP target ' +
       'instead of the framed mini-app. SINGLE-ATTACH MODEL: attaching the launcher self-target ' +
       'evicts any currently-attached mini-app target — use this mode exclusively for diagnosing ' +
-      'the launcher document itself (DOM, safe-area, console). Not applicable in env 3/4 ' +
-      '(relay-staging/relay-live) — passing selfdebug=true there returns an error.',
+      'the launcher document itself (DOM, safe-area, console). Not applicable in env 3 ' +
+      '(relay-staging) — passing selfdebug=true there returns an error.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -200,7 +200,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'so the launcher PWA registers its own document as the CDP target (launcher diagnostics mode). ' +
             'SINGLE-ATTACH MODEL: self-target attach evicts any currently-attached mini-app target. ' +
             'Use only when you need to inspect the launcher itself (DOM, safe-area, console). ' +
-            'Passing selfdebug=true in env 3/4 (relay-staging/relay-live) returns an error. ' +
+            'Passing selfdebug=true in env 3 (relay-staging) returns an error. ' +
             'Default: false (omitted — output is byte-identical to previous behaviour).',
         },
       },
@@ -248,10 +248,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Read-only — does not modify page state. ' +
       'Tier C per RFC #277: the same Runtime.evaluate probe runs in both `mock` (devtools panel ' +
       'page with window.__ait state) and `relay` (real-device WebView with window.__sdk). ' +
-      'The result includes a `source: "mock" | "relay-dev" | "relay-live" | "relay-mobile"` field so consumers can identify ' +
+      'The result includes a `source: "mock" | "relay-dev" | "relay-mobile"` field so consumers can identify ' +
       'provenance without inspecting payload values. ' +
       '(`relay-mobile` = env 2 real-device PWA over an external relay; ' +
-      '`relay-dev` = env 3 dog-food WebView; `relay-live` = env 4 production WebView.) ' +
+      '`relay-dev` = env 3 dog-food WebView; relay-live/env 4 removed #665.) ' +
       'Use in a relay session (phone attached) to get ground-truth values for upgrading a ' +
       'viewport preset from extrapolated/placeholder to measured. ' +
       'Requires a page to be attached — call list_pages first.',
@@ -268,24 +268,16 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Throws if the evaluation throws an exception on the page.\n\n' +
       'SECURITY: expression and result are not redacted — never include secrets or auth ' +
       'tokens in the expression.\n\n' +
-      'LIVE guard: when running against a live/production relay (relay-live env, ' +
-      'MCP_ENV=relay-live), this tool requires `confirm: true` to acknowledge that ' +
-      'the expression may affect real users. Without it the call is rejected with a ' +
-      'structured error. mock and relay-dev sessions are unaffected.',
+      'Positive-allowlist kill-switch (#665): this tool is blocked when the attached ' +
+      'page is on a non-debug host (apps.tossmini.com / env 4). Only localhost, ' +
+      '*.trycloudflare.com, and *.private-apps.tossmini.com are allowed. ' +
+      'relay-live (env 4) and the LIVE confirm guard are removed.',
     inputSchema: {
       type: 'object',
       properties: {
         expression: {
           type: 'string',
           description: 'JavaScript expression to evaluate in the page context.',
-        },
-        confirm: {
-          type: 'boolean',
-          description:
-            'Required when MCP_ENV=relay-live. Set to `true` to explicitly acknowledge ' +
-            'that this expression may have side effects on real/live users. ' +
-            'Omitting this in a relay-live session results in a structured rejection error. ' +
-            'Has no effect in mock or relay-dev sessions.',
         },
       },
       required: ['expression'],
@@ -330,10 +322,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'on local (--target=local, env 1) it means the dev bridge is not installed ' +
       '(start the dev server with `pnpm dev`).\n\n' +
       'SECURITY: method name, args, and result value are not redacted — never include secrets.\n\n' +
-      'LIVE guard: when running against a live/production relay (relay-live env, ' +
-      'MCP_ENV=relay-live), this tool requires `confirm: true` to acknowledge that ' +
-      'the SDK call may affect real users. Without it the call is rejected with a ' +
-      'structured error. mock and relay-dev sessions are unaffected.\n\n' +
+      'Positive-allowlist kill-switch (#665): blocked when the attached page is on ' +
+      'a non-debug host (apps.tossmini.com / env 4). relay-live and the LIVE guard removed.\n\n' +
       'IMPORTANT — 인자 시그니처 (잘못된 인자로 호출하면 토스 앱 crash 위험):\n' +
       '  setDeviceOrientation:        call_sdk("setDeviceOrientation", [{ type: "landscape" }])  // NOT "landscape"\n' +
       '  setIosSwipeGestureEnabled:   call_sdk("setIosSwipeGestureEnabled", [{ isEnabled: false }])\n' +
@@ -358,14 +348,6 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'array',
           description: 'Arguments to pass to the SDK method (optional, default []).',
           items: {},
-        },
-        confirm: {
-          type: 'boolean',
-          description:
-            'Required when MCP_ENV=relay-live. Set to `true` to explicitly acknowledge ' +
-            'that this SDK call may have side effects on real/live users. ' +
-            'Omitting this in a relay-live session results in a structured rejection error. ' +
-            'Has no effect in mock or relay-dev sessions.',
         },
       },
       required: ['name'],
@@ -403,11 +385,15 @@ export const DEBUG_TOOL_DEFINITIONS = [
     description:
       'Switches the active debug environment in-place (issue #348) — no Claude Code restart and ' +
       'no MCP re-handshake. One daemon holds both a local (env 1, mock SDK in a Chromium) and a ' +
-      'relay (env 3/4, real-device Toss WebView over the Chii relay + cloudflared tunnel) ' +
+      'relay (env 2/3, real-device over the Chii relay + cloudflared tunnel) ' +
       'connection at once; this tool flips which one every other tool reads from, lazily booting ' +
       "the requested family's infra on first use and keeping the inactive one warm so an existing " +
       'attach survives the switch. After switching it emits notifications/tools/list_changed — ' +
       'call tools/list again to see the updated tool surface for the new environment.\n\n' +
+      'Positive-allowlist kill-switch (#665): relay sessions on apps.tossmini.com (env 4, released ' +
+      'production) are silently blocked at both the in-app gate and this MCP layer — ' +
+      'relay-live and the LIVE guard have been removed. Only localhost/loopback (env 1), ' +
+      '*.trycloudflare.com (env 2), and *.private-apps.tossmini.com (env 3) are allowed.\n\n' +
       'modes:\n' +
       '  local-browser — env 1: desktop Chromium with the mock SDK and a local CDP attach. ' +
       'Side-effect tools (call_sdk/evaluate) run unguarded against the mock; nothing touches a ' +
@@ -415,8 +401,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'for state/contract and visual-layout work.\n' +
       '  relay-sandbox — env 2: a real-device PWA (real WebKit engine, mock SDK) over an external ' +
       'Chii relay. CDP covers real-device WebKit DOM, console, exceptions, and safe-area ' +
-      'observation; call_sdk still hits the mock (SDK fidelity needs relay-staging). liveIntent ' +
-      'off — dev-intent, LIVE guard inactive, side-effect tools run unguarded against the mock. ' +
+      'observation; call_sdk still hits the mock (SDK fidelity needs relay-staging). ' +
+      'Side-effect tools run unguarded against the mock. ' +
       'Only the dual-connection daemon can enter relay-sandbox in-place; a single-connection ' +
       'session rejects it with "동적 전환할 수 없습니다 … relay-sandbox 모드로 재시작하세요" — ' +
       'follow that hint and restart the MCP server in relay-sandbox mode rather than retrying. ' +
@@ -433,14 +419,8 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'intoss-private://…?_deploymentId=… deep-link); open that deep-link/QR on the device to ' +
       'cold-load the bundle with the relay injected. Unlike env 2, env 3 is NOT a dev-server ' +
       'tunnel — it is a deployed bundle reached via the intoss-private scheme, so `pnpm dev` ' +
-      'plays no part here.\n' +
-      '  relay-live — env 4: the REVIEW-PASSED, released production runtime with the REAL SDK over ' +
-      'the intoss relay — real end users are on the other side. Read-only debugging is the intent: ' +
-      'the LIVE guard is armed, so call_sdk/evaluate require confirm:true per call, and ENTERING ' +
-      'relay-live ALSO requires confirm:true on this call. Use it only to observe a shipped ' +
-      'regression; verify fixes in relay-staging first.\n\n' +
-      'Switching back to local-browser automatically disarms the LIVE guard.\n\n' +
-      'For a relay mode (relay-sandbox/relay-staging/relay-live), also pass projectRoot — the ' +
+      'plays no part here.\n\n' +
+      'For a relay mode (relay-sandbox/relay-staging), also pass projectRoot — the ' +
       'absolute mini-app project root — so the daemon can read the relay auth secret from ' +
       '<projectRoot>/.ait_relay (read-only; the daemon never mints it). Omit it for local-browser.',
     inputSchema: {
@@ -448,22 +428,16 @@ export const DEBUG_TOOL_DEFINITIONS = [
       properties: {
         mode: {
           type: 'string',
-          enum: ['local-browser', 'relay-sandbox', 'relay-staging', 'relay-live'],
+          enum: ['local-browser', 'relay-sandbox', 'relay-staging'],
           description:
-            'Target environment to switch to. mode=relay-live additionally requires confirm: true (and arms the read-only LIVE guard).',
-        },
-        confirm: {
-          type: 'boolean',
-          description:
-            'Required when mode=relay-live — set true to acknowledge entering LIVE (env 4) ' +
-            'debugging that can affect real users. Ignored for the other modes.',
+            'Target environment to switch to. relay-live (env 4) has been removed (#665) — use relay-staging (env 3) for dog-food debugging.',
         },
         projectRoot: {
           type: 'string',
           description:
             'Absolute path to the mini-app project root (the directory containing its package.json and .ait_relay). ' +
             'The daemon reads the relay auth secret from <projectRoot>/.ait_relay (read-only) when switching to a relay ' +
-            "environment (relay-staging/relay-live/relay-sandbox). Pass this because the daemon's own cwd is fixed at launch and may not be " +
+            "environment (relay-staging/relay-sandbox). Pass this because the daemon's own cwd is fixed at launch and may not be " +
             'the project being debugged. Omit for mode=local-browser (no secret needed).',
         },
       },
@@ -485,10 +459,10 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'recentErrors (last N server-side errors, PII/secret redacted), ' +
       'authRejects ({count, lastAt} — relay TOTP 401 rejections, secret-free; count > 0 with empty pages ' +
       'means the phone reached the relay but its code was rejected), ' +
-      'environment (kind: mock|relay-dev|relay-live|relay-mobile, env: mock|relay backward-compat, reason, ' +
-      'liveGuardActive: true when relay-live LIVE guard is active; ' +
+      'environment (kind: mock|relay-dev|relay-mobile, env: mock|relay backward-compat, reason, ' +
+      'liveGuardActive: always false — relay-live and LIVE guard removed (#665); ' +
       'start_debug mode→kind mapping: relay-sandbox→relay-mobile, relay-staging→relay-dev, ' +
-      'relay-live→relay-live, local-browser→mock), ' +
+      'local-browser→mock), ' +
       'serverLockHolder (pid + startedAt from the lock file, or null), ' +
       'nextRecommendedAction ({tool, reason} or null — the single next tool to call; ' +
       'in local-target mode tunnel.up=false is normal so "restart" is never recommended). ' +
@@ -520,8 +494,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Test verification (assert/snapshot) is delegated to the in-page Vitest runtime; this tool is ' +
       'the transport + report. The per-file results array is the progress record — on partial failure ' +
       'you see exactly which files passed/failed/timed-out. ' +
-      'In a relay-live session this is a state-mutating injection and is blocked unless confirm=true ' +
-      '(confirm is ignored in every non-live session: mock/local, relay-dev, relay-mobile). ' +
+      'Positive-allowlist kill-switch (#665): blocked when the attached page is on a non-debug host. ' +
       'debug-mode only — dev-mode (--mode=dev) has no CDP. ' +
       'Tier C (both mock/local and relay). The devtools-test CLI shares this run core and file ' +
       'discovery, but its standalone relay attach is not wired yet — run via this tool for now.',
@@ -546,12 +519,6 @@ export const DEBUG_TOOL_DEFINITIONS = [
           description:
             'Per-file evaluate timeout in ms (default 30000, range 1000–600000). ' +
             'Out-of-range/invalid values fall back to the default.',
-        },
-        confirm: {
-          type: 'boolean',
-          description:
-            'Required (true) to run in a relay-live session — test injection mutates page state. ' +
-            'Ignored in every non-live session (mock/local, relay-dev, relay-mobile).',
         },
       },
       required: ['files'],
@@ -586,8 +553,9 @@ export function getToolAvailability(name: string): ToolAvailability | undefined 
  * Unknown tools return `false` — callers should reject them as unknown rather
  * than as env-mismatched.
  *
- * Relay variants (`relay-dev`, `relay-live`, `relay-mobile`) all satisfy the
+ * Relay variants (`relay-dev`, `relay-mobile`) all satisfy the
  * `'relay'` availability tier — `isRelayEnv()` is used for the check.
+ * (`relay-live` removed #665.)
  */
 export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
   const availability = getToolAvailability(name);
@@ -602,8 +570,8 @@ export function isToolAvailableIn(name: string, env: McpEnvironment): boolean {
  * matches the given env. Pure — preserves order; both Tier C ("both") and the
  * matching single-env tier pass through.
  *
- * Relay variants (`relay-dev`, `relay-live`, `relay-mobile`) all satisfy the
- * `'relay'` tier.
+ * Relay variants (`relay-dev`, `relay-mobile`) all satisfy the
+ * `'relay'` tier. (`relay-live` removed #665.)
  */
 export function filterToolsByEnvironment<T extends { name: string; availableIn: ToolAvailability }>(
   tools: ReadonlyArray<T>,
@@ -1275,8 +1243,8 @@ export interface SafeAreaMeasurement {
    * MCP environment this measurement was taken in:
    *   - `'mock'`         — dev browser panel
    *   - `'relay-dev'`    — real-device WebView, dog-food build
-   *   - `'relay-live'`   — real-device WebView, live/production build
    *   - `'relay-mobile'` — real-device PWA (env 2) over an external relay
+   *   (`relay-live` / env 4 removed #665.)
    *
    * Set by the caller (`measureSafeArea`) from the env detection SSoT
    * (`getEnvironment`).
@@ -1840,8 +1808,8 @@ export interface DiagnosticsResult {
   /**
    * Resolved environment and the reason string.
    *
-   * `kind` — the precise four-value environment (`mock` | `relay-dev` |
-   *   `relay-live` | `relay-mobile`). Use this for new code.
+   * `kind` — the precise three-value environment (`mock` | `relay-dev` |
+   *   `relay-mobile`). Use this for new code. (`relay-live` removed #665.)
    * `env`  — backward-compat two-value alias (`mock` | `relay`). Kept so
    *   existing callers that only distinguish mock vs relay continue to work.
    */
@@ -1850,8 +1818,11 @@ export interface DiagnosticsResult {
     /** @deprecated Use `kind` instead. Kept for backward compatibility. */
     env: 'mock' | 'relay';
     reason: string;
-    /** `true` when the LIVE side-effect guard is active (`kind === 'relay-live'`). */
-    liveGuardActive: boolean;
+    /**
+     * @deprecated Always `false` — relay-live and the LIVE guard removed (#665).
+     * Kept for backward compatibility with consumers that read this field.
+     */
+    liveGuardActive: false;
   };
   /**
    * Contents of `~/.ait-devtools/server.lock`, or `null` when absent.
@@ -2169,8 +2140,8 @@ export interface GetDiagnosticsInput {
    */
   connection?: CdpConnection;
   /**
-   * Resolved MCP environment (`mock` | `relay-dev` | `relay-live` |
-   * `relay-mobile`). Caller obtains via `resolveEnvironment()`.
+   * Resolved MCP environment (`mock` | `relay-dev` | `relay-mobile`).
+   * Caller obtains via `resolveEnvironment()`. (`relay-live` removed #665.)
    */
   env: McpEnvironment;
   /** Human-readable reason for the env decision. */
@@ -2314,7 +2285,7 @@ export async function getDiagnostics(input: GetDiagnosticsInput): Promise<Diagno
       kind: env,
       env: toLegacyEnv(env),
       reason: envReason,
-      liveGuardActive: isLiveRelayEnv(env),
+      liveGuardActive: false, // relay-live and LIVE guard removed (#665)
     },
     serverLockHolder,
     process: {

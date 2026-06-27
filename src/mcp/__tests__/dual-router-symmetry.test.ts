@@ -9,7 +9,7 @@
  * one and a lazy resolver booted the rest. #378 generalized the lazy slot from a
  * single "opposite kind" into a `bootLazyFor(key: FamilyKey)` resolver keyed by
  * `local-browser | relay-intoss | relay-sandbox`, so `relay-sandbox` (env-2
- * external relay) and `relay-staging`/`relay-live` (intoss relay) — both
+ * external relay) and `relay-staging` (intoss relay) — both
  * `kind: 'relay'` — get distinct warm slots. #396 makes the router **all-lazy**:
  * NO family boots at startup; every
  * family boots on its first `start_debug` via `bootLazyFor(key)`. So before the
@@ -22,7 +22,7 @@
  *   (first-switch target family) × (same-family vs cross-family follow-up)
  *
  * It covers the #356 core (local → relay hot-switch), warm reuse of a booted
- * family, the relay-live confirm gate, `relayTunnelStatus()` sourcing,
+ * family, `relayTunnelStatus()` sourcing,
  * `bootedFamilies()` for unified shutdown, and the #396 all-lazy pre-boot state.
  *
  * No real Chromium / relay / tunnel — fakes only.
@@ -47,7 +47,7 @@ import {
   type StartDebugMode,
 } from '../debug-server.js';
 import { AutoDevtoolsOpener } from '../devtools-opener.js';
-import { getLiveIntent, type RelayOrigin, setLiveIntent } from '../environment.js';
+import type { RelayOrigin } from '../environment.js';
 import { InMemoryDiagnosticsCollector, type TunnelStatus } from '../tools.js';
 
 // ---- Fakes -----------------------------------------------------------------
@@ -149,9 +149,6 @@ function makeRouter(
   };
 }
 
-// The module-level liveIntent bit must not leak across tests.
-afterEach(() => setLiveIntent(false));
-
 // ---- (eager-kind × target) matrix ------------------------------------------
 
 describe('DualConnectionRouter — relay-first (runDebugServer entry, #354 behavior preserved, all-lazy #396)', () => {
@@ -159,7 +156,7 @@ describe('DualConnectionRouter — relay-first (runDebugServer entry, #354 behav
     const { router, relay, getRelayBootCount } = makeRouter('relay');
     // All-lazy: nothing booted at construction.
     expect(getRelayBootCount()).toBe(0);
-    const report = await router.switchMode('relay-staging', false);
+    const report = await router.switchMode('relay-staging');
     expect(report.kind).toBe('relay');
     // Output env layer unchanged ('relay-dev' from deriveEnvironment).
     expect(report.environment).toBe('relay-dev');
@@ -169,16 +166,16 @@ describe('DualConnectionRouter — relay-first (runDebugServer entry, #354 behav
 
   it('relay → relay-staging twice reuses the warm relay family (no re-boot)', async () => {
     const { router, relay, getRelayBootCount } = makeRouter('relay');
-    await router.switchMode('relay-staging', false);
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
+    await router.switchMode('relay-staging');
     expect(router.active).toBe(relay.connection);
     expect(getRelayBootCount()).toBe(1);
   });
 
   it('relay → then local lazy-boots local as a separate family', async () => {
     const { router, local, getLocalBootCount } = makeRouter('relay');
-    await router.switchMode('relay-staging', false);
-    const report = await router.switchMode('local-browser', false);
+    await router.switchMode('relay-staging');
+    const report = await router.switchMode('local-browser');
     expect(report.kind).toBe('local');
     expect(report.environment).toBe('mock');
     expect(router.active).toBe(local.connection);
@@ -189,7 +186,7 @@ describe('DualConnectionRouter — relay-first (runDebugServer entry, #354 behav
 describe('DualConnectionRouter — local-first (runLocalDebugServer entry, #356 core, all-lazy #396)', () => {
   it('local first switch lazy-boots the local family, never booting relay', async () => {
     const { router, local, getRelayBootCount, getLocalBootCount } = makeRouter('local');
-    const report = await router.switchMode('local-browser', false);
+    const report = await router.switchMode('local-browser');
     expect(report.kind).toBe('local');
     expect(report.environment).toBe('mock');
     expect(router.active).toBe(local.connection);
@@ -200,8 +197,8 @@ describe('DualConnectionRouter — local-first (runLocalDebugServer entry, #356 
 
   it('local → local twice reuses the warm local family, no relay boot', async () => {
     const { router, local, getRelayBootCount, getLocalBootCount } = makeRouter('local');
-    await router.switchMode('local-browser', false);
-    await router.switchMode('local-browser', false);
+    await router.switchMode('local-browser');
+    await router.switchMode('local-browser');
     expect(router.active).toBe(local.connection);
     expect(getLocalBootCount()).toBe(1);
     expect(getRelayBootCount()).toBe(0);
@@ -209,9 +206,9 @@ describe('DualConnectionRouter — local-first (runLocalDebugServer entry, #356 
 
   it('CROSS-FAMILY HOT-SWITCH local-browser → relay-staging lazy-boots relay once (#356)', async () => {
     const { router, relay, getRelayBootCount } = makeRouter('local');
-    await router.switchMode('local-browser', false);
+    await router.switchMode('local-browser');
     expect(router.active.kind).toBe('local');
-    const report = await router.switchMode('relay-staging', false);
+    const report = await router.switchMode('relay-staging');
     expect(report.kind).toBe('relay');
     // Output env layer unchanged ('relay-dev' from deriveEnvironment).
     expect(report.environment).toBe('relay-dev');
@@ -259,57 +256,22 @@ describe('DualConnectionRouter — lazy boot is once-only, family kept warm', ()
   it('local-first: relay booted on first relay switch, both families reused after', async () => {
     const { router, local, relay, getRelayBootCount, getLocalBootCount } = makeRouter('local');
     // Boot local first, then cross to relay.
-    await router.switchMode('local-browser', false);
+    await router.switchMode('local-browser');
     expect(getLocalBootCount()).toBe(1);
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     expect(getRelayBootCount()).toBe(1);
     // Bounce back to local — the warm local family is reused, NOT re-booted.
-    await router.switchMode('local-browser', false);
+    await router.switchMode('local-browser');
     expect(router.active).toBe(local.connection);
     expect(getLocalBootCount()).toBe(1);
     // Return to relay — the warm relay family is reused, NOT re-booted.
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     expect(router.active).toBe(relay.connection);
     expect(getRelayBootCount()).toBe(1);
   });
 });
 
-// ---- relay-live confirm gate from a local-eager start (#356) ---------------
-
-describe('DualConnectionRouter — relay-live confirm gate (direction-neutral)', () => {
-  it('local-browser-first → relay-live without confirm is rejected and does not boot relay', async () => {
-    const { router, local, getRelayBootCount } = makeRouter('local');
-    await router.switchMode('local-browser', false);
-    await expect(router.switchMode('relay-live', false)).rejects.toThrow(/confirm: true/);
-    // Still on the local family; the relay was never booted.
-    expect(router.active).toBe(local.connection);
-    expect(router.active.kind).toBe('local');
-    expect(getRelayBootCount()).toBe(0);
-    expect(getLiveIntent()).toBe(false);
-  });
-
-  it('local-browser-first → relay-live with confirm:true arms the LIVE guard', async () => {
-    const { router, relay } = makeRouter('local');
-    await router.switchMode('local-browser', false);
-    const report = await router.switchMode('relay-live', true);
-    // Output env layer unchanged ('relay-live' from deriveEnvironment).
-    expect(report.environment).toBe('relay-live');
-    expect(report.kind).toBe('relay');
-    expect(report.liveGuardActive).toBe(true);
-    expect(router.active).toBe(relay.connection);
-    expect(getLiveIntent()).toBe(true);
-  });
-
-  it('live → local disarms liveIntent (inert against local)', async () => {
-    const { router } = makeRouter('local');
-    await router.switchMode('local-browser', false);
-    await router.switchMode('relay-live', true);
-    expect(getLiveIntent()).toBe(true);
-    const report = await router.switchMode('local-browser', false);
-    expect(report.liveGuardActive).toBe(false);
-    expect(getLiveIntent()).toBe(false);
-  });
-});
+// relay-live confirm gate tests removed — relay-live and LIVE guard removed (#665).
 
 // ---- relayTunnelStatus() sourcing ------------------------------------------
 
@@ -320,16 +282,16 @@ describe('DualConnectionRouter — relayTunnelStatus()', () => {
     const { router } = makeRouter('relay', { eagerTunnel: upTunnel });
     // All-lazy: no relay family yet → tunnel is down (build_attach_url gated).
     expect(router.relayTunnelStatus()).toEqual({ up: false, wssUrl: null });
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     expect(router.relayTunnelStatus()).toEqual(upTunnel);
   });
 
   it('local-first: reports down before the relay is booted, then follows it', async () => {
     const { router } = makeRouter('local', { lazyTunnel: upTunnel });
-    await router.switchMode('local-browser', false);
+    await router.switchMode('local-browser');
     // No relay family yet → tunnel is down (build_attach_url stays gated).
     expect(router.relayTunnelStatus()).toEqual({ up: false, wssUrl: null });
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     // After the relay switch the relay family's tunnel status is exposed.
     expect(router.relayTunnelStatus()).toEqual(upTunnel);
   });
@@ -342,9 +304,9 @@ describe('DualConnectionRouter — bootedFamilies() drives unified shutdown', ()
     const { router, local, relay } = makeRouter('local');
     // #396: nothing booted at construction.
     expect(router.bootedFamilies()).toEqual([]);
-    await router.switchMode('local-browser', false);
+    await router.switchMode('local-browser');
     expect(router.bootedFamilies()).toEqual([local]);
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     expect(router.bootedFamilies()).toEqual([local, relay]);
     // Tearing down every booted family stops both (one Chromium + one relay).
     for (const family of router.bootedFamilies()) family.stop();
@@ -372,11 +334,9 @@ describe('DualConnectionRouter — swapInFlight re-entrancy guard', () => {
       devtoolsOpener: new AutoDevtoolsOpener(),
     });
 
-    const first = router.switchMode('relay-staging', false);
+    const first = router.switchMode('relay-staging');
     // Second call arrives while the first is awaiting the lazy boot.
-    await expect(router.switchMode('relay-staging', false)).rejects.toThrow(
-      /이전 전환이 아직 진행 중/,
-    );
+    await expect(router.switchMode('relay-staging')).rejects.toThrow(/이전 전환이 아직 진행 중/);
     release();
     await first;
     expect(bootLazyFor).toHaveBeenCalledTimes(1);
@@ -392,7 +352,7 @@ describe('DualConnectionRouter — relay-sandbox (relay-external) keyed family (
 
   /**
    * Builds an all-lazy router with THREE distinct keyed slots — a local family,
-   * an intoss relay (`relay-intoss`, served to relay-staging/relay-live) and an
+   * an intoss relay (`relay-intoss`, served to relay-staging) and an
    * external PWA relay (`relay-sandbox`, served to relay-sandbox mode) — so a
    * collision between the two relay slots would be observable (the wrong family /
    * origin would surface). Every slot boots lazily via `bootLazyFor(key)`; nothing
@@ -423,29 +383,27 @@ describe('DualConnectionRouter — relay-sandbox (relay-external) keyed family (
 
   it('relay-sandbox lazy-boots the external relay family and derives relay-mobile', async () => {
     const { router, external, bootCounts } = makeKeyedRouter();
-    const report = await router.switchMode('relay-sandbox', false);
+    const report = await router.switchMode('relay-sandbox');
     expect(report.kind).toBe('relay');
-    // External-PWA origin → relay-mobile (NOT relay-dev, NOT live).
+    // External-PWA origin → relay-mobile (NOT relay-dev).
     expect(report.environment).toBe('relay-mobile');
-    expect(report.liveGuardActive).toBe(false);
     expect(router.active).toBe(external.connection);
     expect(router.activeRelayOrigin).toBe('external-pwa');
     expect(bootCounts['relay-sandbox']).toBe(1);
-    expect(getLiveIntent()).toBe(false);
   });
 
   it('relay-sandbox and relay-staging occupy SEPARATE warm slots — no collision (#378)', async () => {
     const { router, intoss, external, bootCounts } = makeKeyedRouter();
     // relay-staging boots the intoss relay…
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     expect(router.active).toBe(intoss.connection);
     expect(router.activeRelayOrigin).toBe('intoss-webview');
     // …relay-sandbox boots the SEPARATE external relay (does not reuse the intoss slot).
-    const sandboxReport = await router.switchMode('relay-sandbox', false);
+    const sandboxReport = await router.switchMode('relay-sandbox');
     expect(router.active).toBe(external.connection);
     expect(sandboxReport.environment).toBe('relay-mobile');
     // …back to relay-staging reuses the warm intoss relay (no re-boot).
-    const stagingReport = await router.switchMode('relay-staging', false);
+    const stagingReport = await router.switchMode('relay-staging');
     expect(router.active).toBe(intoss.connection);
     expect(stagingReport.environment).toBe('relay-dev');
     // Each relay family booted exactly once — the two slots never collided.
@@ -455,17 +413,17 @@ describe('DualConnectionRouter — relay-sandbox (relay-external) keyed family (
 
   it('relayTunnelStatus() follows the ACTIVE relay family across relay-sandbox/relay-staging', async () => {
     const { router } = makeKeyedRouter();
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('relay-sandbox');
     expect(router.relayTunnelStatus()).toEqual(externalTunnel);
-    await router.switchMode('relay-staging', false);
+    await router.switchMode('relay-staging');
     expect(router.relayTunnelStatus()).toEqual(intossTunnel);
   });
 
   it('bootedFamilies() lists local + both relay slots after all three switches', async () => {
     const { router, local, intoss, external } = makeKeyedRouter();
-    await router.switchMode('local-browser', false);
-    await router.switchMode('relay-staging', false);
-    await router.switchMode('relay-sandbox', false);
+    await router.switchMode('local-browser');
+    await router.switchMode('relay-staging');
+    await router.switchMode('relay-sandbox');
     const families = router.bootedFamilies();
     expect(families).toContain(local);
     expect(families).toContain(intoss);
@@ -481,7 +439,9 @@ describe('familyKeyForMode (#378)', () => {
     expect(familyKeyForMode('local-browser')).toBe('local-browser');
     expect(familyKeyForMode('relay-sandbox')).toBe('relay-sandbox');
     expect(familyKeyForMode('relay-staging')).toBe('relay-intoss');
-    expect(familyKeyForMode('relay-live')).toBe('relay-intoss');
+    // relay-live removed (#665) — familyKeyForMode returns undefined for it
+    // (no matching case in the exhaustive switch).
+    expect(familyKeyForMode('relay-live' as StartDebugMode)).toBeUndefined();
   });
 });
 
@@ -574,10 +534,6 @@ describe('bootExternalRelayFamily — relay-auth baseline (#250)', () => {
 // boots.
 //
 // Pin the mode-type so an accidental literal typo fails to compile.
-const _exhaustive: StartDebugMode[] = [
-  'local-browser',
-  'relay-sandbox',
-  'relay-staging',
-  'relay-live',
-];
+// relay-live removed (#665) — 3-value exhaustive list.
+const _exhaustive: StartDebugMode[] = ['local-browser', 'relay-sandbox', 'relay-staging'];
 void _exhaustive;

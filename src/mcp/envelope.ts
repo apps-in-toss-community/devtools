@@ -14,7 +14,7 @@
  *   error?: { code, message, nextRecommendedAction? },
  *   meta: {
  *     tool: string,
- *     env: 'mock' | 'relay-dev' | 'relay-live' | 'relay-mobile',
+ *     env: 'mock' | 'relay-dev' | 'relay-mobile',
  *     attached: boolean,
  *     contentType: 'json' | 'image',
  *   }
@@ -30,8 +30,11 @@
 
 import type { McpEnvironment } from './environment.js';
 
-/** Allowed values for `meta.env`. */
-export type EnvelopeEnv = 'mock' | 'relay-dev' | 'relay-live' | 'relay-mobile';
+/**
+ * Allowed values for `meta.env`.
+ * `relay-live` (env 4) has been removed (#665).
+ */
+export type EnvelopeEnv = 'mock' | 'relay-dev' | 'relay-mobile';
 
 /** The unified envelope returned by every debug MCP tool (when compat mode is off). */
 export interface ToolEnvelope<T = unknown> {
@@ -62,9 +65,10 @@ export function isCompatMode(): boolean {
 }
 
 /**
- * Maps `McpEnvironment` to `EnvelopeEnv`. After #307 these are the same
- * union (`mock | relay-dev | relay-live`), so this is identity — kept as a
- * named export for surface stability if envelope env diverges in the future.
+ * Maps `McpEnvironment` to `EnvelopeEnv`. These are now the same 3-value
+ * union (`mock | relay-dev | relay-mobile`; `relay-live` removed in #665),
+ * so this is identity — kept as a named export for surface stability if
+ * envelope env diverges in the future.
  */
 export function toEnvelopeEnv(env: McpEnvironment): EnvelopeEnv {
   return env;

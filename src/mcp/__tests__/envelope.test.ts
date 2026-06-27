@@ -177,9 +177,10 @@ describe('toEnvelopeEnv', () => {
     expect(toEnvelopeEnv('relay-dev')).toBe('relay-dev');
   });
 
-  it('maps relay-live → relay-live', () => {
-    expect(toEnvelopeEnv('relay-live')).toBe('relay-live');
+  it('maps relay-mobile → relay-mobile', () => {
+    expect(toEnvelopeEnv('relay-mobile')).toBe('relay-mobile');
   });
+  // relay-live removed in #665 — no test case.
 });
 
 // ---- Integration: MCP tools return ToolEnvelope ----------------------------
@@ -290,7 +291,11 @@ describe('call_sdk result is wrapped in ToolEnvelope', () => {
     results.set('Runtime.evaluate', {
       result: { value: responseJson, type: 'string' },
     });
-    return new FakeCdpConnection([{ id: 't1', title: 'App', url: 'https://example.com' }], results);
+    // Use a localhost URL — the positive-allowlist (#665) allows localhost (env 1).
+    return new FakeCdpConnection(
+      [{ id: 't1', title: 'App', url: 'http://localhost:5173/' }],
+      results,
+    );
   }
 
   it('wraps a successful call_sdk result', async () => {

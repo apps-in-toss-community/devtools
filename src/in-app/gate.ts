@@ -216,6 +216,37 @@ export function isTrycloudflareHost(hostname: string): boolean {
 }
 
 /**
+ * Returns true when the hostname is a localhost/loopback address.
+ * Allowed: `localhost`, `127.x.x.x`, `[::1]`, `0.0.0.0`, `*.localhost`
+ */
+export function isLocalhostHost(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname === '0.0.0.0') return true;
+  if (hostname === '[::1]') return true;
+  if (hostname.startsWith('127.')) return true;
+  if (hostname.endsWith('.localhost')) return true;
+  return false;
+}
+
+/**
+ * Positive-allowlist kill-switch (#665): returns true when the hostname is a
+ * known debug-allowed host. The debug surface is ONLY active on:
+ *   - localhost / loopback (env 1 desktop dev)
+ *   - *.trycloudflare.com (env 2 PWA tunnel)
+ *   - *.private-apps.tossmini.com (env 3 dog-food)
+ *
+ * Any other host (including apps.tossmini.com — the former env 4 LIVE host)
+ * is silently blocked. This is a positive allowlist — unlisted hosts never
+ * had debug surface regardless, but this function makes it explicit and
+ * auditable in a single place.
+ *
+ * SECRET-HANDLING: the hostname value MUST NOT be logged or included in any
+ * error reason string — only benign labels ('host not in allowlist') are safe.
+ */
+export function isDebugAllowedHost(hostname: string): boolean {
+  return isLocalhostHost(hostname) || isTrycloudflareHost(hostname) || isPrivateAppsHost(hostname);
+}
+
+/**
  * Pure function that evaluates the runtime debug activation layers (B and C).
  *
  * Has no side effects. The input is explicit. Returns a discriminated union
@@ -238,7 +269,7 @@ export function isTrycloudflareHost(hostname: string): boolean {
  */
 export function evaluateDebugGate(input: GateInput): GateResult {
   // Layer B1 — host allowlist (the security gate).
-  // Two host kinds are allowed past B1:
+  // Three host kinds are allowed past B1:
   //   - Toss dogfood: `*.private-apps.tossmini.com`. A production `intoss://`
   //     entry is served from `*.apps.tossmini.com` and is rejected here. This
   //     is what stops a dogfood build that somehow reaches a production entry
@@ -251,19 +282,23 @@ export function evaluateDebugGate(input: GateInput): GateResult {
   //     but NOT the remaining layers — C1/C2/C3 (incl. TOTP) still apply, so a
   //     leaked tunnel URL is blocked exactly as on the Toss path. See
   //     {@link isTrycloudflareHost}.
+  //   - Localhost/loopback: env 1 desktop dev (127.x.x.x, [::1], localhost,
+  //     *.localhost, 0.0.0.0). Positive-allowlist kill-switch (#665).
   const isTunnel = isTrycloudflareHost(input.hostname);
-  if (!isPrivateAppsHost(input.hostname) && !isTunnel) {
+  const isLocal = isLocalhostHost(input.hostname);
+  if (!isDebugAllowedHost(input.hostname)) {
     return { attach: false, reason: 'host' };
   }
 
   // Layer B2 — runtime entry query gate (Toss path only).
   // `_deploymentId` must be present and non-empty. The `intoss-private://`
   // scheme used for dogfood entries includes this param; general user entry
-  // paths do not. The env 2 tunnel has no deployed bundle and therefore no
-  // `_deploymentId` — B2 is skipped for it, and `deploymentId` is reported as
-  // the empty string on a tunnel attach (no consumer reads it; see attach.ts).
+  // paths do not. The env 2 tunnel and localhost have no deployed bundle and
+  // therefore no `_deploymentId` — B2 is skipped for them, and `deploymentId`
+  // is reported as the empty string on such attaches (no consumer reads it;
+  // see attach.ts).
   let deploymentId = '';
-  if (!isTunnel) {
+  if (!isTunnel && !isLocal) {
     deploymentId = input.searchParams.get('_deploymentId') ?? '';
     if (deploymentId === '') {
       return { attach: false, reason: 'entry' };

@@ -11,7 +11,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { evaluateDebugGate, isPrivateAppsHost, isTrycloudflareHost } from '../in-app/gate.js';
+import {
+  evaluateDebugGate,
+  isDebugAllowedHost,
+  isPrivateAppsHost,
+  isTrycloudflareHost,
+} from '../in-app/gate.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -534,5 +539,55 @@ describe('Full decision matrix', () => {
     const result = gate(params('relay=wss://r.example.com/'), VALID_TC_HOST);
     expect(result.attach).toBe(false);
     if (!result.attach) expect(result.reason).toBe('opt-in');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Positive-allowlist kill-switch: isDebugAllowedHost (#665)
+// ---------------------------------------------------------------------------
+
+describe('isDebugAllowedHost — positive-allowlist kill-switch (#665)', () => {
+  // ── Allowed hosts ──────────────────────────────────────────────────────────
+
+  it('allows localhost', () => {
+    expect(isDebugAllowedHost('localhost')).toBe(true);
+  });
+
+  it('allows 127.0.0.1', () => {
+    expect(isDebugAllowedHost('127.0.0.1')).toBe(true);
+  });
+
+  it('allows [::1] (bracketed IPv6 loopback — as URL parser produces)', () => {
+    // URL parser converts http://[::1]:3000 → hostname = '[::1]' (with brackets).
+    expect(isDebugAllowedHost('[::1]')).toBe(true);
+  });
+
+  it('allows *.trycloudflare.com (env 2 tunnel)', () => {
+    expect(isDebugAllowedHost('abc-def-ghi.trycloudflare.com')).toBe(true);
+    expect(isDebugAllowedHost('test.trycloudflare.com')).toBe(true);
+  });
+
+  it('allows *.private-apps.tossmini.com (env 3 dogfood)', () => {
+    expect(isDebugAllowedHost('aitc-sdk-example.private-apps.tossmini.com')).toBe(true);
+    expect(isDebugAllowedHost('my-app.private-apps.tossmini.com')).toBe(true);
+  });
+
+  // ── Blocked hosts — env 4 / production ────────────────────────────────────
+
+  it('blocks apps.tossmini.com (production host, env 4 removed #665)', () => {
+    expect(isDebugAllowedHost('apps.tossmini.com')).toBe(false);
+  });
+
+  it('blocks subdomain of apps.tossmini.com', () => {
+    expect(isDebugAllowedHost('aitc-sdk-example.apps.tossmini.com')).toBe(false);
+  });
+
+  it('blocks arbitrary external host', () => {
+    expect(isDebugAllowedHost('example.com')).toBe(false);
+    expect(isDebugAllowedHost('evil.trycloudflare.com.attacker.com')).toBe(false);
+  });
+
+  it('blocks bare tossmini.com (not private-apps or trycloudflare)', () => {
+    expect(isDebugAllowedHost('tossmini.com')).toBe(false);
   });
 });

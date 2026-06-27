@@ -648,6 +648,7 @@ describe('get_debug_status MCP tool', () => {
       kind: 'mock',
       env: 'mock',
       reason: 'test-pinned-mock',
+      // liveGuardActive is always false — relay-live and LIVE guard removed (#665)
       liveGuardActive: false,
     });
   });
@@ -657,7 +658,7 @@ describe('get_debug_status MCP tool', () => {
     const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
     expect(result.isError).toBeFalsy();
     const data = parseResult(result) as Record<string, unknown>;
-    // kind = relay-dev, legacy env = relay (backward-compat), liveGuardActive = false
+    // kind = relay-dev, legacy env = relay (backward-compat), liveGuardActive always false (#665)
     expect(data.environment).toMatchObject({
       kind: 'relay-dev',
       env: 'relay',
@@ -666,17 +667,7 @@ describe('get_debug_status MCP tool', () => {
     });
   });
 
-  it('is available in relay-live env and sets liveGuardActive', async () => {
-    const client = await makeClient({ env: 'relay-live' });
-    const result = await client.callTool({ name: 'get_debug_status', arguments: {} });
-    expect(result.isError).toBeFalsy();
-    const data = parseResult(result) as Record<string, unknown>;
-    expect(data.environment).toMatchObject({
-      kind: 'relay-live',
-      env: 'relay',
-      liveGuardActive: true,
-    });
-  });
+  // relay-live env test removed — relay-live and LIVE guard removed (#665).
 
   it('returns the current tunnel status', async () => {
     const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
@@ -935,11 +926,8 @@ describe('computeNextRecommendedAction', () => {
     expect(action).toBeNull();
   });
 
-  it('Rule 1 still triggers for relay-live with tunnel down', () => {
-    const action = computeNextRecommendedAction(tunnelInfoDown, null, 'relay-live');
-    expect(action).not.toBeNull();
-    expect(action!.tool).toBe('restart');
-  });
+  // Rule 1 relay-live test removed — relay-live env removed (#665).
+  // relay-dev has the same Rule 1 behaviour (tunnel down → restart).
 
   // ---- Rule 0: permanent tunnel drop (#347) ----------------------------------
 
