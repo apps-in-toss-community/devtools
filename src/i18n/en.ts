@@ -212,7 +212,7 @@ export const en: Record<StringKey, string> = {
   'inspector.error.relayDown': 'Relay is not active. Start a relay session first.',
 
   // qr-http-server — attach page (server-side, Node, per-request)
-  // Copy branches per session mode into sandbox (env 2) / intoss (env 3·4) families (#468).
+  // Copy branches per session mode into sandbox (env 2) / intoss (env 3) families (#468).
   'attach.title': 'AIT Debug Session — QR Scan',
   'attach.deployment': 'deployment: {label}',
   'attach.steps.section': 'How to scan',
@@ -222,7 +222,6 @@ export const en: Record<StringKey, string> = {
   // qr-http-server — attach page mode label (environment visibility, #468)
   'attach.mode.sandbox': 'env 2 — AITC Sandbox App (PWA)',
   'attach.mode.intossDev': 'env 3 — intoss-private relay dev',
-  'attach.mode.intossLive': 'env 4 — intoss live relay debug',
 
   // attach page — sandbox family (env 2: launcher PWA; no Toss app / _deploymentId concepts)
   'attach.sandbox.step1':
@@ -240,7 +239,7 @@ export const en: Record<StringKey, string> = {
   'attach.sandbox.faq.chii':
     '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
 
-  // attach page — intoss family (env 3·4: Toss app deep-link)
+  // attach page — intoss family (env 3: Toss app deep-link)
   'attach.intoss.step1': 'Open the Toss app.',
   'attach.intoss.step2': 'Scan the QR code with your phone camera app.',
   'attach.intoss.step3': 'Tap <strong>"Open in Toss"</strong> when the popup appears.',
@@ -253,10 +252,6 @@ export const en: Record<StringKey, string> = {
     '<strong>Chii injection failure / console is empty</strong> — verify the mini-app bundle has an <code>in-app</code> debug import',
   'attach.intoss.faq.totp':
     '<strong>TOTP gate Layer C is inactive</strong> — check that <code>AIT_DEBUG_TOTP_SECRET</code> is set on the relay server',
-  // env 4 (relay-live) only — appended to the intoss family at runtime (#468).
-  'attach.intoss.faq.liveReadOnly':
-    '<strong>LIVE session is read-only</strong> — <code>call_sdk</code>/<code>evaluate</code> require an explicit <code>confirm</code>',
-
   // Launcher PWA
   'launcher.title': 'AITC DevTools Launcher',
   'launcher.description': 'Scan the terminal QR code or paste the tunnel URL.',

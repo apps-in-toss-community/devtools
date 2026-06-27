@@ -96,6 +96,6 @@ npx @ait-co/devtools devtools-mcp --target=local --force
 ## 환경 1 한계 (구조적 불가)
 
 - 실기기 WebKit 엔진 fidelity: 환경 2(PWA, `/ait setup-phone-preview`)로 보완
-- 토스 WebView native bridge: 환경 3·4(`devtools-mcp` + `start_debug(relay-staging/relay-live)`)로 보완
+- 토스 WebView native bridge: 환경 3(`devtools-mcp` + `start_debug(relay-staging)`)으로 보완
 
 다음 단계: 실기기 검증이 필요하면 `npx @ait-co/devtools devtools-mcp` 실행 후 `start_debug({mode: 'relay-staging'})` → `get_debug_status`로 상태 확인.
