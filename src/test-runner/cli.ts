@@ -249,7 +249,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         .map((c) => c.text)
         .join('\n');
       process.stderr.write(`devtools-test: attach preparation failed:\n${errText}\n`);
-      process.exitCode = 1;
+      // Use the local `exitCode` (not `process.exitCode`) — the `finally`
+      // block below sets `process.exitCode = exitCode`, so writing
+      // `process.exitCode` directly here would be clobbered back to 0,
+      // turning an attach-prep failure into a false success. (Matches the
+      // timeout branch below.)
+      exitCode = 1;
       return;
     }
 
