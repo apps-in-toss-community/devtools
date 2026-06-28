@@ -810,7 +810,10 @@ export function listPages(connection: CdpConnection, tunnel: TunnelStatus): List
     return {
       id: t.id,
       title: t.title,
-      url: t.url,
+      // SECRET-HANDLING: a relay-attach page url can carry the one-time TOTP
+      // `at=<code>` (#real-phone repro, #668). Redact it for display only —
+      // attach drives off targetId, never this url. relay/_deploymentId/debug kept.
+      url: redactAtParam(t.url),
       lastSeenAt: lastSeenMs !== null ? new Date(lastSeenMs).toISOString() : null,
     };
   });
@@ -1001,10 +1004,18 @@ function getBrowserCandidates(httpUrl: string): Array<{ cmd: string; args: strin
   ];
 }
 
+/**
+ * Redacts ONLY the `at=<value>` (TOTP) query param to `at=<redacted>`, leaving
+ * every other query param (_deploymentId, debug, relay) intact. SECRET-HANDLING:
+ * the TOTP code is the single short-lived secret carried in a CDP page url.
+ */
+export function redactAtParam(text: string): string {
+  return text.replace(/\bat=([^&\s"']+)/g, 'at=<redacted>');
+}
+
 /** stderr에서 at= TOTP 코드 값을 redact한다. */
 function redactSecrets(text: string): string {
-  // at=<value> 패턴에서 값 부분을 redact — TOTP 코드가 노출되지 않도록.
-  return text.replace(/\bat=([^&\s"']+)/g, 'at=<redacted>');
+  return redactAtParam(text);
 }
 
 /** spawnSync exit 0이어도 stderr에 launch 실패 시그널이 있으면 실패로 판단한다. */

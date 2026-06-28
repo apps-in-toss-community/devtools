@@ -27,6 +27,7 @@ import {
   normalizeConsoleMessage,
   normalizeException,
   normalizeSafeAreaResult,
+  redactAtParam,
   type TunnelStatus,
   takeScreenshot,
   takeSnapshot,
@@ -250,6 +251,48 @@ describe('listPages', () => {
       crashWarning: null,
       singleAttachModel: true,
     });
+  });
+
+  it('redacts the at= TOTP code from the page url but keeps other params', () => {
+    // SECRET-HANDLING: use a literal placeholder code (474082), never a real TOTP value.
+    const secretUrl =
+      'intoss-private://app?_deploymentId=dep-1&debug=1&relay=wss://x.trycloudflare.com&at=474082';
+    const connection = new FakeCdpConnection({
+      targets: [{ id: 'relay-t1', title: 'My Mini App', url: secretUrl }],
+    });
+    const result = listPages(connection, { up: true, wssUrl: 'wss://x.trycloudflare.com' });
+    const url = result.pages[0]!.url;
+    // The TOTP code must not appear in the output url.
+    expect(url).not.toMatch(/at=\d+/);
+    // It must be replaced with the redacted sentinel.
+    expect(url).toContain('at=<redacted>');
+    // Non-secret params must survive.
+    expect(url).toContain('_deploymentId=dep-1');
+    expect(url).toContain('debug=1');
+    expect(url).toContain('relay=wss://x.trycloudflare.com');
+  });
+});
+
+describe('redactAtParam', () => {
+  it('replaces at= TOTP value with <redacted> sentinel', () => {
+    // SECRET-HANDLING: use literal placeholder codes (123456), never real TOTP values.
+    expect(redactAtParam('a?at=123456&b=2')).toBe('a?at=<redacted>&b=2');
+  });
+
+  it('leaves urls without at= unchanged', () => {
+    expect(redactAtParam('https://example/storage?foo=bar')).toBe(
+      'https://example/storage?foo=bar',
+    );
+  });
+
+  it('keeps relay and _deploymentId params intact', () => {
+    const url =
+      'intoss-private://app?_deploymentId=dep-1&debug=1&relay=wss://x.trycloudflare.com&at=474082';
+    const result = redactAtParam(url);
+    expect(result).toContain('_deploymentId=dep-1');
+    expect(result).toContain('relay=wss://x.trycloudflare.com');
+    expect(result).toContain('at=<redacted>');
+    expect(result).not.toContain('at=474082');
   });
 });
 
