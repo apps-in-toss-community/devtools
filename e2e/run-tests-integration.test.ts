@@ -33,7 +33,7 @@
  *
  * ## Fixture file
  *
- * `e2e/fixtures/phone-test-fixture.ts` — uses bare `describe/it/test/expect`
+ * `e2e/fixtures/ait-test-fixture.ts` — uses bare `describe/it/test/expect`
  * globals (installed by the runtime). Expected outcome:
  *   passed=3, failed=1, skipped=1, total=5
  */
@@ -49,7 +49,7 @@ import { runWithConnection } from '../src/test-runner/cli.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** Absolute path to the fixture test file bundled and evaluated by the pipeline. */
-const FIXTURE_TEST_FILE = path.resolve(__dirname, 'fixtures/phone-test-fixture.ts');
+const FIXTURE_TEST_FILE = path.resolve(__dirname, 'fixtures/ait-test-fixture.ts');
 
 /**
  * Spin up a minimal HTTP server that serves a non-blank HTML page.

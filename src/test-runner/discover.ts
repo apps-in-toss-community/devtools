@@ -22,7 +22,7 @@ import { isAbsolute, resolve } from 'node:path';
  * resolved against `cwd`. `bundleTestFile` requires an absolute path, so the
  * absolute output feeds it directly.
  *
- * @param patterns Glob patterns or file paths (e.g. `['src/**\/*.phone.test.ts']`).
+ * @param patterns Glob patterns or file paths (e.g. `['src/**\/*.ait.test.ts']`).
  * @param cwd      Base directory for relative patterns/results.
  * @returns Sorted, de-duplicated absolute file paths. Empty when nothing matches.
  */

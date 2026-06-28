@@ -45,7 +45,7 @@ DESCRIPTION
   yet (it currently resolves the matched files and defers to that tool).
 
 EXAMPLE
-  devtools-test 'src/**/*.phone.test.ts' --timeout 60000
+  devtools-test 'src/**/*.ait.test.ts' --timeout 60000
 
 `.trimStart();
 

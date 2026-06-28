@@ -2,7 +2,7 @@
  * Fixture test file for the run_tests pipeline integration test.
  *
  * This file is NOT a Playwright test and NOT a vitest test. It is a
- * *.phone.test.ts-style fixture intended to be bundled by `bundleTestFile`
+ * *.ait.test.ts-style fixture intended to be bundled by `bundleTestFile`
  * and evaluated inside a real Chromium page via the CDP runtime.
  *
  * It deliberately uses describe/it/test/expect as globals — these are

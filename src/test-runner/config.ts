@@ -5,7 +5,7 @@
  * relay test runner. It mirrors the pattern of Vitest's `defineConfig` so
  * users can write:
  *
- *   // phone-test.config.ts
+ *   // ait-test.config.ts
  *   import { definePhoneTestConfig } from '@ait-co/devtools/test-runner';
  *   export default definePhoneTestConfig({ ... });
  *
@@ -25,7 +25,7 @@ import { createRelayPool, RELAY_POOL_NAME } from './pool.js';
 export interface PhoneTestConfig {
   /**
    * Glob patterns (relative to cwd) for test files to run on the device.
-   * Defaults to `['**\/*.phone.test.ts']`.
+   * Defaults to `['**\/*.ait.test.ts']`.
    */
   include: string[];
   /**
@@ -47,7 +47,7 @@ export interface PhoneTestUserConfig {
 }
 
 const DEFAULT_CONFIG: PhoneTestConfig = {
-  include: ['**/*.phone.test.ts'],
+  include: ['**/*.ait.test.ts'],
   timeoutMs: 30_000,
   extraExternals: [],
 };
