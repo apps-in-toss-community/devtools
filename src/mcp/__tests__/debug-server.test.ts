@@ -1,6 +1,6 @@
 /**
  * Tests for createDebugServer:
- *   - build_attach_url tool (QR, wait_for_attach)
+ *   - start_attach tool (QR, wait_for_attach)
  *   - Dynamic tool registration (issue #208):
  *     - listChanged capability declaration
  *     - Two-tier tools/list (bootstrap only vs. full)
@@ -117,12 +117,12 @@ interface MakeClientOptions {
   qrHttpServer?: import('../qr-http-server.js').QrHttpServer;
   /**
    * Pin the env reported by `getEnvironment()` for this server. Defaults to
-   * `'relay-dev'` because this test file exercises relay-only tools (build_attach_url).
+   * `'relay-dev'` because this test file exercises relay-only tools (start_attach).
    * Set to `'mock'` for env-mismatch tests.
    */
   env?: McpEnvironment;
   /**
-   * Hex-encoded TOTP secret for build_attach_url auto-splice tests.
+   * Hex-encoded TOTP secret for start_attach auto-splice tests.
    * Defaults to DUMMY_SECRET_FOR_TESTS so that relay-mode tests pass the
    * defense-in-depth (#452) fail-closed guard without needing a real secret.
    * Pass `undefined` explicitly to test the no-secret rejection path.
@@ -172,16 +172,65 @@ function getContent(result: Awaited<ReturnType<Client['callTool']>>) {
   return result.content as Array<{ type: string; text?: string }>;
 }
 
+/**
+ * Builds a FakeCdpConnection whose single target matches `schemeUrl` — its
+ * `_deploymentId` (or, for a scheme without one, presence-only). start_attach
+ * always waits, so content-focused tests that just assert on the QR/JSON pass a
+ * pre-attached page here so the segmented wait resolves on the first segment.
+ */
+function attachedConn(schemeUrl: string): FakeCdpConnection {
+  return new FakeCdpConnection([{ id: 'attached-target', title: 'Attached', url: schemeUrl }]);
+}
+
+/**
+ * Parses the first balanced `{...}` JSON object out of a tool-result text block.
+ * The start_attach result JSON nests a `totp` object, so a non-greedy regex
+ * truncates at the inner brace — this does a brace-depth scan instead.
+ */
+function parseLeadingJson(text: string): Record<string, unknown> {
+  const start = text.indexOf('{');
+  if (start === -1) throw new Error('no JSON object in text');
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(text.slice(start, i + 1)) as Record<string, unknown>;
+    }
+  }
+  throw new Error('unbalanced JSON object in text');
+}
+
 // ---- Tests ----------------------------------------------------------------
 
-describe('build_attach_url — response includes unicode QR', () => {
+describe('start_attach — response includes unicode QR', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+  // start_attach always waits (default), so we pre-attach a matching page so
+  // the segmented wait resolves on the first segment instead of timing out.
+  const matchTarget = (deploymentId: string): CdpTarget => ({
+    id: `target-${deploymentId}`,
+    title: 'Test',
+    url: `intoss-private://miniapp?_deploymentId=${deploymentId}`,
+  });
 
   it('response text starts with the do-not-reprint instruction', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: new FakeCdpConnection([matchTarget('test-uuid-1234')]),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=test-uuid-1234',
       },
@@ -194,10 +243,13 @@ describe('build_attach_url — response includes unicode QR', () => {
   });
 
   it('response text contains the attachUrl JSON and a QR string without ANSI escapes', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: new FakeCdpConnection([matchTarget('test-uuid-1234')]),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=test-uuid-1234',
       },
@@ -213,11 +265,9 @@ describe('build_attach_url — response includes unicode QR', () => {
 
     const text = block!.text!;
 
-    // JSON portion: must contain attachUrl and relayUrl keys.
-    // Use a greedy match to capture the full JSON object (may include nested totp).
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    expect(jsonMatch).toBeTruthy();
-    const parsed = JSON.parse(jsonMatch![0]!);
+    // JSON portion: must contain attachUrl and relayUrl keys. The block nests a
+    // `totp` object, so extract the full balanced object (not a non-greedy match).
+    const parsed = parseLeadingJson(text) as { attachUrl?: string; relayUrl?: string };
     expect(parsed).toHaveProperty('attachUrl');
     expect(parsed).toHaveProperty('relayUrl');
     expect(parsed.relayUrl).toBe('wss://abc123.trycloudflare.com');
@@ -230,10 +280,13 @@ describe('build_attach_url — response includes unicode QR', () => {
   });
 
   it('response text is a single text content block (not split into two blocks)', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: new FakeCdpConnection([matchTarget('xyz')]),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: { scheme_url: 'intoss-private://miniapp?_deploymentId=xyz' },
     });
 
@@ -246,7 +299,7 @@ describe('build_attach_url — response includes unicode QR', () => {
     const client = await makeClient({ getTunnelStatus: () => tunnelUp });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {},
     });
 
@@ -259,7 +312,7 @@ describe('build_attach_url — response includes unicode QR', () => {
     const client = await makeClient({ getTunnelStatus: () => ({ up: false, wssUrl: null }) });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: { scheme_url: 'intoss-private://miniapp?_deploymentId=xyz' },
     });
 
@@ -270,7 +323,7 @@ describe('build_attach_url — response includes unicode QR', () => {
   });
 });
 
-describe('build_attach_url — wait_for_attach', () => {
+describe('start_attach — wait_for_attach', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
   // URL includes the deploymentId so the isMatchingPage filter passes.
   const fakeTarget: CdpTarget = {
@@ -288,10 +341,9 @@ describe('build_attach_url — wait_for_attach', () => {
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=wait-test',
-        wait_for_attach: true,
       },
     });
 
@@ -314,10 +366,9 @@ describe('build_attach_url — wait_for_attach', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=timeout-test',
-          wait_for_attach: true,
         },
       },
       undefined,
@@ -344,10 +395,9 @@ describe('build_attach_url — wait_for_attach', () => {
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=wait-qr-test',
-        wait_for_attach: true,
       },
     });
 
@@ -375,10 +425,9 @@ describe('build_attach_url — wait_for_attach', () => {
     });
 
     await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=spy-test',
-        wait_for_attach: true,
       },
     });
 
@@ -419,10 +468,9 @@ describe('build_attach_url — wait_for_attach', () => {
     try {
       const result = await client.callTool(
         {
-          name: 'build_attach_url',
+          name: 'start_attach',
           arguments: {
             scheme_url: 'intoss-private://miniapp?_deploymentId=new-deployment-fake-id',
-            wait_for_attach: true,
           },
         },
         undefined,
@@ -456,10 +504,9 @@ describe('build_attach_url — wait_for_attach', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=expected-fake-id',
-          wait_for_attach: true,
         },
       },
       undefined,
@@ -491,11 +538,10 @@ describe('build_attach_url — wait_for_attach', () => {
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         // No _deploymentId query param — tests the null-fallback path.
         scheme_url: 'intoss-private://miniapp',
-        wait_for_attach: true,
       },
     });
 
@@ -507,10 +553,10 @@ describe('build_attach_url — wait_for_attach', () => {
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — wait_timeout_seconds (issue #558)
+// start_attach — wait_timeout_seconds (issue #558)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — wait_timeout_seconds', () => {
+describe('start_attach — wait_timeout_seconds', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
   it('uses the specified wait_timeout_seconds when provided (short value → timeout fires quickly)', async () => {
@@ -525,10 +571,9 @@ describe('build_attach_url — wait_timeout_seconds', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=timeout-param-test',
-          wait_for_attach: true,
           wait_timeout_seconds: 0.05,
         },
       },
@@ -555,10 +600,9 @@ describe('build_attach_url — wait_timeout_seconds', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=default-timeout-test',
-          wait_for_attach: true,
           // wait_timeout_seconds intentionally absent
         },
       },
@@ -581,10 +625,9 @@ describe('build_attach_url — wait_timeout_seconds', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=zero-timeout-test',
-          wait_for_attach: true,
           wait_timeout_seconds: 0,
         },
       },
@@ -609,10 +652,9 @@ describe('build_attach_url — wait_timeout_seconds', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=neg-timeout-test',
-          wait_for_attach: true,
           wait_timeout_seconds: -10,
         },
       },
@@ -635,10 +677,9 @@ describe('build_attach_url — wait_timeout_seconds', () => {
 
     const result = await client.callTool(
       {
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://miniapp?_deploymentId=str-timeout-test',
-          wait_for_attach: true,
           wait_timeout_seconds: 'fast' as unknown as number,
         },
       },
@@ -651,28 +692,154 @@ describe('build_attach_url — wait_timeout_seconds', () => {
     expect(text).toContain('list_pages');
   });
 
-  it('wait_timeout_seconds param does not affect behavior when wait_for_attach is false', async () => {
-    // When wait_for_attach is false the timeout value is irrelevant.
-    // The call must return immediately without error regardless of wait_timeout_seconds.
-    const connection = new FakeCdpConnection([]);
+  it('resolves immediately (with QR) when a matching page is already attached', async () => {
+    // start_attach always waits (default); when a matching page is already
+    // present the segmented wait resolves on the immediate check — no timeout.
+    const connection = new FakeCdpConnection([
+      {
+        id: 'already-attached',
+        title: 'Test',
+        url: 'intoss-private://miniapp?_deploymentId=no-wait-test',
+      },
+    ]);
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       connection,
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=no-wait-test',
-        wait_for_attach: false,
         wait_timeout_seconds: 1,
       },
     });
 
-    // Should succeed immediately (no attach waiting).
     expect(result.isError).toBeFalsy();
     const text = getContent(result)[0]!.text!;
     expect(text).toContain('do NOT re-print the QR below in your reply');
+    expect(text).toContain('already-attached');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// start_attach — TOTP in-call re-mint (issue #626) + at= non-disclosure
+// ---------------------------------------------------------------------------
+
+describe('start_attach — TOTP in-call re-mint', () => {
+  const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
+  const matchTarget: CdpTarget = {
+    id: 'remint-target',
+    title: 'Test',
+    url: 'intoss-private://miniapp?_deploymentId=remint-test',
+  };
+
+  /**
+   * Connection whose `waitForFirstTarget` advances an injected clock by 160 s
+   * each call and rejects (= a 30 s segment elapsed without attach in fake
+   * time), until the configured segment count is reached — then it resolves
+   * with the matching target. Driving the clock past 150 s forces a re-mint.
+   */
+  class RemintConnection extends FakeCdpConnection {
+    private callCount = 0;
+    constructor(
+      private readonly advanceClock: (ms: number) => void,
+      private readonly resolveOnCall: number,
+    ) {
+      super([]);
+    }
+    waitForFirstTarget(
+      filterFn: (targets: CdpTarget[]) => boolean,
+      _timeoutMs: number,
+    ): Promise<CdpTarget[]> {
+      this.callCount += 1;
+      if (this.callCount >= this.resolveOnCall) {
+        this.setTargets([matchTarget]);
+        const targets = this.listTargets();
+        if (filterFn(targets)) return Promise.resolve(targets);
+      }
+      // Segment elapsed: advance fake time past the re-mint threshold, reject.
+      this.advanceClock(160_000);
+      return Promise.reject(new Error('segment timeout (fake)'));
+    }
+  }
+
+  it('re-mints a fresh TOTP code when the wait crosses the 150 s threshold', async () => {
+    let mockNow = 1_000_000;
+    const nowMs = () => mockNow;
+    const advanceClock = (ms: number) => {
+      mockNow += ms;
+    };
+    const builtParts: AttachUrlParts[] = [];
+
+    // Resolve on the 2nd segment: segment 1 advances +160 s (≥150 s) → 1 re-mint,
+    // segment 2 resolves with the attached target.
+    const connection = new RemintConnection(advanceClock, /*resolveOnCall*/ 2);
+
+    const server = createDebugServer({
+      connection,
+      aitSource: new FakeAitSource(),
+      getTunnelStatus: () => tunnelUp,
+      getEnvironment: () => 'relay-dev',
+      getEnvironmentReason: () => 'test-pinned-relay-dev',
+      totpSecret: DUMMY_SECRET_FOR_TESTS,
+      nowMs,
+      onAttachUrlBuilt: (parts) => builtParts.push(parts),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    const client = new Client({ name: 'remint-test', version: '0.0.0' });
+    await client.connect(clientTransport);
+
+    const result = await client.callTool(
+      {
+        name: 'start_attach',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=remint-test',
+          wait_timeout_seconds: 600,
+        },
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // The success result must report at least one re-mint.
+    expect(text).toMatch(/"reminted":\s*[1-9]/);
+    // onAttachUrlBuilt fired for the initial mint + each re-mint (≥ 2 total).
+    expect(builtParts.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does NOT leak the TOTP at= code value in the tool-result', async () => {
+    // A matching page is already attached so the wait resolves immediately.
+    const connection = new FakeCdpConnection([matchTarget]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      totpSecret: DUMMY_SECRET_FOR_TESTS,
+    });
+
+    const result = await client.callTool({
+      name: 'start_attach',
+      arguments: { scheme_url: 'intoss-private://miniapp?_deploymentId=remint-test' },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    // The attachUrl carries `at=<code>` inside the QR payload, which is allowed.
+    // But the structured `totp` block must carry ONLY expiresAt/ttlSeconds/
+    // reminted — never the code value. Assert on the parsed totp object.
+    const totpMatch = text.match(/"totp":\s*(\{[^}]*\})/);
+    expect(totpMatch).toBeTruthy();
+    const totp = JSON.parse(totpMatch![1]!) as Record<string, unknown>;
+    expect(totp).not.toHaveProperty('code');
+    expect(totp).not.toHaveProperty('at');
+    expect(totp).toHaveProperty('expiresAt');
+    // SECRET-HANDLING: no bare `at=<6-digit>` may appear in the result OUTSIDE
+    // the attachUrl string (which legitimately carries it in the QR payload).
+    const withoutAttachUrl = text.replace(/"attachUrl":\s*"[^"]*"/g, '');
+    expect(withoutAttachUrl).not.toMatch(/\bat=\d{6}\b/);
   });
 });
 
@@ -1144,18 +1311,21 @@ describe('startParentWatcher', () => {
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — 항상 대시보드 오픈 시도 (#553, 구 #288 open_in_browser 헤드리스 폴백)
+// start_attach — 항상 대시보드 오픈 시도 (#553, 구 #288 open_in_browser 헤드리스 폴백)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — always open dashboard (headless fallback when GUI unavailable, #553)', () => {
+describe('start_attach — always open dashboard (headless fallback when GUI unavailable, #553)', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
   it('when canOpenBrowser()=false: response contains headless notice and text QR (no isError)', async () => {
     // canOpenBrowser is already mocked to false in this file's module-level mock.
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: attachedConn('intoss-private://miniapp?_deploymentId=headless-test'),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=headless-test',
         // open_in_browser 키를 보내도 무시됨 (하위호환)
@@ -1189,10 +1359,11 @@ describe('build_attach_url — always open dashboard (headless fallback when GUI
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       qrHttpServer: fakeQrServer,
+      connection: attachedConn('intoss-private://miniapp?_deploymentId=browser-ok-test'),
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=browser-ok-test',
         // open_in_browser 키를 보내도 무시됨 (하위호환)
@@ -1229,10 +1400,11 @@ describe('build_attach_url — always open dashboard (headless fallback when GUI
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       qrHttpServer: fakeQrServer,
+      connection: attachedConn('intoss-private://miniapp?_deploymentId=browser-fail-test'),
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://miniapp?_deploymentId=browser-fail-test',
         // open_in_browser 키를 보내도 무시됨 (하위호환)
@@ -1254,17 +1426,20 @@ describe('build_attach_url — always open dashboard (headless fallback when GUI
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — scheme authority warning (#221)
+// start_attach — scheme authority warning (#221)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — scheme authority warning', () => {
+describe('start_attach — scheme authority warning', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
   it('result text does not contain a warning for a well-formed scheme URL', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=valid-uuid'),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=valid-uuid',
       },
@@ -1277,10 +1452,13 @@ describe('build_attach_url — scheme authority warning', () => {
   });
 
   it('result text includes a warning when authority is "web" (generic placeholder)', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: attachedConn('intoss-private://web?_deploymentId=uuid'),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://web?_deploymentId=uuid',
       },
@@ -1295,10 +1473,13 @@ describe('build_attach_url — scheme authority warning', () => {
   });
 
   it('result text includes a warning when authority is empty', async () => {
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: attachedConn('intoss-private://?_deploymentId=uuid'),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://?_deploymentId=uuid',
       },
@@ -1311,18 +1492,21 @@ describe('build_attach_url — scheme authority warning', () => {
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — browser dashboard (항상 오픈 시도, #553 / 구 #221)
+// start_attach — browser dashboard (항상 오픈 시도, #553 / 구 #221)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — browser dashboard (always attempted, #553)', () => {
+describe('start_attach — browser dashboard (always attempted, #553)', () => {
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
 
   it('legacy open_in_browser=false key is ignored — always attempts browser open; when no GUI/server falls back to text QR', async () => {
     // canOpenBrowser is mocked to false at module level — no GUI available, no HTTP server.
-    const client = await makeClient({ getTunnelStatus: () => tunnelUp });
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=uuid'),
+    });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
         // open_in_browser=false 키를 보내도 무시됨 (하위호환) — 항상 오픈 시도하되 headless이면 text QR
@@ -1358,10 +1542,11 @@ describe('build_attach_url — browser dashboard (always attempted, #553)', () =
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       qrHttpServer: fakeQrServer,
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=uuid'),
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
       },
@@ -1397,10 +1582,11 @@ describe('build_attach_url — browser dashboard (always attempted, #553)', () =
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       qrHttpServer: fakeQrServer,
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=uuid'),
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
       },
@@ -1419,10 +1605,10 @@ describe('build_attach_url — browser dashboard (always attempted, #553)', () =
 });
 
 // ---------------------------------------------------------------------------
-// build_attach_url — TOTP auto-splice (#310)
+// start_attach — TOTP auto-splice (#310)
 // ---------------------------------------------------------------------------
 
-describe('build_attach_url — TOTP auto-splice', () => {
+describe('start_attach — TOTP auto-splice', () => {
   /** Dummy 32-byte hex secret — not a real secret value. */
   const DUMMY_SECRET = 'deadbeef'.repeat(8);
   const tunnelUp: TunnelStatus = { up: true, wssUrl: 'wss://abc123.trycloudflare.com' };
@@ -1431,10 +1617,11 @@ describe('build_attach_url — TOTP auto-splice', () => {
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       totpSecret: DUMMY_SECRET,
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=test-uuid'),
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
       },
@@ -1450,10 +1637,11 @@ describe('build_attach_url — TOTP auto-splice', () => {
     const client = await makeClient({
       getTunnelStatus: () => tunnelUp,
       totpSecret: DUMMY_SECRET,
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=test-uuid'),
     });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
       },
@@ -1474,7 +1662,7 @@ describe('build_attach_url — TOTP auto-splice', () => {
     const client = await makeClient({ getTunnelStatus: () => tunnelUp, totpSecret: null });
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-uuid',
       },
@@ -1494,7 +1682,7 @@ describe('build_attach_url — TOTP auto-splice', () => {
 // The run functions now store AttachUrlParts (not a finished URL string) and
 // call rebuildAttachUrl() on every getDashboardState() call, so the TOTP at=
 // code is always fresh. These tests verify the round-trip via createDebugServer:
-// inject onAttachUrlBuilt, fire build_attach_url, then assert getDashboardState
+// inject onAttachUrlBuilt, fire start_attach, then assert getDashboardState
 // rebuilds a verifiable fresh code.
 // ---------------------------------------------------------------------------
 
@@ -1506,7 +1694,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
   it('onAttachUrlBuilt receives {kind:scheme,...} shape for env 3/4 branch', async () => {
     const received: AttachUrlParts[] = [];
     const server = createDebugServer({
-      connection: new FakeCdpConnection(),
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=test-435'),
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnelUp,
       getEnvironment: () => 'relay-dev',
@@ -1521,7 +1709,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     await client.connect(clientTransport);
 
     await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-435',
       },
@@ -1541,7 +1729,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
   it('getDashboardState re-mints a fresh at= code on each call (kind:scheme)', async () => {
     let storedParts: AttachUrlParts | null = null;
     const server = createDebugServer({
-      connection: new FakeCdpConnection(),
+      connection: attachedConn('intoss-private://aitc-sdk-example?_deploymentId=test-435-remint'),
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnelUp,
       getEnvironment: () => 'relay-dev',
@@ -1558,7 +1746,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     await client.connect(clientTransport);
 
     await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=test-435-remint',
       },
@@ -1602,7 +1790,8 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
   it('getDashboardState re-mints a fresh at= code on each call (kind:launcher)', async () => {
     let storedParts: AttachUrlParts | null = null;
     const server = createDebugServer({
-      connection: new FakeCdpConnection(),
+      // relay-mobile/launcher has no _deploymentId → presence-only match, any target resolves.
+      connection: attachedConn('https://app.trycloudflare.com/'),
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnelUp,
       getEnvironment: () => 'relay-mobile',
@@ -1623,7 +1812,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
     try {
       await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {},
       });
 
@@ -1669,7 +1858,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
   });
 
   it('getDashboardState returns null attachUrl when no onAttachUrlBuilt has fired (no-secret case)', async () => {
-    // When no secret is set and no build_attach_url has been called, the dashboard
+    // When no secret is set and no start_attach has been called, the dashboard
     // attachUrl is null (rebuildAttachUrl is never called).
     let storedParts: AttachUrlParts | null = null;
     createDebugServer({
@@ -1684,14 +1873,14 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
       },
     });
 
-    // No call to build_attach_url — storedParts stays null.
+    // No call to start_attach — storedParts stays null.
     expect(storedParts).toBeNull();
   });
 
   // Defense-in-depth (#452): relay-dev/live path must refuse when TOTP secret is absent.
   // assertRelayAuthConfigured() at boot already gates relay startup, so this is dead
   // code in normal operation — but the handler must fail-closed if the guard is bypassed.
-  it('build_attach_url(relay-dev) returns mcpError when TOTP secret is unset (#452)', async () => {
+  it('start_attach(relay-dev) returns mcpError when TOTP secret is unset (#452)', async () => {
     const server = createDebugServer({
       connection: new FakeCdpConnection(),
       aitSource: new FakeAitSource(),
@@ -1711,7 +1900,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     delete process.env.AIT_DEBUG_TOTP_SECRET;
     try {
       const result = await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {
           scheme_url: 'intoss-private://app?_deploymentId=no-secret',
         },
@@ -1736,9 +1925,10 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
   // selfdebug option (#543) — relay-mobile adds &selfdebug=1, env 3/4 rejects
   // ---------------------------------------------------------------------------
 
-  it('build_attach_url(relay-mobile, selfdebug=true) includes selfdebug=1 in attachUrl', async () => {
+  it('start_attach(relay-mobile, selfdebug=true) includes selfdebug=1 in attachUrl', async () => {
     const server = createDebugServer({
-      connection: new FakeCdpConnection(),
+      // relay-mobile → presence-only match, any pre-attached target resolves the wait.
+      connection: attachedConn('https://app.trycloudflare.com/'),
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnelUp,
       getEnvironment: () => 'relay-mobile',
@@ -1755,7 +1945,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
     try {
       const result = await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: { selfdebug: true },
       });
       expect(result.isError).toBeFalsy();
@@ -1772,9 +1962,10 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     }
   });
 
-  it('build_attach_url(relay-mobile, selfdebug=false) output is byte-identical (no selfdebug param)', async () => {
+  it('start_attach(relay-mobile, selfdebug=false) output is byte-identical (no selfdebug param)', async () => {
     const server = createDebugServer({
-      connection: new FakeCdpConnection(),
+      // relay-mobile → presence-only match, any pre-attached target resolves the wait.
+      connection: attachedConn('https://app.trycloudflare.com/'),
       aitSource: new FakeAitSource(),
       getTunnelStatus: () => tunnelUp,
       getEnvironment: () => 'relay-mobile',
@@ -1791,7 +1982,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
     try {
       const result = await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: { selfdebug: false },
       });
       expect(result.isError).toBeFalsy();
@@ -1808,7 +1999,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     }
   });
 
-  it('build_attach_url(relay-dev, selfdebug=true) returns mcpError — launcher-only feature', async () => {
+  it('start_attach(relay-dev, selfdebug=true) returns mcpError — launcher-only feature', async () => {
     const server = createDebugServer({
       connection: new FakeCdpConnection(),
       aitSource: new FakeAitSource(),
@@ -1824,7 +2015,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     await client.connect(clientTransport);
 
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: {
         scheme_url: 'intoss-private://aitc-sdk-example?_deploymentId=uuid',
         selfdebug: true,
@@ -1839,7 +2030,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
   });
 
   // Defense-in-depth (#452): relay-mobile path must also refuse when TOTP secret is absent.
-  it('build_attach_url(relay-mobile) returns mcpError when TOTP secret is unset (#452)', async () => {
+  it('start_attach(relay-mobile) returns mcpError when TOTP secret is unset (#452)', async () => {
     const server = createDebugServer({
       connection: new FakeCdpConnection(),
       aitSource: new FakeAitSource(),
@@ -1860,7 +2051,7 @@ describe('onAttachUrlBuilt — AttachUrlParts stored, fresh TOTP re-minted on ge
     process.env.AIT_TUNNEL_BASE_URL = 'https://app.trycloudflare.com';
     try {
       const result = await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: {},
       });
       // Must be a tool-level error (isError: true) — not a successful attach URL.

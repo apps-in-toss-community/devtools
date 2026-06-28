@@ -119,13 +119,17 @@ class TestRouter implements ConnectionRouter {
   }
 }
 
-async function makeClient(router: ConnectionRouter): Promise<Client> {
+/** Dummy 32-byte hex secret for relay-env start_attach tests (never real). */
+const DUMMY_SECRET = 'cafebabe'.repeat(8);
+
+async function makeClient(router: ConnectionRouter, totpSecret?: string): Promise<Client> {
   const tunnel: TunnelStatus = { up: true, wssUrl: 'wss://abc.trycloudflare.com' };
   const server = createDebugServer({
     connection: router.active,
     router,
     aitSource: new FakeAitSource(),
     getTunnelStatus: () => tunnel,
+    ...(totpSecret !== undefined ? { totpSecret } : {}),
     // No getEnvironment injection — exercise the real derived resolver.
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -187,8 +191,8 @@ describe('start_debug — bootstrap visibility (before attach)', () => {
     const client = await makeClient(router);
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain('start_debug');
-    // Relay kind → build_attach_url (Tier B) also visible pre-attach.
-    expect(names).toContain('build_attach_url');
+    // Relay kind → start_attach (Tier B) also visible pre-attach.
+    expect(names).toContain('start_attach');
   });
 
   it('is listed pre-attach in a local (mock) session', async () => {
@@ -196,8 +200,8 @@ describe('start_debug — bootstrap visibility (before attach)', () => {
     const client = await makeClient(router);
     const names = (await client.listTools()).tools.map((t) => t.name);
     expect(names).toContain('start_debug');
-    // Tier B build_attach_url stays hidden in mock — start_debug is Tier C.
-    expect(names).not.toContain('build_attach_url');
+    // Tier B start_attach stays hidden in mock — start_debug is Tier C.
+    expect(names).not.toContain('start_attach');
   });
 });
 
@@ -265,6 +269,61 @@ describe('start_debug — mode switch report + seamless active-pointer flip', ()
     const list = await client.listTools();
     expect(list.tools.map((t) => t.name)).toContain('list_pages');
     expect(router.active.kind).toBe('local');
+  });
+});
+
+// ---- start_attach mode auto-switch (issue #626) ----------------------------
+
+describe('start_attach — mode prologue auto-switch', () => {
+  // scheme_url WITHOUT _deploymentId → presence-only match, so the relay's
+  // already-attached page (TestRouter default) resolves the wait immediately.
+  const schemeArg = { scheme_url: 'intoss-private://app' };
+
+  it('switches into relay-staging from local (env flip + listChanged) then attaches', async () => {
+    const router = new TestRouter('local');
+    const client = await makeClient(router, DUMMY_SECRET);
+    expect(router.active.kind).toBe('local');
+    expect(router.listChangedCount).toBe(0);
+
+    const result = await client.callTool({
+      name: 'start_attach',
+      arguments: { mode: 'relay-staging', ...schemeArg },
+    });
+
+    expect(result.isError).toBeFalsy();
+    // The mode prologue switched the active connection to relay.
+    expect(router.active.kind).toBe('relay');
+    // switchMode emitted a list_changed exactly once.
+    expect(router.listChangedCount).toBe(1);
+  });
+
+  it('skips the switch when already in the requested mode (listChanged unchanged)', async () => {
+    const router = new TestRouter('relay');
+    const client = await makeClient(router, DUMMY_SECRET);
+    expect(router.listChangedCount).toBe(0);
+
+    const result = await client.callTool({
+      name: 'start_attach',
+      arguments: { mode: 'relay-staging', ...schemeArg },
+    });
+
+    expect(result.isError).toBeFalsy();
+    // Already relay-dev (= envForMode('relay-staging')) → no switchMode call.
+    expect(router.active.kind).toBe('relay');
+    expect(router.listChangedCount).toBe(0);
+  });
+
+  it('rejects local-browser mode (start_attach is relay-only)', async () => {
+    const router = new TestRouter('relay');
+    const client = await makeClient(router, DUMMY_SECRET);
+    const result = await client.callTool({
+      name: 'start_attach',
+      arguments: { mode: 'local-browser' },
+    });
+    expect(result.isError).toBe(true);
+    expect(getText(result)).toMatch(/relay/);
+    // No switch happened (local-browser rejected before switchMode).
+    expect(router.listChangedCount).toBe(0);
   });
 });
 

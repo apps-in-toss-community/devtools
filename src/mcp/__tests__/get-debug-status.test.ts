@@ -867,11 +867,11 @@ describe('computeNextRecommendedAction', () => {
     expect(action!.tool).toBe('restart');
   });
 
-  it('Rule 2: returns build_attach_url when tunnel up, no pages, relay env', () => {
+  it('Rule 2: returns start_attach when tunnel up, no pages, relay env', () => {
     const emptyPages = makePages([]);
     const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay-dev');
     expect(action).not.toBeNull();
-    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.tool).toBe('start_attach');
     expect(action!.reason).toContain('no pages');
   });
 
@@ -882,11 +882,11 @@ describe('computeNextRecommendedAction', () => {
     expect(action).toBeNull();
   });
 
-  it('Rule 3: returns build_attach_url when crash detected', () => {
+  it('Rule 3: returns start_attach when crash detected', () => {
     const crashedPages = makePages([], '2026-01-01T00:00:00.000Z');
     const action = computeNextRecommendedAction(tunnelInfoUp, crashedPages, 'relay-dev');
     expect(action).not.toBeNull();
-    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.tool).toBe('start_attach');
     expect(action!.reason).toContain('crashed');
   });
 
@@ -972,7 +972,7 @@ describe('computeNextRecommendedAction', () => {
     const emptyPages = makePages([]);
     const action = computeNextRecommendedAction(tunnelInfoUp, emptyPages, 'relay-dev', someRejects);
     expect(action).not.toBeNull();
-    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.tool).toBe('start_attach');
     expect(action!.reason).toContain('TOTP');
     expect(action!.reason).toContain('2건');
     expect(action!.reason).toContain('QR');
@@ -1005,7 +1005,7 @@ describe('computeNextRecommendedAction', () => {
       count: 0,
       lastAt: null,
     });
-    expect(action!.tool).toBe('build_attach_url');
+    expect(action!.tool).toBe('start_attach');
     expect(action!.reason).toContain('no pages');
   });
 
