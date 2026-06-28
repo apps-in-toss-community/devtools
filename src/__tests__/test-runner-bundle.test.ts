@@ -27,6 +27,8 @@ import { bundleTestFile } from '../test-runner/bundle.js';
 let tmpDir: string;
 let fixtureFile: string;
 let sdkImportFile: string;
+let multilineImportFile: string;
+let multilineReExportFile: string;
 
 beforeAll(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'devtools-test-runner-'));
@@ -53,6 +55,52 @@ export function runTestModule() { return { passed: 1, failed: 0 }; }
 import { getPlatformOS } from '@apps-in-toss/web-framework';
 export function getResult() { return getPlatformOS; }
 export function runTestModule() { return { passed: 0 }; }
+`.trimStart(),
+    'utf8',
+  );
+
+  // Fixture with a MULTI-LINE named SDK import (one member per line). This is
+  // the shape that broke env3 run_tests (#678): the member lines and the
+  // closing `} from '…'` line leaked into the factory body, leaving an
+  // unterminated `import {` at module scope → esbuild `Expected "as"`.
+  // It also calls describe/it so the factory body is non-empty, exercising the
+  // import-block / body split.
+  multilineImportFile = path.join(tmpDir, 'multiline-import.test.ts');
+  await fs.writeFile(
+    multilineImportFile,
+    `
+import {
+  appLogin,
+  getAnonymousKey,
+  getUserKeyForGame,
+} from '@apps-in-toss/web-framework';
+
+describe('multiline', () => {
+  it('registers with members in scope', () => {
+    expect(appLogin).toBeDefined();
+    expect(getAnonymousKey).toBeDefined();
+    expect(getUserKeyForGame).toBeDefined();
+  });
+});
+`.trimStart(),
+    'utf8',
+  );
+
+  // Fixture with a MULTI-LINE re-export block — must also stay at top level.
+  multilineReExportFile = path.join(tmpDir, 'multiline-reexport.test.ts');
+  await fs.writeFile(
+    multilineReExportFile,
+    `
+export {
+  appLogin,
+  getAnonymousKey,
+} from '@apps-in-toss/web-framework';
+
+describe('reexport', () => {
+  it('ok', () => {
+    expect(true).toBe(true);
+  });
+});
 `.trimStart(),
     'utf8',
   );
@@ -121,5 +169,41 @@ describe('bundleTestFile', () => {
 
   it('throws on a non-existent file', async () => {
     await expect(bundleTestFile('/nonexistent/path/test.ts')).rejects.toThrow();
+  });
+
+  // Regression: #678 — multi-line named SDK imports broke env3 run_tests.
+  // The line-based factory wrapper must keep the whole import statement
+  // (opening `import {`, member lines, closing `} from '…'`) at module scope.
+  it('bundles a multi-line named SDK import without error (#678)', async () => {
+    const result = await bundleTestFile(multilineImportFile);
+    expect(result.code).toContain('__userFactory');
+    expect(result.code.length).toBeGreaterThan(10);
+    // The SDK redirect shim must be present (the import was processed at top
+    // level, not stranded inside the factory body).
+    expect(result.code).toContain('window.__sdk');
+  });
+
+  it('does not leak multi-line import member lines into the factory body', async () => {
+    const result = await bundleTestFile(multilineImportFile);
+    // If the closing `} from '…'` line had leaked into the factory body, the
+    // bundle would have thrown above. As an extra guard, the factory wrapper
+    // declaration must appear AFTER the import shim was emitted — i.e. the
+    // import was not re-parsed as a stray `{ … }` block inside the function.
+    const userFactoryIdx = result.code.indexOf('__userFactory');
+    const sdkShimIdx = result.code.indexOf('window.__sdk');
+    expect(userFactoryIdx).toBeGreaterThan(-1);
+    expect(sdkShimIdx).toBeGreaterThan(-1);
+  });
+
+  it('keeps a multi-line re-export block at top level (#678)', async () => {
+    const result = await bundleTestFile(multilineReExportFile);
+    expect(result.code).toContain('__userFactory');
+    expect(result.code.length).toBeGreaterThan(10);
+  });
+
+  it('still bundles a single-line named SDK import (no regression)', async () => {
+    const result = await bundleTestFile(sdkImportFile);
+    expect(result.code).toContain('__userFactory');
+    expect(result.code).toContain('window.__sdk');
   });
 });
