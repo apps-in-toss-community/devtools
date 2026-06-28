@@ -154,8 +154,19 @@ module.exports = __proxy;
  * installed describe/it/test/expect as globals.
  *
  * Algorithm:
- *   - Lines matching import declarations or re-export statements are kept at
- *     module top-level (the only valid ESM position for static `import`).
+ *   - Import declarations and re-export statements are kept at module top-level
+ *     (the only valid ESM position for static `import`). A statement that spans
+ *     multiple lines — e.g. a named import with one member per line:
+ *       import {
+ *         appLogin,
+ *         getAnonymousKey,
+ *       } from '@apps-in-toss/web-framework';
+ *     is tracked as a single block: every line from the opening `import {` /
+ *     `export {` through the closing `from '…'` (or side-effect `'…'`) line is
+ *     kept together at top-level. This prevents the member lines and the
+ *     closing `} from '…'` line from leaking into the factory body, which would
+ *     leave an unterminated `import {` at module scope (the #678 env3 failure:
+ *     esbuild threw `Expected "as" but found "{"` on multi-line SDK imports).
  *   - All other lines (describe/it/test calls, local declarations, etc.) are
  *     moved into the body of the exported async factory function.
  *
@@ -187,19 +198,50 @@ function userFactoryPlugin(absPath: string): esbuild.Plugin {
         const EXPORT_DECLARATION_RE =
           /^(export\s+)(default\s+|async\s+function\s+|function\s+|class\s+|const\s+|let\s+|var\s+)/;
 
+        // True when `trimmed` begins a static `import` statement.
+        const isImportStart = (trimmed: string): boolean =>
+          trimmed.startsWith('import ') ||
+          trimmed.startsWith('import{') ||
+          trimmed.startsWith("import'") ||
+          trimmed.startsWith('import"');
+
+        // A module-scope `import`/`export … from` statement is "complete" on a
+        // single line when it ends with a quoted module specifier (optionally
+        // followed by `;`/whitespace), e.g. `… from '@x';` or side-effect
+        // `import './x';`. A line ending in `{` or `,` (the common multi-line
+        // named-import shape) is therefore NOT complete and must accumulate
+        // further lines until the closing `from '…'` line.
+        const endsStatement = (trimmed: string): boolean =>
+          /['"]\s*;?\s*$/.test(trimmed.replace(/\/\/.*$/, '').trimEnd());
+
+        // When set, we are inside an unterminated multi-line import/re-export
+        // block: every subsequent line stays at top level until the block ends.
+        let inImportBlock = false;
+
         for (const line of lines) {
           const trimmed = line.trimStart();
           const indent = line.slice(0, line.length - trimmed.length);
 
-          // Static import declarations must stay at module top level
-          // (the ESM spec forbids `import` inside a function body).
-          if (
-            trimmed.startsWith('import ') ||
-            trimmed.startsWith('import{') ||
-            trimmed.startsWith("import'") ||
-            trimmed.startsWith('import"')
-          ) {
+          // Continuation of a multi-line import / re-export block — keep at
+          // top level. The block ends on the line that terminates the
+          // statement (closing `from '…'` / side-effect `'…'`).
+          if (inImportBlock) {
             topLevelLines.push(line);
+            if (endsStatement(trimmed)) {
+              inImportBlock = false;
+            }
+            continue;
+          }
+
+          // Static import declarations must stay at module top level
+          // (the ESM spec forbids `import` inside a function body). If the
+          // statement does not terminate on this line, open an import block so
+          // the member lines and closing `} from '…'` line stay top-level too.
+          if (isImportStart(trimmed)) {
+            topLevelLines.push(line);
+            if (!endsStatement(trimmed)) {
+              inImportBlock = true;
+            }
           } else if (trimmed.startsWith('export ')) {
             // Determine whether this is a re-export (stays top-level) or a value
             // declaration (goes into the factory, export keyword stripped).
@@ -210,8 +252,12 @@ function userFactoryPlugin(absPath: string): esbuild.Plugin {
               //       `export const x = 1`     → `const x = 1`
               bodyLines.push(indent + trimmed.slice('export '.length));
             } else {
-              // Re-export or `export type { … }` — stays at top level.
+              // Re-export or `export type { … }` — stays at top level. A
+              // multi-line `export { … } from '…'` opens an import block too.
               topLevelLines.push(line);
+              if (/\bfrom\b/.test(trimmed) ? !endsStatement(trimmed) : trimmed.endsWith('{')) {
+                inImportBlock = true;
+              }
             }
           } else {
             bodyLines.push(line);
