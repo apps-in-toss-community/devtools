@@ -55,14 +55,34 @@ import { discoverTestFiles } from '../test-runner/discover.js';
 import type { RelayRunReport } from '../test-runner/relay-worker.js';
 import { ChiiAitSource } from './ait-chii-source.js';
 import type { AitSource } from './ait-source.js';
+// Attach orchestrator (issue #684 §2) — the relay-attach orchestration extracted
+// to module level. `createDebugServer` assembles `attachDeps` from its closure
+// variables and calls these. Pure extraction; behavior unchanged (#684 PR1).
+import {
+  type AttachDeps,
+  type AttachUrlParts,
+  prepareAttach as prepareAttachCore,
+  RELAY_SANDBOX_STALE_PAGE_MS,
+  renderAndMaybeWait as renderAndMaybeWaitCore,
+} from './attach-orchestrator.js';
+
+// Back-compat re-exports (issue #684 PR1): these symbols moved to
+// `attach-orchestrator.ts` but were previously exported from here. Re-export so
+// existing importers (tests) keep resolving them from `./debug-server.js`
+// unchanged — a pure refactor must not move a public symbol's import path.
+export {
+  type AttachUrlParts,
+  extractDeploymentId,
+  isSandboxPageFresh,
+  RELAY_SANDBOX_STALE_PAGE_MS,
+  START_ATTACH_REMINT_THRESHOLD_MS,
+  START_ATTACH_SEGMENT_MS,
+} from './attach-orchestrator.js';
+
 import type { CdpConnection } from './cdp-connection.js';
 import { ChiiCdpConnection } from './chii-connection.js';
 import { startChiiRelay } from './chii-relay.js';
-import {
-  buildDeepLinkAttachUrl,
-  buildLauncherAttachUrl,
-  validateSchemeAuthority,
-} from './deeplink.js';
+import { buildDeepLinkAttachUrl, buildLauncherAttachUrl } from './deeplink.js';
 import { AutoDevtoolsOpener, buildChiiInspectorUrl } from './devtools-opener.js';
 import { wrapEnvelope } from './envelope.js';
 import {
@@ -94,7 +114,6 @@ import { acquireLock, readServerLock } from './server-lock.js';
 import {
   BOOTSTRAP_TOOL_NAMES,
   callSdk,
-  canOpenBrowser,
   DEBUG_TOOL_DEFINITIONS,
   type DiagnosticsCollector,
   evaluate,
@@ -114,17 +133,11 @@ import {
   listNetworkRequests,
   listPages,
   measureSafeArea,
-  openQrInBrowser,
   type TunnelStatus,
   takeScreenshot,
   takeSnapshot,
 } from './tools.js';
-import {
-  assertRelayAuthConfigured,
-  buildRelayVerifyAuth,
-  generateTotp,
-  RELAY_VERIFY_SKEW_STEPS,
-} from './totp.js';
+import { assertRelayAuthConfigured, buildRelayVerifyAuth, generateTotp } from './totp.js';
 
 export { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watcher.js';
 
@@ -133,106 +146,14 @@ import {
   makeTunnelStatus,
   printAttachBanner,
   type QuickTunnel,
-  renderQr,
   startQuickTunnel,
   startTunnelHealthProbe,
 } from './tunnel.js';
 
-/**
- * Maximum age (ms) of a page's `lastSeenAt` before it is treated as a ghost
- * and excluded from the `wait_for_attach` short-circuit in `start_attach`
- * (issue #610).
- *
- * Rationale: the env-2 relay is owned by the dev server (unplugin), so every
- * `dev:phone:cdp` restart produces a new quick-tunnel. The old relay goes
- * offline immediately, but the daemon's warm `ChiiCdpConnection` still lists
- * the last-seen target — its `lastSeenAt` freezes at the moment the old relay
- * died. A 5-minute threshold is large enough to be invisible in normal usage
- * (active CDP sessions see a message every few seconds) while being small
- * enough to catch a relay that went down before the daemon was re-entered.
- *
- * Injectable for tests via {@link DebugServerDeps.stalePageThresholdMs}.
- */
-export const RELAY_SANDBOX_STALE_PAGE_MS = 5 * 60 * 1_000; // 5 minutes
-
-/**
- * Segment length (ms) of the `start_attach` wait loop (issue #626 — TOTP in-call
- * re-mint). The single-shot `wait_for_attach` of the old attach tool could
- * not re-mint a TOTP code mid-wait; `start_attach` decomposes the wait into
- * SEGMENT_MS slices so it can detect an aging code between slices and re-mint a
- * fresh one without the agent re-calling the tool. 30 s = one TOTP step.
- */
-export const START_ATTACH_SEGMENT_MS = 30_000;
-
-/**
- * Elapsed-since-mint threshold (ms) at which `start_attach` re-mints a fresh
- * TOTP code during its wait loop (issue #626). The relay gate accepts a code for
- * `RELAY_VERIFY_SKEW_STEPS` (6) × 30 s = 180 s backwards from issuance; we re-mint
- * at 150 s to leave a 30 s margin so a phone scan never lands on an expired code.
- */
-export const START_ATTACH_REMINT_THRESHOLD_MS = 150_000;
-
-/**
- * Predicate used by `start_attach`'s `wait_for_attach` loop to decide
- * whether the relay-sandbox connection has a genuinely fresh page attached.
- *
- * Stale-ghost gating (issue #610): when the dev server restarts with a new
- * quick-tunnel, the warm `ChiiCdpConnection` still lists the last-seen target
- * but its `lastSeenAt` is frozen. A page whose `lastSeenAt` exceeds
- * `stalePageThresholdMs` is a ghost from the dead relay — it must NOT
- * short-circuit `wait_for_attach`.
- *
- * Rules:
- * - `pages.length === 0` → false (nothing attached).
- * - Connection has no `getLastSeenAt` (test fakes, local-browser) → falls back
- *   to `pages.length > 0` (regression-safe).
- * - `seenMs === null` → treat as fresh (no CDP message received yet, first
- *   message pending — the connection is alive).
- * - Otherwise: at least one page must satisfy `nowMs - seenMs <=
- *   stalePageThresholdMs`.
- *
- * Exported for unit testing.
- */
-export function isSandboxPageFresh(
-  pages: ReadonlyArray<{ id: string }>,
-  getLastSeenAt: ((id: string) => number | null) | null,
-  nowMs: number,
-  stalePageThresholdMs: number,
-): boolean {
-  if (pages.length === 0) return false;
-  if (getLastSeenAt === null) return true;
-  return pages.some((p) => {
-    const seenMs = getLastSeenAt(p.id);
-    // null = no CDP message yet (fresh attach, first message pending) → fresh.
-    if (seenMs === null) return true;
-    return nowMs - seenMs <= stalePageThresholdMs;
-  });
-}
-
-/**
- * Parses `_deploymentId` from the query string of a scheme URL.
- *
- * Returns `null` when the param is absent or empty — callers treat that as
- * "no deploymentId filter; match on presence only" and fall back to the
- * original `attachedPages.length > 0` condition.
- *
- * SECRET-HANDLING: deploymentId is a public identifier and may appear in
- * debug output. Never confuse it with TOTP secrets or relay tunnel URLs.
- */
-export function extractDeploymentId(schemeUrl: string): string | null {
-  try {
-    // scheme URLs like `intoss-private://host?_deploymentId=xxx` are not
-    // parseable by `new URL()` in all environments, so we extract the query
-    // string manually.
-    const qIndex = schemeUrl.indexOf('?');
-    if (qIndex === -1) return null;
-    const params = new URLSearchParams(schemeUrl.slice(qIndex + 1));
-    const id = params.get('_deploymentId');
-    return id && id.length > 0 ? id : null;
-  } catch {
-    return null;
-  }
-}
+// RELAY_SANDBOX_STALE_PAGE_MS / START_ATTACH_SEGMENT_MS /
+// START_ATTACH_REMINT_THRESHOLD_MS / isSandboxPageFresh / extractDeploymentId
+// moved to `attach-orchestrator.ts` (issue #684 PR1) and are re-exported above
+// for back-compat.
 
 /**
  * The result of a `start_debug` mode switch (issue #348). Reported back to the
@@ -308,63 +229,10 @@ export function envForMode(mode: StartDebugMode): McpEnvironment {
   }
 }
 
-/**
- * Attach URL components — stored in the run functions instead of a finished
- * URL string so that `getDashboardState` can RE-MINT a fresh TOTP code on
- * every call (Defect 1: baked codes expire → relay 401 reason:'auth').
- *
- * `kind: 'launcher'` = env 2 (launcher PWA QR, `buildLauncherAttachUrl`).
- * `kind: 'scheme'`   = env 3/4 (intoss-private deep-link, `buildDeepLinkAttachUrl`).
- *
- * SECRET-HANDLING: these components contain tunnel/scheme hosts. They are
- * NEVER logged. The TOTP code is minted fresh at call time via `rebuildAttachUrl`
- * and rides inside the assembled URL's `at=` param only.
- */
-export type AttachUrlParts =
-  | {
-      kind: 'launcher';
-      tunnelHttpUrl: string;
-      wssUrl: string;
-      appName?: string;
-      selfdebug?: boolean;
-    }
-  | { kind: 'scheme'; schemeUrl: string; wssUrl: string };
-
-/** TOTP metadata surfaced in an attach tool result (code value never included). */
-interface AttachTotpMeta {
-  enabled: true;
-  ttlSeconds: number;
-  expiresAt: string;
-}
-
-/**
- * Output of the `prepareAttach` helper (issue #626) — the shared validation +
- * component bundle that the env-2 (relay-mobile) and env-3 (relay-dev) attach
- * paths both produce. On any validation failure the helper returns
- * `{ ok: false, error }` with a ready-to-return `McpResult`.
- */
-type PrepareAttachResult =
-  | {
-      ok: true;
-      parts: AttachUrlParts;
-      isMatchingPage: (pages: ReturnType<CdpConnection['listTargets']>) => boolean;
-      buildTimeoutError: (
-        baseText: string,
-        timeoutSec: number,
-        observed: ReturnType<CdpConnection['listTargets']>,
-      ) => string;
-      authorityWarning: string | undefined;
-      totpMeta: AttachTotpMeta | undefined;
-    }
-  | { ok: false; error: McpResult };
-
-/** The tool-result shape returned by every CallTool handler branch. */
-type McpResult = {
-  content: Array<
-    { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
-  >;
-  isError?: boolean;
-};
+// AttachUrlParts / AttachTotpMeta / PrepareAttachResult / McpResult moved to
+// `attach-orchestrator.ts` (issue #684 PR1). AttachUrlParts / PrepareAttachResult
+// / McpResult are imported above; AttachUrlParts is also re-exported for
+// back-compat.
 
 /**
  * Owns the two coexisting CDP connections (local + relay) and the `active`
@@ -554,65 +422,9 @@ export interface DebugServerDeps {
  */
 let runTestsInFlight = false;
 
-/**
- * Waits for the first target matching `filterFn` to attach, using the
- * event-driven `waitForFirstTarget()` when the connection supports it
- * (interface-optional member, present on `ChiiCdpConnection`), or falling
- * back to a polling loop for connections that don't implement it (test fakes,
- * `LocalCdpConnection`).
- *
- * This eliminates the polling-only race that previously caused `wait_for_attach`
- * to resolve before the relay had observed the first inbound CDP message from
- * the phone.
- *
- * Timeout note: callers (e.g. the `start_attach` path) always pass an
- * explicit `timeoutMs`, sourced from the factory's `waitForAttachTimeoutMs`
- * (default 60 000). That value is forwarded to `waitForFirstTarget`, so it
- * overrides that method's own 90 000 signature default — the effective
- * wait on the tool path is 60 s, not 90 s.
- *
- * @param connection - The CDP connection (production or fake).
- * @param filterFn   - Resolves when this predicate is satisfied.
- * @param timeoutMs  - Maximum wait time in ms.
- * @param pollIntervalMs - Fallback poll interval for connections without waitForFirstTarget.
- */
-function waitForAttachWithEvents(
-  connection: CdpConnection,
-  filterFn: (targets: ReturnType<CdpConnection['listTargets']>) => boolean,
-  timeoutMs: number,
-  pollIntervalMs = 1_000,
-): Promise<ReturnType<CdpConnection['listTargets']>> {
-  // Use event-driven path when available (CdpConnection.waitForFirstTarget is
-  // optional; ChiiCdpConnection implements it, LocalCdpConnection and test fakes do not).
-  if (connection.waitForFirstTarget) {
-    return connection.waitForFirstTarget(filterFn, timeoutMs, pollIntervalMs);
-  }
-  // Generic fallback for connections without waitForFirstTarget
-  // (test fakes, LocalCdpConnection — they don't emit 'target:attached').
-  return new Promise<ReturnType<CdpConnection['listTargets']>>((resolve, reject) => {
-    const deadline = Date.now() + timeoutMs;
-    let settled = false;
-    const poll = setInterval(() => {
-      const targets = connection.listTargets();
-      if (filterFn(targets)) {
-        settled = true;
-        clearInterval(poll);
-        resolve(targets);
-      } else if (Date.now() >= deadline) {
-        settled = true;
-        clearInterval(poll);
-        reject(new Error(`waitForAttachWithEvents: 타임아웃 (${timeoutMs}ms)`));
-      }
-    }, pollIntervalMs);
-    // Also check immediately.
-    const targets = connection.listTargets();
-    if (!settled && filterFn(targets)) {
-      settled = true;
-      clearInterval(poll);
-      resolve(targets);
-    }
-  });
-}
+// waitForAttachWithEvents moved to `attach-orchestrator.ts` (issue #684 PR1) —
+// it is the orchestrator's wait primitive (used by renderAndMaybeWait's
+// segmented wait). The `start_attach` handler no longer references it directly.
 
 /**
  * Builds the debug-mode MCP server around an injected CDP connection + AIT
@@ -683,457 +495,26 @@ export function createDebugServer(deps: DebugServerDeps): Server {
   const collector: DiagnosticsCollector = collectorDep ?? new InMemoryDiagnosticsCollector();
 
   // ──────────────────────────────────────────────────────────────────────────
-  // start_attach shared helpers (issue #626).
+  // start_attach orchestration (issue #626 → extracted #684 PR1).
   //
-  // The old attach-URL handler carried ~640 lines with the env-2
-  // (relay-mobile) and env-3 (relay-dev) render-and-wait logic duplicated 8
-  // times. `start_attach` factors that into three closures defined here so they
-  // can read the closure variables (getTunnelStatus / getTotpSecret /
-  // onAttachUrlBuilt / qrHttpServer / nowMs / stalePageThresholdMs):
+  // The attach orchestration (mint URL / validate env / render QR / open browser
+  // / segmented wait with in-call TOTP re-mint) moved to `attach-orchestrator.ts`
+  // at module level. Here we assemble `attachDeps` from this server's closure
+  // variables — the six dependencies the extracted functions used to read off
+  // this closure — and the `start_attach` handler calls `prepareAttachCore` /
+  // `renderAndMaybeWaitCore` with it. Behavior is identical (pure extraction).
   //
-  //   prepareAttach     — env-specific validation + component bundle
-  //   mintAttachUrl     — fresh-TOTP URL synthesis (single mint point)
-  //   renderAndMaybeWait— QR render + browser open + segmented attach wait with
-  //                       in-call TOTP re-mint
+  // SECRET-HANDLING: `getTotpSecret` is late-bound (read at call time, #396); its
+  // value rides inside the attach URL's `at=` param only — never logged.
   // ──────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Synthesizes an attach URL from stored components with a FRESHLY-minted TOTP
-   * code (issue #626 §3/§4 — the single mint point). Reads the late-bound secret
-   * via `getTotpSecret()` so the project-local `.ait_relay` secret loaded by
-   * `switchMode` is visible. SECRET-HANDLING: the minted code rides inside the
-   * URL's `at=` param only — never logged or returned separately.
-   */
-  function mintAttachUrl(parts: AttachUrlParts): string {
-    const secret = getTotpSecret();
-    const code = secret ? generateTotp(secret) : undefined;
-    return parts.kind === 'launcher'
-      ? buildLauncherAttachUrl(parts.tunnelHttpUrl, parts.wssUrl, code, {
-          name: parts.appName,
-          ...(parts.selfdebug ? { selfdebug: true } : {}),
-        })
-      : buildDeepLinkAttachUrl(parts.schemeUrl, parts.wssUrl, code);
-  }
-
-  /** Builds the fresh TOTP metadata (expiresAt window) for a tool result. */
-  function buildTotpMeta(): AttachTotpMeta | undefined {
-    const secret = getTotpSecret();
-    if (secret === undefined || secret === '') return undefined;
-    const STEP_SECONDS = 30;
-    const expiresAtMs = nowMs() + RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS * 1000;
-    return {
-      enabled: true,
-      ttlSeconds: RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS,
-      expiresAt: new Date(expiresAtMs).toISOString(),
-    };
-  }
-
-  /**
-   * Env-specific validation + component bundle for `start_attach` (issue #626).
-   * Branches on `env`: `relay-mobile` reads AIT_TUNNEL_BASE_URL + builds launcher
-   * parts; `relay-dev` requires scheme_url + builds scheme parts. Returns
-   * `{ ok: false, error }` with a ready McpResult on any failure.
-   */
-  async function prepareAttach(
-    env: McpEnvironment,
-    args: Record<string, unknown> | undefined,
-    conn: CdpConnection,
-  ): Promise<PrepareAttachResult> {
-    const selfdebug = args?.selfdebug === true;
-
-    // Guard: selfdebug is a launcher-only feature — reject early for env 3
-    // so the caller gets a clear diagnostic instead of silently ignoring it.
-    if (selfdebug && env !== 'relay-mobile') {
-      return {
-        ok: false,
-        error: mcpError(
-          'start_attach: selfdebug=true는 env 2 / relay-sandbox 전용 기능입니다. ' +
-            '현재 환경(env 3)에서는 launcher가 없어 self-target 모드를 지원하지 않습니다. ' +
-            'launcher self-target이 필요하다면 relay-sandbox 모드로 전환하세요.',
-        ),
-      };
-    }
-
-    // ── relay-mobile branch (env 2 — launcher PWA QR) ──────────────────────
-    if (env === 'relay-mobile') {
-      // SECRET-HANDLING: AIT_TUNNEL_BASE_URL carries the app tunnel host —
-      // NEVER echo it in error messages or logs. (#424) env wins; .ait_urls
-      // is the fallback when env is unset.
-      const rawProjectRoot = args?.projectRoot;
-      const buildProjectRoot = typeof rawProjectRoot === 'string' ? rawProjectRoot : undefined;
-      const envTunnelUrl = process.env.AIT_TUNNEL_BASE_URL?.trim() ?? '';
-      let tunnelHttpUrl = envTunnelUrl;
-      if (tunnelHttpUrl === '' && buildProjectRoot !== undefined) {
-        const { readRelayUrls } = await import('./relay-url-store.js');
-        const stored = await readRelayUrls({ projectRoot: buildProjectRoot });
-        tunnelHttpUrl = stored?.tunnelBaseUrl ?? '';
-      }
-      if (tunnelHttpUrl === '') {
-        return {
-          ok: false,
-          error: mcpError(
-            'start_attach(mobile): AIT_TUNNEL_BASE_URL이 설정되지 않았습니다. ' +
-              'dev 서버가 tunnel:{cdp:true}로 기동 중이면 .ait_urls 파일이 자동 생성돼 있어야 합니다. ' +
-              '자동 발견이 되지 않을 경우 앱 HTTP 터널 URL을 AIT_TUNNEL_BASE_URL 환경변수로 직접 전달하세요.',
-          ),
-        };
-      }
-      const tunnelStatus = getTunnelStatus();
-      if (!tunnelStatus.up || tunnelStatus.wssUrl === null) {
-        return {
-          ok: false,
-          error: mcpError(
-            'start_attach(mobile): relay wssUrl이 아직 설정되지 않았습니다. ' +
-              'unplugin tunnel:{cdp:true}가 relay를 완전히 기동할 때까지 잠시 후 다시 시도하세요.',
-          ),
-        };
-      }
-
-      // Defense-in-depth (#452): relay mode requires TOTP auth — fail-closed if
-      // the secret is missing rather than issuing an unauthenticated attach URL.
-      // SECRET-HANDLING: error message names the requirement only.
-      const secret = getTotpSecret();
-      if (secret === undefined || secret === '') {
-        return {
-          ok: false,
-          error: mcpError(
-            'start_attach(relay): TOTP secret(AIT_DEBUG_TOTP_SECRET)이 설정되지 않았습니다. ' +
-              'relay 환경은 TOTP 인증이 필수입니다 — relay를 secret과 함께 재기동하세요.',
-          ),
-        };
-      }
-
-      // Read the app name from projectRoot/package.json for the launcher
-      // partner bar (#498). Failure to read is silently ignored (fail-open).
-      let launcherAppName: string | undefined;
-      if (buildProjectRoot !== undefined) {
-        try {
-          const { readFileSync } = await import('node:fs');
-          const pkgRaw = readFileSync(`${buildProjectRoot}/package.json`, 'utf8');
-          const pkg = JSON.parse(pkgRaw) as Record<string, unknown>;
-          const rawName = typeof pkg.name === 'string' ? pkg.name : '';
-          const stripped = rawName.includes('/')
-            ? rawName.slice(rawName.indexOf('/') + 1)
-            : rawName;
-          launcherAppName = stripped.trim() || undefined;
-        } catch {
-          // Silently ignore — fail-open.
-        }
-      }
-
-      const parts: AttachUrlParts = {
-        kind: 'launcher',
-        tunnelHttpUrl,
-        wssUrl: tunnelStatus.wssUrl,
-        appName: launcherAppName,
-        ...(selfdebug ? { selfdebug: true } : {}),
-      };
-
-      // In mobile mode, deploymentId filtering is not applicable — match on
-      // presence only, but with a stale-ghost guard (issue #610). The env-2
-      // relay is owned by the dev server; a restart leaves a frozen lastSeenAt.
-      const connAsAny = conn as unknown as {
-        getTargetLastSeenAt?: (id: string) => number | null;
-      };
-      const getLastSeenAt =
-        typeof connAsAny.getTargetLastSeenAt === 'function'
-          ? (id: string) => (connAsAny.getTargetLastSeenAt as (id: string) => number | null)(id)
-          : null;
-      const callNow = nowMs();
-      const isMatchingPage = (pages: ReturnType<CdpConnection['listTargets']>): boolean =>
-        isSandboxPageFresh(pages, getLastSeenAt, callNow, stalePageThresholdMs);
-      const buildTimeoutError = (
-        baseText: string,
-        timeoutSec: number,
-        observed: ReturnType<CdpConnection['listTargets']>,
-      ): string => {
-        const observedUrls = observed
-          .slice(0, 3)
-          .map((p) => p.url.slice(0, 80))
-          .join(', ');
-        const observedNote =
-          observed.length > 0 ? ` — previously attached pages: [${observedUrls}]` : '';
-        return (
-          `${baseText}\n\nNo page attached within ${timeoutSec}s${observedNote} — ` +
-          'launcher QR을 폰 카메라로 스캔한 뒤 call list_pages를 다시 호출하세요.'
-        );
-      };
-
-      return {
-        ok: true,
-        parts,
-        isMatchingPage,
-        buildTimeoutError,
-        authorityWarning: undefined, // no scheme authority for launcher
-        totpMeta: buildTotpMeta(),
-      };
-    }
-    // ── end relay-mobile branch ────────────────────────────────────────────
-
-    // ── relay-dev branch (env 3 — intoss-private QR) ───────────────────────
-    const schemeUrl = args?.scheme_url;
-    if (typeof schemeUrl !== 'string' || schemeUrl === '') {
-      return {
-        ok: false,
-        error: mcpError(
-          'start_attach: scheme_url이 비어 있습니다. ' +
-            '`ait deploy --scheme-only`가 출력하는 intoss-private:// URL을 인자로 전달하세요. ' +
-            '환경 2(mobile)라면 scheme_url 대신 AIT_TUNNEL_BASE_URL을 설정하세요.',
-        ),
-      };
-    }
-
-    // Defense-in-depth (#452): relay-dev mode requires TOTP auth.
-    // SECRET-HANDLING: error message names the requirement only.
-    {
-      const relaySecret = getTotpSecret();
-      if (relaySecret === undefined || relaySecret === '') {
-        return {
-          ok: false,
-          error: mcpError(
-            'start_attach(relay): TOTP secret(AIT_DEBUG_TOTP_SECRET)이 설정되지 않았습니다. ' +
-              'relay 환경은 TOTP 인증이 필수입니다 — relay를 secret과 함께 재기동하세요.',
-          ),
-        };
-      }
-    }
-
-    // Tunnel-down check (the old buildAttachUrl threw here; we fail-fast with a
-    // structured error to keep prepareAttach side-effect-free).
-    const tunnelForBuild = getTunnelStatus();
-    if (!tunnelForBuild.up || tunnelForBuild.wssUrl === null) {
-      return { ok: false, error: classifyToolError(new Error('tunnel-down:'), 'start_attach') };
-    }
-    const authorityWarning = validateSchemeAuthority(schemeUrl) ?? undefined;
-
-    const parts: AttachUrlParts = {
-      kind: 'scheme',
-      schemeUrl,
-      wssUrl: tunnelForBuild.wssUrl,
-    };
-
-    // Parse _deploymentId to filter stale attached pages (null → presence-only).
-    const deploymentId = extractDeploymentId(schemeUrl);
-    if (!deploymentId) {
-      logInfo('tool.call', {
-        tool: 'start_attach',
-        msg: 'no _deploymentId in scheme_url; matching on presence only',
-      });
-    }
-    const isMatchingPage = (pages: ReturnType<CdpConnection['listTargets']>): boolean => {
-      if (pages.length === 0) return false;
-      if (deploymentId === null) return true;
-      return pages.some((p) => p.url.includes(deploymentId));
-    };
-    const buildTimeoutError = (
-      baseText: string,
-      timeoutSec: number,
-      observed: ReturnType<CdpConnection['listTargets']>,
-    ): string => {
-      const observedUrls = observed
-        .slice(0, 3)
-        .map((p) => p.url.slice(0, 80))
-        .join(', ');
-      const observedNote =
-        observed.length > 0 ? ` — previously attached pages: [${observedUrls}]` : '';
-      const deploymentNote = deploymentId ? ` matching deploymentId=${deploymentId}` : '';
-      return (
-        `${baseText}\n\nNo page${deploymentNote} attached within ${timeoutSec}s${observedNote} — ` +
-        'call list_pages to retry.'
-      );
-    };
-
-    return {
-      ok: true,
-      parts,
-      isMatchingPage,
-      buildTimeoutError,
-      authorityWarning,
-      totpMeta: buildTotpMeta(),
-    };
-  }
-
-  /**
-   * QR render + browser open + segmented attach wait with in-call TOTP re-mint
-   * (issue #626 §3). Shared by env-2 and env-3 (4 render paths:
-   * headless / browser-opened / browser-open-failed / no-http-server).
-   *
-   * The wait is decomposed into `START_ATTACH_SEGMENT_MS` slices. Between slices,
-   * if the current TOTP code has aged past `START_ATTACH_REMINT_THRESHOLD_MS`,
-   * a fresh URL is minted via `mintAttachUrl` and pushed to the dashboard via
-   * `onAttachUrlBuilt` (SSE refresh — NO browser re-open). The `reminted` count
-   * rides in the success/timeout result.
-   *
-   * SECRET-HANDLING: attachUrl encodes tunnel/scheme host + the TOTP `at=` code
-   * in the QR payload only. The browser is opened on a 127.0.0.1 URL only. The
-   * tool result carries `totp.expiresAt` + `reminted` count — never the code.
-   */
-  async function renderAndMaybeWait(
-    prep: Extract<PrepareAttachResult, { ok: true }>,
-    waitForAttach: boolean,
-    callTimeoutMs: number,
-    conn: CdpConnection,
-  ): Promise<McpResult> {
-    const { parts, isMatchingPage, buildTimeoutError, authorityWarning, totpMeta } = prep;
-
-    // Initial mint + dashboard notify (components, not a finished URL, so
-    // getDashboardState re-mints on every SSE push — Defect 1).
-    let attachUrl = mintAttachUrl(parts);
-    onAttachUrlBuilt?.(parts);
-    let totpIssuedAt = nowMs();
-    let reminted = 0;
-    const relayUrl = parts.wssUrl;
-
-    const header =
-      'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
-    const warningPrefix = authorityWarning ? `⚠️  scheme_url 경고: ${authorityWarning}\n\n` : '';
-    const guiAvailable = canOpenBrowser();
-
-    /** Builds the totp object surfaced in results (fresh expiresAt + reminted). */
-    const totpResult = (): Record<string, unknown> | undefined => {
-      if (!totpMeta) return undefined;
-      const STEP_SECONDS = 30;
-      const expiresAtMs = totpIssuedAt + RELAY_VERIFY_SKEW_STEPS * STEP_SECONDS * 1000;
-      return {
-        enabled: true,
-        ttlSeconds: totpMeta.ttlSeconds,
-        expiresAt: new Date(expiresAtMs).toISOString(),
-        ...(reminted > 0 ? { reminted } : {}),
-      };
-    };
-
-    /**
-     * Segmented wait with TOTP re-mint (issue #626 §3). Resolves with the
-     * attached page list, or rejects on timeout. Between SEGMENT_MS slices it
-     * re-mints when the code has aged past the threshold (max ~4 re-mints over
-     * 600 s). Returns immediately once a matching page attaches (no re-mint).
-     */
-    async function waitWithRemint(): Promise<ReturnType<CdpConnection['listTargets']>> {
-      const deadline = nowMs() + callTimeoutMs;
-      // Immediate check — already attached resolves without any wait/re-mint.
-      if (isMatchingPage(conn.listTargets())) return conn.listTargets();
-      for (;;) {
-        const remaining = deadline - nowMs();
-        if (remaining <= 0) {
-          throw new Error(`start_attach: 타임아웃 (${callTimeoutMs}ms)`);
-        }
-        const segmentMs = Math.min(START_ATTACH_SEGMENT_MS, remaining);
-        try {
-          return await waitForAttachWithEvents(conn, isMatchingPage, segmentMs);
-        } catch {
-          // Segment elapsed without attach — re-mint if the code is aging, then
-          // loop into the next segment. SECRET-HANDLING: code never logged.
-          if (totpMeta && nowMs() - totpIssuedAt >= START_ATTACH_REMINT_THRESHOLD_MS) {
-            attachUrl = mintAttachUrl(parts);
-            onAttachUrlBuilt?.(parts);
-            totpIssuedAt = nowMs();
-            reminted += 1;
-          }
-        }
-      }
-    }
-
-    /**
-     * Assembles the success result after a page attaches. `baseText` carries the
-     * QR + pre-wait JSON block (the QR the user already scanned). The attach
-     * itself ends the wait, so the QR is moot — what matters now is the final
-     * TOTP state. If the segmented wait re-minted (issue #626 §3), surface the
-     * post-wait `totp` block (fresh `expiresAt` + `reminted` count) so the result
-     * reflects how many times the code rotated during the wait. SECRET-HANDLING:
-     * the totp block carries expiresAt + reminted only — never the code value.
-     */
-    const successResult = (baseText: string): McpResult => {
-      const pagesResult = listPages(conn, getTunnelStatus());
-      const finalTotp = totpResult();
-      const remintNote =
-        finalTotp && reminted > 0 ? `\n\n${JSON.stringify({ totp: finalTotp }, null, 2)}` : '';
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `${baseText}\n\n${JSON.stringify(pagesResult, null, 2)}${remintNote}`,
-          },
-        ],
-      };
-    };
-
-    /** Runs the wait (when requested) and returns success/timeout result. */
-    const runWait = async (baseText: string): Promise<McpResult> => {
-      if (!waitForAttach) {
-        return { content: [{ type: 'text', text: baseText }] };
-      }
-      try {
-        await waitWithRemint();
-      } catch {
-        const observed = conn.listTargets();
-        return {
-          content: [
-            { type: 'text', text: buildTimeoutError(baseText, callTimeoutMs / 1000, observed) },
-          ],
-          isError: true,
-        };
-      }
-      return successResult(baseText);
-    };
-
-    // Path 1: headless — no GUI, text QR only.
-    if (!guiAvailable) {
-      const headlessNote =
-        'GUI 환경이 감지되지 않았습니다 (headless/remote 환경). ' +
-        '텍스트 QR을 폰 카메라로 스캔하거나, 로컬 GUI 환경에서 실행하세요.\n\n';
-      const qr = await renderQr(attachUrl);
-      const baseText = `${warningPrefix}${headlessNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totpResult() ? { totp: totpResult() } : {}) }, null, 2)}\n\n${qr}`;
-      return runWait(baseText);
-    }
-
-    // Path 2 / 3: GUI + HTTP server — open the dashboard in the browser.
-    if (guiAvailable && qrHttpServer) {
-      const httpUrl = qrHttpServer.buildAttachPageUrl(attachUrl);
-      const pngUrl = `http://127.0.0.1:${qrHttpServer.port}/qr.png?u=${encodeURIComponent(attachUrl)}`;
-      const browserResult = await openQrInBrowser(httpUrl, pngUrl);
-
-      if (browserResult.opened) {
-        const retriedNote = browserResult.retried ? ' (1회 retry 후 성공)' : '';
-        const openResult = {
-          attempted: true,
-          succeeded: true,
-          ...(browserResult.retried ? { retried: true } : {}),
-        };
-        const shortText =
-          `${warningPrefix}${header}\n` +
-          `${JSON.stringify({ relayUrl, openResult, ...(totpResult() ? { totp: totpResult() } : {}) }, null, 2)}\n\n` +
-          `브라우저에서 QR을 열었습니다${retriedNote}. 폰 카메라로 스캔하세요.\n` +
-          `URL: ${browserResult.httpUrl}`;
-        return runWait(shortText);
-      }
-
-      // Browser open failed — structured error + URL hint + text QR fallback.
-      const openResult = {
-        attempted: true,
-        succeeded: false,
-        failureReason: browserResult.error ?? '브라우저 실행 후보 모두 실패',
-        pngUrl: browserResult.pngUrl,
-        ...(browserResult.stderrSummary ? { stderrSummary: browserResult.stderrSummary } : {}),
-      };
-      const stderrNote = browserResult.stderrSummary
-        ? `\nstderr: ${browserResult.stderrSummary}`
-        : '';
-      const fallbackNote =
-        `브라우저 자동 열기에 실패했습니다. ` +
-        `다음 URL을 직접 브라우저에서 여세요:\n${browserResult.httpUrl}\n` +
-        `또는 PNG로 받기: ${browserResult.pngUrl}` +
-        stderrNote +
-        '\n\n';
-      const qr = await renderQr(attachUrl);
-      const baseText = `${warningPrefix}${fallbackNote}${header}\n${JSON.stringify({ attachUrl, relayUrl, openResult, ...(totpResult() ? { totp: totpResult() } : {}) }, null, 2)}\n\n${qr}`;
-      return runWait(baseText);
-    }
-
-    // Path 4: GUI but no HTTP server — text QR fallback.
-    const qr = await renderQr(attachUrl);
-    const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totpResult() ? { totp: totpResult() } : {}) }, null, 2)}\n\n${qr}`;
-    return runWait(baseText);
-  }
+  const attachDeps: AttachDeps = {
+    getTunnelStatus,
+    getTotpSecret,
+    qrHttpServer,
+    onAttachUrlBuilt,
+    stalePageThresholdMs,
+    nowMs,
+  };
 
   const server = new Server(
     { name: 'ait-debug', version: __VERSION__ },
@@ -1268,9 +649,15 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       })();
 
       try {
-        const prep = await prepareAttach(attachEnv, args, attachConn);
+        const prep = await prepareAttachCore(attachDeps, attachEnv, args, attachConn);
         if (!prep.ok) return prep.error;
-        return await renderAndMaybeWait(prep, waitForAttach, callTimeoutMs, attachConn);
+        return await renderAndMaybeWaitCore(
+          attachDeps,
+          prep,
+          waitForAttach,
+          callTimeoutMs,
+          attachConn,
+        );
       } catch (err) {
         return errorResult(err, name);
       }
