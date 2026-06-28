@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.1.110
+
+### Patch Changes
+
+- a4974a1: 의존성 최신화 — web-framework-2x alias를 2.10.0 exact pin으로 올림 (2.10.1 upstream type regression 회피)
+
+  `web-framework@2.10.1`은 `@apps-in-toss/web-bridge@2.10.1`이 `@apps-in-toss/native-modules`의 미빌드 raw `.ts` subpath를 import하는 upstream type regression이 있어 `tsc -p tsconfig.2x.json`이 실패한다. 2.10.0은 그 import가 없어 clean하다.
+
+  - `@apps-in-toss/web-framework-2x`: `npm:…@2.9.3` → `npm:…@2.10.0` (exact pin, 2.10.1 회피)
+  - `@types/react`: `^19.2.14` → `^19.2.17`
+  - `react` / `react-dom`: `^19.2.6` → `^19.2.7` (devDependencies only)
+  - `@biomejs/biome`: `2.4.15` → `2.5.1` (biome.json schema migration 포함)
+  - `@playwright/test`: `^1.59.1` → `^1.61.1`
+  - `ajv`: `^8.18.0` → `^8.20.0`
+  - `tsx`: `^4.21.0` → `^4.22.4`
+  - `unplugin`: `^3.0.0` → `^3.2.0`
+  - `vite`: `^8.0.8` → `^8.0.16`
+  - `ws`: `^8.18.0` → `^8.21.0`
+  - `sharp`: `^0.34.5` → `^0.35.2`
+  - `@vitejs/plugin-react`: `^5.1.0` → `^6.0.3` (major 5→6 bump)
+
+  `tsdown`은 0.21.7을 유지한다 — 0.22.3은 rolldown-plugin-dts 0.26으로 올라가면서 트랜지티브 CJS .d.ts(postcss via web-framework) 처리를 warning에서 error로 격상시켜 빌드가 실패한다.
+
+  **`haptic.ts` e2e 회귀 수정 (이번 deps bump로 발생)**: `@ait-co/polyfill/auto`와 함께 사용할 때 `generateHapticFeedback`이 브라우저를 hang시키는 무한 재귀를 수정한다. polyfill이 `navigator.vibrate`를 shim으로 교체하는데 그 shim이 내부적으로 mock의 `generateHapticFeedback`을 호출하고, mock은 다시 `navigator.vibrate`(= shim)를 호출해 무한 async 재귀가 발생했다. Vite 8의 번들 분할 방식이 deps bump 이후 바뀌면서 dynamic import가 즉시 resolve되어 재귀가 발현됐다. 수정: mock이 `Symbol.for('@ait-co/polyfill/vibrate.original')`에 저장된 원본 vibrate를 우선 사용해 재귀를 끊는다.
+
+  런타임 동작 변화 없음. 모든 검증 게이트(build·typecheck·test·lint·check:mcp-react-free·check:debug-surface-absent·check:dashboard-html-fresh·test:e2e) 통과.
+
+- a55747d: feat(gate): env 4 제거 + positive-allowlist kill-switch (#665)
+
+  relay-live (env 4 — 프로덕션 WebView)와 LIVE guard(`liveIntent`/`confirm` 게이트)를 완전 제거하고 positive-allowlist kill-switch로 교체한다.
+
+  **변경 요약:**
+
+  - `isDebugAllowedHost(hostname)` 함수 추가 — 허용 호스트: localhost/loopback, `*.trycloudflare.com` (env 2), `*.private-apps.tossmini.com` (env 3). `apps.tossmini.com` (env 4 LIVE)는 허용 목록에 없어 차단.
+  - `McpEnvironment`: `'relay-live'` 제거 → 3-value union (`mock | relay-dev | relay-mobile`).
+  - `StartDebugMode`: `'relay-live'` 제거 → 3-value union.
+  - `ConnectionRouter.switchMode`: `confirm: boolean` 파라미터 제거.
+  - `ModeSwitchReport.liveGuardActive`: 필드 제거.
+  - `deriveEnvironment`: `liveIntent` 파라미터 제거, 2-param 시그니처.
+  - `liveIntent`/`getLiveIntent`/`setLiveIntent`/`seedLiveIntentFromEnv`/`isLiveRelayEnv`/`liveGuardError` 완전 삭제.
+  - `evaluate`/`call_sdk`/`run_tests` 핸들러: LIVE guard → `connectionHostsAllowed(conn)` positive-allowlist 검사로 교체.
+  - `DiagnosticsResult.environment.liveGuardActive`: `false` literal 타입으로 고정 (`@deprecated`).
+  - `in-app/auto.ts`: `isDebugAllowedHost` 체크 추가 — 허용 호스트 아니면 dormant.
+  - `in-app/gate.ts`: Layer B1에 `isDebugAllowedHost` 체크 통합.
+
+  **SECRET-HANDLING:** hostname 값은 로그에 절대 출력하지 않음 — allowlist 검사 결과(boolean)만 사용.
+
+- b1cd2f3: feat: `start_attach` 단일 통합 MCP tool — `build_attach_url` 대체 + 호출 안 attach 대기 + TOTP 자동 재발행
+
+  기존 `build_attach_url`(QR/deep-link 합성) + 별도 attach 폴링의 2호출 흐름을 `start_attach` 단일 tool로 합쳤다. `start_attach`은 attach URL을 합성해 QR을 띄운 뒤 **같은 호출 안에서 폰이 attach될 때까지 대기**하고, 그동안 TOTP 코드를 자동 재발행한다.
+
+  - **단일 진입 tool**: `build_attach_url`을 완전히 대체. descriptor는 bootstrap·`availableIn: 'relay'` 유지.
+  - **`mode` 인자**: `local-browser` | `relay-sandbox` | `relay-staging` enum. mode를 주면 `start_debug`처럼 세션 환경을 함께 전환한 뒤(per-call 스냅샷으로 active connection·env 재캡처) 그 환경 기준으로 attach를 진행한다. relay 환경이 아니면 거부한다.
+  - **기본 attach 대기**: `wait_for_attach` 인자는 제거됐고, 대기가 기본 동작이다(`wait_timeout_seconds`, 1–600s, 기본 60s로 조절). attach되면 호출이 그대로 페이지 목록을 반환한다.
+  - **TOTP 호출-내 자동 재발행**: 대기를 30초 세그먼트로 쪼개고, 코드가 relay 검증 창(±6 step = 180s)에 가까워지면(150s 경과) 새 코드로 URL을 재합성해 대시보드 QR을 갱신한다. 재발행 횟수는 결과의 `totp.reminted`로 노출된다(최대 ~4회/600s). 대기 중 수동 재호출 불필요.
+
+  SECRET-HANDLING 유지: TOTP 코드 값·tunnel host·relay wss·hostname은 stdout/log/tool-result/에러에 노출하지 않는다. tool-result의 `totp` 블록은 `expiresAt` + `reminted`만 싣고, 코드는 attachUrl(QR 페이로드)·`127.0.0.1` 대시보드 안에만 존재한다.
+
+  모든 검증 게이트(typecheck·test·lint·build·check:mcp-react-free·check:debug-surface-absent·check:dashboard-html-fresh) 통과.
+
 ## 0.1.109
 
 ### Patch Changes
