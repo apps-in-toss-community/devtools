@@ -211,6 +211,13 @@ export const en: Record<StringKey, string> = {
   'inspector.error.noTarget': 'No page attached. Attach a device and try again.',
   'inspector.error.relayDown': 'Relay is not active. Start a relay session first.',
 
+  // qr-http-server — SSE watchdog fallback UI (#681)
+  // Shown when SSE refresh stops (server shutdown); attempts window.close() first.
+  'dashboard.watchdog.title': 'Server has shut down',
+  'dashboard.watchdog.body':
+    'The MCP server has stopped. This session is no longer active. You may close this tab.',
+  'dashboard.watchdog.close': 'Close tab',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // Copy branches per session mode into sandbox (env 2) / intoss (env 3) families (#468).
   'attach.title': 'AIT Debug Session — QR Scan',

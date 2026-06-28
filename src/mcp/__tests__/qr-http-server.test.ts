@@ -12,7 +12,7 @@
  * i18n: 대부분의 테스트는 `Accept-Language: ko` 헤더를 명시해 한국어 응답을
  * 얻는다. Accept-Language 없이 fetch하면 기본값 'en'이 적용된다.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DashboardState, startQrHttpServer } from '../qr-http-server.js';
 
 // ---------------------------------------------------------------------------
@@ -1975,6 +1975,352 @@ describe('startQrHttpServer — dashboard GET / DevTools 진입로 (#248)', () =
       // 페이지 미attach → 링크 없음.
       expect(html).not.toContain('href="/devtools/');
       expect(html).toContain('inspector-hint');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SSE watchdog (#681) — server 무응답 시 탭 자동 닫기 + 폴백 UI
+//
+// 테스트 전략:
+//   - sseRefreshIntervalMs를 짧게(50ms) 주입 → watchdogTimeoutMs = 50*3 = 150ms로 축소.
+//   - dashboard HTML을 fetch해 <script> 블록을 추출, 소스 레벨에서 watchdog 구조를 검증한다.
+//   - 동작 테스트(타이머 발화)는 jsdom 환경에서 테스트 간 setInterval 누수로 신뢰성이 낮아
+//     소스 레벨 구조 검증으로 대체한다.
+// ---------------------------------------------------------------------------
+
+/**
+ * HTML에서 마지막 <script>…</script> 블록의 내용을 추출한다.
+ * buildSseScript가 생성하는 SSE 스크립트 블록을 검사할 때 사용한다.
+ */
+function extractLastScriptContent(html: string): string {
+  const scriptMatches = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  const last = scriptMatches.at(-1);
+  if (!last?.[1]) throw new Error('SSE <script> 블록을 찾을 수 없습니다');
+  return last[1];
+}
+
+describe('startQrHttpServer — SSE watchdog 자동 닫기 (#681)', () => {
+  const defaultState: DashboardState = {
+    tunnel: { up: true, wssUrl: 'wss://test.trycloudflare.com' },
+    pages: [],
+    attachUrl: null,
+  };
+
+  it('dashboard HTML에 WATCHDOG_TIMEOUT_MS + 폴백 UI 문자열이 주입된다 (ko)', async () => {
+    // sseRefreshIntervalMs=50 → watchdogTimeoutMs = 50*3 = 150
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      // watchdog timeout 값 주입 확인
+      expect(html).toContain('WATCHDOG_TIMEOUT_MS = 150');
+      // 한국어 폴백 UI 문자열
+      expect(html).toContain('서버가 종료되었습니다');
+      expect(html).toContain('이 탭을 닫아도 됩니다');
+      expect(html).toContain('탭 닫기');
+      // watchdog 로직 확인
+      expect(html).toContain('fireWatchdog');
+      expect(html).toContain('showWatchdogFallback');
+      expect(html).toContain('window.close()');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('dashboard HTML에 WATCHDOG_TIMEOUT_MS + 폴백 UI 문자열이 주입된다 (en)', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/?lang=en`)).text();
+      expect(html).toContain('WATCHDOG_TIMEOUT_MS = 150');
+      expect(html).toContain('Server has shut down');
+      expect(html).toContain('You may close this tab');
+      expect(html).toContain('Close tab');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('기본 sseRefreshIntervalMs(90s) 사용 시 watchdog timeout이 210s(210_000ms)로 계산된다', async () => {
+    // 90_000 >= 5_000 이므로 90_000 * 2 + 30_000 = 210_000
+    const srv = await startQrHttpServer(() => defaultState);
+    try {
+      const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
+      expect(html).toContain('WATCHDOG_TIMEOUT_MS = 210000');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  // ── 스크립트 구조 검증 (소스 레벨) ──────────────────────────────────────
+  // Function() eval + 실제 타이머를 이용한 동작 테스트는 jsdom 환경에서 테스트 간
+  // setInterval 타이머 누수로 인해 신뢰성이 낮다. 대신 생성된 스크립트의 구조를
+  // 직접 검사해 watchdog 로직이 올바르게 생성됐는지 검증한다.
+
+  it('스크립트 구조: setInterval 콜백이 timeout 초과 시 fireWatchdog을 호출한다', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      const script = extractLastScriptContent(html);
+
+      // setInterval 콜백 안에 fireWatchdog() 호출이 있어야 한다.
+      expect(script).toContain('setInterval(function ()');
+      expect(script).toContain('fireWatchdog()');
+      // 타임아웃 초과 조건이 있어야 한다.
+      expect(script).toContain('Date.now() - lastSeen > WATCHDOG_TIMEOUT_MS');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('스크립트 구조: onmessage/onopen이 lastSeen을 갱신해 메시지 수신 시 watchdog을 리셋한다', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      const script = extractLastScriptContent(html);
+
+      // onmessage와 onopen 모두 lastSeen = Date.now()를 포함해야 한다.
+      // 메시지가 계속 오면 lastSeen이 갱신돼 timeout 조건이 충족되지 않는다.
+      const lastSeenUpdateCount = (script.match(/lastSeen = Date\.now\(\)/g) ?? []).length;
+      expect(lastSeenUpdateCount).toBeGreaterThanOrEqual(2); // onopen + onmessage 각 1회
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('스크립트 구조: fireWatchdog이 watchdogFired guard와 clearInterval을 포함해 중복 발화를 막는다', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/`, { headers: { 'Accept-Language': 'ko' } })
+      ).text();
+      const script = extractLastScriptContent(html);
+
+      // watchdogFired guard: if (watchdogFired) return;
+      expect(script).toContain('if (watchdogFired) return;');
+      // 발화 후 타이머 클리어: clearInterval
+      expect(script).toContain('clearInterval(watchdogTimer)');
+      // watchdogFired = true로 플래그 설정
+      expect(script).toContain('watchdogFired = true;');
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('/attach 페이지에도 watchdog 스크립트가 주입된다', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      const attachUrl =
+        'intoss-private://aitc-sdk-example?_deploymentId=test-watchdog&debug=1&relay=wss%3A%2F%2Fx.tc.com';
+      const html = await (
+        await fetch(`http://127.0.0.1:${srv.port}/attach?u=${encodeURIComponent(attachUrl)}`, {
+          headers: { 'Accept-Language': 'ko' },
+        })
+      ).text();
+      // watchdog 로직이 /attach 페이지에도 있어야 한다
+      expect(html).toContain('WATCHDOG_TIMEOUT_MS = 150');
+      expect(html).toContain('fireWatchdog');
+      expect(html).toContain('서버가 종료되었습니다');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SSE watchdog 실발화 검증 (#681)
+//
+// 인라인 스크립트의 IIFE를 eval해 jsdom 환경에서 fake timers로
+// 타이머 발화·미발화·lastSeen 리셋을 실제로 단언한다.
+//
+// sseRefreshIntervalMs: 50 → watchdogTimeoutMs = 150, checkIntervalMs = 150
+// (Math.min(Math.max(1000, 25), 150) = 150)
+//
+// 중요: fetch는 fake timers 활성화 전에 수행하고, eval은 fake timers 활성화
+// 후에 수행한다 — eval 시점에 setInterval/Date.now()가 fake로 등록된다.
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — SSE watchdog 실발화 검증 (#681)', () => {
+  const defaultState: DashboardState = {
+    tunnel: { up: true, wssUrl: 'wss://test.trycloudflare.com' },
+    pages: [],
+    attachUrl: null,
+  };
+
+  /**
+   * 서버에서 HTML을 받아 마지막 <script> 본문을 추출한다.
+   * fetch는 실제 timers 상태에서 수행해야 Node.js 네트워크 IO가 막히지 않는다.
+   */
+  async function fetchScript(port: number): Promise<string> {
+    const html = await (
+      await fetch(`http://127.0.0.1:${port}/`, { headers: { 'Accept-Language': 'ko' } })
+    ).text();
+    return extractLastScriptContent(html);
+  }
+
+  /**
+   * EventSource·window.close 스텁을 전역에 주입하고 스크립트를 eval한다.
+   * fake timers가 활성화된 상태에서 호출해야 setInterval/Date.now()가 fake로 등록된다.
+   *
+   * 반환값: 스텁 인스턴스(`sse`)와 정리 함수(`cleanup`)
+   */
+  function evalScript(script: string): {
+    sse: {
+      onopen: ((e: Event) => void) | null;
+      onmessage: ((e: MessageEvent) => void) | null;
+      onerror: ((e: Event) => void) | null;
+    };
+    closeSpy: ReturnType<typeof vi.fn>;
+    cleanup: () => void;
+  } {
+    const closeSpy = vi.fn();
+
+    // EventSource 스텁 — 외부에서 onmessage/onopen을 수동 호출해 메시지 시뮬레이션.
+    let sseInstance: {
+      onopen: ((e: Event) => void) | null;
+      onmessage: ((e: MessageEvent) => void) | null;
+      onerror: ((e: Event) => void) | null;
+    } | null = null;
+
+    class StubEventSource {
+      onopen: ((e: Event) => void) | null = null;
+      onmessage: ((e: MessageEvent) => void) | null = null;
+      onerror: ((e: Event) => void) | null = null;
+      constructor() {
+        // 인스턴스를 외부로 노출해 테스트에서 직접 호출한다.
+        sseInstance = this;
+      }
+    }
+
+    // 전역 스텁 주입 — vi.stubGlobal이 afterEach에서 자동 복원된다(restoreMocks: true).
+    vi.stubGlobal('EventSource', StubEventSource);
+    vi.stubGlobal('close', closeSpy);
+
+    // jsdom window.close는 read-only가 아니므로 Object.defineProperty 없이 직접 주입한다.
+    (window as unknown as Record<string, unknown>).close = closeSpy;
+
+    // document.body 초기화 — showWatchdogFallback이 innerHTML을 교체할 루트 필요.
+    document.body.innerHTML = '<div id="test-root"><div id="tunnel-status"></div></div>';
+
+    // IIFE를 eval한다 — fake timers 활성화 후 호출하므로 setInterval/Date.now()가
+    // jsdom fake timers에 등록된다.
+    // biome-ignore lint/security/noGlobalEval: 인라인 스크립트 검증 목적
+    eval(script);
+
+    if (!sseInstance) {
+      throw new Error(
+        'StubEventSource 인스턴스가 생성되지 않았습니다 — EventSource 스텁 주입 실패',
+      );
+    }
+
+    const sse = sseInstance;
+    return {
+      sse,
+      closeSpy,
+      cleanup: () => {
+        document.body.innerHTML = '';
+      },
+    };
+  }
+
+  afterEach(() => {
+    // fake timers는 restoreMocks가 자동 복원하지 않으므로 명시적으로 복원한다.
+    vi.useRealTimers();
+  });
+
+  it('타임아웃 경과 전에는 window.close를 호출하지 않는다', async () => {
+    // sseRefreshIntervalMs=50 → watchdogTimeoutMs=150, checkIntervalMs=150
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      // fetch는 실제 timers 상태에서 수행한다.
+      const script = await fetchScript(srv.port);
+      // fake timers 활성화 후 eval — setInterval/Date.now()가 fake로 등록된다.
+      vi.useFakeTimers();
+      const { sse, closeSpy, cleanup } = evalScript(script);
+      try {
+        // onopen으로 lastSeen 갱신 — 연결 시각 기준 재설정.
+        sse.onopen?.(new Event('open'));
+
+        // checkIntervalMs=150ms 직전(149ms)까지 경과 — interval 콜백이 아직 발화 안 됨.
+        await vi.advanceTimersByTimeAsync(149);
+
+        expect(closeSpy).not.toHaveBeenCalled();
+      } finally {
+        cleanup();
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('lastSeen이 계속 갱신되면 타임아웃 시간이 지나도 window.close를 호출하지 않는다', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      // fetch는 실제 timers 상태에서 수행한다.
+      const script = await fetchScript(srv.port);
+      vi.useFakeTimers();
+      const { sse, closeSpy, cleanup } = evalScript(script);
+      try {
+        // onopen으로 초기 lastSeen 갱신.
+        sse.onopen?.(new Event('open'));
+
+        // checkIntervalMs=150ms마다 메시지를 주입해 lastSeen을 리셋한다.
+        // 150ms 간격으로 5번 메시지를 보내면 총 750ms가 지나도 watchdog이 발화하지 않아야 한다.
+        for (let i = 0; i < 5; i++) {
+          // checkInterval 직전에 메시지를 받아 lastSeen을 갱신한다.
+          await vi.advanceTimersByTimeAsync(100);
+          sse.onmessage?.(
+            new MessageEvent('message', {
+              data: '{"tunnel":{"up":true},"pages":[],"attachUrl":null}',
+            }),
+          );
+          // 나머지 interval을 완주한다.
+          await vi.advanceTimersByTimeAsync(50);
+        }
+
+        // 5번의 메시지 + interval을 다 돌았지만 watchdog은 미발화여야 한다.
+        expect(closeSpy).not.toHaveBeenCalled();
+      } finally {
+        cleanup();
+      }
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('타임아웃 경과 후 window.close를 호출하고 폴백 UI가 표시된다', async () => {
+    const srv = await startQrHttpServer(() => defaultState, { sseRefreshIntervalMs: 50 });
+    try {
+      // fetch는 실제 timers 상태에서 수행한다.
+      const script = await fetchScript(srv.port);
+      vi.useFakeTimers();
+      const { sse, closeSpy, cleanup } = evalScript(script);
+      try {
+        // onopen으로 lastSeen 갱신.
+        sse.onopen?.(new Event('open'));
+
+        // checkIntervalMs=150ms 두 번 경과(300ms) — 두 번째 interval 발화 시
+        // Date.now()-lastSeen = 300 > 150(WATCHDOG_TIMEOUT_MS)으로 조건 만족.
+        // 첫 번째 interval(t=150)에서는 diff=150이 정확히 timeout과 같아 >가 아닌 ==이므로
+        // 미발화 — 두 번째 interval(t=300)에서 diff=300 > 150으로 발화한다.
+        await vi.advanceTimersByTimeAsync(300);
+
+        // window.close 스파이가 호출됐어야 한다.
+        expect(closeSpy).toHaveBeenCalledTimes(1);
+
+        // showWatchdogFallback이 document.body.innerHTML을 교체했어야 한다.
+        // 한국어 모드(Accept-Language: ko)로 서버를 요청했으므로 한국어 텍스트.
+        expect(document.body.innerHTML).toContain('서버가 종료되었습니다');
+      } finally {
+        cleanup();
+      }
     } finally {
       await srv.close();
     }

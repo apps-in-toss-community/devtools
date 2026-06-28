@@ -204,6 +204,11 @@ function buildDashboardHtml(
    * SECRET-HANDLING: 링크 클릭 후 302 응답의 Location에만 relay host·TOTP가 담긴다.
    */
   devtoolsEntryUrl: string | null = null,
+  /**
+   * SSE watchdog timeout 계산에 쓰이는 server refresh 주기 (ms, #681).
+   * 미지정 시 기본값 90_000 적용 → watchdog timeout = 90_000 × 2 + 30_000 = 210_000ms.
+   */
+  sseRefreshIntervalMs = 90_000,
 ): string {
   const s = resolveLocaleStrings(locale);
   const now = new Date().toISOString();
@@ -275,6 +280,11 @@ function buildDashboardHtml(
         }</ul></section>`;
 
   // locale-aware strings for the inline SSE client script
+  // watchdog timeout: server refresh 주기보다 넉넉히 크게 잡아 일시적 끊김을 오탐하지 않는다.
+  //   - 기본(90s): 90s × 2 + 30s = 210s — 주기 1회 놓쳐도 정상 케이스 배제.
+  //   - 짧은 주기(테스트용, < 5000ms): 주기 × 3 — 절대 30s를 더하지 않아 빠른 검증 가능.
+  const watchdogTimeoutMs =
+    sseRefreshIntervalMs < 5_000 ? sseRefreshIntervalMs * 3 : sseRefreshIntervalMs * 2 + 30_000;
   const sseStrings: SseScriptStrings = {
     tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
@@ -286,6 +296,10 @@ function buildDashboardHtml(
     inspectorOpenLabel: JSON.stringify(s('dashboard.inspector.open')),
     inspectorWaitingLabel: JSON.stringify(s('dashboard.inspector.waiting')),
     dashboardSurface: true,
+    watchdogTimeoutMs,
+    watchdogTitle: JSON.stringify(s('dashboard.watchdog.title')),
+    watchdogBody: JSON.stringify(s('dashboard.watchdog.body')),
+    watchdogCloseLabel: JSON.stringify(s('dashboard.watchdog.close')),
   };
 
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
@@ -332,6 +346,22 @@ interface SseScriptStrings {
    *        이 분기가 url-box 이중 표시 결함을 방지한다.
    */
   dashboardSurface: boolean;
+  /**
+   * SSE watchdog — server 무응답 판정 임계값 (ms). (#681)
+   *
+   * server의 SSE refresh 주기(`sseRefreshIntervalMs`, 기본 90s)보다 넉넉히 크게 잡아
+   * 한 번 놓쳐도 정상인 경우를 배제한다. token-fill 패턴으로 server refresh 주기를
+   * 기반으로 계산한 값을 주입한다 (주기 × 2 + 30s 여유).
+   *
+   * 테스트에서는 짧은 `sseRefreshIntervalMs`를 주입하면 이 값도 짧아져 빠르게 검증 가능.
+   */
+  watchdogTimeoutMs: number;
+  /** watchdog 발화 후 폴백 UI 제목 (JSON.stringify로 이미 escape됨). */
+  watchdogTitle: string;
+  /** watchdog 발화 후 폴백 UI 본문 (JSON.stringify로 이미 escape됨). */
+  watchdogBody: string;
+  /** watchdog 폴백 UI의 "탭 닫기" 버튼 라벨 (JSON.stringify로 이미 escape됨). */
+  watchdogCloseLabel: string;
 }
 
 /**
@@ -353,6 +383,10 @@ interface SseScriptStrings {
  *   - clipboard: navigator.clipboard.writeText → 실패/부재 시 textarea execCommand fallback.
  *   - 피드백: 버튼 라벨이 COPIED_LABEL로 ~1.5초 전환 후 COPY_LABEL로 복귀.
  *
+ * SSE watchdog (#681): SSE 주기 갱신이 `watchdogTimeoutMs` 동안 수신되지 않으면
+ * server가 종료된 것으로 판단한다. `window.close()`를 시도하고, 닫히지 않으면
+ * 폴백 안내 화면으로 교체해 stale QR이 계속 보이는 오해를 항상 방지한다.
+ *
  * 문자열 인자는 빌드타임에 ko/en 테이블에서 가져와 JSON.stringify로 이미 escape됨.
  *
  * SECRET-HANDLING: URL 값을 console.log 등으로 출력하지 않는다.
@@ -371,6 +405,14 @@ function buildSseScript(strings: SseScriptStrings): string {
       var COPIED_LABEL = ${strings.copiedLabel};
       var INSPECTOR_OPEN_LABEL = ${strings.inspectorOpenLabel};
       var INSPECTOR_WAITING_LABEL = ${strings.inspectorWaitingLabel};
+
+      // ── SSE watchdog 상수 (#681) ──────────────────────────────────────────
+      // server의 SSE refresh 주기(기본 90s)보다 넉넉히 큰 값 — 주기 × 2 + 30s 여유.
+      // token-fill 패턴으로 server에서 계산해 주입한다.
+      var WATCHDOG_TIMEOUT_MS = ${strings.watchdogTimeoutMs};
+      var WATCHDOG_TITLE = ${strings.watchdogTitle};
+      var WATCHDOG_BODY = ${strings.watchdogBody};
+      var WATCHDOG_CLOSE_LABEL = ${strings.watchdogCloseLabel};
 
       // ── 클립보드 복사 헬퍼 ────────────────────────────────────────────────
       function copyText(text) {
@@ -426,9 +468,65 @@ function buildSseScript(strings: SseScriptStrings): string {
         }
       });
 
+      // ── SSE watchdog (#681) ───────────────────────────────────────────────
+      // 마지막으로 SSE 메시지를 수신한 시각. 스크립트 로드 시각으로 초기화한다.
+      // (서버가 /events 연결 즉시 초기 상태를 push하므로 onmessage가 곧 갱신한다.)
+      var lastSeen = Date.now();
+      // watchdog이 한 번 발화하면 타이머를 clear해 중복 실행 방지.
+      var watchdogFired = false;
+      var watchdogTimer = null;
+
+      // 폴백 UI — window.close()가 무시되면 stale QR 대신 안내 화면을 표시한다.
+      function showWatchdogFallback() {
+        if (document.body) {
+          document.body.innerHTML =
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+            'height:100vh;font-family:sans-serif;text-align:center;padding:2rem;box-sizing:border-box;">' +
+            '<p style="font-size:1.4rem;font-weight:bold;margin-bottom:1rem;">' + WATCHDOG_TITLE + '</p>' +
+            '<p style="color:#555;margin-bottom:2rem;">' + WATCHDOG_BODY + '</p>' +
+            '<button onclick="window.close()" ' +
+            'style="padding:0.6rem 1.4rem;font-size:1rem;cursor:pointer;border:1px solid #ccc;' +
+            'border-radius:6px;background:#f5f5f5;">' + WATCHDOG_CLOSE_LABEL + '</button>' +
+            '</div>';
+        }
+      }
+
+      function fireWatchdog() {
+        if (watchdogFired) return;
+        watchdogFired = true;
+        if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+        // 폴백 UI를 먼저 표시한다 — close가 성공하면 어차피 페이지가 닫혀 보이지 않는다.
+        // close 실패(opener 없는 탭)에 대비해 stale QR 대신 안내 화면을 항상 보장한다.
+        showWatchdogFallback();
+        // window.close() 시도 — OS가 연 탭은 opener가 없어 무시될 수 있다.
+        window.close();
+      }
+
+      // 주기적으로 lastSeen을 검사 — WATCHDOG_TIMEOUT_MS 초과 시 발화.
+      // 검사 간격: WATCHDOG_TIMEOUT_MS / 6, 단 최소 1s 이상이되 timeout 자체보다 크지 않게 한다.
+      // (sseRefreshIntervalMs가 작을 때 최솟값 1s가 timeout을 초과하는 경우 방지 — 테스트 격리.)
+      var checkIntervalMs = Math.min(
+        Math.max(1000, Math.round(WATCHDOG_TIMEOUT_MS / 6)),
+        WATCHDOG_TIMEOUT_MS,
+      );
+      watchdogTimer = setInterval(function () {
+        if (watchdogFired) return;
+        if (Date.now() - lastSeen > WATCHDOG_TIMEOUT_MS) {
+          fireWatchdog();
+        }
+      }, checkIntervalMs);
+
       // ── SSE 구독 ──────────────────────────────────────────────────────────
       var src = new EventSource('/events');
+      src.onopen = function () {
+        // 연결 복구 시 lastSeen 갱신 — 일시적 끊김이 watchdog을 발화시키지 않게.
+        // watchdog이 이미 발화했으면 갱신하지 않는다(폴백 UI를 그대로 유지).
+        if (!watchdogFired) { lastSeen = Date.now(); }
+      };
       src.onmessage = function (e) {
+        // SSE 메시지 수신 — lastSeen 갱신으로 watchdog 리셋.
+        // watchdog 발화 후라면 갱신해도 타이머가 이미 clear됐으므로 효과 없음.
+        if (!watchdogFired) { lastSeen = Date.now(); }
         try {
           var s = JSON.parse(e.data);
           // 터널 상태 갱신
@@ -554,6 +652,11 @@ function buildAttachHtml(
   mode?: McpEnvironment,
   pagesAttached = false,
   inspectorStableUrl: string | null = null,
+  /**
+   * SSE watchdog timeout 계산에 쓰이는 server refresh 주기 (ms, #681).
+   * 미지정 시 기본값 90_000 적용.
+   */
+  sseRefreshIntervalMs = 90_000,
 ): string {
   const s = resolveLocaleStrings(locale);
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
@@ -583,6 +686,9 @@ function buildAttachHtml(
   // Inject SSE script so QR auto-refreshes on each /events push,
   // and #inspector-link updates via pages.length > 0 gate on state change.
   // dashboardSurface: false → /attach 표면 분기 (img src 교체, url-box textContent만 갱신).
+  // watchdog timeout: buildDashboardHtml와 동일 공식 (#681).
+  const watchdogTimeoutMs =
+    sseRefreshIntervalMs < 5_000 ? sseRefreshIntervalMs * 3 : sseRefreshIntervalMs * 2 + 30_000;
   const sseStrings: SseScriptStrings = {
     tunnelUp: JSON.stringify(s('dashboard.tunnel.up')),
     tunnelDown: JSON.stringify(s('dashboard.tunnel.down')),
@@ -596,6 +702,10 @@ function buildAttachHtml(
     inspectorWaitingLabel: JSON.stringify(s('dashboard.inspector.waiting')),
     // /attach 표면: img src만 교체, #url-box textContent만 갱신 → url-box 이중 표시 방지(#458).
     dashboardSurface: false,
+    watchdogTimeoutMs,
+    watchdogTitle: JSON.stringify(s('dashboard.watchdog.title')),
+    watchdogBody: JSON.stringify(s('dashboard.watchdog.body')),
+    watchdogCloseLabel: JSON.stringify(s('dashboard.watchdog.close')),
   };
   const sseScript = buildSseScript(sseStrings);
   return filled.replace('</body>', `${sseScript}\n</body>`);
@@ -651,6 +761,10 @@ export async function startQrHttpServer(
 
   /** SSE 활성 연결 목록 — `notifyStateChange()` 시 전체 push. */
   const sseClients: ServerResponse[] = [];
+
+  // SSE refresh 주기 — 핸들러 클로저 안에서 buildDashboardHtml/buildAttachHtml에 전달하기 위해
+  // createServer 앞에서 선언한다 (temporal dead zone 방지, #681).
+  const refreshIntervalMs = options?.sseRefreshIntervalMs ?? 90_000;
 
   /** SSE 연결 하나에 상태 이벤트를 flush한다. */
   function pushStateToClient(res: ServerResponse, state: DashboardState): void {
@@ -708,7 +822,15 @@ export async function startQrHttpServer(
         if (!addr || typeof addr === 'string') return null;
         return `http://127.0.0.1:${addr.port}/devtools/`;
       })();
-      const html = buildDashboardHtml(state, qrDataUrl, locale, path, params, devtoolsEntryUrl);
+      const html = buildDashboardHtml(
+        state,
+        qrDataUrl,
+        locale,
+        path,
+        params,
+        devtoolsEntryUrl,
+        refreshIntervalMs,
+      );
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -797,6 +919,7 @@ export async function startQrHttpServer(
             mode,
             pagesAttached,
             inspectorStableUrlForAttach,
+            refreshIntervalMs,
           );
           res.writeHead(200, {
             'Content-Type': 'text/html; charset=utf-8',
@@ -934,7 +1057,7 @@ export async function startQrHttpServer(
   // 주기 SSE 갱신 — getDashboardState() 호출 시점에 TOTP at=가 재발급되므로
   // push 자체가 열린 탭의 인스펙터 링크를 신선하게 유지한다 (issue #509).
   // .unref()로 프로세스 종료를 막지 않는다.
-  const refreshIntervalMs = options?.sseRefreshIntervalMs ?? 90_000;
+  // refreshIntervalMs는 createServer 앞에서 이미 선언됨 (#681 — 핸들러 클로저에서 참조).
   const refreshHandle = setInterval(() => {
     if (sseClients.length > 0 && getDashboardState) {
       notifyStateChangeInternal();
