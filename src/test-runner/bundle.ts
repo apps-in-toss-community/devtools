@@ -238,21 +238,35 @@ function userFactoryPlugin(absPath: string): esbuild.Plugin {
 }
 
 /**
- * Returns the absolute path to the co-located runtime module.
+ * Returns the absolute path to the test-runner runtime module.
  *
- * In the source tree (running via tsx / ts-node) the file is `runtime.ts`.
- * After `tsdown` compiles to `dist/test-runner/`, it becomes `runtime.js`.
- * We try both extensions to support both environments.
+ * Searches candidates in priority order:
+ *   1. Co-located `runtime.ts` / `runtime.js` — covers the source tree
+ *      (tsx / ts-node) and the `dist/test-runner/` entry.
+ *   2. `../test-runner/runtime.js` — covers the `dist/mcp/cli.js` entry,
+ *      where `import.meta.url` resolves to `dist/mcp/` (a sibling directory
+ *      of `dist/test-runner/`). Without this second candidate the MCP entry
+ *      point would look for `dist/mcp/runtime.js`, which does not exist, and
+ *      every `run_tests` call would fail with an esbuild "Could not resolve"
+ *      error (#678).
+ *
+ * Returns the first candidate that exists on disk. Falls back to the
+ * co-located `runtime.js` path so esbuild produces a clear "file not found"
+ * error rather than a cryptic failure.
  */
 function getRuntimePath(): string {
   const dir = path.dirname(fileURLToPath(import.meta.url));
-  for (const ext of ['.ts', '.js']) {
-    const candidate = path.join(dir, `runtime${ext}`);
+  const candidates = [
+    path.join(dir, 'runtime.ts'),
+    path.join(dir, 'runtime.js'),
+    path.join(dir, '..', 'test-runner', 'runtime.js'),
+  ];
+  for (const candidate of candidates) {
     try {
       accessSync(candidate);
       return candidate;
     } catch {
-      // try next extension
+      // try next candidate
     }
   }
   // Let esbuild produce a "file not found" error with a clear path.
