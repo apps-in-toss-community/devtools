@@ -487,6 +487,69 @@ describe('vi.fn — standalone mock function', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Conditional test registration — it.skipIf / it.runIf                        */
+/* -------------------------------------------------------------------------- */
+
+describe('it.skipIf — registers as skipped when condition is truthy', () => {
+  let report: RunReport;
+  let ran = false;
+  beforeAll(async () => {
+    ran = false;
+    report = await run(() => {
+      rg.it.skipIf(true)('skipped', () => {
+        ran = true;
+      });
+    });
+  });
+  it('marks the test skipped', () => {
+    expect(report.skipped).toBe(1);
+    expect(report.passed).toBe(0);
+  });
+  it('does not execute the body', () => {
+    expect(ran).toBe(false);
+  });
+});
+
+describe('it.skipIf — runs normally when condition is falsy', () => {
+  let report: RunReport;
+  let ran = false;
+  beforeAll(async () => {
+    ran = false;
+    report = await run(() => {
+      rg.it.skipIf(false)('runs', () => {
+        ran = true;
+      });
+    });
+  });
+  it('runs the test', () => {
+    expect(report.passed).toBe(1);
+    expect(report.skipped).toBe(0);
+  });
+  it('executes the body', () => {
+    expect(ran).toBe(true);
+  });
+});
+
+describe('it.runIf — runs only when condition is truthy', () => {
+  let runReport: RunReport;
+  let skipReport: RunReport;
+  beforeAll(async () => {
+    runReport = await run(() => {
+      rg.it.runIf(true)('runs', () => {});
+    });
+    skipReport = await run(() => {
+      rg.it.runIf(false)('skipped', () => {});
+    });
+  });
+  it('runs when truthy', () => {
+    expect(runReport.passed).toBe(1);
+  });
+  it('skips when falsy', () => {
+    expect(skipReport.skipped).toBe(1);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* State reset between runTestModule calls                                     */
 /* -------------------------------------------------------------------------- */
 

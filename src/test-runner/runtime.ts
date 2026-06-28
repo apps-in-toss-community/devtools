@@ -323,6 +323,35 @@ it.skip = (name: string, _fn?: () => void | Promise<void>): void => {
 };
 test.skip = it.skip;
 
+/**
+ * `it.skipIf(cond)(name, fn)` / `it.runIf(cond)(name, fn)` — conditional test
+ * registration. `skipIf` skips when `cond` is truthy; `runIf` runs only when
+ * `cond` is truthy (skips otherwise). sdk-example uses
+ * `it.skipIf(cell.platform === 'mock')(...)` to skip real-SDK-only cases in env1.
+ */
+type ItRegistrar = (name: string, fn: () => void | Promise<void>) => void;
+function _conditionalIt(skip: boolean): ItRegistrar {
+  return (name, fn) => {
+    _pendingTests.push({ suitePath: [..._suiteStack], name, fn, skip });
+  };
+}
+it.skipIf = (cond: unknown): ItRegistrar => _conditionalIt(Boolean(cond));
+it.runIf = (cond: unknown): ItRegistrar => _conditionalIt(!cond);
+test.skipIf = it.skipIf;
+test.runIf = it.runIf;
+
+/**
+ * `describe.skipIf(cond)(name, fn)` / `describe.runIf(cond)(name, fn)`.
+ * When skipped, the suite body still runs to register its tests but every test
+ * inside is marked skipped (collected via a temporary skip flag is overkill —
+ * a skipped describe simply does not invoke its body, mirroring `describe.skip`).
+ */
+type DescribeRegistrar = (name: string, fn: () => void) => void;
+describe.skipIf = (cond: unknown): DescribeRegistrar =>
+  cond ? (name, _fn) => void name : (name, fn) => describe(name, fn);
+describe.runIf = (cond: unknown): DescribeRegistrar =>
+  cond ? (name, fn) => describe(name, fn) : (name, _fn) => void name;
+
 /* -------------------------------------------------------------------------- */
 /* Lifecycle hooks (devtools#683)                                              */
 /* -------------------------------------------------------------------------- */

@@ -245,17 +245,58 @@ describe('suite', () => {
     expect(result.code).not.toContain('@vitest/');
   });
 
-  it('redirects vitest imports to globalThis references', async () => {
+  it('redirects vitest imports via lazy globalThis getters (not a value copy)', async () => {
     const result = await bundleTestFile(vitestImportFile);
-    // The virtual module exports globals from globalThis
-    expect(result.code).toContain('globalThis.describe');
-    expect(result.code).toContain('globalThis.expect');
-    expect(result.code).toContain('globalThis.vi');
+    // The redirect must defer the lookup to access time. A value-copy redirect
+    // (`export var describe = globalThis.describe`) captured at evaluation time
+    // would be undefined because runTestModule installs globals LATER. The
+    // virtual module instead defines getters that read globalThis at access
+    // time, and marks itself __esModule so esbuild's __toESM maps named imports
+    // to those getters directly (a bare Proxy whose own-keys are empty would
+    // expose zero named exports).
+    expect(result.code).toContain('__esModule');
+    expect(result.code).toContain('globalThis["describe"]');
+    expect(result.code).toContain('globalThis["vi"]');
+    // It must NOT be the broken value-copy form.
+    expect(result.code).not.toContain('var describe = globalThis.describe');
   });
 
-  it('includes all installed globals in the redirect module', async () => {
-    const result = await bundleTestFile(vitestImportFile);
-    for (const name of [
+  // Regression for the env3 timing defect: globals are installed by
+  // runTestModule, which runs AFTER the bundle IIFE is evaluated. If the vitest
+  // redirect captured `describe` at evaluation time it would be undefined and
+  // the user's describe(...) calls would register zero tests. This test
+  // reproduces that order: evaluate the bundle while the runtime's own globals
+  // are NOT yet installed, then call runTestModule — the user's describe/it must
+  // still register through the lazy Proxy.
+  it('registers tests when globals are installed only at runTestModule time (#683)', async () => {
+    const timingFile = path.join(tmpDir, 'timing.test.ts');
+    await fs.writeFile(
+      timingFile,
+      `
+import { describe, it, expect } from 'vitest';
+describe('timing suite', () => {
+  it('runs', () => {
+    expect(1 + 1).toBe(2);
+  });
+});
+`.trimStart(),
+      'utf8',
+    );
+    const { code } = await bundleTestFile(timingFile);
+
+    type TestBundle = {
+      runTestModule: (
+        factory?: () => void | Promise<void>,
+      ) => Promise<{ tests: unknown[]; passed: number; failed: number }>;
+      __userFactory: () => void | Promise<void>;
+    };
+
+    // Snapshot and clear any test globals currently on globalThis so the bundle
+    // is evaluated in the WebView state: no describe/it/expect installed yet.
+    // (Vitest does not install these on globalThis by default, but we clear
+    // defensively to make the timing precondition explicit and robust.)
+    const g = globalThis as unknown as Record<string, unknown>;
+    const NAMES = [
       'describe',
       'it',
       'test',
@@ -265,8 +306,42 @@ describe('suite', () => {
       'beforeEach',
       'afterEach',
       'vi',
-    ]) {
-      expect(result.code).toContain(`globalThis.${name}`);
+    ];
+    const saved: Record<string, unknown> = {};
+    for (const n of NAMES) {
+      saved[n] = g[n];
+      delete g[n];
+    }
+
+    try {
+      // Evaluate the IIFE in the global scope (indirect eval — aliasing eval to
+      // a binding makes the call indirect, so the bundle's `globalThis` footer
+      // assigns `globalThis.__testBundle`). At THIS point no describe global
+      // exists — exactly the WebView precondition that broke with a value-copy
+      // redirect.
+      // biome-ignore lint/security/noGlobalEval: deliberately evaluating the bundle IIFE to reproduce the WebView eval timing.
+      const indirectEval = eval;
+      indirectEval(code);
+      const bundle = g.__testBundle as TestBundle;
+
+      // describe must still be undefined right after evaluation — the redirect
+      // is lazy, not a value-copy that would have captured something here.
+      expect(g.describe).toBeUndefined();
+
+      // Now call runTestModule with the factory (exactly as rpc.ts does). It
+      // installs the runtime globals, then the factory's describe/it resolve
+      // through the lazy Proxy and register the test.
+      const report = await bundle.runTestModule(bundle.__userFactory);
+      expect(report.tests.length).toBeGreaterThan(0);
+      expect(report.passed).toBe(1);
+      expect(report.failed).toBe(0);
+    } finally {
+      // Restore the original globals so we do not leak runtime globals into the
+      // host Vitest run.
+      for (const n of NAMES) {
+        if (saved[n] === undefined) delete g[n];
+        else g[n] = saved[n];
+      }
     }
   });
 });

@@ -95,9 +95,10 @@ export interface BundleResult {
 const SDK_PACKAGE = '@apps-in-toss/web-framework';
 
 /**
- * Names exported from the `vitest` virtual module that map directly to
- * globals installed by the runtime before invoking the user factory.
- * Keep in sync with the globals installed in `runtime.ts#runTestModule`.
+ * Names the runtime installs as globals before invoking the user factory.
+ * The `vitest` virtual module re-exports each as a lazy getter that reads from
+ * `globalThis` at access time. Keep in sync with the globals installed in
+ * `runtime.ts#runTestModule`.
  */
 const VITEST_GLOBAL_NAMES = [
   'describe',
@@ -165,14 +166,30 @@ module.exports = __proxy;
 
 /**
  * esbuild plugin that intercepts `import … from 'vitest'` and replaces it with
- * a virtual module that re-exports the same names from `globalThis`.
+ * a virtual module that delegates every named import to `globalThis` at ACCESS
+ * time (not at bundle-evaluation time).
  *
  * The runtime installs `describe/it/test/expect/beforeAll/afterAll/beforeEach/
- * afterEach/vi` as globals before invoking the user factory, so by the time
- * the factory runs, those names are available on `globalThis`.  This plugin
- * makes `import { describe } from 'vitest'` inside the user file resolve to
- * `globalThis.describe` instead of trying to bundle the real Vitest package
- * (which is Node-only and unavailable in the WebView context).
+ * afterEach/vi` as globals inside `runTestModule`, which runs AFTER the bundle
+ * IIFE is evaluated. A value-copy redirect (`export var describe =
+ * globalThis.describe`) would therefore capture `undefined` at evaluation time
+ * and the user's `describe(...)` calls would be no-ops — registering zero tests.
+ *
+ * The fix defers the lookup to call time using per-name **getter** exports.
+ * We emit a CommonJS module that:
+ *   1. sets `__esModule = true` so esbuild's `__toESM` interop maps each named
+ *      import directly to a property access on the module (NOT wrapped under a
+ *      `default` shim — which is what happens for a bare Proxy whose own-keys
+ *      are empty, leaving every named import `undefined`);
+ *   2. defines each global name as a getter that reads `globalThis[name]` on
+ *      every access. So `import { describe } from 'vitest'` compiles to
+ *      `import_vitest.describe`, whose getter returns the real `describe` only
+ *      when the factory calls it — after `runTestModule` installs the globals.
+ *
+ * A plain `module.exports = new Proxy(...)` does NOT work here: esbuild routes
+ * the virtual module through `__toESM`, which enumerates own-keys (none on an
+ * empty Proxy target) and therefore exposes zero named exports. Explicit getter
+ * properties give `__toESM` real keys to map while keeping access lazy.
  */
 function vitestRedirectPlugin(): esbuild.Plugin {
   return {
@@ -184,13 +201,17 @@ function vitestRedirectPlugin(): esbuild.Plugin {
       }));
 
       build.onLoad({ filter: /^vitest$/, namespace: 'vitest-redirect' }, () => {
-        // Generate named exports that read from globalThis so that
-        // `import { describe, expect } from 'vitest'` resolves to the globals
-        // the runtime installs before calling the user factory.
-        const exports = VITEST_GLOBAL_NAMES.map(
-          (name) => `export var ${name} = globalThis.${name};`,
+        const getters = VITEST_GLOBAL_NAMES.map(
+          (name) =>
+            `Object.defineProperty(exports, ${JSON.stringify(name)}, { enumerable: true, get: function() { return globalThis[${JSON.stringify(name)}]; } });`,
         ).join('\n');
-        return { contents: exports, loader: 'js' };
+        // __esModule lets esbuild __toESM map named imports to these getters
+        // directly. Each getter reads globalThis lazily so the value resolves at
+        // call time — after runTestModule installs the globals.
+        return {
+          contents: `Object.defineProperty(exports, '__esModule', { value: true });\n${getters}\n`,
+          loader: 'js',
+        };
       });
     },
   };
