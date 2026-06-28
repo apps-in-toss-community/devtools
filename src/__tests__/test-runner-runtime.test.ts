@@ -350,6 +350,28 @@ describe('expect.any — user class via instanceof', () => {
   });
 });
 
+describe('expect.any(Object) — vitest semantics: objects yes, functions no', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('plain object matches Object', () => {
+        rg.expect({ v: { a: 1 } }).toMatchObject({ v: rg.expect.any(Object) });
+      });
+      rg.it('array matches Object (arrays are objects)', () => {
+        rg.expect({ v: [1, 2] }).toMatchObject({ v: rg.expect.any(Object) });
+      });
+      rg.it('function does NOT match Object', () => {
+        // vitest: `expect.any(Object)` rejects functions (typeof 'function').
+        rg.expect({ v: () => {} }).toMatchObject({ v: rg.expect.any(Object) });
+      });
+    });
+  });
+  it('2 passed (object, array), 1 failed (function)', () => {
+    expect(report.passed).toBe(2);
+    expect(report.failed).toBe(1);
+  });
+});
+
 describe('expect.any — works inside toEqual + not.toEqual', () => {
   let report: RunReport;
   beforeAll(async () => {

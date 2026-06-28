@@ -96,10 +96,10 @@ type AnyCtor = abstract new (...args: never) => unknown;
  * `expect.any(Ctor)` — matches a value by its constructor. Primitive wrappers
  * (`String`/`Number`/`Boolean`) are matched by `typeof` (so the unboxed
  * primitive matches) AND by `instanceof` (so a boxed wrapper instance also
- * matches). `BigInt`/`Symbol` match by `typeof`. `Object` matches any object or
- * function, `Array` uses `Array.isArray`, `Function` uses `typeof ===
- * 'function'`, and any other constructor (user classes) falls back to
- * `instanceof`.
+ * matches). `BigInt`/`Symbol` match by `typeof`. `Object` matches any non-null
+ * object (NOT functions, matching vitest), `Array` uses `Array.isArray`,
+ * `Function` uses `typeof === 'function'`, and any other constructor (user
+ * classes) falls back to `instanceof`.
  */
 function makeAny(ctor: AnyCtor): AsymmetricMatcher {
   const name = (ctor as { name?: string }).name ?? String(ctor);
@@ -123,7 +123,10 @@ function makeAny(ctor: AnyCtor): AsymmetricMatcher {
         case Function:
           return typeof actual === 'function';
         case Object:
-          return typeof actual === 'object' || typeof actual === 'function';
+          // Match vitest: `expect.any(Object)` accepts objects only, NOT
+          // functions (vitest checks `typeof other === 'object'`). `null` is
+          // already excluded by the guard above.
+          return typeof actual === 'object';
         case Array:
           return Array.isArray(actual);
         default:
