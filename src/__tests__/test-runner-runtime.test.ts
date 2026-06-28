@@ -283,6 +283,172 @@ describe('Expectation.toBeTypeOf — not.toBeTypeOf passes', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* Asymmetric matchers — expect.any / anything / *Containing (devtools#692)    */
+/* -------------------------------------------------------------------------- */
+
+describe('expect.any — primitives + Object/Array inside toMatchObject', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('String/Object/Array match', () => {
+        rg.expect({ hash: 'abc', coords: { x: 1 }, items: [1, 2] }).toMatchObject({
+          hash: rg.expect.any(String),
+          coords: rg.expect.any(Object),
+          items: rg.expect.any(Array),
+        });
+      });
+      rg.it('Number/Boolean/Function match', () => {
+        rg.expect({ n: 5, b: true, f: () => 0 }).toMatchObject({
+          n: rg.expect.any(Number),
+          b: rg.expect.any(Boolean),
+          f: rg.expect.any(Function),
+        });
+      });
+      rg.it('boxed wrapper instance matches', () => {
+        // Object('x') produces a boxed `String` instance without `new String`
+        // (which Biome flags); `expect.any(String)` must still match it.
+        rg.expect({ s: Object('x') }).toMatchObject({ s: rg.expect.any(String) });
+      });
+    });
+  });
+  it('3 passed', () => {
+    expect(report.passed).toBe(3);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('expect.any — wrong type fails', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('number is not String', () => {
+        rg.expect({ hash: 123 }).toMatchObject({ hash: rg.expect.any(String) });
+      });
+    });
+  });
+  it('1 failed', () => {
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('expect.any — user class via instanceof', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    class Widget {}
+    report = await run(() => {
+      rg.it('Widget instance matches', () => {
+        rg.expect({ w: new Widget() }).toMatchObject({ w: rg.expect.any(Widget) });
+      });
+      rg.it('plain object is not Widget', () => {
+        rg.expect({ w: {} }).toMatchObject({ w: rg.expect.any(Widget) });
+      });
+    });
+  });
+  it('1 passed, 1 failed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('expect.any — works inside toEqual + not.toEqual', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('toEqual any String', () => {
+        rg.expect('hello').toEqual(rg.expect.any(String));
+      });
+      rg.it('not.toEqual any Number', () => {
+        rg.expect('hello').not.toEqual(rg.expect.any(Number));
+      });
+    });
+  });
+  it('2 passed', () => {
+    expect(report.passed).toBe(2);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('expect.any — toHaveProperty value side', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('property matches any String', () => {
+        rg.expect({ a: { b: 'x' } }).toHaveProperty('a.b', rg.expect.any(String));
+      });
+    });
+  });
+  it('1 passed', () => {
+    expect(report.passed).toBe(1);
+  });
+});
+
+describe('expect.anything — matches non-nullish, rejects null/undefined', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('0 is anything', () => {
+        rg.expect({ v: 0 }).toMatchObject({ v: rg.expect.anything() });
+      });
+      rg.it('null is not anything', () => {
+        rg.expect({ v: null }).toMatchObject({ v: rg.expect.anything() });
+      });
+    });
+  });
+  it('1 passed, 1 failed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('expect.objectContaining / arrayContaining', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('objectContaining matches subset', () => {
+        rg.expect({ user: { id: 1, name: 'a', extra: true } }).toMatchObject({
+          user: rg.expect.objectContaining({ id: rg.expect.any(Number) }),
+        });
+      });
+      rg.it('arrayContaining matches members', () => {
+        rg.expect([1, 2, 3]).toEqual(rg.expect.arrayContaining([2, rg.expect.any(Number)]));
+      });
+      rg.it('arrayContaining missing member fails', () => {
+        rg.expect([1, 2]).toEqual(rg.expect.arrayContaining([9]));
+      });
+    });
+  });
+  it('2 passed, 1 failed', () => {
+    expect(report.passed).toBe(2);
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('expect.stringContaining / stringMatching', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('stringContaining matches', () => {
+        rg.expect({ msg: 'hello world' }).toMatchObject({
+          msg: rg.expect.stringContaining('world'),
+        });
+      });
+      rg.it('stringMatching regex matches', () => {
+        rg.expect({ id: 'abc-123' }).toMatchObject({
+          id: rg.expect.stringMatching(/^abc-\d+$/),
+        });
+      });
+      rg.it('stringMatching string pattern matches', () => {
+        rg.expect('2026-06').toEqual(rg.expect.stringMatching('\\d{4}-\\d{2}'));
+      });
+    });
+  });
+  it('3 passed', () => {
+    expect(report.passed).toBe(3);
+    expect(report.failed).toBe(0);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* Lifecycle hooks — beforeAll + afterAll fire once                            */
 /* -------------------------------------------------------------------------- */
 
