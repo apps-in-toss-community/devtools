@@ -95,6 +95,7 @@ function makeFakeWriteFs(opts: {
     chmodSync: vi.fn(() => {
       throw new Error('chmodSync should not be called in early-return path');
     }),
+    appendFileSync: vi.fn(),
   };
 }
 
