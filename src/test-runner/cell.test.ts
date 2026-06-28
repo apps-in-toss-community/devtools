@@ -81,12 +81,15 @@ describe('injectGlobals', () => {
     expect(sentExpressions).toHaveLength(1);
   });
 
-  it('sends zero CDP calls for an empty globals map (short-circuit)', async () => {
-    const { conn } = makeSpyConnection();
+  it('sends one (harmless) Runtime.evaluate for an empty globals map', async () => {
+    const { conn, sentExpressions } = makeSpyConnection();
 
     await injectGlobals(conn, {});
 
-    expect(conn.send).not.toHaveBeenCalled();
+    // No short-circuit: an empty map still evaluates `Object.assign(globalThis, {})`,
+    // which is a harmless no-op on the page. (Callers that care guard upstream.)
+    expect(conn.send).toHaveBeenCalledTimes(1);
+    expect(sentExpressions[0]).toContain('Object.assign(globalThis, {})');
   });
 
   it('expression uses Object.assign(globalThis, ...) pattern', async () => {
@@ -155,5 +158,32 @@ describe('injectGlobals', () => {
     };
 
     await expect(injectGlobals(failConn, { k: 'v' })).rejects.toThrow('CDP: page detached');
+  });
+
+  it('throws when Runtime.evaluate resolves with exceptionDetails (page-side throw)', async () => {
+    // CDP does NOT reject on a page-side exception — it resolves with an
+    // `exceptionDetails` payload. injectGlobals must surface that as an error,
+    // otherwise a failed injection looks like success.
+    const throwingConn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: <M extends CdpCommandName>(): Promise<CdpCommandMap[M]['result']> =>
+        Promise.resolve({
+          result: { type: 'object' },
+          exceptionDetails: {
+            text: 'Uncaught',
+            exception: { description: 'ReferenceError: boom is not defined' },
+          },
+        } as unknown as CdpCommandMap[M]['result']),
+    };
+
+    await expect(injectGlobals(throwingConn, { k: 'v' })).rejects.toThrow(
+      /injectGlobals: Runtime\.evaluate threw: ReferenceError: boom/,
+    );
   });
 });

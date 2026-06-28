@@ -1,68 +1,50 @@
 /**
- * Cell injection helper for the test runner (issue #684 §4.1).
+ * Cell injection utility for the `devtools-test` CLI (issue #684 §4.1).
  *
- * A "cell" is an arbitrary key/value record that is injected into the page's
- * `globalThis` BEFORE the first test bundle is evaluated. The canonical
- * consumer is `sdk-example`'s `aitCapture.ts`, which reads
- * `globalThis.__AIT_CELL__` to pick the correct `sdkLine` / `platform` axis
- * for a test session.
+ * Injects arbitrary globals into the page via `Runtime.evaluate` BEFORE the
+ * first test bundle is injected. The injected values are session-global — one
+ * call covers all files in the run.
  *
- * devtools does NOT know the sdk-example-specific shape of `__AIT_CELL__` —
- * it only provides the GENERAL mechanism for injecting any record into the
- * page's globalThis. The caller (run_tests handler, CLI) supplies the exact
- * object via `globals: Record<string, unknown>`.
+ * The primary use-case is injecting `__AIT_CELL__` (sdkLine/platform) so
+ * sdk-example's `aitCapture.ts` picks up the correct test-axis values instead
+ * of falling back to `'2.x'`/`'mock'`.
  *
- * Inject BEFORE the first `bundleTestFile` evaluate call so that every
- * subsequent bundle sees the values as already present (the cell is a
- * session-global, so one inject covers all files in a run).
+ * devtools does NOT know the shape of `__AIT_CELL__` — it only provides the
+ * general injection mechanism. The caller (CLI or MCP auto-attach path) is
+ * responsible for constructing the cell object.
  *
- * SECRET-HANDLING: `globals` values are not secrets (cell axes are
- * informational — sdkLine, platform). Minimise logging of the values to
- * avoid leaking anything the caller passes unexpectedly; the log emitted here
- * records only the key names, not the values.
+ * SECRET-HANDLING: cell values (sdkLine/platform) are not secrets and may be
+ * logged at the caller's discretion. This module does NOT log them itself.
  *
- * react-free — only depends on `CdpConnection` (Node-only CDP transport).
- * No React import, no browser-side bundle.
- *
- * Node-only.
+ * Node-only. react-free. CdpConnection only.
  */
 
 import type { CdpConnection } from '../mcp/cdp-connection.js';
 
 /**
- * Injects each key in `globals` into `globalThis` on the attached page via a
- * single `Runtime.evaluate` call. All keys are assigned atomically in one
- * IIFE so a partial-inject cannot leave the page in a torn state.
+ * Injects each key of `globals` into `globalThis` in the page via a single
+ * `Runtime.evaluate` call. Must be called BEFORE the first `bundleTestFile`
+ * inject — the cell is session-global and applies to all subsequent files.
  *
- * Must be called AFTER the page is attached and BEFORE the first test bundle
- * is injected.
+ * Throws if the CDP evaluate returns an exception.
  *
- * @param conn    - An active CDP connection with at least one attached target.
- * @param globals - Key/value pairs to assign on `globalThis`. Values must be
- *                  JSON-serialisable (they are passed through
- *                  `JSON.stringify`). Non-serialisable values (functions,
- *                  undefined, circular refs) will be silently coerced by
- *                  `JSON.stringify`.
+ * @param conn    - The live CDP connection (relay-attached page).
+ * @param globals - Plain-JSON-serialisable key→value map to assign onto `globalThis`.
  */
 export async function injectGlobals(
   conn: CdpConnection,
   globals: Record<string, unknown>,
 ): Promise<void> {
-  if (Object.keys(globals).length === 0) return;
-
-  // SECRET-HANDLING: log key names only, never values (caller may pass
-  // sensitive data through globals inadvertently in future usage).
-  const keys = Object.keys(globals);
-
-  // Build a single IIFE that atomically assigns all keys to globalThis.
-  // Using Object.assign keeps this to one Runtime.evaluate round-trip.
-  // JSON.stringify encodes the values for safe cross-CDP transport
-  // (returnByValue: true is reliable for booleans; using an expression
-  // is more portable for arbitrary objects).
-  const expr = `(() => { Object.assign(globalThis, ${JSON.stringify(globals)}); return ${JSON.stringify(keys)}; })()`;
-
-  await conn.send('Runtime.evaluate', {
-    expression: expr,
-    returnByValue: true,
-  });
+  // JSON.stringify is safe here: globals values are plain data (sdkLine/platform
+  // strings or simple objects). If a value is not JSON-serialisable this throws
+  // at call time, which surfaces the error early and clearly.
+  const expr = `(() => { Object.assign(globalThis, ${JSON.stringify(globals)}); return true; })()`;
+  const result = await conn.send('Runtime.evaluate', { expression: expr, returnByValue: true });
+  if (result.exceptionDetails) {
+    const msg =
+      result.exceptionDetails.exception?.description ??
+      result.exceptionDetails.text ??
+      'unknown error';
+    throw new Error(`injectGlobals: Runtime.evaluate threw: ${msg}`);
+  }
 }
