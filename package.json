@@ -58,6 +58,7 @@
     "build:dashboard-html": "tsx --tsconfig scripts/tsconfig.json scripts/build-dashboard-html.ts",
     "build": "pnpm build:dashboard-html && tsdown",
     "check:mcp-react-free": "bash scripts/check-mcp-react-free.sh",
+    "check:test-runner-dist": "bash scripts/check-test-runner-dist.sh",
     "check:debug-surface-absent": "bash scripts/check-debug-surface-absent.sh",
     "check:dashboard-html-fresh": "pnpm build:dashboard-html && git diff --exit-code src/mcp/dashboard.generated.ts",
     "dev": "tsdown --watch",
@@ -72,7 +73,7 @@
     "diff-sdk-exports": "tsx scripts/diff-sdk-exports.ts",
     "build:og": "tsx --tsconfig scripts/tsconfig.json scripts/build-og-image.tsx",
     "qa:fidelity": "tsx --tsconfig scripts/tsconfig.json scripts/fidelity-qa/index.ts",
-    "prepublishOnly": "pnpm build && pnpm check:mcp-react-free && pnpm check:debug-surface-absent && pnpm typecheck && pnpm test && pnpm build:og"
+    "prepublishOnly": "pnpm build && pnpm check:mcp-react-free && pnpm check:test-runner-dist && pnpm check:debug-surface-absent && pnpm typecheck && pnpm test && pnpm build:og"
   },
   "peerDependencies": {
     "@apps-in-toss/web-framework": ">=2.6.0 <3.0.0"
