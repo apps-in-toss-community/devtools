@@ -490,16 +490,18 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'Runs mini-app test files on the attached page over CDP (Runtime.evaluate). ' +
       'Each matched file is bundled with esbuild (SDK imports redirected to the live mock/SDK), ' +
       'injected into the attached WebView, and executed; returns per-file results plus flattened ' +
-      'totals (passed/failed/skipped/total). Requires an attached page — call list_pages first to ' +
-      'confirm one is attached. Files run SEQUENTIALLY (single-attach model: the relay/local target ' +
+      'totals (passed/failed/skipped/total). ' +
+      'When there is no attached page and the current environment is relay (env 3), this tool ' +
+      'automatically shows the QR dashboard and waits for a phone to connect before running ' +
+      '(scheme_url required for env 3 relay-dev). ' +
+      'Files run SEQUENTIALLY (single-attach model: the relay/local target ' +
       'serves one page), and one run_tests call runs at a time (a concurrent call is rejected). ' +
       'Test verification (assert/snapshot) is delegated to the in-page Vitest runtime; this tool is ' +
       'the transport + report. The per-file results array is the progress record — on partial failure ' +
       'you see exactly which files passed/failed/timed-out. ' +
       'Positive-allowlist kill-switch (#665): blocked when the attached page is on a non-debug host. ' +
       'debug-mode only — dev-mode (--mode=dev) has no CDP. ' +
-      'Tier C (both mock/local and relay). The devtools-test CLI shares this run core and file ' +
-      'discovery, but its standalone relay attach is not wired yet — run via this tool for now.',
+      'Tier C (both mock/local and relay).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -521,6 +523,24 @@ export const DEBUG_TOOL_DEFINITIONS = [
           description:
             'Per-file evaluate timeout in ms (default 30000, range 1000–600000). ' +
             'Out-of-range/invalid values fall back to the default.',
+        },
+        scheme_url: {
+          type: 'string',
+          description:
+            'intoss-private:// deep-link URL from `ait deploy --scheme-only` (env 3 relay-dev only). ' +
+            'Required when there is no attached page and the environment is relay-dev — ' +
+            'the tool uses it to build the QR attach URL and wait for the phone to connect. ' +
+            'Ignored when a page is already attached.',
+        },
+        cell: {
+          type: 'object',
+          description:
+            'Optional cell object to inject into globalThis BEFORE running tests ' +
+            '(e.g. { "__AIT_CELL__": { "sdkLine": "2.x", "platform": "ios" } }). ' +
+            'Applied only on the auto-attach path (no-page → attach → inject → run). ' +
+            'When a page is already attached the caller is responsible for any prior injection. ' +
+            'Ignored when empty or absent. Values must be JSON-serialisable.',
+          additionalProperties: true,
         },
       },
       required: ['files'],

@@ -50,6 +50,7 @@ import { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watche
 // Test-runner core (#646): run_tests reuses the same orchestration the
 // `devtools-test` CLI uses. These imports are react-free (node:* + esbuild),
 // so they do not break the MCP-daemon react-free invariant.
+import { injectGlobals } from '../test-runner/cell.js';
 import { runWithConnection } from '../test-runner/cli.js';
 import { discoverTestFiles } from '../test-runner/discover.js';
 import type { RelayRunReport } from '../test-runner/relay-worker.js';
@@ -61,6 +62,7 @@ import type { AitSource } from './ait-source.js';
 import {
   type AttachDeps,
   type AttachUrlParts,
+  isSandboxPageFresh,
   prepareAttach as prepareAttachCore,
   RELAY_SANDBOX_STALE_PAGE_MS,
   renderAndMaybeWait as renderAndMaybeWaitCore,
@@ -872,6 +874,113 @@ export function createDebugServer(deps: DebugServerDeps): Server {
               ? rawTimeout
               : undefined; // undefined → relay-worker default (30 000)
 
+          // ── page-0 판정 with freshness guard (설계 §3.1 + §6 위험1) ───────
+          // Simple `conn.listTargets().length > 0` is NOT sufficient: relay-sandbox
+          // may have a ghost page whose `lastSeenAt` froze when the old relay died
+          // (issue #610). Use `isSandboxPageFresh` — the same guard `prepareAttach`
+          // uses — so the auto-attach branch fires for ghost pages too.
+          const runTestPages = conn.listTargets();
+          const connAsAny = conn as unknown as {
+            getTargetLastSeenAt?: (id: string) => number | null;
+          };
+          const runTestGetLastSeenAt =
+            typeof connAsAny.getTargetLastSeenAt === 'function'
+              ? (id: string) => (connAsAny.getTargetLastSeenAt as (id: string) => number | null)(id)
+              : null;
+          const runTestNow = nowMs();
+          const hasLivePage = isSandboxPageFresh(
+            runTestPages,
+            runTestGetLastSeenAt,
+            runTestNow,
+            stalePageThresholdMs,
+          );
+
+          // ── auto-attach分岐: no live page + relay env (설계 §3.1 4b) ────────
+          // When there is no live attached page AND we are in a relay environment,
+          // run_tests triggers QR attach on behalf of the caller (QR dashboard +
+          // phone wait), then optionally injects a cell, then runs.
+          // This path is ONLY taken when hasLivePage is false AND env is relay —
+          // meaning the existing attached-page flow (4a) is completely unchanged.
+          if (!hasLivePage && isRelayEnv(env)) {
+            const autoAttachArgs = request.params.arguments as Record<string, unknown> | undefined;
+            const prep = await prepareAttachCore(attachDeps, env, autoAttachArgs, conn);
+            if (!prep.ok) return prep.error;
+
+            // Wait for the phone to attach (wait=true, use the server's default
+            // attach timeout — same as start_attach uses).
+            const autoAttachResult = await renderAndMaybeWaitCore(
+              attachDeps,
+              prep,
+              true,
+              waitForAttachTimeoutMs,
+              conn,
+            );
+            // If attach timed out or failed, surface the error — no tests to run.
+            if (autoAttachResult.isError) return autoAttachResult;
+
+            // ── cell injection (설계 §4.2 — attach 직후, 첫 bundle inject 전) ─
+            // The caller may pass a `cell` argument — an arbitrary object to merge
+            // into globalThis BEFORE the first test bundle runs.
+            // devtools does NOT know the sdk-example shape of `__AIT_CELL__` —
+            // the caller wraps it: { "__AIT_CELL__": { sdkLine, platform } }.
+            // SECRET-HANDLING: cell values are informational (axes, not secrets);
+            // we log key names only.
+            const rawCell = autoAttachArgs?.cell;
+            if (rawCell !== null && typeof rawCell === 'object' && !Array.isArray(rawCell)) {
+              await injectGlobals(conn, rawCell as Record<string, unknown>);
+            }
+
+            // ── Host allowlist check (run only on allowed hosts) ────────────────
+            if (!connectionHostsAllowed(conn)) {
+              return mcpError(
+                'run_tests: 연결된 페이지가 debug 허용 호스트가 아닙니다 (#665). ' +
+                  '허용 호스트: localhost, *.trycloudflare.com, *.private-apps.tossmini.com.',
+              );
+            }
+
+            // ── single-attach guard ─────────────────────────────────────────────
+            if (runTestsInFlight) {
+              return mcpError(
+                'run_tests: 이미 다른 테스트 실행이 진행 중입니다 ' +
+                  '(single-attach 모델: 페이지는 한 번에 하나의 실행만 처리). 완료 후 다시 시도하세요.',
+              );
+            }
+            runTestsInFlight = true;
+            try {
+              const files = await discoverTestFiles(patterns, projectRoot);
+              if (files.length === 0) {
+                return mcpError(
+                  `run_tests: 매칭된 테스트 파일이 없습니다 (patterns: ${patterns.join(', ')}).`,
+                );
+              }
+              // Verify the page is still alive after the auto-attach wait.
+              if (conn.listTargets().length === 0) {
+                return pageMissingError('run_tests');
+              }
+              logInfo('run_tests.start', { fileCount: files.length, autoAttach: true });
+              const report = await runWithConnection(conn, files, { timeoutMs });
+              logInfo('run_tests.done', {
+                passed: report.totals.passed,
+                failed: report.totals.failed,
+                skipped: report.totals.skipped,
+              });
+              const runAttached = conn.listTargets().length > 0;
+              return envelopeResult(toRunTestsResult(report), name, env, runAttached);
+            } finally {
+              runTestsInFlight = false;
+            }
+          }
+
+          // ── 4c: no live page + mock/local env → original guidance error ──────
+          // (mock has no relay; auto-attach is not applicable)
+          if (!hasLivePage) {
+            return mcpError(
+              'run_tests: 연결된 페이지가 없습니다. mock(로컬) 환경에서는 auto-attach가 지원되지 않습니다. ' +
+                'list_pages로 연결 상태를 확인하고 페이지가 붙어 있는지 확인하세요.',
+            );
+          }
+
+          // ── 4a: already attached → EXISTING PATH, behavior unchanged ─────────
           // Host allowlist kill-switch (#665). Replaces the old LIVE guard.
           // Test injection runs arbitrary code via Runtime.evaluate — must be on
           // an allowed debug host. SECRET-HANDLING: hostname never logged.
