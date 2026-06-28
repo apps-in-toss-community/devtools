@@ -207,3 +207,66 @@ describe('bundleTestFile', () => {
     expect(result.code).toContain('window.__sdk');
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* vitestRedirectPlugin tests (devtools#683)                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('vitestRedirectPlugin', () => {
+  let vitestImportFile: string;
+
+  beforeAll(async () => {
+    // Fixture that imports vitest globals — these should be redirected to globalThis
+    vitestImportFile = path.join(tmpDir, 'vitest-import.test.ts');
+    await fs.writeFile(
+      vitestImportFile,
+      `
+import { describe, it, expect, afterAll, afterEach, beforeAll, beforeEach, vi } from 'vitest';
+describe('suite', () => {
+  it('test', () => {
+    expect(1).toBe(1);
+  });
+});
+`.trimStart(),
+      'utf8',
+    );
+  });
+
+  it('bundles a file that imports from vitest without errors', async () => {
+    const result = await bundleTestFile(vitestImportFile);
+    expect(result.code.length).toBeGreaterThan(10);
+    // No unresolved module errors — esbuild would throw, not produce output
+  });
+
+  it('does not include the real vitest package in the bundle', async () => {
+    const result = await bundleTestFile(vitestImportFile);
+    // The real Vitest internal identifiers should not appear
+    expect(result.code).not.toContain('vitest/dist');
+    expect(result.code).not.toContain('@vitest/');
+  });
+
+  it('redirects vitest imports to globalThis references', async () => {
+    const result = await bundleTestFile(vitestImportFile);
+    // The virtual module exports globals from globalThis
+    expect(result.code).toContain('globalThis.describe');
+    expect(result.code).toContain('globalThis.expect');
+    expect(result.code).toContain('globalThis.vi');
+  });
+
+  it('includes all installed globals in the redirect module', async () => {
+    const result = await bundleTestFile(vitestImportFile);
+    for (const name of [
+      'describe',
+      'it',
+      'test',
+      'expect',
+      'beforeAll',
+      'afterAll',
+      'beforeEach',
+      'afterEach',
+      'vi',
+    ]) {
+      expect(result.code).toContain(`globalThis.${name}`);
+    }
+  });
+});

@@ -95,6 +95,23 @@ export interface BundleResult {
 const SDK_PACKAGE = '@apps-in-toss/web-framework';
 
 /**
+ * Names exported from the `vitest` virtual module that map directly to
+ * globals installed by the runtime before invoking the user factory.
+ * Keep in sync with the globals installed in `runtime.ts#runTestModule`.
+ */
+const VITEST_GLOBAL_NAMES = [
+  'describe',
+  'it',
+  'test',
+  'expect',
+  'beforeAll',
+  'afterAll',
+  'beforeEach',
+  'afterEach',
+  'vi',
+] as const;
+
+/**
  * Matches the bare SDK package and any sub-path import
  * (`@apps-in-toss/web-framework`, `@apps-in-toss/web-framework/foo`).
  * Built from {@link SDK_PACKAGE} so the package name has a single source.
@@ -142,6 +159,39 @@ module.exports = __proxy;
 `,
         loader: 'js',
       }));
+    },
+  };
+}
+
+/**
+ * esbuild plugin that intercepts `import … from 'vitest'` and replaces it with
+ * a virtual module that re-exports the same names from `globalThis`.
+ *
+ * The runtime installs `describe/it/test/expect/beforeAll/afterAll/beforeEach/
+ * afterEach/vi` as globals before invoking the user factory, so by the time
+ * the factory runs, those names are available on `globalThis`.  This plugin
+ * makes `import { describe } from 'vitest'` inside the user file resolve to
+ * `globalThis.describe` instead of trying to bundle the real Vitest package
+ * (which is Node-only and unavailable in the WebView context).
+ */
+function vitestRedirectPlugin(): esbuild.Plugin {
+  return {
+    name: 'vitest-redirect',
+    setup(build) {
+      build.onResolve({ filter: /^vitest$/ }, () => ({
+        path: 'vitest',
+        namespace: 'vitest-redirect',
+      }));
+
+      build.onLoad({ filter: /^vitest$/, namespace: 'vitest-redirect' }, () => {
+        // Generate named exports that read from globalThis so that
+        // `import { describe, expect } from 'vitest'` resolves to the globals
+        // the runtime installs before calling the user factory.
+        const exports = VITEST_GLOBAL_NAMES.map(
+          (name) => `export var ${name} = globalThis.${name};`,
+        ).join('\n');
+        return { contents: exports, loader: 'js' };
+      });
     },
   };
 }
@@ -366,7 +416,7 @@ export async function bundleTestFile(absPath: string, opts?: BundleOptions): Pro
     platform: 'browser',
     target: 'es2022',
     write: false,
-    plugins: [userFactoryPlugin(absPath), sdkRedirectPlugin()],
+    plugins: [userFactoryPlugin(absPath), vitestRedirectPlugin(), sdkRedirectPlugin()],
     external: extraExternals,
     treeShaking: true,
     // Ensure the IIFE result is always reachable via globalThis regardless of
