@@ -60,6 +60,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["src/__tests__/test-runner-runtime.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noDuplicateTestHooks": "off"
+          }
+        }
+      }
     }
   ]
 }
