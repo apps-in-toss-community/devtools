@@ -214,6 +214,13 @@ export const ko = {
   'inspector.error.noTarget': '연결된 페이지가 없습니다. 기기를 attach한 후 다시 시도하세요.',
   'inspector.error.relayDown': 'relay가 활성화되지 않았습니다. start_debug로 relay를 기동하세요.',
 
+  // qr-http-server — SSE watchdog fallback UI (#681)
+  // SSE 주기 갱신이 끊기면(server 종료) 탭 자동 닫기 시도 후 보여주는 안내 화면.
+  'dashboard.watchdog.title': '서버가 종료되었습니다',
+  'dashboard.watchdog.body':
+    'MCP server가 종료되어 이 세션이 더 이상 유효하지 않습니다. 이 탭을 닫아도 됩니다.',
+  'dashboard.watchdog.close': '탭 닫기',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // 카피는 세션 mode별로 sandbox(환경 2) / intoss(환경 3) family로 분기한다 (#468).
   'attach.title': 'AIT 디버그 세션 — QR 스캔',
