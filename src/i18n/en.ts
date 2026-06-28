@@ -192,7 +192,7 @@ export const en: Record<StringKey, string> = {
   'dashboard.tunnel.up': 'Connected',
   'dashboard.tunnel.down': 'Disconnected',
   'dashboard.attach.section': 'Attach QR',
-  'dashboard.attach.hint': 'Call the build_attach_url MCP tool to show the QR here.',
+  'dashboard.attach.hint': 'Call the start_attach MCP tool to show the QR here.',
   'dashboard.attach.tunnelDown':
     'Relay disconnected — this QR is no longer valid. Restart the relay, then regenerate the QR.',
   'dashboard.pages.section': 'Connected Pages',

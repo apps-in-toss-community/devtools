@@ -60,10 +60,10 @@ list_pages
 
 `up: true` + `wssUrl`이 있으면 다음 단계로 진행한다. `up: false`이면 "자주 깨지는 경우" 섹션을 참고.
 
-### 3. QR 페이지 생성 — `build_attach_url`
+### 3. QR 페이지 생성 — `start_attach`
 
 ```
-build_attach_url
+start_attach
   scheme_url: "intoss-private://aitc-sdk-example?_deploymentId=<uuid>"
 ```
 
@@ -71,6 +71,8 @@ MCP가 HTML 페이지를 브라우저에서 자동으로 연다. 페이지에는
 
 - **QR 코드** — TOTP가 활성화된 경우 30초 rotating `at=` 코드가 포함된 deep link를 인코딩
 - 연결 방법 안내
+
+`start_attach`은 QR을 띄운 뒤 같은 호출 안에서 폰이 attach될 때까지 대기하므로(기본 대기, `wait_timeout_seconds`로 조절), 4·5단계의 QR 스캔이 끝나면 이 호출이 그대로 페이지 목록을 반환한다 — 별도 `list_pages` 폴링 불필요. 대기 중 TOTP 코드는 만료 창에 가까워지면 자동 재발행된다(재발행 횟수는 응답 `totp.reminted`).
 
 TOTP 시크릿·코드 값은 QR 페이지에 표시되지 않는다(SECRET-HANDLING: 값은 relay 서버 내부에서만 처리).
 
@@ -148,7 +150,7 @@ attach 중에 미니앱이 **crash**한 경우(tunnel 끊김·TOTP 만료와는 
 **복구**:
 1. Claude Code에서 MCP server 재시작
 2. `list_pages` → `up: true` + 새 `wssUrl` 확인
-3. `build_attach_url`로 새 QR 생성
+3. `start_attach`로 새 QR 생성
 4. 폰 카메라로 새 QR 재스캔
 
 ### cloudflared tunnel 연결 끊김
@@ -173,7 +175,7 @@ attach 중에 미니앱이 **crash**한 경우(tunnel 끊김·TOTP 만료와는 
 
 **원인**: scheme URL에 `_deploymentId=<uuid>` 쿼리가 없거나 잘못된 경우.
 
-**복구**: `ait deploy --scheme-only`를 다시 실행해 올바른 URL을 얻는다. `_deploymentId`가 포함된 URL인지 확인 후 `build_attach_url` 재실행.
+**복구**: `ait deploy --scheme-only`를 다시 실행해 올바른 URL을 얻는다. `_deploymentId`가 포함된 URL인지 확인 후 `start_attach` 재실행.
 
 ### REVIEW lock (errorCode 4046)
 
@@ -205,15 +207,15 @@ call_sdk("setSecureScreen", [{ enabled: true }])               // ✓
 
 `call_sdk` 도구는 등록된 메서드(12개)에 대해 bridge 호출 전에 인자를 검증하고, 시그니처 불일치 시 즉시 `{ok:false, error}` 형태로 거부한다 ([#264](https://github.com/apps-in-toss-community/devtools/issues/264)). 미등록 메서드는 passthrough되므로, crash 후 `AIT.getSdkCallHistory`로 호출 이력을 확인해 인자 형태를 검토한다.
 
-**복구**: `build_attach_url`로 새 QR을 생성해 폰을 다시 attach한다.
+**복구**: `start_attach`로 새 QR을 생성해 폰을 다시 attach한다.
 
 ### TOTP 코드 만료 (Layer C 실패)
 
 **증상**: QR 스캔 → 미니앱은 열리지만 relay에 붙지 않음. `list_pages`에 페이지 미등장.
 
-**원인**: TOTP 코드(`at=`)는 30초마다 교체된다. `build_attach_url` 호출 후 30초 이상 경과하면 코드가 만료된다.
+**원인**: TOTP 코드(`at=`)는 30초마다 교체된다. `start_attach` 호출 후 30초 이상 경과하면 코드가 만료된다.
 
-**복구**: `build_attach_url`을 다시 호출해 새 QR을 받고 즉시 스캔한다.
+**복구**: `start_attach`을 다시 호출해 새 QR을 받고 즉시 스캔한다.
 
 ---
 

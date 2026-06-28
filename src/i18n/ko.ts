@@ -195,7 +195,7 @@ export const ko = {
   'dashboard.tunnel.up': '연결됨',
   'dashboard.tunnel.down': '끊어짐',
   'dashboard.attach.section': 'Attach QR',
-  'dashboard.attach.hint': 'build_attach_url MCP tool을 호출하면 QR이 여기에 표시됩니다.',
+  'dashboard.attach.hint': 'start_attach MCP tool을 호출하면 QR이 여기에 표시됩니다.',
   'dashboard.attach.tunnelDown':
     'relay 연결이 끊겼습니다 — 이 QR은 더 이상 유효하지 않습니다. relay를 재시작한 뒤 QR을 다시 생성하세요.',
   'dashboard.pages.section': '연결된 Pages',

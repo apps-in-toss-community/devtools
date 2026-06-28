@@ -60,7 +60,7 @@ Load a dog-food bundle in the real Toss app WebView and debug it via the MCP rel
 ```bash
 devtools-mcp              # start MCP server → QR printed in terminal
 # ait build && ait deploy --scheme-only
-# call build_attach_url → scan QR → Toss app loads bundle + relay attaches
+# one start_attach(scheme_url) call generates the QR and waits for the phone to attach — scan it and the Toss app loads the bundle + relay attaches
 ```
 
 No HMR (Toss WebView cold-load only). Details: [`docs/scenarios/env-3.md`](./docs/scenarios/env-3.md)
@@ -91,11 +91,11 @@ For environments 3 and 4 (intoss-private relay), the relay QR deep-link carries 
 
 **"QR window doesn't open"**
 
-Either `build_attach_url` wasn't called first, or the MCP server is running in a headless environment where no browser can be opened. The tool result always includes a text QR — scan it directly with your phone camera. On a local GUI machine, the dashboard opens automatically in the browser.
+Either `start_attach` wasn't called first, or the MCP server is running in a headless environment where no browser can be opened. The tool result always includes a text QR — scan it directly with your phone camera. On a local GUI machine, the dashboard opens automatically in the browser.
 
 **"Page not attached" — list_pages returns an empty array**
 
-No page has joined the relay yet. Re-enter via `build_attach_url` → QR scan on your phone. When the MCP error message reads "page not attached — run build_attach_url then scan QR", this is the case.
+No page has joined the relay yet. Re-enter via `start_attach` → QR scan on your phone. When the MCP error message reads "page not attached — run start_attach then scan QR", this is the case.
 
 **"Tunnel down" — no response or timeout**
 
@@ -103,7 +103,7 @@ A cloudflared quick tunnel can drop after a few hours. Restart the `devtools-mcp
 
 **"Page crash" — list_pages shows a non-null crashDetectedAt**
 
-The page on the phone died (OOM, JS exception, or native bridge crash). Relaunch the app, then re-attach via `build_attach_url` → QR scan. (Related: [#265](https://github.com/apps-in-toss-community/devtools/issues/265))
+The page on the phone died (OOM, JS exception, or native bridge crash). Relaunch the app, then re-attach via `start_attach` → QR scan. (Related: [#265](https://github.com/apps-in-toss-community/devtools/issues/265))
 
 **"SDK not available" — window.__sdkCall not injected**
 
@@ -111,7 +111,7 @@ When `call_sdk` returns `ok: false, error: "window.__sdkCall is not available"`,
 
 **"QR scanned but auth rejected" — TOTP code expired**
 
-When `AIT_DEBUG_TOTP_SECRET` is set, `build_attach_url` automatically splices the current one-time TOTP code (`at=`) into the returned `attachUrl`. Each code covers a 30-second step, and the relay accepts ±6 steps (~3 min) of backwards skew. Scanning more than ~3 minutes after `totp.expiresAt` causes the relay to reject the request. Fix: call `build_attach_url` again to get a fresh URL and QR.
+When `AIT_DEBUG_TOTP_SECRET` is set, `start_attach` automatically splices the current one-time TOTP code (`at=`) into the returned `attachUrl`. Each code covers a 30-second step, and the relay accepts ±6 steps (~3 min) of backwards skew. While waiting for the phone to attach, `start_attach` re-mints the code in-call as it nears its expiry window (the re-mint count is surfaced as `totp.reminted`), so you usually do not need to re-call during the wait. If you do scan an expired QR and the relay rejects it, call `start_attach` again to get a fresh URL and QR.
 
 ---
 
@@ -971,7 +971,7 @@ A local browser (env 1) and a phone Toss WebView (env 2/3) both speak CDP, so ev
 
 #### Environment 2 (real-device PWA CDP) — `--target=mobile`
 
-Debug on a real phone using Safari/WebKit without Toss review. The Vite dev server with [`tunnel:{cdp:true}`](#tunnel-option) brings up both an app HTTP tunnel and a Chii relay tunnel. The MCP server attaches to that relay and provides `build_attach_url` → launcher QR.
+Debug on a real phone using Safari/WebKit without Toss review. The Vite dev server with [`tunnel:{cdp:true}`](#tunnel-option) brings up both an app HTTP tunnel and a Chii relay tunnel. The MCP server attaches to that relay and provides `start_attach` → launcher QR.
 
 **Setup procedure:**
 
@@ -1002,7 +1002,7 @@ Debug on a real phone using Safari/WebKit without Toss review. The Vite dev serv
 3. In a Claude Code session:
    ```
    start_debug({mode: 'relay-sandbox'})
-   build_attach_url()
+   start_attach()
    ```
    Scan the QR with your phone camera. The launcher PWA opens the app in a frame and injects Chii target.js.
 
@@ -1016,7 +1016,7 @@ Debug on a real phone using Safari/WebKit without Toss review. The Vite dev serv
 
 For a step-by-step walkthrough of the on-device relay debug loop (dog-food build → QR scan → relay attach) including common failure recovery, see **[`docs/dogfood-relay-loop.md`](./docs/dogfood-relay-loop.md)** (Korean). For crash triage — `list_pages.crashDetectedAt`, iOS Console.app `.ips` analysis, and the redact procedure — see **[`docs/crash-triage.md`](./docs/crash-triage.md)** (Korean).
 
-Read-only tools only. Tools are registered in two tiers based on attach state — before attach, only the bootstrap tools (`build_attach_url`, `list_pages`) are visible; once a relay/local page attaches, the attach-dependent tools are registered dynamically in the same session via `notifications/tools/list_changed` (no session restart needed). The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
+Read-only tools only. Tools are registered in two tiers based on attach state — before attach, only the bootstrap tools (`start_attach`, `list_pages`) are visible; once a relay/local page attaches, the attach-dependent tools are registered dynamically in the same session via `notifications/tools/list_changed` (no session restart needed). The phone attach roundtrip is fully wired; all that remains is a single on-device acceptance run. The tool layer is CI-verified via a mockable injectable CDP connection / AIT source.
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dog-food entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
@@ -1041,7 +1041,7 @@ Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then
 | `list_console_messages` | `Runtime.consoleAPICalled` | Recent console.log/warn/error messages (level, text, timestamp, args) |
 | `list_network_requests` | `Network.requestWillBeSent` + `responseReceived` | Recent XHR/fetch requests (url, method, status, timing) |
 | `list_pages` | Chii relay target list | Attached pages + tunnel status + wss URL |
-| `build_attach_url` | (pure synthesis) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL, prints a QR. Scanning the QR with the phone camera is the single entry path for env 2 and 3 (requires `list_pages` first) |
+| `start_attach` | (pure synthesis + attach wait) | Splices `debug=1` + the relay URL into an `ait deploy --scheme-only` URL, prints a QR, then waits in the same call until the phone attaches (QR generation and attach in one call). A `mode` arg can switch the session environment too, and the TOTP code is re-minted automatically during the wait. Entry tool for env 2 and 3 (bootstrap) — no `list_pages` needed first |
 | `get_dom_document` | `DOM.getDocument` | DOM tree read (structural/layout regression diagnosis) |
 | `take_snapshot` | `DOMSnapshot.captureSnapshot` | Page snapshot (documents + interned strings, visual regression) |
 | `take_screenshot` | `Page.captureScreenshot` | Page PNG screenshot (returned as an MCP image content block) |
