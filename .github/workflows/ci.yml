@@ -36,6 +36,10 @@ jobs:
       # daemon bundles must never import them (see scripts/check-mcp-react-free.sh).
       - run: pnpm check:mcp-react-free
 
+      # Build-artifact presence guard: dist/test-runner/runtime.js must exist
+      # after build so bundleTestFile can resolve it at runtime (#676).
+      - run: pnpm check:test-runner-dist
+
       # Build-time absence invariant (#647): the in-app debug surface (Chii
       # injection + eruda console) must DCE to 0 bytes in a release consumer
       # build and never leak into the MCP daemon bundles. Builds the fixture in

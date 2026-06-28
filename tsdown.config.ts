@@ -147,6 +147,13 @@ export default defineConfig([
     entry: {
       'test-runner/config': 'src/test-runner/config.ts',
       'test-runner/bundle': 'src/test-runner/bundle.ts',
+      // Page-side runtime: describe/it/test/expect + runTestModule.
+      // bundleTestFile (bundle.ts) resolves this file at runtime via
+      // getRuntimePath() using an absolute filesystem path — NOT a package
+      // subpath specifier — so no package.json `exports` entry is required.
+      // Must be emitted to dist/ so it exists in the published package
+      // (the src/ tree is not shipped).
+      'test-runner/runtime': 'src/test-runner/runtime.ts',
       'test-runner/rpc': 'src/test-runner/rpc.ts',
       'test-runner/relay-worker': 'src/test-runner/relay-worker.ts',
       'test-runner/pool': 'src/test-runner/pool.ts',
