@@ -47,6 +47,7 @@ export interface RelaySecretFs {
   readFileSync(path: string, encoding: BufferEncoding): string;
   chmodSync(path: string, mode: number): void;
   existsSync(path: string): boolean;
+  appendFileSync(path: string, data: string): void;
 }
 
 /**
@@ -375,6 +376,86 @@ function warnIfEnvDiffersFromFile(
   }
 }
 
+/**
+ * Result of a {@link ensureGitignoreEntries} call.
+ *
+ * - `injected`: one or more missing lines were appended to `.gitignore`.
+ * - `failed`:   append was attempted but threw (unwritable FS) — secret generation
+ *   is never aborted on failure.
+ * - Neither flag set: all lines were already present — pure no-op.
+ */
+interface GitignoreResult {
+  injected: boolean;
+  failed: boolean;
+}
+
+/**
+ * Idempotently appends `.ait_relay` and `.ait_urls` ignore entries to
+ * `<secretDir>/.gitignore`.
+ *
+ * Covers the commit-safety net for the auto-generated relay secrets (#669).
+ * Both files live in `secretDir` (the nearest package.json directory), so
+ * anchoring the `.gitignore` there ensures the ignore entry and the files it
+ * guards always co-locate.
+ *
+ * Idempotency: reads the existing `.gitignore` (if any), splits into lines,
+ * appends only names not already present (exact-match, trimmed). A project
+ * that already has both entries (the sdk-example case) is a pure no-op — no
+ * write, no log noise.
+ *
+ * On write failure (unwritable FS, read-only mount) the function returns
+ * `{ injected: false, failed: true }` — it NEVER aborts secret generation.
+ *
+ * SECRET-HANDLING: this function only manipulates ignore-pattern strings and
+ * the `.gitignore` path. It never reads, logs, or echoes any secret value.
+ *
+ * @param secretDir - dirname of the `.ait_relay` file (= nearest package.json dir).
+ * @param fsDep     - Injectable fs subset (same object passed to the write path).
+ * @param logFn     - Injectable log sink (used by callers for fold-in messages).
+ */
+function ensureGitignoreEntries(
+  secretDir: string,
+  fsDep: RelaySecretFs,
+  _logFn: (msg: string) => void,
+): GitignoreResult {
+  const gi = join(secretDir, '.gitignore');
+
+  // '.ait_urls' mirrors URLS_FILE_NAME from relay-url-store.ts. The constant is
+  // inlined here (rather than imported) to avoid a circular module dependency:
+  // relay-url-store.ts already imports nearestPackageJsonDir from this module,
+  // so a reverse import would create a 2-way cycle.
+  const names = [RELAY_SECRET_FILE_NAME, '.ait_urls'];
+
+  let existing = '';
+  if (fsDep.existsSync(gi)) {
+    try {
+      existing = fsDep.readFileSync(gi, 'utf8');
+    } catch {
+      // Unreadable .gitignore — degrade gracefully; secret generation is unaffected.
+      return { injected: false, failed: true };
+    }
+  }
+
+  const presentLines = new Set(existing.split(/\r?\n/).map((l) => l.trim()));
+  const missing = names.filter((n) => !presentLines.has(n));
+
+  if (missing.length === 0) {
+    // Pure no-op: all entries already present (sdk-example case).
+    return { injected: false, failed: false };
+  }
+
+  // Ensure we start on a fresh line when the existing content has no trailing newline.
+  const prefix = existing === '' || existing.endsWith('\n') ? '' : '\n';
+  try {
+    fsDep.appendFileSync(gi, `${prefix}${missing.join('\n')}\n`);
+    return { injected: true, failed: false };
+  } catch {
+    // Write failed (unwritable FS, read-only mount, etc.) — degrade gracefully.
+    // SECRET-HANDLING: the error and path are swallowed, not surfaced.
+    return { injected: false, failed: true };
+  }
+}
+
 async function readAndInject(
   secretPath: string,
   fs: RelaySecretFs,
@@ -399,6 +480,12 @@ async function readAndInject(
 
   // Inject into env — silent path (no log on successful reload).
   env.AIT_DEBUG_TOTP_SECRET = stored;
+
+  // Ensure .gitignore covers both secret files even on the reload path (the
+  // secret already exists so mintAndPersist will not run, but .ait_urls is
+  // written unconditionally by the unplugin on every boot and must be ignored).
+  // This is idempotent — if the entries are already present it is a pure no-op.
+  ensureGitignoreEntries(dirname(secretPath), fs, logFn);
 }
 
 async function mintAndPersist(
@@ -454,12 +541,25 @@ async function mintAndPersist(
   // assertRelayAuthConfigured() / buildRelayVerifyAuth() calls see the value.
   env.AIT_DEBUG_TOTP_SECRET = secret;
 
+  // Idempotently inject .gitignore entries for the two secret files (#669).
+  // Fold the result into the single first-mint announcement below so
+  // logs.length === 1 is preserved (SECRET-HANDLING: no path/value surfaced).
+  const giResult = ensureGitignoreEntries(dirname(secretPath), fs, logFn);
+
   // First-mint announcement (value never included — SECRET-HANDLING). The file
   // name is fixed (`.ait_relay`); we do not echo the resolved directory either.
+  // The gitignore result is folded in here to keep the single-log invariant.
+  const giLine = giResult.injected
+    ? `프로젝트의 .gitignore에 .ait_relay / .ait_urls 무시 규칙을 추가했습니다.\n`
+    : giResult.failed
+      ? `.gitignore 자동 갱신에 실패했습니다 — .ait_relay / .ait_urls 를 직접 추가하거나 비공개 repo를 권장합니다.\n`
+      : '';
+
   logFn(
     `[@ait-co/devtools] relay 인증 시크릿을 생성해 프로젝트의 ${RELAY_SECRET_FILE_NAME} 파일에 저장했습니다 (권한 0600).\n` +
       `다음 실행부터 자동으로 사용됩니다. 직접 export할 필요 없습니다.\n` +
       `팀이 같은 relay를 공유하려면 이 파일을 repo에 커밋하세요(비공개 repo 권장).\n` +
+      (giLine ? giLine : '') +
       `자세히: https://docs.aitc.dev/guides/relay-auth-totp\n`,
   );
 }
