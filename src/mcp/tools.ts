@@ -507,7 +507,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Glob patterns or file paths to run (e.g. ["src/**/*.phone.test.ts"]). ' +
+            'Glob patterns or file paths to run (e.g. ["src/**/*.ait.test.ts"]). ' +
             'Resolved relative to projectRoot when given, else the daemon cwd. Required, non-empty.',
         },
         projectRoot: {

@@ -157,14 +157,14 @@ describe('createRelayPool', () => {
     const res = await sendAndAwait(worker, {
       __vitest_worker_request__: true,
       type: 'run',
-      context: { files: [{ filepath: '/project/foo.phone.test.ts' }] },
+      context: { files: [{ filepath: '/project/foo.ait.test.ts' }] },
     });
 
     expect(res.type).toBe('testfileFinished');
     expect(res.error).toBeUndefined();
     // The file's task graph was reported.
     expect(calls.collectFiles).toHaveLength(1);
-    expect(calls.collectFiles[0][0].filepath).toBe('/project/foo.phone.test.ts');
+    expect(calls.collectFiles[0][0].filepath).toBe('/project/foo.ait.test.ts');
     expect(calls.updateTasks).toHaveLength(1);
     // file + suite 'grp' + test 'works'
     expect(calls.updateTasks[0]).toHaveLength(3);
@@ -183,7 +183,7 @@ describe('createRelayPool', () => {
     await sendAndAwait(worker, {
       __vitest_worker_request__: true,
       type: 'run',
-      context: { files: [{ filepath: '/project/a.phone.test.ts' }] },
+      context: { files: [{ filepath: '/project/a.ait.test.ts' }] },
     });
     expect(factory.opened).toBe(1);
 
@@ -205,12 +205,12 @@ describe('createRelayPool', () => {
     await sendAndAwait(worker, {
       __vitest_worker_request__: true,
       type: 'run',
-      context: { files: [{ filepath: '/project/a.phone.test.ts' }] },
+      context: { files: [{ filepath: '/project/a.ait.test.ts' }] },
     });
     await sendAndAwait(worker, {
       __vitest_worker_request__: true,
       type: 'run',
-      context: { files: [{ filepath: '/project/b.phone.test.ts' }] },
+      context: { files: [{ filepath: '/project/b.ait.test.ts' }] },
     });
     expect(factory.opened).toBe(1); // not re-attached per run
     expect(calls.collectFiles).toHaveLength(2);
@@ -230,7 +230,7 @@ describe('createRelayPool', () => {
     const res = await sendAndAwait(worker, {
       __vitest_worker_request__: true,
       type: 'run',
-      context: { files: [{ filepath: '/project/a.phone.test.ts' }] },
+      context: { files: [{ filepath: '/project/a.ait.test.ts' }] },
     });
     expect(res.type).toBe('testfileFinished');
     expect(res.error).toBeInstanceOf(Error);

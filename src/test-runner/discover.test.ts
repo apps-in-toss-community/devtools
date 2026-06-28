@@ -17,11 +17,11 @@ let root: string;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'ait-discover-'));
   // Layout:
-  //   a.phone.test.ts
-  //   b.phone.test.ts
+  //   a.ait.test.ts
+  //   b.ait.test.ts
   //   not-a-test.ts
-  await writeFile(join(root, 'a.phone.test.ts'), '');
-  await writeFile(join(root, 'b.phone.test.ts'), '');
+  await writeFile(join(root, 'a.ait.test.ts'), '');
+  await writeFile(join(root, 'b.ait.test.ts'), '');
   await writeFile(join(root, 'not-a-test.ts'), '');
 });
 
@@ -31,26 +31,26 @@ afterAll(async () => {
 
 describe('discoverTestFiles', () => {
   it('expands a glob to matching files, sorted and absolute', async () => {
-    const files = await discoverTestFiles(['*.phone.test.ts'], root);
+    const files = await discoverTestFiles(['*.ait.test.ts'], root);
     expect(files).toHaveLength(2);
     expect(files.every((f) => isAbsolute(f))).toBe(true);
     // sorted
     expect([...files]).toEqual([...files].sort());
-    expect(files[0].endsWith('a.phone.test.ts')).toBe(true);
-    expect(files[1].endsWith('b.phone.test.ts')).toBe(true);
+    expect(files[0].endsWith('a.ait.test.ts')).toBe(true);
+    expect(files[1].endsWith('b.ait.test.ts')).toBe(true);
   });
 
   it('passes a plain (non-glob) path through when it matches', async () => {
-    const files = await discoverTestFiles(['a.phone.test.ts'], root);
+    const files = await discoverTestFiles(['a.ait.test.ts'], root);
     expect(files).toHaveLength(1);
-    expect(files[0].endsWith('a.phone.test.ts')).toBe(true);
+    expect(files[0].endsWith('a.ait.test.ts')).toBe(true);
     expect(isAbsolute(files[0])).toBe(true);
   });
 
   it('de-duplicates a file matched by multiple patterns', async () => {
-    const files = await discoverTestFiles(['a.phone.test.ts', '*.phone.test.ts'], root);
-    // a.phone.test.ts matched by both patterns → present once
-    const count = files.filter((f) => f.endsWith('a.phone.test.ts')).length;
+    const files = await discoverTestFiles(['a.ait.test.ts', '*.ait.test.ts'], root);
+    // a.ait.test.ts matched by both patterns → present once
+    const count = files.filter((f) => f.endsWith('a.ait.test.ts')).length;
     expect(count).toBe(1);
     expect(files).toHaveLength(2);
   });
@@ -61,7 +61,7 @@ describe('discoverTestFiles', () => {
   });
 
   it('does not match files outside the pattern', async () => {
-    const files = await discoverTestFiles(['*.phone.test.ts'], root);
+    const files = await discoverTestFiles(['*.ait.test.ts'], root);
     expect(files.some((f) => f.endsWith('not-a-test.ts'))).toBe(false);
   });
 });

@@ -170,7 +170,7 @@ let projectRoot: string;
 
 beforeAll(async () => {
   projectRoot = await mkdtemp(join(tmpdir(), 'ait-run-tests-'));
-  await writeFile(join(projectRoot, 'sample.phone.test.ts'), '');
+  await writeFile(join(projectRoot, 'sample.ait.test.ts'), '');
 });
 
 afterAll(async () => {
@@ -195,7 +195,7 @@ describe('run_tests tool', () => {
 
     const result = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
 
     expect(result.isError).toBeFalsy();
@@ -203,7 +203,7 @@ describe('run_tests tool', () => {
     expect(data.totals).toEqual({ passed: 1, failed: 0, skipped: 0, total: 1 });
     const files = data.files as Array<Record<string, unknown>>;
     expect(files).toHaveLength(1);
-    expect(String(files[0].file)).toContain('sample.phone.test.ts');
+    expect(String(files[0].file)).toContain('sample.ait.test.ts');
     expect(files[0].passed).toBe(1);
     // Per-file wall-clock from the in-page RunReport is surfaced (regression
     // guard: toRunTestsResult once dropped it).
@@ -244,7 +244,7 @@ describe('run_tests tool', () => {
 
     const result = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
 
     expect(result.isError).toBe(true);
@@ -261,7 +261,7 @@ describe('run_tests tool', () => {
 
     const result = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot, timeout_ms: 999_999_999 },
+      arguments: { files: ['*.ait.test.ts'], projectRoot, timeout_ms: 999_999_999 },
     });
 
     expect(result.isError).toBeFalsy();
@@ -282,7 +282,7 @@ describe('run_tests tool', () => {
 
     const result = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot, timeout_ms },
+      arguments: { files: ['*.ait.test.ts'], projectRoot, timeout_ms },
     });
 
     expect(result.isError).toBeFalsy();
@@ -299,7 +299,7 @@ describe('run_tests tool', () => {
     // with process.cwd() as its base.
     await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.no-such-file.phone.test.ts'] },
+      arguments: { files: ['*.no-such-file.ait.test.ts'] },
     });
 
     expect(discoverTestFilesSpy).toHaveBeenCalledTimes(1);
@@ -315,13 +315,13 @@ describe('run_tests tool', () => {
 
     const first = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
     expect(first.isError).toBeFalsy(); // run returns with the file marked failed
 
     const second = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
     // Must NOT be the concurrency rejection — the lock was released.
     expect(getText(second)).not.toContain('이미 다른 테스트 실행이 진행 중');
@@ -333,7 +333,7 @@ describe('run_tests tool', () => {
 
     const result = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
 
     const text = getText(result);
@@ -367,13 +367,13 @@ describe('run_tests tool', () => {
 
     const first = client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
     // Give the first call time to claim the in-flight lock before the second.
     await new Promise((r) => setTimeout(r, 20));
     const second = client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
 
     const secondResult = await second;
@@ -393,7 +393,7 @@ describe('run_tests tool', () => {
     const conn = new FakeCdpConnection({ raw: cannedRunReport() });
     const client = await makeClient({ connection: conn });
 
-    const args = { name: 'run_tests', arguments: { files: ['*.phone.test.ts'], projectRoot } };
+    const args = { name: 'run_tests', arguments: { files: ['*.ait.test.ts'], projectRoot } };
     const [a, b] = await Promise.all([client.callTool(args), client.callTool(args)]);
 
     const results = [a, b];
@@ -412,7 +412,7 @@ describe('run_tests tool', () => {
 
     const result = await client.callTool({
       name: 'run_tests',
-      arguments: { files: ['*.phone.test.ts'], projectRoot },
+      arguments: { files: ['*.ait.test.ts'], projectRoot },
     });
 
     // relay-worker records the per-file error; the run still returns (not isError)
