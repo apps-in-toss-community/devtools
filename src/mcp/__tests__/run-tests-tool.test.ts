@@ -69,7 +69,7 @@ vi.mock('../../test-runner/discover.js', async (importActual) => {
 });
 
 // Spy on injectGlobals for cell-injection assertions (issue #684 PR2).
-const injectGlobalsSpy = vi.fn(() => Promise.resolve());
+const injectGlobalsSpy = vi.fn((_conn?: unknown, _cell?: unknown) => Promise.resolve());
 vi.mock('../../test-runner/cell.js', () => ({
   injectGlobals: (...args: [unknown, unknown]) => injectGlobalsSpy(...args),
 }));
