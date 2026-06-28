@@ -4,7 +4,7 @@
  * 검증 항목:
  *   - mcpError(): isError: true + 단일 text content block
  *   - tunnelDownError(): 터널 미가동 한국어 메시지
- *   - pageMissingError(): 페이지 미attach 한국어 메시지 + build_attach_url 안내
+ *   - pageMissingError(): 페이지 미attach 한국어 메시지 + start_attach 안내
  *   - pageCrashError(): 페이지 crash 한국어 메시지 + 재attach 안내
  *   - sdkAbsentError(): SDK 부재 한국어 메시지 + dog-food 채널 안내
  *   - relayDisconnectError(): relay 연결 끊김 한국어 메시지
@@ -66,8 +66,8 @@ describe('pageMissingError — 상태 2: page 미attach', () => {
     expect(getText(pageMissingError())).toContain('attach');
   });
 
-  it('포함: "build_attach_url" (다음 행동 안내)', () => {
-    expect(getText(pageMissingError())).toContain('build_attach_url');
+  it('포함: "start_attach" (다음 행동 안내)', () => {
+    expect(getText(pageMissingError())).toContain('start_attach');
   });
 
   it('toolName 있으면 prefix에 포함', () => {
@@ -84,9 +84,9 @@ describe('pageCrashError — 상태 3: page crash', () => {
     expect(getText(pageCrashError())).toContain('crash');
   });
 
-  it('포함: "재attach" 또는 "build_attach_url" (다음 행동 안내)', () => {
+  it('포함: "재attach" 또는 "start_attach" (다음 행동 안내)', () => {
     const text = getText(pageCrashError());
-    expect(text.includes('재attach') || text.includes('build_attach_url')).toBe(true);
+    expect(text.includes('재attach') || text.includes('start_attach')).toBe(true);
   });
 
   it('toolName 있으면 prefix에 포함', () => {
@@ -155,26 +155,24 @@ describe('relayDisconnectError — relay 연결 끊김', () => {
 
 describe('tierRejectionError — Tier A/B 환경 불일치', () => {
   it('한국어 원인 메시지 포함', () => {
-    const text = getText(tierRejectionError('build_attach_url', 'relay', 'mock', 'default-mock'));
-    expect(text).toContain('build_attach_url');
+    const text = getText(tierRejectionError('start_attach', 'relay', 'mock', 'default-mock'));
+    expect(text).toContain('start_attach');
     expect(text).toContain('relay');
   });
 
   it('하위 호환 영문 패턴 포함 (기존 테스트 어서션 유지)', () => {
-    const text = getText(tierRejectionError('build_attach_url', 'relay', 'mock', 'default-mock'));
+    const text = getText(tierRejectionError('start_attach', 'relay', 'mock', 'default-mock'));
     expect(text).toContain('available only in relay');
     expect(text).toContain('Current environment is mock');
   });
 
-  it('relay 환경 필요 → build_attach_url hint 포함', () => {
-    const text = getText(tierRejectionError('build_attach_url', 'relay', 'mock', 'env-var-mock'));
-    expect(text).toContain('build_attach_url');
+  it('relay 환경 필요 → start_attach hint 포함', () => {
+    const text = getText(tierRejectionError('start_attach', 'relay', 'mock', 'env-var-mock'));
+    expect(text).toContain('start_attach');
   });
 
   it('isError: true', () => {
-    expect(tierRejectionError('build_attach_url', 'relay', 'mock', 'default-mock').isError).toBe(
-      true,
-    );
+    expect(tierRejectionError('start_attach', 'relay', 'mock', 'default-mock').isError).toBe(true);
   });
 });
 
@@ -183,7 +181,7 @@ describe('tierRejectionError — Tier A/B 환경 불일치', () => {
 describe('classifyToolError — 에러 패턴 자동 분류', () => {
   it('tunnel-down: 접두사 → tunnelDownError 메시지', () => {
     const err = new Error('tunnel-down: 터널이 안 떠 있습니다. 서버를 재시작하세요.');
-    const result = classifyToolError(err, 'build_attach_url');
+    const result = classifyToolError(err, 'start_attach');
     expect(getText(result)).toContain('터널');
   });
 

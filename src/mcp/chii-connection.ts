@@ -14,7 +14,7 @@
  * Attach reliability (#281):
  *   `refreshTargets()` emits an internal 'target:attached' event whenever a
  *   new target is added to the relay. `waitForFirstTarget()` awaits that event
- *   (with a polling-interval fallback) so `build_attach_url wait_for_attach`
+ *   (with a polling-interval fallback) so `start_attach`'s attach wait
  *   resolves deterministically rather than racing between polling rounds.
  */
 

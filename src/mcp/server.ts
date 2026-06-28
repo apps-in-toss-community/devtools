@@ -194,37 +194,40 @@ const DEV_TOOL_DEFINITIONS = [
   /* ------------------------------------------------------------------ */
   /* Tier B tool — tier-filter stub (issue #323)                         */
   /*                                                                      */
-  /* build_attach_url is relay-only (Tier B per RFC #277). Listing it   */
+  /* start_attach is relay-only (Tier B per RFC #277). Listing it        */
   /* here in dev-mode ensures agents don't hit "Unknown tool" and get a  */
   /* clear hand-off hint toward --mode=debug (station 2 → 3 seam).      */
   /* ------------------------------------------------------------------ */
   {
-    name: 'build_attach_url',
+    name: 'start_attach',
     description:
-      'Turns an `ait deploy --scheme-only` URL into a self-attaching deep link for a real device. ' +
+      'Switches into a relay mode (if given), builds a self-attaching deep-link QR for a real device, ' +
+      'and waits for the phone to attach — all in one call. ' +
       'NOT available in dev-mode — requires a live cloudflared relay (Tier B, relay-only). ' +
       'To use this tool: restart the MCP server with `--mode=debug` (or omit --mode) and set ' +
-      'MCP_ENV=relay, then call build_attach_url to generate the QR for phone scanning. ' +
+      'MCP_ENV=relay, then call start_attach to generate the QR for phone scanning. ' +
       'See: https://docs.aitc.dev/guides/debug-relay',
     inputSchema: {
       type: 'object',
       properties: {
+        mode: {
+          type: 'string',
+          enum: ['local-browser', 'relay-sandbox', 'relay-staging'],
+          description: 'Optional relay mode to switch into before attaching.',
+        },
         scheme_url: {
           type: 'string',
-          description: 'The intoss-private:// URL from `ait deploy --scheme-only`.',
-        },
-        wait_for_attach: {
-          type: 'boolean',
-          description: 'If true, block until a page attaches (default 60 s).',
+          description:
+            'The intoss-private:// URL from `ait deploy --scheme-only` (env 3/relay-staging).',
         },
         wait_timeout_seconds: {
           type: 'number',
           description:
-            'Maximum seconds to wait when wait_for_attach=true (default 60, range 1–600). ' +
+            'Maximum seconds to wait for a page to attach (default 60, range 1–600). ' +
             'Invalid inputs fall back to default.',
         },
       },
-      required: ['scheme_url'],
+      required: [],
     },
     availableIn: 'relay' as ToolAvailability,
   },
@@ -351,7 +354,7 @@ const CDP_ONLY_TOOL_NAMES = new Set<string>([
  * Listed in dev-mode tool surface (issue #323) so agents get a hand-off hint
  * toward `--mode=debug` instead of "Unknown tool".
  */
-const TIER_B_TOOL_NAMES = new Set<string>(['build_attach_url']);
+const TIER_B_TOOL_NAMES = new Set<string>(['start_attach']);
 
 export interface CreateDevServerDeps {
   /** AIT source for the dev tools. Defaults to an HTTP source over the dev server. */

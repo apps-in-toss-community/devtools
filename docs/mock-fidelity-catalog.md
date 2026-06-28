@@ -75,7 +75,7 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 
 ### 측정 흐름
 
-1. relay 세션 진입: `build_attach_url` 툴로 QR/deep-link를 생성하고 실기기 토스 앱에서 스캔.
+1. relay 세션 진입: `start_attach` 툴로 QR/deep-link를 생성하고 실기기 토스 앱에서 스캔.
 2. relay attach 확인: `list_pages` 툴로 연결된 페이지 확인.
 3. 각 조합마다 `measure_safe_area` 툴 호출. 반환 예시:
    ```json

@@ -66,7 +66,7 @@ start_debug({mode: 'local-browser'})
   }
   ```
   - `kind: "relay-dev"` (출력 env.kind 불변)
-  - `tunnel.up: false` 도 가능 — relay lazy-boot됐지만 `build_attach_url` 호출 전에는 tunnel 미부팅 상태 정상
+  - `tunnel.up: false` 도 가능 — relay lazy-boot됐지만 `start_attach` 호출 전에는 tunnel 미부팅 상태 정상
 
 - [ ] **다시 local-browser로 전환: `start_debug({mode: 'local-browser'})`**
   - `kind: "local"` 확인
@@ -112,14 +112,14 @@ start_debug({mode: 'relay-staging'})
 {
   "mode": "relay-staging",
   "kind": "relay",
-  "nextStep": "build_attach_url로 attach QR을 생성하세요 (relay 세션)."
+  "nextStep": "start_attach로 attach QR을 생성하세요 (relay 세션)."
 }
 ```
 
 ### 3. QR 발급 → 폰에서 토스 앱 cold-load
 
 ```
-build_attach_url({scheme_url: "intoss-private://aitc-sdk-example?_deploymentId=<uuid>"})
+start_attach({scheme_url: "intoss-private://aitc-sdk-example?_deploymentId=<uuid>"})
 → QR PNG 자동 열림 + attachUrl 출력
 ```
 
@@ -154,7 +154,7 @@ start_debug({mode: 'local-browser'})
 # Step 2: relay-staging(env 3)으로 swap (입력 mode: 'relay-staging', 출력 env.kind: "relay-dev")
 start_debug({mode: 'relay-staging'})
 → kind: "relay"
-(→ build_attach_url로 dogfood QR 생성, 폰에서 스캔)
+(→ start_attach로 dogfood QR 생성, 폰에서 스캔)
 
 # Step 3: 다시 local-browser로 돌아가기
 start_debug({mode: 'local-browser'})

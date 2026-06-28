@@ -6,7 +6,7 @@
  *
  * 4가지 상태 (진단 메시지 차별화):
  *   - tunnel-down  : cloudflared 터널 미가동 — 서버 재시작 필요
- *   - page-missing : 페이지가 attach 안 됨 — build_attach_url → QR 스캔
+ *   - page-missing : 페이지가 attach 안 됨 — start_attach → QR 스캔
  *   - page-crash   : 페이지 crash 감지 — 앱 재실행 후 재attach
  *   - sdk-absent   : window.__sdkCall 미주입 — dog-food 채널로 재배포
  *
@@ -55,7 +55,7 @@ export function tierRejectionError(
   const currentLabel = currentEnv === 'relay' ? 'relay' : 'mock';
   const hint =
     requiredEnv === 'relay'
-      ? 'relay로 전환하려면 MCP_ENV=relay 설정 후 서버를 재시작하고 build_attach_url → QR 스캔으로 실기기를 attach하세요.'
+      ? 'relay로 전환하려면 MCP_ENV=relay 설정 후 서버를 재시작하고 start_attach → QR 스캔으로 실기기를 attach하세요.'
       : 'mock으로 전환하려면 MCP_ENV=mock 설정 후 서버를 재시작하세요.';
   const text =
     `${toolName}은 ${envLabel} 환경에서만 사용할 수 있습니다. ` +
@@ -72,7 +72,7 @@ export function tierRejectionError(
 /**
  * 상태 1: tunnel 미가동 — cloudflared 터널이 아직 뜨지 않았다.
  *
- * `build_attach_url` 호출 시 tunnel.up === false 인 경우.
+ * `start_attach` 호출 시 tunnel.up === false 인 경우.
  */
 export function tunnelDownError(): McpErrorResult {
   return mcpError(
@@ -90,8 +90,8 @@ export function pageMissingError(toolName?: string): McpErrorResult {
   const prefix = toolName ? `${toolName}: ` : '';
   return mcpError(
     `${prefix}페이지가 attach 안 됨. ` +
-      'dog-food 번들 배포 후 build_attach_url을 호출해 QR을 생성하세요: ' +
-      '`ait deploy --scheme-only` → `build_attach_url(scheme_url)` → QR 스캔.',
+      'dog-food 번들 배포 후 start_attach를 호출해 QR 생성 + attach까지 진행하세요: ' +
+      '`ait deploy --scheme-only` → `start_attach(scheme_url)` → QR 스캔.',
   );
 }
 
@@ -105,7 +105,7 @@ export function pageCrashError(toolName?: string): McpErrorResult {
   const prefix = toolName ? `${toolName}: ` : '';
   return mcpError(
     `${prefix}페이지가 crash됐습니다. ` +
-      '토스 앱을 재실행한 뒤 build_attach_url → QR 스캔으로 재attach하세요.',
+      '토스 앱을 재실행한 뒤 start_attach → QR 스캔으로 재attach하세요.',
   );
 }
 

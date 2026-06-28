@@ -158,7 +158,7 @@ describe('startQrHttpServer — GET / dashboard HTML', () => {
     const srv = await startQrHttpServer(() => state);
     try {
       const html = await (await fetch(`http://127.0.0.1:${srv.port}/`)).text();
-      expect(html).toContain('build_attach_url');
+      expect(html).toContain('start_attach');
     } finally {
       await srv.close();
     }

@@ -76,7 +76,7 @@ AI가 단독으로 회귀를 진단·고치고 검증하는 한 사이클:
 1. AI: 가설 수립 ("BrowserRouter history.length === 1이라 native swipe가 미니앱 종료로 빠짐")
 2. AI: 코드 패치 (setIosSwipeGestureEnabled(false) 등)
 3. AI: `git push origin main && gh release create v0.1.x` → tag-gated workflow가 deploy
-4. AI: `build_attach_url` MCP tool 호출 → `ait deploy --scheme-only` URL에 `debug=1&relay=<wss>` splice → ASCII QR 렌더
+4. AI: `start_attach` MCP tool 호출 → `ait deploy --scheme-only` URL에 `debug=1&relay=<wss>` splice → ASCII QR 렌더
        → 사람이 폰 카메라로 QR 스캔(이 한 번만 사람 개입) → deep-link 진입 + Layer C 쿼리 전파 + relay attach 자동 완결
        (test-push는 Layer C 쿼리를 WebView로 전파하지 못해 폐기 — open question 6 참고)
 5. 번들 mount 시 query에서 debug+relay+session 감지, WebSocket relay 연결
@@ -283,7 +283,7 @@ devtools#130 패턴 유지. vite dev server가 `@ait-co/devtools/mcp/dev`를 띄
 
    **test-push는 Layer C 채널이 될 수 없다 (2026-05-21 실폰 확정).** sdk-example 31146 dogfood 번들로 실기기 dog-food 시 확인한 사실: 토스 앱의 test-push는 POST `{deploymentId}` payload만 보내는 알림 채널이다 — 진입 URL에 `_deploymentId`(Layer B)와 토스 자체 파라미터(`toss_referrer`/`contentId`)만 붙고, `debug=1`/`relay` 같은 Layer C query param이 WebView로 전파되지 않는다. 결과적으로 in-app gate는 영구히 `reason: 'opt-in'`으로 막혀 attach가 불가능하다. test-push를 Layer C 전달 경로로 쓰는 설계는 폐기한다.
 
-   **Layer C 정식 전달 경로는 QR/deep-link query-param 단일 경로 (2026-05-25 실증).** `build_attach_url` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1&relay=<wss>`를 splice한 `intoss-private://…?_deploymentId=…&debug=1&relay=<wss>` deep link를 만들고 ASCII QR로 렌더한다. 폰 카메라로 QR을 스캔하면 딥링크가 WebView URL로 진입하면서 Layer C 쿼리가 그대로 전파되어 gate 통과 + relay attach가 자동으로 닫힌다. 이 경로는 실유저 플로우와 동일하고 의존성 0, iOS/Android 모두 동일하게 동작한다.
+   **Layer C 정식 전달 경로는 QR/deep-link query-param 단일 경로 (2026-05-25 실증).** `start_attach` MCP tool이 `ait deploy --scheme-only` URL에 `debug=1&relay=<wss>`를 splice한 `intoss-private://…?_deploymentId=…&debug=1&relay=<wss>` deep link를 만들고 ASCII QR로 렌더한다. 폰 카메라로 QR을 스캔하면 딥링크가 WebView URL로 진입하면서 Layer C 쿼리가 그대로 전파되어 gate 통과 + relay attach가 자동으로 닫힌다. 이 경로는 실유저 플로우와 동일하고 의존성 0, iOS/Android 모두 동일하게 동작한다.
 
    따라서 사람 개입은 "QR 스캔" 1회로 고정된다 — 사람이 스캔할 QR을 에이전트가 만들고, 붙으면 자동으로 알아챈다는 자동화 천장이 이게 전부다.
 

@@ -240,7 +240,7 @@ describe('DualConnectionRouter — all-lazy boot (#396)', () => {
     );
   });
 
-  it('relayTunnelStatus() is down before any family boots (build_attach_url gated)', () => {
+  it('relayTunnelStatus() is down before any family boots (start_attach gated)', () => {
     const { router } = makeRouter('local', {
       lazyTunnel: { up: true, wssUrl: 'wss://x.trycloudflare.com' },
     });
@@ -280,7 +280,7 @@ describe('DualConnectionRouter — relayTunnelStatus()', () => {
 
   it('relay-first: down before the relay boots, then reads the relay tunnel', async () => {
     const { router } = makeRouter('relay', { eagerTunnel: upTunnel });
-    // All-lazy: no relay family yet → tunnel is down (build_attach_url gated).
+    // All-lazy: no relay family yet → tunnel is down (start_attach gated).
     expect(router.relayTunnelStatus()).toEqual({ up: false, wssUrl: null });
     await router.switchMode('relay-staging');
     expect(router.relayTunnelStatus()).toEqual(upTunnel);
@@ -289,7 +289,7 @@ describe('DualConnectionRouter — relayTunnelStatus()', () => {
   it('local-first: reports down before the relay is booted, then follows it', async () => {
     const { router } = makeRouter('local', { lazyTunnel: upTunnel });
     await router.switchMode('local-browser');
-    // No relay family yet → tunnel is down (build_attach_url stays gated).
+    // No relay family yet → tunnel is down (start_attach stays gated).
     expect(router.relayTunnelStatus()).toEqual({ up: false, wssUrl: null });
     await router.switchMode('relay-staging');
     // After the relay switch the relay family's tunnel status is exposed.
@@ -486,7 +486,7 @@ describe('bootExternalRelayFamily (#378)', () => {
     const family = await bootExternalRelayFamily('https://relay.example');
     expect(family.connection.kind).toBe('relay');
     expect(family.relayOrigin).toBe('external-pwa');
-    // wss derived http→ws so build_attach_url's `up && wssUrl` gate is satisfied
+    // wss derived http→ws so start_attach's `up && wssUrl` gate is satisfied
     // even though we never opened a cloudflared tunnel ourselves.
     expect(family.getTunnelStatus?.()).toEqual({
       up: true,

@@ -13,7 +13,7 @@
  *   - issue #322: list_pages / get_debug_status / measure_safe_area / call_sdk
  *     responses are wrapped in ToolEnvelope {ok, data, meta} when compat mode off.
  *   - issue #322: AIT_MCP_COMPAT=chrome-devtools bypasses the envelope.
- *   - issue #323: build_attach_url appears in tools/list and returns a tier-filter
+ *   - issue #323: start_attach appears in tools/list and returns a tier-filter
  *     error (with debug-mode hand-off hint) on call.
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -133,12 +133,12 @@ describe('createDevServer — tools/list', () => {
   });
 
   // issue #323 — Option B: Tier B tool must appear in dev-mode tools/list
-  it('exposes build_attach_url (Tier B stub) so agents do not hit Unknown tool', async () => {
+  it('exposes start_attach (Tier B stub) so agents do not hit Unknown tool', async () => {
     const { client, cleanup } = await setupDevClient();
     try {
       const { tools } = await client.listTools();
       const names = tools.map((t) => t.name);
-      expect(names).toContain('build_attach_url');
+      expect(names).toContain('start_attach');
     } finally {
       await cleanup();
     }
@@ -491,14 +491,14 @@ describe('CDP-only tools return tier-filter error (not Unknown tool)', () => {
   }
 });
 
-// ---- Tier B tool (build_attach_url) — issue #323 ---------------------------
+// ---- Tier B tool (start_attach) — issue #323 ---------------------------
 
-describe('build_attach_url — Tier B recovery guidance (issue #323)', () => {
+describe('start_attach — Tier B recovery guidance (issue #323)', () => {
   it('returns isError: true with relay/debug mode hand-off hint', async () => {
     const { client, cleanup } = await setupDevClient();
     try {
       const result = await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: { scheme_url: 'intoss-private://my-app?_deploymentId=abc' },
       });
       expect(result.isError).toBe(true);
@@ -512,16 +512,16 @@ describe('build_attach_url — Tier B recovery guidance (issue #323)', () => {
     }
   });
 
-  it('error message includes build_attach_url tool name', async () => {
+  it('error message includes start_attach tool name', async () => {
     const { client, cleanup } = await setupDevClient();
     try {
       const result = await client.callTool({
-        name: 'build_attach_url',
+        name: 'start_attach',
         arguments: { scheme_url: 'intoss-private://my-app?_deploymentId=abc' },
       });
       expect(result.isError).toBe(true);
       const text = (result.content as Array<{ type: string; text: string }>)[0]?.text ?? '';
-      expect(text).toContain('build_attach_url');
+      expect(text).toContain('start_attach');
     } finally {
       await cleanup();
     }

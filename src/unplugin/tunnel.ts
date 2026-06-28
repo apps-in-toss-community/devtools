@@ -272,7 +272,7 @@ export interface StartTunnelDashboardOptions {
 /**
  * Env-2 UX parity with env 3/4 (issue #408): when CDP wiring is on and a GUI is
  * available, start the SAME `127.0.0.1` HTML dashboard (QR image + connect steps
- * + FAQ) that the MCP `build_attach_url` path serves, and auto-open it in the
+ * + FAQ) that the MCP `start_attach` path serves, and auto-open it in the
  * browser. headless / opt-out falls back to the terminal ASCII QR (printed
  * separately by {@link printTunnelBanner}).
  *

@@ -9,7 +9,7 @@
  *    When the URL is unchanged (or unreadable) the warm family is reused.
  *
  * 2. **stale ghost page does NOT short-circuit wait_for_attach**
- *    `isSandboxPageFresh` (the pure function extracted from `build_attach_url`'s
+ *    `isSandboxPageFresh` (the pure function extracted from `start_attach`'s
  *    relay-mobile branch) gates on `lastSeenAt` age. A page whose
  *    `getTargetLastSeenAt` is older than `stalePageThresholdMs` is a ghost —
  *    the predicate returns false so the caller keeps polling.
@@ -20,7 +20,7 @@
  * SECRET-HANDLING: relay URL values in this file are fake test strings. They
  * are never compared against production secrets and contain no real tunnel host.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   CdpCommandMap,
   CdpCommandName,

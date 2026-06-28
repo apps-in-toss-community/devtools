@@ -40,21 +40,22 @@ list_pages → measure_safe_area → call_sdk(getOperationalEnvironment)
 ## attach 절차
 
 1. `ait deploy --scheme-only` → scheme URL 획득
-2. `build_attach_url(scheme_url, wait_for_attach=true)` 호출
+2. `start_attach(scheme_url)` 호출 — QR 생성 + 폰 attach까지 한 번에 (기본으로 attach될 때까지 대기, `wait_timeout_seconds`로 조절)
 3. QR 스캔 → 토스 앱이 dogfood bundle 로드 + relay attach
-4. `list_pages` 확인 후 이후 도구 사용
+4. attach 완료 시 `start_attach`이 그대로 페이지 목록을 반환 — 이후 도구 사용
 
 ## TOTP (선택)
 
 `AIT_DEBUG_TOTP_SECRET` 설정 시 relay 인증 활성화 — relay URL 유출 방어.
 
-- `build_attach_url` 호출 시 현재 유효 TOTP 코드(`at=<code>`)가 attachUrl에 **자동 splice**된다.
-  별도 작업 불필요 — `build_attach_url`을 호출하면 최신 코드가 항상 포함된다.
+- `start_attach` 호출 시 현재 유효 TOTP 코드(`at=<code>`)가 attachUrl에 **자동 splice**된다.
+  별도 작업 불필요 — `start_attach`을 호출하면 최신 코드가 항상 포함된다.
 - 응답에 `totp.expiresAt` (ISO timestamp) 포함 — 이 시각 이후 스캔 시 relay가 인증 실패.
-  만료 시 `build_attach_url`을 재호출하면 새 코드가 포함된 URL을 발급받는다.
+  만료 시 `start_attach`을 재호출하면 새 코드가 포함된 URL을 발급받는다.
+- attach 대기 중 코드가 만료 창에 가까워지면 `start_attach`이 호출 안에서 **TOTP 코드를 자동 재발행**하고 대시보드 QR을 갱신한다 — 대기 중 수동 재호출 불필요(재발행 횟수는 응답의 `totp.reminted`로 노출).
 - 시크릿 값과 `at=` 코드는 절대 stdout/stderr/log 출력 금지.
 
-troubleshooting: QR 스캔했는데 relay가 인증 실패 → `totp.expiresAt` 확인 후 `build_attach_url` 재호출.
+troubleshooting: QR 스캔했는데 relay가 인증 실패 → `totp.expiresAt` 확인 후 `start_attach` 재호출.
 
 ## 트러블슈팅
 

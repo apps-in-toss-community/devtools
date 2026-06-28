@@ -2,7 +2,7 @@
  * Tier A·B tool-registry filtering tests (RFC #277).
  *
  * Verifies:
- *   - `tools/list` filters out Tier B (`build_attach_url`) when env is `mock`.
+ *   - `tools/list` filters out Tier B (`start_attach`) when env is `mock`.
  *   - `tools/list` filters out Tier A tools when env is `relay` (no Tier A
  *     tools are registered yet — guarded by the pure helpers so future Tier A
  *     additions inherit the filter automatically).
@@ -96,7 +96,7 @@ async function makeClient(env: McpEnvironment, attached: boolean): Promise<Clien
 
 describe('tool-registry — pure helpers', () => {
   it('getToolAvailability returns the declared tier per RFC #277', () => {
-    expect(getToolAvailability('build_attach_url')).toBe('relay');
+    expect(getToolAvailability('start_attach')).toBe('relay');
     expect(getToolAvailability('measure_safe_area')).toBe('both');
     expect(getToolAvailability('list_console_messages')).toBe('both');
     expect(getToolAvailability('AIT.getMockState')).toBe('both');
@@ -105,9 +105,9 @@ describe('tool-registry — pure helpers', () => {
 
   it('isToolAvailableIn respects the env decision (relay-live removed #665)', () => {
     // Tier B → relay only (relay-dev and relay-mobile all satisfy it).
-    expect(isToolAvailableIn('build_attach_url', 'relay-dev')).toBe(true);
-    expect(isToolAvailableIn('build_attach_url', 'relay-mobile')).toBe(true);
-    expect(isToolAvailableIn('build_attach_url', 'mock')).toBe(false);
+    expect(isToolAvailableIn('start_attach', 'relay-dev')).toBe(true);
+    expect(isToolAvailableIn('start_attach', 'relay-mobile')).toBe(true);
+    expect(isToolAvailableIn('start_attach', 'mock')).toBe(false);
     // Tier C → both.
     expect(isToolAvailableIn('measure_safe_area', 'relay-dev')).toBe(true);
     expect(isToolAvailableIn('measure_safe_area', 'relay-mobile')).toBe(true);
@@ -122,7 +122,7 @@ describe('tool-registry — pure helpers', () => {
   it('filterToolsByEnvironment hides Tier B in mock and keeps Tier C', () => {
     const mockTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'mock');
     const mockNames = mockTools.map((t) => t.name);
-    expect(mockNames).not.toContain('build_attach_url');
+    expect(mockNames).not.toContain('start_attach');
     expect(mockNames).toContain('measure_safe_area');
     expect(mockNames).toContain('AIT.getMockState');
   });
@@ -130,7 +130,7 @@ describe('tool-registry — pure helpers', () => {
   it('filterToolsByEnvironment keeps Tier B in relay-dev', () => {
     const relayTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay-dev');
     const relayNames = relayTools.map((t) => t.name);
-    expect(relayNames).toContain('build_attach_url');
+    expect(relayNames).toContain('start_attach');
     expect(relayNames).toContain('measure_safe_area');
   });
 
@@ -139,7 +139,7 @@ describe('tool-registry — pure helpers', () => {
   it('filterToolsByEnvironment keeps Tier B in relay-mobile (#378)', () => {
     const relayMobileTools = filterToolsByEnvironment(DEBUG_TOOL_DEFINITIONS, 'relay-mobile');
     const relayMobileNames = relayMobileTools.map((t) => t.name);
-    expect(relayMobileNames).toContain('build_attach_url');
+    expect(relayMobileNames).toContain('start_attach');
     expect(relayMobileNames).toContain('measure_safe_area');
   });
 });
@@ -147,48 +147,48 @@ describe('tool-registry — pure helpers', () => {
 // ----- tools/list integration via MCP client ------------------------------
 
 describe('tools/list — env filtering integration', () => {
-  it('mock env hides build_attach_url (Tier B)', async () => {
+  it('mock env hides start_attach (Tier B)', async () => {
     const client = await makeClient('mock', /*attached*/ true);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).not.toContain('build_attach_url');
+    expect(names).not.toContain('start_attach');
     expect(names).toContain('measure_safe_area');
   });
 
-  it('relay-dev env exposes build_attach_url (Tier B)', async () => {
+  it('relay-dev env exposes start_attach (Tier B)', async () => {
     const client = await makeClient('relay-dev', /*attached*/ true);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).toContain('build_attach_url');
+    expect(names).toContain('start_attach');
     expect(names).toContain('measure_safe_area');
   });
 
   // relay-live removed (#665) — no tools/list test for relay-live.
 
-  it('relay-mobile env exposes build_attach_url (Tier B) — same surface as relay-dev (#378)', async () => {
+  it('relay-mobile env exposes start_attach (Tier B) — same surface as relay-dev (#378)', async () => {
     const client = await makeClient('relay-mobile', /*attached*/ true);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).toContain('build_attach_url');
+    expect(names).toContain('start_attach');
     expect(names).toContain('measure_safe_area');
   });
 
-  it('relay-dev env unattached still exposes bootstrap tools (list_pages, build_attach_url)', async () => {
+  it('relay-dev env unattached still exposes bootstrap tools (list_pages, start_attach)', async () => {
     const client = await makeClient('relay-dev', /*attached*/ false);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).toContain('build_attach_url');
+    expect(names).toContain('start_attach');
     expect(names).toContain('list_pages');
     // Non-bootstrap tools are hidden pre-attach.
     expect(names).not.toContain('measure_safe_area');
   });
 
-  it('mock env unattached hides build_attach_url even though it is a bootstrap tool', async () => {
-    // build_attach_url is BOOTSTRAP_TOOL_NAMES, but Tier filter (env=mock) wins.
+  it('mock env unattached hides start_attach even though it is a bootstrap tool', async () => {
+    // start_attach is BOOTSTRAP_TOOL_NAMES, but Tier filter (env=mock) wins.
     const client = await makeClient('mock', /*attached*/ false);
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).not.toContain('build_attach_url');
+    expect(names).not.toContain('start_attach');
     // list_pages (bootstrap + Tier C) is still listed.
     expect(names).toContain('list_pages');
   });
@@ -202,7 +202,7 @@ describe('tools/list — env derived from connection.kind (issue #348)', () => {
    * the ACTIVE connection's `kind` (relay → relay-dev, local → mock). This
    * replaces the deleted `defaultEnv`/URL-sniffing precedence chain. The key
    * M2-5 property survives: a relay-kind connection advertises Tier B
-   * `build_attach_url` from the very first `tools/list`, before any attach.
+   * `start_attach` from the very first `tools/list`, before any attach.
    */
   async function makeRealEnvClient(opts: {
     attached: boolean;
@@ -238,13 +238,13 @@ describe('tools/list — env derived from connection.kind (issue #348)', () => {
     else process.env.MCP_ENV = originalEnv;
   });
 
-  it('relay-kind connection exposes build_attach_url on first tools/list — unattached', async () => {
+  it('relay-kind connection exposes start_attach on first tools/list — unattached', async () => {
     const client = await makeRealEnvClient({ attached: false, kind: 'relay' });
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    // Tier B `build_attach_url` listed because kind=relay → relay-dev env,
+    // Tier B `start_attach` listed because kind=relay → relay-dev env,
     // even before any target attaches (the M2-5 property, now kind-derived).
-    expect(names).toContain('build_attach_url');
+    expect(names).toContain('start_attach');
     expect(names).toContain('list_pages');
     expect(names).toContain('get_debug_status');
     expect(names).toContain('start_debug');
@@ -252,20 +252,20 @@ describe('tools/list — env derived from connection.kind (issue #348)', () => {
     expect(names).not.toContain('measure_safe_area');
   });
 
-  it('local-kind connection keeps build_attach_url hidden (mock env)', async () => {
+  it('local-kind connection keeps start_attach hidden (mock env)', async () => {
     const client = await makeRealEnvClient({ attached: false, kind: 'local' });
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).not.toContain('build_attach_url');
+    expect(names).not.toContain('start_attach');
     expect(names).toContain('list_pages');
     expect(names).toContain('start_debug');
   });
 
-  it('relay-kind attached exposes build_attach_url + attach-dependent tools', async () => {
+  it('relay-kind attached exposes start_attach + attach-dependent tools', async () => {
     const client = await makeRealEnvClient({ attached: true, kind: 'relay' });
     const list = await client.listTools();
     const names = list.tools.map((t) => t.name);
-    expect(names).toContain('build_attach_url');
+    expect(names).toContain('start_attach');
     expect(names).toContain('measure_safe_area');
   });
 });
@@ -273,17 +273,19 @@ describe('tools/list — env derived from connection.kind (issue #348)', () => {
 // ----- tools/call env-mismatch rejection -----------------------------------
 
 describe('tools/call — env mismatch rejection', () => {
-  it('rejects build_attach_url in mock env with reason text', async () => {
+  it('rejects start_attach in mock env (relay-only) with reason text', async () => {
+    // start_attach is handled before the env-mismatch guard (its `mode` arg can
+    // switch FROM mock), so a no-mode call in mock env returns the handler's own
+    // relay-only error rather than the generic tierRejectionError (#626).
     const client = await makeClient('mock', /*attached*/ true);
     const result = await client.callTool({
-      name: 'build_attach_url',
+      name: 'start_attach',
       arguments: { scheme_url: 'intoss-private://miniapp?_deploymentId=xyz' },
     });
     expect(result.isError).toBe(true);
     const text = (result.content as Array<{ text?: string }>)[0]?.text ?? '';
-    expect(text).toContain('build_attach_url');
-    expect(text).toContain('available only in relay');
-    expect(text).toContain('Current environment is mock');
+    expect(text).toContain('start_attach');
+    expect(text).toContain('relay 전용');
   });
 
   it('does NOT reject Tier C tools (measure_safe_area) for env mismatch', async () => {

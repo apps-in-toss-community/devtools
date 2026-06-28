@@ -234,7 +234,7 @@ ait deploy --scheme-only
 # → intoss-private://aitc-sdk-example?_deploymentId=<uuid> 출력
 
 # 4. relay URL 포함 deep-link 생성
-# build_attach_url 도구로 scheme URL + debug=1&relay=<wss> 생성
+# start_attach 도구로 scheme URL + debug=1&relay=<wss> 생성
 
 # 5. QR 스캔 (단일 정식 경로)
 # 실기기 토스 앱에서 QR 스캔
@@ -243,7 +243,7 @@ ait deploy --scheme-only
 ### 검증 명령
 
 ```
-1. build_attach_url(scheme_url, wait_for_attach=true)
+1. start_attach(scheme_url)   # QR 생성 + 폰 attach까지 한 번에 (기본 대기)
 2. list_pages
 3. measure_safe_area
 4. call_sdk("getOperationalEnvironment", [])
@@ -302,7 +302,7 @@ ait deploy --scheme-only
 
 | 증상 | 원인 | 처리 |
 |---|---|---|
-| `list_pages` 빈 배열 | relay attach 미완료 | `wait_for_attach=true` 확인, QR 재스캔 |
+| `list_pages` 빈 배열 | relay attach 미완료 | `start_attach`이 attach까지 대기하므로 QR 재스캔(필요 시 `wait_timeout_seconds` 상향) |
 | `call_sdk` `ok: false` | dogfood bundle이 아닌 일반 bundle | `ait deploy` 재실행 후 deep-link 갱신 |
 | `sdkInsets.top` 0 | non-dogfood 경로 (bridge 없음) | 환경 3 진입 경로(QR/deep-link) 확인 |
 | TOTP 인증 실패 | `AIT_DEBUG_TOTP_SECRET` 미설정 또는 불일치 | relay 서버와 동일 시크릿 확인 |

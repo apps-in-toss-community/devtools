@@ -73,7 +73,7 @@ export interface TunnelStatus {
  * - **Tier A** (`mock` only) — mock-internal state dials with no real-device
  *   equivalent. Hidden when env is `relay`.
  * - **Tier B** (`relay` only) — relay infrastructure tools that have no mock
- *   equivalent (e.g. `build_attach_url` needs a cloudflared tunnel URL). Hidden
+ *   equivalent (e.g. `start_attach` needs a cloudflared tunnel URL). Hidden
  *   when env is `mock`.
  * - **Tier C** (`both`) — fidelity-parallel tools that produce semantically
  *   equivalent results across mock and relay. The agent sees the same tool with
@@ -126,34 +126,35 @@ export const DEBUG_TOOL_DEFINITIONS = [
     availableIn: 'both' as ToolAvailability,
   },
   {
-    name: 'build_attach_url',
+    name: 'start_attach',
     description:
       "The tool result already shows the QR to the user directly (Claude Code renders MCP tool output to the user's screen; they press Ctrl+O to expand if it's collapsed). Do NOT re-print or re-render the QR in your reply — that just wastes output tokens. Simply tell the user to scan the QR shown in this tool's output with their phone camera. " +
-      'Builds a self-attaching deep-link for the active relay environment and returns a QR code. ' +
+      'Single entry point to attach a real device: switches the debug mode (if `mode` is given), ' +
+      'builds the self-attaching deep-link QR for the active relay environment, and waits for the ' +
+      'phone to attach — all in one call (replaces the old attach-URL + start_debug two-step). ' +
       'Scan the QR with the phone camera to open the mini-app and attach it to this debug session ' +
-      '(QR is the single entry path — no USB cable or platform CLI needed). ' +
-      'Call list_pages first to confirm the relay/tunnel is up. If the tunnel is not up, restart: ' +
-      '`npx @ait-co/devtools devtools-mcp`.\n\n' +
+      '(QR is the single entry path — no USB cable or platform CLI needed).\n\n' +
+      'mode (optional): pass "relay-sandbox" (env 2) or "relay-staging" (env 3) to switch the active ' +
+      'environment first. When omitted, the current relay environment is used as-is (no switch). ' +
+      'Passing "local-browser" returns an error — start_attach is relay-only (env 2/3). ' +
+      'When the session is already in the requested mode, the switch is skipped.\n\n' +
       'Environment-specific behaviour:\n' +
-      '  • env 3 / relay-staging (start_debug mode="relay-staging"): requires scheme_url — the ' +
-      'intoss-private://…?_deploymentId=<uuid> URL from `ait deploy --scheme-only`. Splices ' +
-      'debug=1 + relay URL into the scheme URL to produce a self-attach deep-link.\n' +
-      '  • env 2 / relay-sandbox (start_debug mode="relay-sandbox"): scheme_url is NOT used. Instead, reads ' +
-      'AIT_TUNNEL_BASE_URL (the https://*.trycloudflare.com app tunnel from `tunnel:{cdp:true}`) ' +
-      'and builds a launcher PWA deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). ' +
-      'When projectRoot is given, the app name from <projectRoot>/package.json is automatically added as name= so the launcher partner bar shows it. ' +
-      'Scan the QR with the phone to open the launcher, which frames the tunnel URL and attaches CDP.\n\n' +
-      'Set wait_for_attach=true to block until a page attaches (default 60 s, adjustable via wait_timeout_seconds). ' +
-      'On timeout, call build_attach_url again to resume polling. ' +
+      '  • env 3 / relay-staging: requires scheme_url — the intoss-private://…?_deploymentId=<uuid> ' +
+      'URL from `ait deploy --scheme-only`. Splices debug=1 + relay URL into the scheme URL.\n' +
+      '  • env 2 / relay-sandbox: scheme_url is NOT used. Instead, reads AIT_TUNNEL_BASE_URL ' +
+      '(the https://*.trycloudflare.com app tunnel from `tunnel:{cdp:true}`) and builds a launcher PWA ' +
+      'deep-link (https://devtools.aitc.dev/launcher/?url=…&debug=1&relay=…). When projectRoot is given, ' +
+      'the app name from <projectRoot>/package.json is added as name= so the launcher partner bar shows it.\n\n' +
+      'Waits for a page to attach by default (up to wait_timeout_seconds, default 60 s). ' +
       'The server automatically opens the QR dashboard in the OS default browser when running on a ' +
       'local GUI machine — headless/remote environments fall back to the text QR in the tool output.' +
-      '\n\nTOTP auth: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the returned attachUrl ' +
-      'automatically includes the current one-time code (at=<code>). The code is valid for ~3 minutes ' +
-      '(the relay gate accepts ±6 TOTP steps = 180–210 s of backwards acceptance). ' +
-      'The response includes a `totp` field with `expiresAt` (ISO timestamp, ~3 min from issuance). ' +
-      'If the phone scan happens after expiresAt, the relay will reject the code — just call ' +
-      'build_attach_url again to get a fresh URL. ' +
-      'Without AIT_DEBUG_TOTP_SECRET, the attachUrl has no expiry.\n\n' +
+      '\n\nTOTP auto re-mint: when AIT_DEBUG_TOTP_SECRET is set on the MCP server, the attachUrl carries ' +
+      'a one-time code (at=<code>) valid for ~3 minutes (the relay gate accepts ±6 TOTP steps). ' +
+      'While waiting, start_attach AUTOMATICALLY re-mints a fresh code before the current one expires ' +
+      'and refreshes the dashboard QR in place (no browser re-open). You do NOT need to re-call ' +
+      'start_attach every time the code would expire — a single call covers the whole wait window. ' +
+      'The response includes a `totp` field with `expiresAt` and a `reminted` count of how many fresh ' +
+      'codes were issued during the wait. Without AIT_DEBUG_TOTP_SECRET, the attachUrl has no expiry.\n\n' +
       'selfdebug (env 2 / relay-sandbox only): pass selfdebug=true to add &selfdebug=1 to the ' +
       'launcher deep-link. The launcher PWA then registers its own document as the CDP target ' +
       'instead of the framed mini-app. SINGLE-ATTACH MODEL: attaching the launcher self-target ' +
@@ -163,6 +164,14 @@ export const DEBUG_TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
+        mode: {
+          type: 'string',
+          enum: ['local-browser', 'relay-sandbox', 'relay-staging'],
+          description:
+            'Optional debug mode to switch into before attaching. "relay-sandbox" = env 2 (launcher PWA), ' +
+            '"relay-staging" = env 3 (intoss-private dog-food). "local-browser" returns an error ' +
+            '(start_attach is relay-only). Omit to keep the current relay environment.',
+        },
         scheme_url: {
           type: 'string',
           description:
@@ -171,19 +180,12 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'The authority (host) must be the app name (e.g. intoss-private://aitc-sdk-example?_deploymentId=…). ' +
             'Generic values like "web" or an empty host indicate a malformed URL.',
         },
-        wait_for_attach: {
-          type: 'boolean',
-          description:
-            'If true, block after returning the QR until a page attaches to the relay (polls ' +
-            'listTargets ~1 s interval, default 60 s). On attach, the response includes the ' +
-            'attached page list. On timeout, call build_attach_url again to resume polling.',
-        },
         wait_timeout_seconds: {
           type: 'number',
           description:
-            'Maximum seconds to wait when wait_for_attach=true (default 60, range 1–600). ' +
+            'Maximum seconds to wait for a page to attach (default 60, range 1–600). ' +
             'Values outside the range or invalid inputs (0, negative, NaN) fall back to the default silently. ' +
-            'Only meaningful when wait_for_attach=true.',
+            'During the wait the TOTP code is auto re-minted as needed, so a single call covers the whole window.',
         },
         projectRoot: {
           type: 'string',
@@ -201,11 +203,11 @@ export const DEBUG_TOOL_DEFINITIONS = [
             'SINGLE-ATTACH MODEL: self-target attach evicts any currently-attached mini-app target. ' +
             'Use only when you need to inspect the launcher itself (DOM, safe-area, console). ' +
             'Passing selfdebug=true in env 3 (relay-staging) returns an error. ' +
-            'Default: false (omitted — output is byte-identical to previous behaviour).',
+            'Default: false (omitted).',
         },
       },
-      // scheme_url is required only for env 3/relay-staging; env 2/relay-sandbox uses AIT_TUNNEL_BASE_URL.
-      // The handler enforces the requirement at runtime based on the active environment.
+      // No required fields — mode/scheme_url requirements are enforced at runtime
+      // based on the active (or switched-into) relay environment.
       required: [],
     },
     // Tier B per RFC #277 — the URL synthesis requires a live cloudflared
@@ -408,7 +410,7 @@ export const DEBUG_TOOL_DEFINITIONS = [
       'follow that hint and restart the MCP server in relay-sandbox mode rather than retrying. ' +
       'Prerequisites: both AIT_RELAY_BASE_URL (the relay base the unplugin emits when started ' +
       'with tunnel:{cdp:true}, used for the CDP attach) and AIT_TUNNEL_BASE_URL (the dev-server ' +
-      'tunnel host, required by build_attach_url to render the launcher QR) must be set before ' +
+      'tunnel host, required by start_attach to render the launcher QR) must be set before ' +
       'the MCP server starts — the unplugin does not auto-forward either; set them explicitly. ' +
       'Both carry relay/tunnel hosts (secret-class) — keep them out of logs.\n' +
       '  relay-staging — env 3: a real-device Toss WebView dog-food build with the REAL SDK over the ' +
@@ -588,14 +590,14 @@ export function filterToolsByEnvironment<T extends { name: string; availableIn: 
 /**
  * Tool names that are available before any page attaches (bootstrap tier).
  *
- * `build_attach_url` — pure URL synthesis, no attach needed.
- * `list_pages`       — reports tunnel status + empty pages even pre-attach.
+ * `start_attach` — mode switch + QR synthesis + attach wait, no prior attach needed.
+ * `list_pages`   — reports tunnel status + empty pages even pre-attach.
  *
  * All other tools require an attached page (`enableDomains` must succeed) and
  * are only advertised in `tools/list` once a target appears.
  */
 export const BOOTSTRAP_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
-  'build_attach_url',
+  'start_attach',
   'get_debug_status',
   'list_pages',
   // start_debug must be visible from the very first tools/list (before any
@@ -822,7 +824,7 @@ export function listPages(connection: CdpConnection, tunnel: TunnelStatus): List
   return { pages, tunnel, crashDetectedAt, crashWarning, singleAttachModel: true };
 }
 
-/** A `build_attach_url` result: the spliced deep-link the phone should open. */
+/** A `buildAttachUrl()` result: the spliced deep-link the phone should open. */
 export interface BuildAttachUrlResult {
   /** The scheme URL with `debug=1&relay=<wss>[&at=<totp-code>]` spliced in. */
   attachUrl: string;
@@ -846,7 +848,7 @@ export interface BuildAttachUrlResult {
     enabled: true;
     /** RFC 6238 step duration in seconds. */
     ttlSeconds: number;
-    /** ISO timestamp when the current step expires. Rescan or call build_attach_url again after this. */
+    /** ISO timestamp when the current step expires. start_attach auto re-mints before this elapses. */
     expiresAt: string;
   };
 }
@@ -859,8 +861,8 @@ export interface BuildAttachUrlResult {
  * When `AIT_DEBUG_TOTP_SECRET` is set, generates the current TOTP code and
  * splices it as `at=<code>` into the attach URL. The code is valid for ~3
  * minutes (the relay gate uses {@link RELAY_VERIFY_SKEW_STEPS}=6, accepting
- * past 6 steps = 180–210 s backwards from issuance). If the scan happens after
- * `totp.expiresAt`, call `build_attach_url` again to get a fresh code (#490).
+ * past 6 steps = 180–210 s backwards from issuance). The start_attach handler
+ * auto re-mints a fresh code before `totp.expiresAt` elapses during its wait (#490).
  *
  * Also validates the scheme URL's authority. A suspicious authority (empty,
  * "web", "localhost", etc.) is surfaced as a non-fatal `authorityWarning` on
@@ -1762,7 +1764,7 @@ export interface AuthRejectsSnapshot {
  * state snapshot. `null` means the session looks healthy — no specific action needed.
  */
 export interface NextRecommendedAction {
-  /** MCP tool name to call next (e.g. `'build_attach_url'`, `'restart'`). */
+  /** MCP tool name to call next (e.g. `'start_attach'`, `'restart'`). */
   tool: string;
   /** Human-readable reason explaining why this action is recommended. */
   reason: string;
@@ -1850,9 +1852,9 @@ export interface DiagnosticsResult {
    *   0. tunnel.droppedAt non-null                   → restart (permanent tunnel drop)
    *   1. tunnel.up === false AND relay env            → restart
    *   1b. tunnel.up === false AND mock env, no pages  → wait_for_page (local target is tunnel-less)
-   *   2a. authRejects.count > 0 AND pages empty       → build_attach_url (TOTP 거부 — QR 재스캔 안내)
-   *   2. tunnel.up, pages empty, env === relay        → build_attach_url
-   *   3. pages[0] exists + crashDetectedAt non-null   → build_attach_url (re-attach)
+   *   2a. authRejects.count > 0 AND pages empty       → start_attach (TOTP 거부 — QR 재스캔 안내)
+   *   2. tunnel.up, pages empty, env === relay        → start_attach
+   *   3. pages[0] exists + crashDetectedAt non-null   → start_attach (re-attach)
    *   4. otherwise                                    → null
    */
   nextRecommendedAction: NextRecommendedAction | null;
@@ -2042,10 +2044,10 @@ export function readDevtoolsVersion(): string | null {
  *   0. tunnel.droppedAt non-null                  → restart (permanent tunnel drop — highest priority)
  *   1. tunnel.up === false AND env is relay       → restart (relay needs a live tunnel)
  *   1b. tunnel.up === false AND env is mock       → wait_for_page (local target: tunnel-less is normal)
- *   2a. authRejects.count > 0 AND pages empty     → build_attach_url (relay TOTP 거부 관측 — QR 재스캔
+ *   2a. authRejects.count > 0 AND pages empty     → start_attach (relay TOTP 거부 관측 — QR 재스캔
  *       또는 target-side `at` 전달 확인. 일반 rule 2보다 구체적이므로 먼저 평가 — issue #467)
- *   2. tunnel.up, pages empty, env === relay      → build_attach_url (start attach)
- *   3. pages has entry + crashDetectedAt non-null → build_attach_url (re-attach after crash)
+ *   2. tunnel.up, pages empty, env === relay      → start_attach (start attach)
+ *   3. pages has entry + crashDetectedAt non-null → start_attach (re-attach after crash)
  *   4. otherwise                                  → null (session looks healthy)
  *
  * Pure — does not throw; receives the final assembled snapshot fields.
@@ -2098,11 +2100,11 @@ export function computeNextRecommendedAction(
 
   // Rule 2a (issue #467): auth rejections observed while no page is attached —
   // the phone DID reach the relay but its TOTP verification failed. Without
-  // this rule the generic rule 2 ("call build_attach_url") hides the rejection
+  // this rule the generic rule 2 ("call start_attach") hides the rejection
   // and the diagnosis runs the wrong way ("the phone never arrived").
   if (authRejects !== null && authRejects.count > 0 && pages !== null && pages.pages.length === 0) {
     return {
-      tool: 'build_attach_url',
+      tool: 'start_attach',
       reason:
         `relay 인증(TOTP) 거부 ${authRejects.count}건 발생 (last ${authRejects.lastAt ?? 'unknown'}) — ` +
         'QR을 다시 스캔해 새 코드로 attach하세요(코드는 ~3분마다 만료). 반복되면 폰 페이지 URL에 ' +
@@ -2113,16 +2115,16 @@ export function computeNextRecommendedAction(
   // Rule 2: tunnel up but no pages attached in relay env → start attach.
   if (isRelayEnv(env) && pages !== null && pages.pages.length === 0 && !pages.crashDetectedAt) {
     return {
-      tool: 'build_attach_url',
-      reason: 'tunnel ready, no pages attached — call build_attach_url to generate the attach QR',
+      tool: 'start_attach',
+      reason: 'tunnel ready, no pages attached — call start_attach to generate the attach QR',
     };
   }
 
   // Rule 3: crash detected — need to re-attach.
   if (pages !== null && pages.crashDetectedAt !== null) {
     return {
-      tool: 'build_attach_url',
-      reason: `page crashed at ${pages.crashDetectedAt} — call build_attach_url to re-attach`,
+      tool: 'start_attach',
+      reason: `page crashed at ${pages.crashDetectedAt} — call start_attach to re-attach`,
     };
   }
 
