@@ -52,14 +52,170 @@ export interface RunReport {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Asymmetric matchers (devtools#692)                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Brand property that tags asymmetric matcher markers (`expect.any(String)`,
+ * `expect.objectContaining(...)`, etc). A reserved string key is used as the
+ * brand so the guard stays a plain own-property check — markers are only ever
+ * compared in-process by reference, so no cross-realm Symbol coordination is
+ * needed.
+ */
+const ASYMMETRIC_BRAND = '$$asymmetricMatch' as const;
+
+/**
+ * An asymmetric matcher: a placeholder that, when found on the `expected` side
+ * of a deep comparison, runs its own `asymmetricMatch(actual)` predicate
+ * instead of being structurally compared as a plain object. This is what makes
+ * `toMatchObject({ hash: expect.any(String) })` match any string `hash`.
+ */
+interface AsymmetricMatcher {
+  /** Brand discriminator — present only on asymmetric markers. */
+  [ASYMMETRIC_BRAND]: true;
+  /** Human-readable label used in failure messages. */
+  toString(): string;
+  /** Returns true when `actual` satisfies this matcher. */
+  asymmetricMatch(actual: unknown): boolean;
+}
+
+/** Narrowing guard: is `v` an asymmetric matcher marker? */
+function isAsymmetric(v: unknown): v is AsymmetricMatcher {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    (v as Record<string, unknown>)[ASYMMETRIC_BRAND] === true &&
+    typeof (v as { asymmetricMatch?: unknown }).asymmetricMatch === 'function'
+  );
+}
+
+/** The widest constructor type TypeScript allows without `any` (see toBeInstanceOf). */
+type AnyCtor = abstract new (...args: never) => unknown;
+
+/**
+ * `expect.any(Ctor)` — matches a value by its constructor. Primitive wrappers
+ * (`String`/`Number`/`Boolean`) are matched by `typeof` (so the unboxed
+ * primitive matches) AND by `instanceof` (so a boxed wrapper instance also
+ * matches). `BigInt`/`Symbol` match by `typeof`. `Object` matches any non-null
+ * object (NOT functions, matching vitest), `Array` uses `Array.isArray`,
+ * `Function` uses `typeof === 'function'`, and any other constructor (user
+ * classes) falls back to `instanceof`.
+ */
+function makeAny(ctor: AnyCtor): AsymmetricMatcher {
+  const name = (ctor as { name?: string }).name ?? String(ctor);
+  const ctorAsFn = ctor as unknown as (new (...args: unknown[]) => unknown) | undefined;
+  return {
+    [ASYMMETRIC_BRAND]: true,
+    toString: () => `Any<${name}>`,
+    asymmetricMatch(actual: unknown): boolean {
+      if (actual === null || actual === undefined) return false;
+      switch (ctor as unknown) {
+        case String:
+          return typeof actual === 'string' || actual instanceof String;
+        case Number:
+          return typeof actual === 'number' || actual instanceof Number;
+        case Boolean:
+          return typeof actual === 'boolean' || actual instanceof Boolean;
+        case BigInt:
+          return typeof actual === 'bigint';
+        case Symbol:
+          return typeof actual === 'symbol';
+        case Function:
+          return typeof actual === 'function';
+        case Object:
+          // Match vitest: `expect.any(Object)` accepts objects only, NOT
+          // functions (vitest checks `typeof other === 'object'`). `null` is
+          // already excluded by the guard above.
+          return typeof actual === 'object';
+        case Array:
+          return Array.isArray(actual);
+        default:
+          return ctorAsFn ? actual instanceof ctorAsFn : false;
+      }
+    },
+  };
+}
+
+/** `expect.anything()` — matches any value except `null`/`undefined`. */
+function makeAnything(): AsymmetricMatcher {
+  return {
+    [ASYMMETRIC_BRAND]: true,
+    toString: () => 'Anything',
+    asymmetricMatch: (actual: unknown): boolean => actual !== null && actual !== undefined,
+  };
+}
+
+/** `expect.objectContaining(obj)` — partial-match every key of `obj` on `actual`. */
+function makeObjectContaining(expected: Record<string, unknown>): AsymmetricMatcher {
+  return {
+    [ASYMMETRIC_BRAND]: true,
+    toString: () => `ObjectContaining<${safeStringify(expected)}>`,
+    asymmetricMatch: (actual: unknown): boolean => deepMatchObject(actual, expected),
+  };
+}
+
+/** `expect.arrayContaining(arr)` — `actual` is an array containing each element of `arr`. */
+function makeArrayContaining(expected: unknown[]): AsymmetricMatcher {
+  return {
+    [ASYMMETRIC_BRAND]: true,
+    toString: () => `ArrayContaining<${safeStringify(expected)}>`,
+    asymmetricMatch(actual: unknown): boolean {
+      if (!Array.isArray(actual)) return false;
+      return expected.every((exp) =>
+        actual.some((act) => (isAsymmetric(exp) ? exp.asymmetricMatch(act) : deepEqual(act, exp))),
+      );
+    },
+  };
+}
+
+/** `expect.stringContaining(sub)` — `actual` is a string containing `sub`. */
+function makeStringContaining(sub: string): AsymmetricMatcher {
+  return {
+    [ASYMMETRIC_BRAND]: true,
+    toString: () => `StringContaining<${sub}>`,
+    asymmetricMatch: (actual: unknown): boolean =>
+      typeof actual === 'string' && actual.includes(sub),
+  };
+}
+
+/** `expect.stringMatching(re)` — `actual` is a string matching `re` (string or RegExp). */
+function makeStringMatching(re: string | RegExp): AsymmetricMatcher {
+  const pattern = typeof re === 'string' ? new RegExp(re) : re;
+  return {
+    [ASYMMETRIC_BRAND]: true,
+    toString: () => `StringMatching<${String(pattern)}>`,
+    asymmetricMatch: (actual: unknown): boolean =>
+      typeof actual === 'string' && pattern.test(actual),
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Deep equality helpers                                                        */
 /* -------------------------------------------------------------------------- */
+
+/** JSON.stringify that never throws (cycles/BigInt) — for failure messages. */
+function safeStringify(v: unknown): string {
+  try {
+    return (
+      JSON.stringify(v, (_k, val) =>
+        isAsymmetric(val) ? val.toString() : typeof val === 'bigint' ? `${val}n` : val,
+      ) ?? String(v)
+    );
+  } catch {
+    return String(v);
+  }
+}
 
 /**
  * Recursive structural equality — replaces JSON.stringify comparison to
  * handle key-order differences and undefined values correctly.
+ *
+ * When the `b` (expected) side is an asymmetric marker, its `asymmetricMatch`
+ * predicate decides the result instead of structural comparison — markers are
+ * placeholders, not plain objects, so deep-comparing them never matches.
  */
 function deepEqual(a: unknown, b: unknown): boolean {
+  if (isAsymmetric(b)) return b.asymmetricMatch(a);
   if (Object.is(a, b)) return true;
   if (a === null || b === null) return false;
   if (typeof a !== 'object' || typeof b !== 'object') return false;
@@ -88,8 +244,12 @@ function deepEqual(a: unknown, b: unknown): boolean {
 /**
  * Partial-match: every key in `expected` must exist in `received` with a
  * recursively matching value. Extra keys in `received` are ignored.
+ *
+ * As in `deepEqual`, an asymmetric marker on the `expected` side delegates to
+ * its `asymmetricMatch` predicate rather than being compared structurally.
  */
 function deepMatchObject(received: unknown, expected: unknown): boolean {
+  if (isAsymmetric(expected)) return expected.asymmetricMatch(received);
   if (Object.is(received, expected)) return true;
   if (expected === null || received === null) return Object.is(received, expected);
   if (typeof expected !== 'object' || typeof received !== 'object')
@@ -280,10 +440,35 @@ class Expectation {
   }
 }
 
-/** The `expect` function installed as a global. */
-function expect(received: unknown): Expectation {
-  return new Expectation(received);
+/**
+ * The `expect` callable plus its asymmetric-matcher static surface
+ * (`expect.any`, `expect.objectContaining`, …). The user file accesses these as
+ * `expect.any(String)`; the vitest redirect (`bundle.ts`) re-exports `expect` by
+ * reading `globalThis.expect`, so attaching the statics to this function object
+ * makes them reachable through the getter (a function's own properties survive
+ * the getter that returns the function itself).
+ */
+interface ExpectStatic {
+  (received: unknown): Expectation;
+  any(ctor: AnyCtor): AsymmetricMatcher;
+  anything(): AsymmetricMatcher;
+  objectContaining(expected: Record<string, unknown>): AsymmetricMatcher;
+  arrayContaining(expected: unknown[]): AsymmetricMatcher;
+  stringContaining(sub: string): AsymmetricMatcher;
+  stringMatching(re: string | RegExp): AsymmetricMatcher;
 }
+
+/** The `expect` function installed as a global. */
+const expect: ExpectStatic = ((received: unknown): Expectation =>
+  new Expectation(received)) as ExpectStatic;
+
+// Asymmetric matcher statics — vitest-compatible surface (devtools#692).
+expect.any = makeAny;
+expect.anything = makeAnything;
+expect.objectContaining = makeObjectContaining;
+expect.arrayContaining = makeArrayContaining;
+expect.stringContaining = makeStringContaining;
+expect.stringMatching = makeStringMatching;
 
 /* -------------------------------------------------------------------------- */
 /* describe / it / test registry                                               */
