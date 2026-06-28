@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.111
+
+### Patch Changes
+
+- 81c660c: fix(mcp): redact at= TOTP code from list_pages / get_debug_status page url
+- a25722a: tunnel:{cdp:true} 첫 실행 및 재로드 시 .ait_relay / .ait_urls 를 프로젝트 .gitignore에 자동 추가(멱등, 실패 시 graceful 강등)
+
 ## 0.1.110
 
 ### Patch Changes
