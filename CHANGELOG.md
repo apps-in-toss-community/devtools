@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.1.116
+
+### Patch Changes
+
+- 26d77e3: feat(test-runner): devtools-test CLI standalone relay attach 배선 (#684 PR3)
+
+  `devtools-test` bin의 `main()` stub를 완전 구현으로 교체한다. 이제 MCP 데몬 없이
+  CLI 단독으로 env3(실기기 토스 WebView)에서 `.ait.test` 슈트를 실행할 수 있다.
+
+  - `src/test-runner/cli.ts` — main() 9단계 구현: parseArgs → discoverTestFiles →
+    loadRelaySecretReadOnly → bootRelayFamily → AttachDeps 조립(qrHttpServer 미주입) →
+    prepareAttach → renderAndMaybeWait(text QR + 폰 대기) → injectGlobals(**AIT_CELL**) →
+    runWithConnection → family.stop(). CLI는 daemon이 아니므로 lock/router/SSE 불필요.
+  - `src/test-runner/cell.ts` (신규) — `injectGlobals(conn, globals)`: attach 직후
+    첫 번들 inject 전에 `Runtime.evaluate`로 globalThis에 cell 객체를 박는 일반 helper.
+    devtools는 `__AIT_CELL__` 모양을 모르고 일반 `Record<string, unknown>`만 다룬다.
+  - 새 CLI 플래그: `--scheme-url`, `--cell-sdk-line`, `--cell-platform`, `--headless`,
+    `--project-root` (AIT_CELL_PLATFORM env fallback 지원).
+  - install-graph 불변식 유지: dist/test-runner/cli.js에 react/react-dom 0건.
+    qrHttpServer 미주입 → text QR(qrcode-terminal) 경로를 renderAndMaybeWait이 처리.
+    esbuild lazy import 유지.
+
+  sdk-example의 `test:env3` 스크립트는 이 PR에 포함하지 않는다 — devtools PR3 머지 후
+  sdk-example repo 별도 PR에서 추가한다(cross-repo 분리).
+
+- 6b64fa3: feat(run_tests): auto-attach when no page is connected (issue #684 PR2)
+
+  `run_tests` now auto-attaches to a phone when there is no live CDP page, instead
+  of immediately returning `pageMissingError`. The attach branch fires only in relay
+  environments (env 3/relay-dev) and only when `isSandboxPageFresh` confirms there
+  is no live page (ghost-page safe via the stale-threshold guard from #610).
+
+  - **Already-attached path (4a) is unchanged** — existing behaviour, no regression.
+  - **Auto-attach path (4b)**: no live page + relay env → calls `prepareAttach` +
+    `renderAndMaybeWait` (QR dashboard + phone wait), then optionally injects a
+    `cell` object via `injectGlobals` into `globalThis` before the first test bundle
+    runs, then proceeds with the normal run path.
+  - **Mock/local guidance path (4c)**: no live page + mock env → returns a clear
+    guidance error (mock has no relay, auto-attach not applicable).
+
+  New module `src/test-runner/cell.ts` exports `injectGlobals(conn, globals)` — a
+  react-free, CdpConnection-only helper that atomically assigns any record onto
+  `globalThis` via a single `Runtime.evaluate` before test bundles are injected.
+  Callers use `{ "__AIT_CELL__": { sdkLine, platform } }` — devtools does not know
+  the sdk-example-specific shape.
+
+  `run_tests` descriptor gains three optional args: `scheme_url`, `cell`, `projectRoot`
+  context for the auto-attach flow. `availableIn` stays `both`.
+
+- 74e9606: test-runner `expect`에 asymmetric matcher(`expect.any`/`anything`/`objectContaining`/`arrayContaining`/`stringContaining`/`stringMatching`)를 추가했습니다 (#692). deep-equal 헬퍼(`toMatchObject`/`toEqual`/`toHaveProperty`)가 expected 쪽 marker를 인식해 구조 비교 대신 marker의 `asymmetricMatch`로 매칭하며, `not` 부정도 동작합니다. 실기기에서 `expect.any(String)` 등을 쓰는 `.ait.test` 파일이 `expect.any is not a function`으로 깨지던 문제가 풀립니다.
+- a899993: attach 오케스트레이션을 `createDebugServer` 클로저에서 `src/mcp/attach-orchestrator.ts` 모듈로 추출했습니다 (#684 PR1). attach URL mint·env 검증·QR 렌더·segmented wait(in-call TOTP re-mint)이 6개 클로저 변수를 명시적 `AttachDeps` 객체로 받는 모듈 레벨 함수가 되어, MCP `start_attach` 핸들러 밖에서도 재사용할 수 있습니다. `createDebugServer`는 자기 클로저 변수로 `attachDeps`를 조립해 호출하는 얇은 래퍼가 됐고, 동작은 100% 동일합니다 — 순수 리팩터(행동 무변경).
+
 ## 0.1.115
 
 ### Patch Changes
