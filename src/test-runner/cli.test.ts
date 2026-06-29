@@ -30,8 +30,10 @@ vi.mock('./discover.js', () => ({
 }));
 
 const injectGlobalsMock = vi.fn((..._args: unknown[]) => Promise.resolve());
+const injectDebugIndicatorMock = vi.fn((..._args: unknown[]) => Promise.resolve());
 vi.mock('./cell.js', () => ({
   injectGlobals: (...args: unknown[]) => injectGlobalsMock(...args),
+  injectDebugIndicator: (...args: unknown[]) => injectDebugIndicatorMock(...args),
 }));
 
 const runTestFilesOverRelayMock = vi.fn();

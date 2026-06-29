@@ -15,7 +15,7 @@ import { parseArgs } from 'node:util';
 import type { AttachDeps, PrepareAttachResult } from '../mcp/attach-orchestrator.js';
 import { prepareAttach, renderAndMaybeWait } from '../mcp/attach-orchestrator.js';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
-import { injectGlobals } from './cell.js';
+import { injectDebugIndicator, injectGlobals } from './cell.js';
 import { discoverTestFiles } from './discover.js';
 import type { RelayRunOptions, RelayRunReport } from './relay-worker.js';
 import { runTestFilesOverRelay } from './relay-worker.js';
@@ -287,6 +287,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         process.stdout.write(`${chunk.text}\n`);
       }
     }
+
+    // Debugger attached — show the on-phone "Debugger Connected" indicator.
+    await injectDebugIndicator(family.connection);
 
     // ── Step 7: inject cell globals (before first bundle inject) ───────────
     // Cell is session-global: one inject covers all test files in this run.

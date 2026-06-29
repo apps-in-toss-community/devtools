@@ -50,7 +50,7 @@ import { startMaxAgeWatchdog, startParentWatcher } from '../shared/parent-watche
 // Test-runner core (#646): run_tests reuses the same orchestration the
 // `devtools-test` CLI uses. These imports are react-free (node:* + esbuild),
 // so they do not break the MCP-daemon react-free invariant.
-import { injectGlobals } from '../test-runner/cell.js';
+import { injectDebugIndicator, injectGlobals } from '../test-runner/cell.js';
 import { runWithConnection } from '../test-runner/cli.js';
 import { discoverTestFiles } from '../test-runner/discover.js';
 import type { RelayRunReport } from '../test-runner/relay-worker.js';
@@ -653,13 +653,18 @@ export function createDebugServer(deps: DebugServerDeps): Server {
       try {
         const prep = await prepareAttachCore(attachDeps, attachEnv, args, attachConn);
         if (!prep.ok) return prep.error;
-        return await renderAndMaybeWaitCore(
+        const attachResult = await renderAndMaybeWaitCore(
           attachDeps,
           prep,
           waitForAttach,
           callTimeoutMs,
           attachConn,
         );
+        if (!attachResult.isError) {
+          // Debugger attached — show the on-phone "Debugger Connected" indicator.
+          await injectDebugIndicator(attachConn);
+        }
+        return attachResult;
       } catch (err) {
         return errorResult(err, name);
       }

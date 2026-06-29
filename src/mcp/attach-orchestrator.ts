@@ -760,3 +760,60 @@ export async function renderAndMaybeWait(
   const baseText = `${warningPrefix}${header}\n${JSON.stringify({ attachUrl, relayUrl, ...(totpResult() ? { totp: totpResult() } : {}) }, null, 2)}\n\n${qr}`;
   return runWait(baseText);
 }
+
+/**
+ * Builds a self-contained IIFE DOM expression that renders a dismissible
+ * "Debugger Connected" badge on the bottom-left of the phone screen.
+ *
+ * **Pure function** — returns a JS expression string; does NOT inject it.
+ * Injection is performed by {@link injectDebugIndicator} in `cell.ts`.
+ *
+ * The expression, when evaluated on the page, does the following:
+ *   1. Early-returns if `#__ait_debug_indicator` already exists (idempotent —
+ *      prevents duplicate badges on re-injection after page reload).
+ *   2. Appends a fixed-position `<div id="__ait_debug_indicator">` at the
+ *      bottom-left, accounting for safe-area insets.
+ *   3. Attaches a `{ once: true }` `pointerdown` listener that removes the
+ *      badge on first touch — one-tap dismiss.
+ *
+ * The expression intentionally contains NO relay URLs, wss addresses, TOTP
+ * codes, or any other secrets. It is pure DOM UI text only.
+ *
+ * SECRET-HANDLING: this expression contains no secrets, relay URLs, wss
+ * addresses, or TOTP codes whatsoever — DOM label text only.
+ *
+ * @param opts.label - Badge text (default: `'Debugger Connected'`).
+ * @returns A JS expression string suitable for `Runtime.evaluate`.
+ */
+export function buildIndicatorExpression(opts?: { label?: string }): string {
+  const label = opts?.label ?? 'Debugger Connected';
+  // JSON.stringify ensures the label is safely embedded even if it contains
+  // quotes or backslashes.
+  const safeLabel = JSON.stringify(label);
+  return (
+    `(() => {` +
+    // Idempotent guard — prevents duplicates on re-injection.
+    `if (document.getElementById('__ait_debug_indicator')) return;` +
+    `const el = document.createElement('div');` +
+    `el.id = '__ait_debug_indicator';` +
+    // Position: fixed, bottom-left with safe-area inset support.
+    `el.style.cssText = [` +
+    `'position:fixed',` +
+    `'left:max(12px,calc(env(safe-area-inset-left,0px) + 8px))',` +
+    `'bottom:max(12px,calc(env(safe-area-inset-bottom,0px) + 8px))',` +
+    `'z-index:2147483647',` +
+    `'background:#e5484d',` +
+    `'color:#fff',` +
+    `'font:bold 11px/1 system-ui,sans-serif',` +
+    `'padding:5px 9px',` +
+    `'border-radius:6px',` +
+    `'pointer-events:auto',` +
+    `'user-select:none',` +
+    `].join(';');` +
+    `el.textContent = ${safeLabel};` +
+    // One-tap dismiss — removes itself on the first touch/click.
+    `el.addEventListener('pointerdown', () => el.remove(), { once: true });` +
+    `document.body.appendChild(el);` +
+    `})()`
+  );
+}
