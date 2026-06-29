@@ -106,8 +106,12 @@ for entry in "${LEAF_ENTRIES[@]}"; do
   fi
 done
 
-# relay-factory: heavy graph is permitted but ONLY via dynamic import. The static
-# surface must still be react-free.
+# relay-factory: heavy graph is permitted but ONLY via dynamic import, so the
+# emitted bundle must stay react-free AND must not have the chii/cloudflared graph
+# statically inlined. A dynamic `import('../mcp/debug-server.js')` keeps those
+# modules in separate chunks (the specifier names debug-server, not chii); if
+# someone flips a dynamic import to static, chii-relay's `require('chii')` /
+# cloudflared inline into THIS bundle and trip HEAVY_ANCHORS.
 RELAY_FACTORY="dist/test-runner/relay-factory.js"
 if [[ ! -f "$RELAY_FACTORY" ]]; then
   echo "✗ $RELAY_FACTORY missing — run 'pnpm build' first (check tsdown.config.ts #696 entry)" >&2
@@ -115,8 +119,12 @@ if [[ ! -f "$RELAY_FACTORY" ]]; then
 elif grep -qE "$REACT_PATTERN" "$RELAY_FACTORY"; then
   echo "✗ #696 VIOLATION: $RELAY_FACTORY imports react — the factory must stay react-free" >&2
   fail=1
+elif grep -qE "$HEAVY_ANCHORS" "$RELAY_FACTORY"; then
+  echo "✗ #696 VIOLATION: $RELAY_FACTORY statically inlined the heavy graph (server-lock/parent-watcher/chii/cloudflared)" >&2
+  echo "  The MCP boot graph must stay behind dynamic import() inside open()." >&2
+  fail=1
 else
-  echo "✓ $RELAY_FACTORY is react-free (#696; heavy graph behind dynamic import)"
+  echo "✓ $RELAY_FACTORY is react-free and heavy-graph-free (#696; heavy graph behind dynamic import)"
 fi
 
 exit "$fail"

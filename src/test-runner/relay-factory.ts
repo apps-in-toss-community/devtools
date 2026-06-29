@@ -12,7 +12,16 @@
  * (config.ts) exposes it so a downstream `vitest.config.ts` can wire the pool:
  *
  *   import { createRelayConnectionFactory } from '@ait-co/devtools/test-runner';
- *   const connection = createRelayConnectionFactory({ schemeUrl, cell });
+ *   const connection = createRelayConnectionFactory({
+ *     schemeUrl,
+ *     cell,
+ *     // REQUIRED — own the stdout decision (the chunks carry the relay wss +
+ *     // TOTP code). Suppress on non-interactive stdout; print otherwise.
+ *     onQrContent: (chunks) => {
+ *       if (!process.stdout.isTTY) return;
+ *       for (const c of chunks) process.stdout.write(`${c}\n`);
+ *     },
+ *   });
  *   export default defineConfig({ test: definePhoneVitestConfig({ connection }) });
  *
  * The heavy boot graph (chii relay, cloudflared, ws, debug-server) is pulled via
@@ -66,18 +75,21 @@ export interface RelayConnectionFactoryOptions {
   cell?: { sdkLine: string; platform: string };
   /**
    * Receives the QR/attach render content (text chunks) from
-   * `renderAndMaybeWait`, so a caller (the `devtools-test` CLI) can decide
-   * whether to print them — e.g. suppress on non-interactive stdout. When this
-   * hook is omitted, `open()` prints the chunks to stdout itself (standalone
-   * default).
+   * `renderAndMaybeWait`, so the caller decides whether to print them — e.g.
+   * suppress on non-interactive stdout.
    *
-   * SECRET-HANDLING: these chunks contain the QR payload (which encodes the
-   * relay wss + TOTP `at=` code) and the attach JSON block. The hook owns the
-   * stdout decision — when a non-interactive caller is detected it MUST suppress
-   * the whole chunk (not just `attachUrl`), since `relayUrl` rides in the same
-   * block.
+   * REQUIRED (not optional) on purpose: these chunks contain the QR payload
+   * (which encodes the relay wss + TOTP `at=` code) and the attach JSON block.
+   * Making the hook mandatory means the factory never falls back to printing
+   * them itself — a downstream `vitest.config.ts` consumer that wires this via
+   * the `@ait-co/devtools/test-runner` barrel is forced to make an explicit
+   * stdout decision rather than silently leaking the secret-bearing block.
+   *
+   * SECRET-HANDLING: when a non-interactive caller is detected the hook MUST
+   * suppress the WHOLE chunk (not just `attachUrl`), since `relayUrl` rides in
+   * the same block.
    */
-  onQrContent?: (textChunks: string[]) => void;
+  onQrContent: (textChunks: string[]) => void;
 }
 
 /**
@@ -138,13 +150,17 @@ export function createRelayConnectionFactory(
         booted.connection,
       );
       if (!prep.ok) {
-        const errText = prep.error.content
-          .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-          .map((c) => c.text)
-          .join('\n');
         booted.stop();
         family = undefined;
-        throw new Error(`createRelayConnectionFactory: attach preparation failed:\n${errText}`);
+        // SECRET-HANDLING: do NOT surface `prep.error.content` in the thrown
+        // message. Some prep error paths build their text from attach
+        // components, and the CLI catch writes `e.message` to stderr — embedding
+        // that text risks leaking the scheme/relay wss URL. The detailed
+        // diagnostic is the daemon/dashboard's job; the factory throws a
+        // secret-free message only.
+        throw new Error(
+          'createRelayConnectionFactory: attach preparation failed — check the scheme_url and that the relay tunnel is up',
+        );
       }
 
       // Render the QR + wait for the phone to attach. SECRET-HANDLING: this
@@ -157,26 +173,30 @@ export function createRelayConnectionFactory(
         booted.connection,
       );
       if (waitResult.isError) {
-        const errText = waitResult.content
-          .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-          .map((c) => c.text)
-          .join('\n');
         booted.stop();
         family = undefined;
-        throw new Error(`createRelayConnectionFactory: attach timed out or failed:\n${errText}`);
+        // SECRET-HANDLING (BLOCKER fix): `waitResult.content` is the timeout
+        // result built from `buildTimeoutError(baseText, ...)`, and `baseText`
+        // is `JSON.stringify({ attachUrl, relayUrl, ... })` — `attachUrl` carries
+        // the TOTP `at=` code and `relayUrl` is the relay `wss://` URL. The CLI
+        // catch writes `e.message` to stderr, so extracting that text here would
+        // leak the relay wss + TOTP code on every timeout. Throw a secret-free
+        // message with only the timeout duration.
+        const timeoutSec = Math.round(timeoutMs / 1000);
+        throw new Error(
+          `createRelayConnectionFactory: attach timed out after ${timeoutSec}s — phone did not scan the QR within the timeout`,
+        );
       }
 
-      // Surface the QR/attach render content. The caller (CLI) decides whether
-      // to print it (e.g. suppress on non-interactive stdout); without a hook we
-      // print it ourselves so a standalone `open()` still shows the QR.
+      // Surface the QR/attach render content to the caller, which owns the
+      // stdout decision (suppress on non-interactive stdout). There is no
+      // fallback that prints here itself: `onQrContent` is a required option so
+      // the secret-bearing block (attachUrl TOTP + relayUrl wss) can never be
+      // emitted without an explicit caller decision. SECRET-HANDLING.
       const qrChunks = waitResult.content
         .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
         .map((c) => c.text);
-      if (opts.onQrContent) {
-        opts.onQrContent(qrChunks);
-      } else {
-        for (const chunk of qrChunks) process.stdout.write(`${chunk}\n`);
-      }
+      opts.onQrContent(qrChunks);
 
       // Debugger attached — show the on-phone "Debugger Connected" badge.
       await injectDebugIndicator(booted.connection);

@@ -97,13 +97,13 @@ export interface PhoneVitestUserConfig extends PhoneTestUserConfig {
    */
   connection: RelayConnectionFactory;
   /**
-   * When set, the relay pool harvests `__AIT_CAPTURE__` console lines during the
-   * run (forwarded as `collectCaptures` to `runTestFilesOverRelay`). The
-   * directory names where a downstream consumer persists artifacts; the captures
-   * themselves ride on the report the pool reports through `vitest.state`.
-   * Omitted = no capture harvest (build-only, zero listener overhead).
+   * When `true`, the relay pool harvests `__AIT_CAPTURE__` console lines during
+   * the run (forwarded as `collectCaptures` to `runTestFilesOverRelay`), so
+   * `RelayRunReport.captures` is populated; a downstream consumer persists the
+   * artifacts (pool-side artifact writing + cell-meta wiring lands in PR-S1).
+   * Omitted/`false` = no capture harvest (build-only, zero listener overhead).
    */
-  reportDir?: string;
+  collectCaptures?: boolean;
 }
 
 /**
@@ -129,9 +129,9 @@ export function definePhoneVitestConfig(userConfig: PhoneVitestUserConfig): Phon
       run: {
         timeoutMs: resolved.timeoutMs,
         bundleOptions: { extraExternals: resolved.extraExternals },
-        // Harvest captures only when a report dir is configured — keeps the
-        // build-only path free of the live console listener (#696).
-        collectCaptures: userConfig.reportDir !== undefined,
+        // Harvest captures only when explicitly opted in — keeps the build-only
+        // path free of the live console listener (#696).
+        collectCaptures: userConfig.collectCaptures === true,
       },
     }),
     include: resolved.include,

@@ -16,6 +16,7 @@ import type {
   CdpEventMap,
   CdpEventName,
   CdpTarget,
+  ConsoleApiCalledEvent,
 } from '../mcp/cdp-connection.js';
 import { flattenResults, runTestFilesOverRelay } from '../test-runner/relay-worker.js';
 import type { RunReport } from '../test-runner/runtime.js';
@@ -185,6 +186,118 @@ describe('runTestFilesOverRelay', () => {
     const result = await runTestFilesOverRelay(conn, []);
     expect(result.files).toHaveLength(0);
     expect(result.totals.total).toBe(0);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* collectCaptures: live console listener → parseCaptureLines seam            */
+/* -------------------------------------------------------------------------- */
+
+/** A console.log event whose args render to `text` when space-joined. */
+function consoleEvent(...args: string[]): ConsoleApiCalledEvent {
+  return {
+    type: 'log',
+    timestamp: 0,
+    args: args.map((value) => ({ type: 'string', value })),
+  };
+}
+
+/**
+ * Fake connection that stores the `Runtime.consoleAPICalled` listener so a test
+ * can fire console events into the live-capture seam, and records whether the
+ * listener was unsubscribed. The events to fire are supplied up front and are
+ * flushed synchronously from inside the `Runtime.evaluate` send — by then the
+ * run has already registered the listener (it registers before the file loop),
+ * so there is no microtask-ordering fragility.
+ */
+function makeCapturingConnection(opts: { raw: string; fireOnEvaluate?: ConsoleApiCalledEvent[] }): {
+  conn: CdpConnection;
+  isSubscribed: () => boolean;
+  fireConsole: (event: ConsoleApiCalledEvent) => void;
+} {
+  let listener: ((payload: ConsoleApiCalledEvent) => void) | undefined;
+  const base = makeFakeConnection();
+  const conn: CdpConnection = {
+    ...base,
+    on: (<E extends CdpEventName>(
+      event: E,
+      cb: (payload: CdpEventMap[E]) => void,
+    ): (() => void) => {
+      if (event === 'Runtime.consoleAPICalled') {
+        listener = cb as unknown as (payload: ConsoleApiCalledEvent) => void;
+      }
+      return () => {
+        listener = undefined;
+      };
+    }) as CdpConnection['on'],
+    send: (<M extends CdpCommandName>(
+      method: M,
+      _params?: CdpCommandMap[M]['params'],
+    ): Promise<CdpCommandMap[M]['result']> => {
+      if (method === 'Runtime.evaluate') {
+        // The listener is live by now — flush the canned console events into it.
+        for (const ev of opts.fireOnEvaluate ?? []) listener?.(ev);
+        return Promise.resolve({
+          result: { type: 'string', value: opts.raw },
+        } as unknown as CdpCommandMap[M]['result']);
+      }
+      return Promise.reject(new Error(`FakeCdpConnection: no canned result for ${method}`));
+    }) as CdpConnection['send'],
+  };
+  return {
+    conn,
+    isSubscribed: () => listener !== undefined,
+    fireConsole: (event) => listener?.(event),
+  };
+}
+
+describe('runTestFilesOverRelay collectCaptures', () => {
+  const RAW = JSON.stringify({ ok: true, value: makeRunReport() });
+
+  it('harvests __AIT_CAPTURE__ lines fired during the run, dropping noise', async () => {
+    const cap = makeCapturingConnection({
+      raw: RAW,
+      fireOnEvaluate: [
+        consoleEvent('__AIT_CAPTURE__', 'clipboard', '[{"op":"writeText"}]'),
+        consoleEvent('a regular log line'), // noise → dropped
+        consoleEvent('relay wss://FAKE.example/x'), // wss noise → dropped
+        consoleEvent('__AIT_CAPTURE__', 'storage', '[1,2]'),
+      ],
+    });
+
+    const result = await runTestFilesOverRelay(cap.conn, ['/t.ts'], { collectCaptures: true });
+
+    expect(result.captures).toEqual([
+      { category: 'clipboard', json: '[{"op":"writeText"}]' },
+      { category: 'storage', json: '[1,2]' },
+    ]);
+    // No fake secret survived into the captures.
+    expect(JSON.stringify(result.captures)).not.toContain('wss://');
+  });
+
+  it('returns empty captures when collectCaptures is not set (default false)', async () => {
+    const cap = makeCapturingConnection({
+      raw: RAW,
+      fireOnEvaluate: [consoleEvent('__AIT_CAPTURE__', 'clipboard', '[1]')],
+    });
+
+    const result = await runTestFilesOverRelay(cap.conn, ['/t.ts']);
+
+    expect(result.captures).toEqual([]);
+    // The listener was never registered → the fired event went nowhere.
+    expect(cap.isSubscribed()).toBe(false);
+  });
+
+  it('unsubscribes the listener after the run (post-run events are not captured)', async () => {
+    const cap = makeCapturingConnection({ raw: RAW });
+
+    const result = await runTestFilesOverRelay(cap.conn, ['/t.ts'], { collectCaptures: true });
+
+    // The finally block removed the listener.
+    expect(cap.isSubscribed()).toBe(false);
+    // Firing after the run does nothing and cannot retroactively add captures.
+    cap.fireConsole(consoleEvent('__AIT_CAPTURE__', 'late', '[1]'));
+    expect(result.captures).toEqual([]);
   });
 });
 

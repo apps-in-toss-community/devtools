@@ -46,7 +46,7 @@ vi.mock('./report.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-const { main } = await import('./cli.js');
+const { main, shouldSuppressQr } = await import('./cli.js');
 
 const FAKE_CONN = { kind: 'relay' as const };
 const SCHEME = 'intoss-private://app?_deploymentId=test';
@@ -146,5 +146,59 @@ describe('devtools-test main() exit codes', () => {
       | { collectCaptures?: boolean }
       | undefined;
     expect(runOpts?.collectCaptures).toBe(false);
+  });
+});
+
+/**
+ * `shouldSuppressQr` is the SECRET-HANDLING gate that keeps the QR/attach block
+ * (relay wss + TOTP `at=` code) off a captured stdout. Pin every suppress path
+ * + the single "print" path so a regression can't silently leak the block.
+ */
+describe('shouldSuppressQr', () => {
+  // Make stdout look interactive by default so each suppress trigger is isolated.
+  const realIsTTY = process.stdout.isTTY;
+
+  function setTTY(value: boolean): void {
+    Object.defineProperty(process.stdout, 'isTTY', {
+      value,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  beforeEach(() => {
+    setTTY(true);
+    // Clear the env triggers so the interactive baseline is clean (CI is usually
+    // set in the test runner's own environment).
+    vi.stubEnv('CI', undefined);
+    vi.stubEnv('AIT_NO_QR_STDOUT', undefined);
+  });
+
+  afterEach(() => {
+    setTTY(realIsTTY);
+    vi.unstubAllEnvs();
+  });
+
+  it('suppresses when --no-qr-stdout is passed (even on an interactive TTY)', () => {
+    expect(shouldSuppressQr(true)).toBe(true);
+  });
+
+  it('suppresses when stdout is not a TTY', () => {
+    setTTY(false);
+    expect(shouldSuppressQr(false)).toBe(true);
+  });
+
+  it('suppresses when CI is set — including an empty string', () => {
+    vi.stubEnv('CI', '');
+    expect(shouldSuppressQr(false)).toBe(true);
+  });
+
+  it('suppresses when AIT_NO_QR_STDOUT is set', () => {
+    vi.stubEnv('AIT_NO_QR_STDOUT', '1');
+    expect(shouldSuppressQr(false)).toBe(true);
+  });
+
+  it('does NOT suppress on an interactive TTY with no flag/env triggers', () => {
+    expect(shouldSuppressQr(false)).toBe(false);
   });
 });

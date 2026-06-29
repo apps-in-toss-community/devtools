@@ -124,8 +124,10 @@ export async function runTestFilesOverRelay(
   // per-file inject below produces a structured error result instead. We warn on
   // stderr (secret-free) and continue. SECRET-HANDLING: the message names the
   // failure only — no relay/wss URL.
+  let domainsEnabled = false;
   try {
     await connection.enableDomains();
+    domainsEnabled = true;
   } catch (e) {
     process.stderr.write(
       `relay-worker: enableDomains() failed before run — console capture may be empty (${
@@ -140,10 +142,15 @@ export async function runTestFilesOverRelay(
   // `getBufferedEvents` after the fact — that ring buffer caps at 500 and
   // `shift()`s older entries, so a chatty run would silently lose capture lines.
   // The listener is removed in `finally` so it never bleeds into the next run.
+  //
+  // Gate the listener on `domainsEnabled`: if enableDomains() soft-failed, the
+  // client ws never opened so `Runtime.consoleAPICalled` cannot stream —
+  // registering would only add a dead listener that never fires. (The `finally`
+  // unsubscribe is an undefined no-op in that case, so this stays safe.)
   const collectCaptures = opts?.collectCaptures === true;
   const liveConsole: ConsoleApiCalledEvent[] = [];
   let unsubscribeConsole: (() => void) | undefined;
-  if (collectCaptures) {
+  if (collectCaptures && domainsEnabled) {
     unsubscribeConsole = connection.on('Runtime.consoleAPICalled', (event) => {
       liveConsole.push(event);
     });

@@ -1035,7 +1035,13 @@ export function createDebugServer(deps: DebugServerDeps): Server {
             // as secrets / relay URLs. SECRET-HANDLING: do not log bundle code,
             // expression, or result values.
             logInfo('run_tests.start', { fileCount: files.length });
-            const report = await runWithConnection(conn, files, { timeoutMs });
+            const report = await runWithConnection(conn, files, {
+              timeoutMs,
+              // #696: symmetric with the auto-attach path above — run_tests must
+              // harvest __AIT_CAPTURE__ lines regardless of how the page was
+              // attached. toRunTestsResult exposes per-category counts only.
+              collectCaptures: true,
+            });
             logInfo('run_tests.done', {
               passed: report.totals.passed,
               failed: report.totals.failed,
