@@ -1,5 +1,6 @@
 /**
- * Unit tests for `injectGlobals` (issue #684 §4.1).
+ * Unit tests for `injectGlobals`, `buildIndicatorExpression`, and
+ * `injectDebugIndicator`.
  *
  * Verifies that:
  *   - Each key in `globals` is assigned onto `globalThis` via a single
@@ -9,14 +10,19 @@
  *   - The function returns `void` (no return-value leakage).
  *   - JSON-serialisable values (strings, numbers, objects) are embedded
  *     correctly in the generated expression.
+ *   - `buildIndicatorExpression` is a pure function that returns a DOM
+ *     expression with the expected structural tokens.
+ *   - `injectDebugIndicator` calls `Runtime.evaluate` once and never rejects,
+ *     even when the CDP send throws.
  *
  * Uses a spy-based fake CdpConnection so no phone or relay is required.
  *
  * react-free invariant: this test file imports ONLY from `../mcp/cdp-connection`
- * (types) and `./cell` — both are react-free modules.
+ * (types), `../mcp/attach-orchestrator`, and `./cell` — all react-free modules.
  */
 
 import { describe, expect, it, vi } from 'vitest';
+import { buildIndicatorExpression } from '../mcp/attach-orchestrator.js';
 import type {
   CdpCommandMap,
   CdpCommandName,
@@ -25,7 +31,7 @@ import type {
   CdpEventName,
   CdpTarget,
 } from '../mcp/cdp-connection.js';
-import { injectGlobals } from './cell.js';
+import { injectDebugIndicator, injectGlobals } from './cell.js';
 
 /* -------------------------------------------------------------------------- */
 /* Spy fake                                                                    */
@@ -185,5 +191,142 @@ describe('injectGlobals', () => {
     await expect(injectGlobals(throwingConn, { k: 'v' })).rejects.toThrow(
       /injectGlobals: Runtime\.evaluate threw: ReferenceError: boom/,
     );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* buildIndicatorExpression                                                    */
+/* -------------------------------------------------------------------------- */
+
+describe('buildIndicatorExpression', () => {
+  it('returns a string (pure, no side effects)', () => {
+    const expr = buildIndicatorExpression();
+    expect(typeof expr).toBe('string');
+    expect(expr.length).toBeGreaterThan(0);
+  });
+
+  it('embeds the default label "Debugger Connected"', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('Debugger Connected');
+  });
+
+  it('embeds a custom label', () => {
+    const expr = buildIndicatorExpression({ label: 'My Custom Label' });
+    expect(expr).toContain('My Custom Label');
+    expect(expr).not.toContain('Debugger Connected');
+  });
+
+  it('escapes label via JSON.stringify (quotes and backslashes)', () => {
+    const expr = buildIndicatorExpression({ label: 'Has "quotes" and \\backslash' });
+    // JSON.stringify produces a quoted string — raw unescaped quote must not appear
+    // as a bare string literal.
+    expect(expr).toContain(JSON.stringify('Has "quotes" and \\backslash'));
+  });
+
+  it('includes __ait_debug_indicator element id', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('__ait_debug_indicator');
+  });
+
+  it('has an idempotent guard (getElementById early-return)', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain("getElementById('__ait_debug_indicator')");
+    expect(expr).toContain('return');
+  });
+
+  it('uses position:fixed for fixed overlay', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('position:fixed');
+  });
+
+  it('positions element at the bottom-left (bottom + left tokens)', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('bottom');
+    expect(expr).toContain('left');
+  });
+
+  it('uses a red background colour (#e5484d)', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('#e5484d');
+  });
+
+  it('uses a high z-index (2147483647)', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('2147483647');
+  });
+
+  it('adds a pointerdown listener with { once: true }', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toMatch(/pointerdown/);
+    expect(expr).toContain('once: true');
+  });
+
+  it('does not contain secret tokens (relay/wss/totp)', () => {
+    const expr = buildIndicatorExpression();
+    // These strings must never appear in the DOM expression.
+    expect(expr).not.toMatch(/wss:\/\//);
+    expect(expr).not.toMatch(/relay/i);
+    expect(expr).not.toMatch(/totp/i);
+    expect(expr).not.toMatch(/at=/);
+    expect(expr).not.toMatch(/AIT_DEBUG_TOTP_SECRET/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* injectDebugIndicator                                                        */
+/* -------------------------------------------------------------------------- */
+
+describe('injectDebugIndicator', () => {
+  it('calls conn.send with Runtime.evaluate once', async () => {
+    const { conn, sentExpressions } = makeSpyConnection();
+    await injectDebugIndicator(conn);
+
+    expect(conn.send).toHaveBeenCalledTimes(1);
+    expect(sentExpressions).toHaveLength(1);
+    expect(sentExpressions[0]).toContain('__ait_debug_indicator');
+  });
+
+  it('resolves (does NOT reject) even when conn.send throws', async () => {
+    const failConn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: () => Promise.reject(new Error('CDP: page detached')),
+    };
+
+    // Must not throw — isolation guarantee.
+    await expect(injectDebugIndicator(failConn)).resolves.toBeUndefined();
+  });
+
+  it('resolves (does NOT reject) when conn.send rejects with any error', async () => {
+    const conn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: () => Promise.reject(new TypeError('network error')),
+    };
+
+    await expect(injectDebugIndicator(conn)).resolves.toBeUndefined();
+  });
+
+  it('forwards a custom label to the expression', async () => {
+    const { conn, sentExpressions } = makeSpyConnection();
+    await injectDebugIndicator(conn, { label: 'Custom Badge' });
+
+    expect(sentExpressions[0]).toContain('Custom Badge');
+  });
+
+  it('returns void (no return value leakage)', async () => {
+    const { conn } = makeSpyConnection();
+    const result = await injectDebugIndicator(conn);
+    expect(result).toBeUndefined();
   });
 });

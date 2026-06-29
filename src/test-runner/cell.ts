@@ -19,6 +19,7 @@
  * Node-only. react-free. CdpConnection only.
  */
 
+import { buildIndicatorExpression } from '../mcp/attach-orchestrator.js';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
 
 /**
@@ -46,5 +47,47 @@ export async function injectGlobals(
       result.exceptionDetails.text ??
       'unknown error';
     throw new Error(`injectGlobals: Runtime.evaluate threw: ${msg}`);
+  }
+}
+
+/**
+ * Injects the "Debugger Connected" on-phone indicator via `Runtime.evaluate`.
+ *
+ * Uses the same CDP mechanism as {@link injectGlobals} — a single
+ * `Runtime.evaluate` round-trip with the expression built by
+ * {@link buildIndicatorExpression}. The indicator is a dismissible red badge
+ * rendered at the bottom-left of the page (position:fixed, safe-area-aware).
+ *
+ * **Isolation**: unlike {@link injectGlobals}, this function NEVER throws to
+ * its caller. Injection failure (e.g. page detached during inject, CSS not
+ * supported) is swallowed and logged as `console.debug` — the badge is
+ * informational UI and must never block attach success or test execution.
+ * This is the same fire-and-forget spirit as the eruda mount in
+ * `src/in-app/attach.ts`.
+ *
+ * Call this ONLY on the manual debug paths (start_attach MCP, devtools-test
+ * CLI). Do NOT call on the `run_tests` auto-attach path — the red badge
+ * would contaminate screenshots, measure_safe_area probes, and DOM snapshots
+ * taken during automated measurement runs.
+ *
+ * SECRET-HANDLING: the injected expression contains no secrets, relay URLs,
+ * wss addresses, or TOTP codes — it is pure DOM UI text built by
+ * {@link buildIndicatorExpression}.
+ *
+ * @param conn - The live CDP connection (relay-attached page).
+ * @param opts - Optional overrides forwarded to {@link buildIndicatorExpression}.
+ */
+export async function injectDebugIndicator(
+  conn: CdpConnection,
+  opts?: { label?: string },
+): Promise<void> {
+  try {
+    await conn.send('Runtime.evaluate', {
+      expression: buildIndicatorExpression(opts),
+      returnByValue: true,
+    });
+  } catch (err) {
+    // Badge injection is informational UI — swallow and log; never propagate.
+    console.debug('[@ait-co/devtools] debug indicator inject skipped:', err);
   }
 }
