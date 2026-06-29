@@ -12,13 +12,12 @@
  */
 
 import { parseArgs } from 'node:util';
-import type { AttachDeps, PrepareAttachResult } from '../mcp/attach-orchestrator.js';
-import { prepareAttach, renderAndMaybeWait } from '../mcp/attach-orchestrator.js';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
-import { injectDebugIndicator, injectGlobals } from './cell.js';
 import { discoverTestFiles } from './discover.js';
+import { createRelayConnectionFactory } from './relay-factory.js';
 import type { RelayRunOptions, RelayRunReport } from './relay-worker.js';
 import { runTestFilesOverRelay } from './relay-worker.js';
+import { writeCaptureArtifacts, writeReportArtifact } from './report.js';
 
 /* -------------------------------------------------------------------------- */
 /* CLI help                                                                    */
@@ -37,6 +36,12 @@ OPTIONS
   --cell-sdk-line <line>  SDK line to inject as __AIT_CELL__.sdkLine (2.x|3.x)
   --cell-platform <plat>  Platform to inject as __AIT_CELL__.platform
                           (mock|ios|android, default: AIT_CELL_PLATFORM env)
+  --report-dir <dir>      Persist a runner-agnostic report + captures to <dir>
+                          (report: <sdkLine>.<platform>.json; captures:
+                          <dir>/.ait-capture/<category>.<sdkLine>.<platform>.json).
+                          Omitted = nothing saved. Enables console capture.
+  --no-qr-stdout          Suppress the QR/attach block on stdout (auto-on for
+                          non-interactive stdout / CI / AIT_NO_QR_STDOUT)
   --headless              Disable browser auto-open (text QR only)
   --project-root <dir>    Project root for .ait_relay secret lookup
                           (default: current working directory)
@@ -49,13 +54,19 @@ DESCRIPTION
   injects the bundle into the attached WebView via Runtime.evaluate, and prints
   a summary.
 
+  With --report-dir, also harvests __AIT_CAPTURE__ console lines and writes a
+  runner-agnostic report + per-category capture files so 2.x↔3.0 runs can be
+  compared offline.
+
   The test files run against the live relay connection started by this process;
   no separate MCP daemon is required.
 
 EXAMPLE
   devtools-test 'src/**/*.ait.test.ts' \\
     --scheme-url "intoss-private://..." \\
+    --cell-sdk-line 3.x \\
     --cell-platform ios \\
+    --report-dir .ait-report \\
     --timeout 60000
 
 `.trimStart();
@@ -98,27 +109,47 @@ export async function runWithConnection(
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Decides whether to suppress the QR/attach block on stdout.
+ *
+ * Suppress when EITHER the user passed `--no-qr-stdout`, OR stdout is not a TTY
+ * / `CI` is set / `AIT_NO_QR_STDOUT` is set (non-interactive — a captured stdout
+ * must not leak the relay wss + TOTP `at=` code that the QR block encodes). The
+ * suppression is whole-chunk: `attachUrl` AND `relayUrl` ride in the same block.
+ *
+ * Exported for unit testing.
+ */
+export function shouldSuppressQr(noQrFlag: boolean): boolean {
+  return (
+    noQrFlag ||
+    !process.stdout.isTTY ||
+    process.env.CI !== undefined ||
+    process.env.AIT_NO_QR_STDOUT !== undefined
+  );
+}
+
+/**
  * CLI entry point.
  *
- * Performs a standalone relay attach → run lifecycle:
+ * Performs a standalone relay attach → run lifecycle, sharing the attach
+ * assembly with the Vitest pool via `createRelayConnectionFactory` (single
+ * source — no drift):
  *
  * 1. Parse args: globs, --timeout, --cell-sdk-line, --cell-platform,
- *    --scheme-url (required for env3), --headless, --project-root.
+ *    --scheme-url (required for env3), --report-dir, --no-qr-stdout,
+ *    --headless, --project-root.
  * 2. Discover test files; exit 1 if none.
- * 3. Load .ait_relay secret into AIT_DEBUG_TOTP_SECRET, then boot relay family.
- * 4. Assemble AttachDeps (no qrHttpServer → text QR).
- * 5. prepareAttach(deps, 'relay-dev', { scheme_url }, conn).
- * 6. renderAndMaybeWait(deps, prep, true, timeoutMs, conn) — text QR + wait.
- * 7. If cell flags present, injectGlobals({ __AIT_CELL__: cell }) before run.
- * 8. runWithConnection(conn, files, { timeoutMs, printSummary: true }).
- * 9. family.stop(); process.exitCode = failed > 0 ? 1 : 0.
+ * 3. factory.open() — boot relay → render QR (suppressed on non-interactive
+ *    stdout) → wait for phone → inject cell → enableDomains. Returns the conn.
+ * 4. runWithConnection(conn, files, { timeoutMs, collectCaptures, printSummary }).
+ * 5. With --report-dir: write the runner-agnostic report + capture files.
+ * 6. factory.close(); process.exitCode = failed > 0 ? 1 : 0.
  *
  * The CLI is not a daemon — no lock, router, SSE, or tools_list is needed.
  * Attach timeout exits with code 1; test failures exit with code 1.
  *
  * SECRET-HANDLING: scheme_url / relay wssUrl / TOTP codes are never written to
- * stdout/stderr directly. text QR renders via renderAndMaybeWait which encodes
- * the TOTP `at=` code inside the QR payload (not in plain log lines).
+ * stdout/stderr directly. The QR block (which encodes the TOTP `at=` code) is
+ * printed only when stdout is interactive AND not suppressed.
  */
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   // ── Step 1: parse arguments ───────────────────────────────────────────────
@@ -132,6 +163,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         'scheme-url': { type: 'string' },
         'cell-sdk-line': { type: 'string' },
         'cell-platform': { type: 'string' },
+        'report-dir': { type: 'string' },
+        'no-qr-stdout': { type: 'boolean' },
         headless: { type: 'boolean' },
         'project-root': { type: 'string' },
       } as const,
@@ -173,6 +206,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const headless = vals.headless === true;
   const projectRoot =
     typeof vals['project-root'] === 'string' ? vals['project-root'] : process.cwd();
+  const reportDir = typeof vals['report-dir'] === 'string' ? vals['report-dir'] : undefined;
+  const suppressQr = shouldSuppressQr(vals['no-qr-stdout'] === true);
 
   // Cell: --cell-sdk-line and --cell-platform (fall back to AIT_CELL_PLATFORM env).
   const cellSdkLine = typeof vals['cell-sdk-line'] === 'string' ? vals['cell-sdk-line'] : undefined;
@@ -181,6 +216,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       ? vals['cell-platform']
       : process.env.AIT_CELL_PLATFORM;
   const hasCell = cellSdkLine !== undefined || cellPlatform !== undefined;
+  // The cell injected onto the page and the report/capture filename suffix.
+  // sdk-example's own fallbacks are '2.x'/'mock'; mirror them when a flag is
+  // absent so artifacts still get a stable, meaningful cell suffix.
+  const cell = { sdkLine: cellSdkLine ?? '2.x', platform: cellPlatform ?? 'mock' };
 
   // ── Step 2: discover test files ───────────────────────────────────────────
   const globs = parsed.positionals;
@@ -199,23 +238,35 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
   process.stderr.write(`devtools-test: found ${files.length} test file(s)\n`);
 
-  // ── Step 3: load .ait_relay secret, then boot relay family ───────────────
-  // loadRelaySecretReadOnly reads <projectRoot>/.ait_relay and loads the value
-  // into process.env.AIT_DEBUG_TOTP_SECRET (read-only, never mints).
-  // Must be called BEFORE bootRelayFamily so assertRelayAuthConfigured() passes.
-  // SECRET-HANDLING: the secret value is never logged here.
-  const { loadRelaySecretReadOnly } = await import('../mcp/relay-secret-store.js');
-  await loadRelaySecretReadOnly({ projectRoot });
+  // ── Step 3: open the relay connection via the shared factory ──────────────
+  // The factory boots the relay, renders the QR, waits for the phone, injects
+  // the cell, and enables CDP domains — the same assembly the Vitest pool uses.
+  // We pass `onQrContent` so the CLI owns the stdout decision: suppress the whole
+  // QR block on non-interactive stdout (it encodes the relay wss + TOTP code).
+  // SECRET-HANDLING: scheme_url / wss / TOTP are never logged by the factory.
+  if (hasCell) {
+    process.stderr.write(`devtools-test: injecting __AIT_CELL__ = ${JSON.stringify(cell)}\n`);
+  }
+  const factory = createRelayConnectionFactory({
+    schemeUrl,
+    projectRoot,
+    timeoutMs,
+    headless,
+    cell: hasCell ? cell : undefined,
+    onQrContent: (chunks) => {
+      if (suppressQr) {
+        process.stdout.write('QR suppressed (non-interactive)\n');
+        return;
+      }
+      for (const chunk of chunks) process.stdout.write(`${chunk}\n`);
+    },
+  });
 
-  const { bootRelayFamily, buildRelayVerifyAuth } = await import('../mcp/debug-server.js');
-
-  let family: Awaited<ReturnType<typeof bootRelayFamily>>;
+  let connection: CdpConnection;
   try {
-    family = await bootRelayFamily({ verifyAuth: buildRelayVerifyAuth() });
+    connection = await factory.open();
   } catch (e) {
-    process.stderr.write(
-      `devtools-test: failed to boot relay: ${e instanceof Error ? e.message : String(e)}\n`,
-    );
+    process.stderr.write(`devtools-test: ${e instanceof Error ? e.message : String(e)}\n`);
     process.exitCode = 1;
     return;
   }
@@ -223,98 +274,46 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // Ensure cleanup on early exit.
   let exitCode = 0;
   try {
-    // ── Step 4: assemble AttachDeps ─────────────────────────────────────────
-    // qrHttpServer=undefined → text QR (no dashboard; CLI is not a daemon).
-    // onAttachUrlBuilt=undefined → no SSE push.
-    // canOpenBrowser=()=>!headless → respects --headless flag.
-    const attachDeps: AttachDeps = {
-      getTunnelStatus: family.getTunnelStatus ?? (() => ({ up: false, wssUrl: null })),
-      getTotpSecret: () => process.env.AIT_DEBUG_TOTP_SECRET,
-      qrHttpServer: undefined,
-      onAttachUrlBuilt: undefined,
-      canOpenBrowser: () => !headless,
-    };
-
-    // ── Step 5: prepareAttach ───────────────────────────────────────────────
-    const prep: PrepareAttachResult = await prepareAttach(
-      attachDeps,
-      'relay-dev',
-      { scheme_url: schemeUrl },
-      family.connection,
-    );
-
-    if (!prep.ok) {
-      const errText = prep.error.content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-        .map((c) => c.text)
-        .join('\n');
-      process.stderr.write(`devtools-test: attach preparation failed:\n${errText}\n`);
-      // Use the local `exitCode` (not `process.exitCode`) — the `finally`
-      // block below sets `process.exitCode = exitCode`, so writing
-      // `process.exitCode` directly here would be clobbered back to 0,
-      // turning an attach-prep failure into a false success. (Matches the
-      // timeout branch below.)
-      exitCode = 1;
-      return;
-    }
-
-    // ── Step 6: renderAndMaybeWait — text QR + wait for phone ──────────────
-    // waitForAttach=true → wait until a matching page attaches (or timeout).
-    // renderAndMaybeWait handles TOTP re-mint between segments automatically.
-    // SECRET-HANDLING: the function never logs scheme/wss/TOTP values.
-    const waitResult = await renderAndMaybeWait(
-      attachDeps,
-      prep,
-      true,
+    // ── Step 4: run test files ──────────────────────────────────────────────
+    // collectCaptures is enabled only when a report dir is given (the only sink
+    // for captures) — keeps the no-report path free of listener overhead.
+    const report = await runWithConnection(connection, files, {
       timeoutMs,
-      family.connection,
-    );
+      printSummary: true,
+      collectCaptures: reportDir !== undefined,
+    });
 
-    if (waitResult.isError) {
-      // Timeout or attach error — print the diagnostic text and exit.
-      const errText = waitResult.content
-        .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
-        .map((c) => c.text)
-        .join('\n');
-      process.stderr.write(`devtools-test: attach timed out or failed:\n${errText}\n`);
-      exitCode = 1;
-      return;
-    }
-
-    // Print the success output (QR + pages snapshot) from renderAndMaybeWait.
-    for (const chunk of waitResult.content) {
-      if (chunk.type === 'text') {
-        process.stdout.write(`${chunk.text}\n`);
+    // ── Step 5: persist artifacts (only with --report-dir) ──────────────────
+    if (reportDir !== undefined) {
+      try {
+        const reportPath = await writeReportArtifact(report, reportDir, {
+          sdkLine: cell.sdkLine,
+          platform: cell.platform,
+          projectRoot,
+        });
+        process.stderr.write(`devtools-test: wrote report ${reportPath}\n`);
+        const capturePaths = await writeCaptureArtifacts(
+          report.captures,
+          `${reportDir}/.ait-capture`,
+          cell,
+        );
+        if (capturePaths.length > 0) {
+          process.stderr.write(`devtools-test: wrote ${capturePaths.length} capture file(s)\n`);
+        }
+      } catch (e) {
+        // Artifact write failure must not mask the test result.
+        process.stderr.write(
+          `devtools-test: failed to write report artifacts: ${e instanceof Error ? e.message : String(e)}\n`,
+        );
       }
     }
 
-    // Debugger attached — show the on-phone "Debugger Connected" indicator.
-    await injectDebugIndicator(family.connection);
-
-    // ── Step 7: inject cell globals (before first bundle inject) ───────────
-    // Cell is session-global: one inject covers all test files in this run.
-    // devtools does NOT know the __AIT_CELL__ shape — it passes the object as-is.
-    // SECRET-HANDLING: cell values are not secrets; logging them is caller's choice.
-    if (hasCell) {
-      const cell: Record<string, string> = {};
-      if (cellSdkLine !== undefined) cell.sdkLine = cellSdkLine;
-      if (cellPlatform !== undefined) cell.platform = cellPlatform;
-      process.stderr.write(`devtools-test: injecting __AIT_CELL__ = ${JSON.stringify(cell)}\n`);
-      await injectGlobals(family.connection, { __AIT_CELL__: cell });
-    }
-
-    // ── Step 8: run test files ──────────────────────────────────────────────
-    const report = await runWithConnection(family.connection, files, {
-      timeoutMs,
-      printSummary: true,
-    });
-
     exitCode = report.totals.failed > 0 ? 1 : 0;
   } finally {
-    // ── Step 9: teardown ────────────────────────────────────────────────────
-    // family.stop() is synchronous best-effort: closes the CDP connection and
-    // shuts down the relay + cloudflared child. No await needed.
-    family.stop();
+    // ── Step 6: teardown ────────────────────────────────────────────────────
+    // factory.close() stops the relay family (closes the CDP connection +
+    // shuts down the relay + cloudflared child).
+    await factory.close(connection);
     process.exitCode = exitCode;
   }
 }

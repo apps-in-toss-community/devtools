@@ -18,6 +18,10 @@
 
 import type { RelayConnectionFactory } from './pool.js';
 import { createRelayPool, RELAY_POOL_NAME } from './pool.js';
+import {
+  createRelayConnectionFactory,
+  type RelayConnectionFactoryOptions,
+} from './relay-factory.js';
 
 /**
  * Resolved phone-test configuration returned by `definePhoneTestConfig`.
@@ -92,6 +96,14 @@ export interface PhoneVitestUserConfig extends PhoneTestUserConfig {
    * never stores or logs those values.
    */
   connection: RelayConnectionFactory;
+  /**
+   * When `true`, the relay pool harvests `__AIT_CAPTURE__` console lines during
+   * the run (forwarded as `collectCaptures` to `runTestFilesOverRelay`), so
+   * `RelayRunReport.captures` is populated; a downstream consumer persists the
+   * artifacts (pool-side artifact writing + cell-meta wiring lands in PR-S1).
+   * Omitted/`false` = no capture harvest (build-only, zero listener overhead).
+   */
+  collectCaptures?: boolean;
 }
 
 /**
@@ -117,6 +129,9 @@ export function definePhoneVitestConfig(userConfig: PhoneVitestUserConfig): Phon
       run: {
         timeoutMs: resolved.timeoutMs,
         bundleOptions: { extraExternals: resolved.extraExternals },
+        // Harvest captures only when explicitly opted in — keeps the build-only
+        // path free of the live console listener (#696).
+        collectCaptures: userConfig.collectCaptures === true,
       },
     }),
     include: resolved.include,
@@ -124,5 +139,10 @@ export function definePhoneVitestConfig(userConfig: PhoneVitestUserConfig): Phon
   };
 }
 
-export type { RelayConnectionFactory };
-export { createRelayPool, RELAY_POOL_NAME };
+export type { RelayConnectionFactory, RelayConnectionFactoryOptions };
+// Re-exported so a downstream `vitest.config.ts` can build the connection
+// factory straight from the `@ait-co/devtools/test-runner` barrel. relay-factory
+// keeps its heavy MCP graph behind dynamic imports, so this static re-export does
+// NOT drag chii/cloudflared/tools onto this Node-config entry (verified by
+// scripts/check-test-runner-dist.sh).
+export { createRelayConnectionFactory, createRelayPool, RELAY_POOL_NAME };
