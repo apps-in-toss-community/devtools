@@ -10,13 +10,15 @@
 # entry → no dist/runtime.js → "Could not resolve" on every run_tests call)
 # to ship undetected.
 #
-# Additionally checks that the dist/mcp/cli.js entry can resolve the runtime
-# via getRuntimePath's sibling-directory candidate (#678):
-#   getRuntimePath from dist/mcp/ → tries ../test-runner/runtime.js
-#   → that resolves to dist/test-runner/runtime.js, which must exist.
-# Also asserts that dist/mcp/cli.js does NOT contain a hard-coded
-# "mcp/runtime.js" reference (which would indicate the co-location
-# assumption leaked into the compiled output).
+# Additionally checks the chunk-graph-agnostic runtime resolution (#697):
+# Rolldown code-splitting hoists the bundling logic (getRuntimePath) into
+# shared chunks emitted at the dist/ ROOT (e.g. debug-server-<hash>.js, pulled
+# by dist/mcp/cli.js). The old fixed 3-candidate list assumed dist/test-runner/
+# depth and missed from dist/ root — every run_tests / devtools-test call failed
+# with esbuild "Could not resolve". The new depth-robust probe ascends from
+# import.meta.url's dir until it finds test-runner/runtime.js. This guard
+# discovers all carrier chunks and verifies the resolver lands on
+# dist/test-runner/runtime.js from each carrier's real directory.
 #
 # Run after `pnpm build`. Fails (exit 1) if any check fails.
 set -euo pipefail
@@ -38,34 +40,51 @@ for artifact in "${REQUIRED[@]}"; do
   fi
 done
 
-# --- dist/mcp entry invariant (#678) ---
-# getRuntimePath in dist/mcp/cli.js resolves "../test-runner/runtime.js"
-# which must exist as dist/test-runner/runtime.js.
-MCP_RUNTIME_SIBLING="dist/test-runner/runtime.js"
-if [[ ! -f "$MCP_RUNTIME_SIBLING" ]]; then
-  echo "✗ dist/mcp entry: sibling runtime '$MCP_RUNTIME_SIBLING' missing" \
-    "— getRuntimePath will fail from the dist/mcp/ context (#678)" >&2
-  fail=1
-else
-  echo "✓ dist/mcp entry: sibling runtime '$MCP_RUNTIME_SIBLING' reachable"
-fi
-
-# Ensure no stale "mcp/runtime.js" hard-coded reference leaked into mcp/cli.js.
-MCP_CLI="dist/mcp/cli.js"
-if [[ -f "$MCP_CLI" ]]; then
-  # Exclude JSDoc/comment lines (lines whose first non-space chars are `*` or `//`)
-  # — the bundler may inline docblock text that mentions mcp/runtime.js in prose.
-  # We only care about live string literals / require() paths in code.
-  if grep "mcp/runtime\.js" "$MCP_CLI" 2>/dev/null | grep -qv '^\s*[*/]'; then
-    echo "✗ $MCP_CLI contains a non-comment 'mcp/runtime.js' reference — stale co-location path leaked into build (#678)" >&2
-    fail=1
-  else
-    echo "✓ $MCP_CLI: no stale 'mcp/runtime.js' code reference"
-  fi
-else
-  echo "✗ $MCP_CLI missing — run 'pnpm build' first" >&2
-  fail=1
-fi
+# --- chunk-graph-agnostic runtime resolution guard (#697) ---
+# getRuntimePath() is duplicated by rolldown into shared chunks at arbitrary
+# dist depths. Instead of assuming WHERE that chunk lands, discover EVERY dist
+# .js chunk that carries the nested `test-runner/runtime.js` probe, then run the
+# real resolver from each carrier's actual directory and assert it lands on
+# dist/test-runner/runtime.js. A future chunk-graph shift that re-breaks
+# resolution fails here without anyone hand-enumerating placements.
+node --input-type=module -e '
+import { accessSync, readFileSync, readdirSync, statSync } from "node:fs";
+import * as path from "node:path";
+const DIST = path.resolve("dist");
+const EXPECTED = path.join(DIST, "test-runner", "runtime.js");
+const walk = (d) => readdirSync(d).flatMap((e) => {
+  const p = path.join(d, e);
+  return statSync(p).isDirectory() ? walk(p) : (e.endsWith(".js") ? [p] : []);
+});
+// Marker: the joined nested candidate the fixed getRuntimePath emits.
+const MARKER = /"test-runner",\s*"runtime\.js"/;
+// Replicate the resolver (.js-first, bounded ascent).
+const resolve = (startDir) => {
+  const probes = [["runtime.js"],["test-runner","runtime.js"],["runtime.ts"],["test-runner","runtime.ts"]];
+  let dir = startDir;
+  for (let i = 0; i < 12; i++) {
+    for (const s of probes) { const c = path.join(dir, ...s); try { accessSync(c); return c; } catch {} }
+    const par = path.dirname(dir); if (par === dir) break; dir = par;
+  }
+  return path.join(startDir, "runtime.js");
+};
+const carriers = walk(DIST).filter((f) => MARKER.test(readFileSync(f, "utf8")));
+if (carriers.length === 0) {
+  console.error("✗ no dist chunk carries getRuntimePath nested probe — marker drift or build shape changed (#697)");
+  process.exit(1);
+}
+let bad = 0;
+for (const c of carriers) {
+  const got = resolve(path.dirname(c));
+  if (got !== EXPECTED) {
+    console.error(`✗ ${path.relative(DIST, c)}: getRuntimePath resolves to ${path.relative(DIST, got)} (want test-runner/runtime.js) — chunk-graph shift re-broke resolution (#697)`);
+    bad++;
+  } else {
+    console.log(`✓ ${path.relative(DIST, c)}: runtime resolves to test-runner/runtime.js`);
+  }
+}
+process.exit(bad ? 1 : 0);
+' || fail=1
 
 # --- #696: capture/report/relay-factory graph invariants ----------------------
 # capture.ts and report.ts are deliberately LEAF modules: react-free AND free of

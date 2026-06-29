@@ -355,39 +355,62 @@ function userFactoryPlugin(absPath: string): esbuild.Plugin {
 }
 
 /**
- * Returns the absolute path to the test-runner runtime module.
+ * Returns the absolute filesystem path to the test-runner runtime module
+ * (dist/test-runner/runtime.js — a fully self-contained page-side bundle).
  *
- * Searches candidates in priority order:
- *   1. Co-located `runtime.ts` / `runtime.js` — covers the source tree
- *      (tsx / ts-node) and the `dist/test-runner/` entry.
- *   2. `../test-runner/runtime.js` — covers the `dist/mcp/cli.js` entry,
- *      where `import.meta.url` resolves to `dist/mcp/` (a sibling directory
- *      of `dist/test-runner/`). Without this second candidate the MCP entry
- *      point would look for `dist/mcp/runtime.js`, which does not exist, and
- *      every `run_tests` call would fail with an esbuild "Could not resolve"
- *      error (#678).
+ * Rolldown code-splitting duplicates this bundling logic into shared chunks
+ * emitted at ARBITRARY dist depths: the `devtools-test` CLI pulls it from
+ * dist/test-runner/bundle.js (dir = dist/test-runner/), while the `devtools-mcp`
+ * daemon (dist/mcp/cli.js) pulls it through a ROOT chunk
+ * (dist/debug-server-<hash>.js, dir = dist/). A fixed `..`-hop candidate list
+ * is therefore wrong from at least one chunk — the live #697 regression.
  *
- * Returns the first candidate that exists on disk. Falls back to the
- * co-located `runtime.js` path so esbuild produces a clear "file not found"
- * error rather than a cryptic failure.
+ * This resolves WITHOUT assuming chunk depth: from `import.meta.url`'s dir it
+ * probes the co-located `runtime.js` and the nested `test-runner/runtime.js`,
+ * then ascends one directory at a time (bounded) repeating both probes. The
+ * nested probe catches dist/test-runner/runtime.js from the dist/ root level no
+ * matter which depth the chunk was hoisted to (root, dist/mcp/, or a future
+ * relocation). The build always emits dist/test-runner/runtime.js (tsdown entry
+ * `'test-runner/runtime'`; guarded by scripts/check-test-runner-dist.sh).
+ *
+ * An ABSOLUTE path is returned deliberately: esbuild loads it as a literal file
+ * read, bypassing Node module resolution entirely, so this works identically in
+ * the npx-daemon context (its own dist tree) and the consumer-CLI context
+ * (the mini-app's installed @ait-co/devtools dist) — neither needs the package
+ * to be node-resolvable from the caller.
  */
 function getRuntimePath(): string {
-  const dir = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    path.join(dir, 'runtime.ts'),
-    path.join(dir, 'runtime.js'),
-    path.join(dir, '..', 'test-runner', 'runtime.js'),
+  const startDir = path.dirname(fileURLToPath(import.meta.url));
+  // .js first so a SHIPPED chunk never feeds esbuild raw TypeScript; the .ts
+  // probe is last, for the source-tree (tsx) dev case where runtime.ts sits
+  // beside bundle.ts and no dist exists.
+  const RELATIVE_PROBES: string[][] = [
+    ['runtime.js'],
+    ['test-runner', 'runtime.js'],
+    ['runtime.ts'],
+    ['test-runner', 'runtime.ts'],
   ];
-  for (const candidate of candidates) {
-    try {
-      accessSync(candidate);
-      return candidate;
-    } catch {
-      // try next candidate
+  // Bounded ascent: a package's dist is only a few levels deep. 12 is far more
+  // than any real layout (root chunk → dist is 0 hops; dist/mcp → dist is 1)
+  // and terminates well before the filesystem root in every case.
+  let dir = startDir;
+  for (let i = 0; i < 12; i++) {
+    for (const segs of RELATIVE_PROBES) {
+      const candidate = path.join(dir, ...segs);
+      try {
+        accessSync(candidate);
+        return candidate;
+      } catch {
+        // try next probe
+      }
     }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // reached filesystem root
+    dir = parent;
   }
-  // Let esbuild produce a "file not found" error with a clear path.
-  return path.join(dir, 'runtime.js');
+  // Nothing matched — return the co-located path so esbuild emits a clear
+  // "Could not resolve" against a concrete path rather than failing cryptically.
+  return path.join(startDir, 'runtime.js');
 }
 
 /**

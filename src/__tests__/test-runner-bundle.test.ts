@@ -206,6 +206,17 @@ describe('bundleTestFile', () => {
     expect(result.code).toContain('__userFactory');
     expect(result.code).toContain('window.__sdk');
   });
+
+  // Regression #697: the runtime path must resolve regardless of which dist
+  // chunk rolldown hoists getRuntimePath into. At the unit level we can only
+  // assert the src-context resolution still works end-to-end (the dist-chunk
+  // depth cases are covered by scripts/check-test-runner-dist.sh, which runs
+  // the resolver from every built carrier chunk's real directory).
+  it('resolves the runtime and includes runTestModule in the bundle (#697)', async () => {
+    const result = await bundleTestFile(fixtureFile);
+    expect(result.code).toContain('runTestModule');
+    expect(result.warnings.join('\n')).not.toMatch(/Could not resolve/);
+  });
 });
 
 /* -------------------------------------------------------------------------- */
