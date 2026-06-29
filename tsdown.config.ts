@@ -52,6 +52,9 @@ const outExtensions: Options['outExtensions'] = ({ format }) => {
 
 // Each entry lives in its own config object so Rolldown does not emit a
 // shared hashed chunk at `dist/` root (every entry is self-contained).
+// NOTE: Rolldown still emits cross-entry code as dist/ root shared chunks
+// (per-entry config reduces but cannot eliminate this); getRuntimePath uses
+// depth-robust resolution to handle any chunk depth (#697).
 const common = {
   dts: true,
   sourcemap: true,
@@ -149,8 +152,9 @@ export default defineConfig([
       'test-runner/bundle': 'src/test-runner/bundle.ts',
       // Page-side runtime: describe/it/test/expect + runTestModule.
       // bundleTestFile (bundle.ts) resolves this file at runtime via
-      // getRuntimePath() using an absolute filesystem path — NOT a package
-      // subpath specifier — so no package.json `exports` entry is required.
+      // getRuntimePath() using an absolute filesystem path (depth-robust probe
+      // from import.meta.url) — NOT a package subpath specifier — so no
+      // package.json `exports` entry is required.
       // Must be emitted to dist/ so it exists in the published package
       // (the src/ tree is not shipped).
       'test-runner/runtime': 'src/test-runner/runtime.ts',
