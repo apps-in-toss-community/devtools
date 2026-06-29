@@ -211,6 +211,7 @@ describe('flattenResults', () => {
       duration: 0,
       files: [{ file: '/bad.ts', result: { error: 'boom' } }],
       totals: { passed: 0, failed: 1, skipped: 0, total: 1 },
+      captures: [],
     };
     const flat = flattenResults(report);
     expect(flat).toHaveLength(1);

@@ -67,4 +67,56 @@ else
   fail=1
 fi
 
+# --- #696: capture/report/relay-factory graph invariants ----------------------
+# capture.ts and report.ts are deliberately LEAF modules: react-free AND free of
+# the heavy MCP graph (server-lock, parent-watcher, chii/cloudflared). They are
+# re-exported from the `@ait-co/devtools/test-runner` barrel (config.ts), so if
+# they ever statically pulled the daemon graph, that graph would land on the
+# Node-config entry every consumer's vitest.config.ts imports. relay-factory is
+# allowed the heavy graph but ONLY behind dynamic import — so its STATIC bundle
+# must still be react-free.
+#
+# A static `import x from 'react'` survives as a top-level import; a dynamic
+# `import('...')` is a call expression and is intentionally NOT matched by the
+# react pattern (we ban react entirely, which no path here should ever need).
+REACT_PATTERN="react-dom|from[[:space:]]*['\"]react['\"]|require\\(['\"]react"
+
+# Leaf modules: must be free of react AND the heavy-graph anchors.
+LEAF_ENTRIES=("dist/test-runner/capture.js" "dist/test-runner/report.js")
+# Anchors whose presence proves the heavy MCP/daemon graph was pulled in. Matched
+# ONLY as quoted import/require specifiers (`'...server-lock...'`) so a docblock
+# that merely names the chii/cloudflared graph in prose is not a false positive.
+HEAVY_ANCHORS="['\"][^'\"]*(server-lock|parent-watcher|chii|cloudflared)[^'\"]*['\"]"
+
+for entry in "${LEAF_ENTRIES[@]}"; do
+  if [[ ! -f "$entry" ]]; then
+    echo "✗ $entry missing — run 'pnpm build' first (check tsdown.config.ts #696 entry)" >&2
+    fail=1
+    continue
+  fi
+  if grep -qE "$REACT_PATTERN" "$entry"; then
+    echo "✗ #696 LEAF VIOLATION: $entry imports react — capture/report must stay react-free" >&2
+    fail=1
+  elif grep -qE "$HEAVY_ANCHORS" "$entry"; then
+    echo "✗ #696 LEAF VIOLATION: $entry pulled the heavy MCP graph (server-lock/parent-watcher/chii/cloudflared)" >&2
+    echo "  capture.ts/report.ts must be pure leaves so the test-runner barrel re-export stays light." >&2
+    fail=1
+  else
+    echo "✓ $entry is react-free and heavy-graph-free (#696)"
+  fi
+done
+
+# relay-factory: heavy graph is permitted but ONLY via dynamic import. The static
+# surface must still be react-free.
+RELAY_FACTORY="dist/test-runner/relay-factory.js"
+if [[ ! -f "$RELAY_FACTORY" ]]; then
+  echo "✗ $RELAY_FACTORY missing — run 'pnpm build' first (check tsdown.config.ts #696 entry)" >&2
+  fail=1
+elif grep -qE "$REACT_PATTERN" "$RELAY_FACTORY"; then
+  echo "✗ #696 VIOLATION: $RELAY_FACTORY imports react — the factory must stay react-free" >&2
+  fail=1
+else
+  echo "✓ $RELAY_FACTORY is react-free (#696; heavy graph behind dynamic import)"
+fi
+
 exit "$fail"

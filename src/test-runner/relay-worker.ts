@@ -15,8 +15,9 @@
  * SECRET-HANDLING: file paths are surfaced in reports; relay URLs are not.
  */
 
-import type { CdpConnection } from '../mcp/cdp-connection.js';
+import type { CdpConnection, ConsoleApiCalledEvent } from '../mcp/cdp-connection.js';
 import { type BundleOptions, bundleTestFile } from './bundle.js';
+import { type AitCaptureLine, parseCaptureLines } from './capture.js';
 import { injectAndRunBundle } from './rpc.js';
 import type { RunReport, TestResult } from './runtime.js';
 
@@ -43,6 +44,17 @@ export interface RelayRunReport {
     skipped: number;
     total: number;
   };
+  /**
+   * `__AIT_CAPTURE__` lines harvested from the page console during the run
+   * (additive field, devtools#696). Empty unless `collectCaptures` was set.
+   * Each entry is opaque (`{ category, json }`) — devtools does not interpret
+   * the record shape, only forwards it for downstream 2.x↔3.0 diffing.
+   *
+   * SECRET-HANDLING: only lines matching the `__AIT_CAPTURE__ ` allowlist
+   * prefix reach here; relay/wss/scheme noise lines are dropped in
+   * `parseCaptureLines`.
+   */
+  captures: AitCaptureLine[];
 }
 
 /** Options for `runTestFilesOverRelay`. */
@@ -56,6 +68,18 @@ export interface RelayRunOptions {
    * Increase for long-running suites or split the file.
    */
   timeoutMs?: number;
+  /**
+   * When `true`, registers a live `Runtime.consoleAPICalled` listener for the
+   * duration of the run and harvests `__AIT_CAPTURE__` lines into
+   * `RelayRunReport.captures`. Defaults to **false** so the build-only
+   * eval/e2e path (and the Vitest pool) pay no listener/state overhead —
+   * `captures` is then an empty array.
+   *
+   * The listener is registered just BEFORE the first file runs and removed in a
+   * `finally` so it never accumulates across runs (no ring-buffer drain — the
+   * default 500-entry buffer would silently drop lines via `shift`).
+   */
+  collectCaptures?: boolean;
 }
 
 /**
@@ -88,27 +112,79 @@ export async function runTestFilesOverRelay(
   const startedAt = new Date(wallStart).toISOString();
   const fileResults: FileResult[] = [];
 
-  for (const file of files) {
-    let fileEntry: FileResult;
-    try {
-      const { code } = await bundleTestFile(file, opts?.bundleOptions);
-      const rpcResult = await injectAndRunBundle(connection, code, opts?.timeoutMs);
-      if (rpcResult.ok) {
-        fileEntry = { file, result: rpcResult.report };
-      } else {
-        fileEntry = { file, result: { error: rpcResult.error } };
-      }
-    } catch (e) {
-      // Capture bundle/inject errors per-file so subsequent files still run.
-      fileEntry = {
-        file,
-        result: {
-          error: e instanceof Error ? e.message : String(e),
-        },
-      };
-    }
-    fileResults.push(fileEntry);
+  // Enable CDP domains ONCE up front. Without this the relay connection has not
+  // opened its client websocket, so the very first `Runtime.evaluate` (in
+  // `injectAndRunBundle`) explodes AND `Runtime.consoleAPICalled` never streams
+  // — the console capture harvest would be structurally 0. `enableDomains()` is
+  // idempotent (see chii-connection: early-returns when the ws is already OPEN,
+  // and shares an in-flight promise), so calling it here is safe even when a
+  // caller (the MCP `run_tests` path) already enabled it.
+  //
+  // Failure here (e.g. no target attached yet) must NOT throw the whole run: the
+  // per-file inject below produces a structured error result instead. We warn on
+  // stderr (secret-free) and continue. SECRET-HANDLING: the message names the
+  // failure only — no relay/wss URL.
+  try {
+    await connection.enableDomains();
+  } catch (e) {
+    process.stderr.write(
+      `relay-worker: enableDomains() failed before run — console capture may be empty (${
+        e instanceof Error ? e.message : String(e)
+      })\n`,
+    );
   }
+
+  // Live console capture (#696): when requested, accumulate every
+  // `Runtime.consoleAPICalled` event into a local array via a LIVE listener
+  // registered just before the run. We deliberately do NOT drain
+  // `getBufferedEvents` after the fact — that ring buffer caps at 500 and
+  // `shift()`s older entries, so a chatty run would silently lose capture lines.
+  // The listener is removed in `finally` so it never bleeds into the next run.
+  const collectCaptures = opts?.collectCaptures === true;
+  const liveConsole: ConsoleApiCalledEvent[] = [];
+  let unsubscribeConsole: (() => void) | undefined;
+  if (collectCaptures) {
+    unsubscribeConsole = connection.on('Runtime.consoleAPICalled', (event) => {
+      liveConsole.push(event);
+    });
+  }
+
+  try {
+    for (const file of files) {
+      let fileEntry: FileResult;
+      try {
+        const { code } = await bundleTestFile(file, opts?.bundleOptions);
+        const rpcResult = await injectAndRunBundle(connection, code, opts?.timeoutMs);
+        if (rpcResult.ok) {
+          fileEntry = { file, result: rpcResult.report };
+        } else {
+          fileEntry = { file, result: { error: rpcResult.error } };
+        }
+      } catch (e) {
+        // Capture bundle/inject errors per-file so subsequent files still run.
+        fileEntry = {
+          file,
+          result: {
+            error: e instanceof Error ? e.message : String(e),
+          },
+        };
+      }
+      fileResults.push(fileEntry);
+    }
+  } finally {
+    // Always remove the live listener — leaking it would accumulate across runs
+    // on a reused connection (the Vitest pool keeps one connection for the whole
+    // run; the MCP daemon keeps one for the session).
+    unsubscribeConsole?.();
+  }
+
+  // Convert the accumulated console events to `__AIT_CAPTURE__` lines. Each
+  // event's args are rendered to a single line text (inlined console rendering —
+  // no tools.ts import, to keep this module off the heavy MCP graph), then the
+  // allowlist-prefix parser keeps only genuine capture lines.
+  const captures = collectCaptures
+    ? parseCaptureLines(liveConsole.map((e) => ({ text: renderConsoleLineText(e) })))
+    : [];
 
   const totals = fileResults.reduce(
     (acc, { result }) => {
@@ -132,7 +208,37 @@ export async function runTestFilesOverRelay(
     duration: Date.now() - wallStart,
     files: fileResults,
     totals,
+    captures,
   };
+}
+
+/**
+ * Renders one `Runtime.consoleAPICalled` event to a single line of text, the
+ * same way `tools.ts#normalizeConsoleMessage` does (args rendered + space-
+ * joined). Inlined here (≈8 lines) so this module avoids importing `tools.ts`,
+ * which would drag the heavy MCP/Node graph (server-lock, parent-watcher, …)
+ * onto the test-runner entry.
+ *
+ * SECRET-HANDLING: this only stringifies console args; the caller's
+ * allowlist-prefix parser then discards everything that is not a genuine
+ * `__AIT_CAPTURE__` line.
+ */
+function renderConsoleLineText(event: ConsoleApiCalledEvent): string {
+  return event.args
+    .map((arg) => {
+      if (arg.value !== undefined) {
+        if (typeof arg.value === 'string') return arg.value;
+        try {
+          return JSON.stringify(arg.value);
+        } catch {
+          return String(arg.value);
+        }
+      }
+      if (arg.description !== undefined) return arg.description;
+      if (arg.className !== undefined) return arg.className;
+      return arg.subtype ?? arg.type;
+    })
+    .join(' ');
 }
 
 /**

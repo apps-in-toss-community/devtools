@@ -963,7 +963,13 @@ export function createDebugServer(deps: DebugServerDeps): Server {
                 return pageMissingError('run_tests');
               }
               logInfo('run_tests.start', { fileCount: files.length, autoAttach: true });
-              const report = await runWithConnection(conn, files, { timeoutMs });
+              const report = await runWithConnection(conn, files, {
+                timeoutMs,
+                // #696: harvest __AIT_CAPTURE__ lines on the MCP path. The
+                // envelope surfaces only a per-category count (toRunTestsResult);
+                // line bodies stay off the run_tests result.
+                collectCaptures: true,
+              });
               logInfo('run_tests.done', {
                 passed: report.totals.passed,
                 failed: report.totals.failed,
@@ -1199,11 +1205,22 @@ function envelopeResult(value: unknown, tool: string, env: McpEnvironment, attac
 /**
  * Maps a {@link RelayRunReport} to a flat, agent-friendly object for the
  * `run_tests` tool result. SECRET-HANDLING: a RelayRunReport carries only
- * startedAt/duration/totals and per-file `{file, result}` — file paths are
- * surfaced (allowed), relay wss/TOTP URLs never appear in it. No stripping
- * needed; this only reshapes for readability.
+ * startedAt/duration/totals, per-file `{file, result}`, and capture lines —
+ * file paths are surfaced (allowed), relay wss/TOTP URLs never appear in it.
+ * No stripping needed; this only reshapes for readability.
+ *
+ * Captures (#696): the envelope surfaces a COUNT-LEVEL summary only
+ * (per-category line counts) — never the line bodies. Capture bodies belong in
+ * the on-disk artifact, not the `run_tests` log (keeps the tool result small and
+ * avoids dumping large capture arrays into the agent's context).
  */
 function toRunTestsResult(report: RelayRunReport) {
+  // Per-category capture counts — { clipboard: 3, storage: 1, ... }. Bodies are
+  // deliberately omitted (artifact-only policy).
+  const captureCounts: Record<string, number> = {};
+  for (const { category } of report.captures) {
+    captureCounts[category] = (captureCounts[category] ?? 0) + 1;
+  }
   return {
     startedAt: report.startedAt,
     duration: report.duration,
@@ -1224,6 +1241,9 @@ function toRunTestsResult(report: RelayRunReport) {
             tests: f.result.tests,
           },
     ),
+    // Count-level capture summary only (per category). Empty object when no
+    // capture lines were harvested.
+    captures: captureCounts,
   };
 }
 

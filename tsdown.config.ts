@@ -158,19 +158,38 @@ export default defineConfig([
       'test-runner/relay-worker': 'src/test-runner/relay-worker.ts',
       'test-runner/pool': 'src/test-runner/pool.ts',
       'test-runner/task-graph': 'src/test-runner/task-graph.ts',
+      // #696: capture/report are react-free, heavy-graph-free leaf modules
+      // (capture.ts: zero deps; report.ts: node:fs/path + type-only relay-worker).
+      // They stay in this esbuild-only entry — no chii/cloudflared/react reach them.
+      'test-runner/capture': 'src/test-runner/capture.ts',
+      'test-runner/report': 'src/test-runner/report.ts',
     },
     format: ['esm'],
     deps: { neverBundle: ['esbuild'] },
   },
   {
     ...common,
+    // #696: relay-factory is the shared env3 attach assembly. Its heavy graph
+    // (debug-server → chii/cloudflared/ws; cell → attach-orchestrator → tools) is
+    // reached ONLY via dynamic import inside `open()`, so those deps are kept
+    // external here — without them the chii CJS + Koa tree (and ws) would be
+    // inlined as megabytes. esbuild stays external like the sibling entries.
+    platform: 'node',
+    entry: { 'test-runner/relay-factory': 'src/test-runner/relay-factory.ts' },
+    format: ['esm'],
+    deps: { neverBundle: ['esbuild', 'chii', 'cloudflared', 'ws'] },
+  },
+  {
+    ...common,
     // `devtools-test` bin: CLI entry point for running phone-relay tests.
     // Node-only. esbuild is external (resolved at runtime from node_modules).
+    // chii/cloudflared/ws are reached only via relay-factory's dynamic imports —
+    // keep them external so they are not inlined into the bin either.
     // Shebang via banner only — source must not carry its own shebang.
     platform: 'node',
     entry: { 'test-runner/cli': 'src/test-runner/cli.ts' },
     format: ['esm'],
-    deps: { neverBundle: ['esbuild'] },
+    deps: { neverBundle: ['esbuild', 'chii', 'cloudflared', 'ws'] },
     banner: { js: '#!/usr/bin/env node' },
   },
 ]);
