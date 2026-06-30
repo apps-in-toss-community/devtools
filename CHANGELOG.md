@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.121
+
+### Patch Changes
+
+- d258ae3: fix(debug-server): push dashboard state on silent disconnect so the relay dashboard stops showing a stale 'connected' page
+
 ## 0.1.120
 
 ### Patch Changes
