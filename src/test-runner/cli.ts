@@ -317,15 +317,3 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.exitCode = exitCode;
   }
 }
-
-// Run main() when executed as a binary (not imported as a module).
-// Node ESM: `import.meta.url === pathToFileURL(process.argv[1]).href` is the
-// canonical "am I the main module?" check.
-if (import.meta.url === new URL(process.argv[1], 'file://').href) {
-  main().catch((e: unknown) => {
-    process.stderr.write(
-      `devtools-test: unexpected error: ${e instanceof Error ? e.message : String(e)}\n`,
-    );
-    process.exitCode = 1;
-  });
-}

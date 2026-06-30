@@ -49,7 +49,7 @@
   },
   "bin": {
     "devtools-mcp": "./dist/mcp/cli.js",
-    "devtools-test": "./dist/test-runner/cli.js"
+    "devtools-test": "./dist/test-runner/bin.js"
   },
   "files": [
     "dist"
