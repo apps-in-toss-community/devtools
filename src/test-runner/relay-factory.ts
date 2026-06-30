@@ -35,8 +35,9 @@
  * Node-only. react-free (CdpConnection + lazily-imported MCP boot helpers only).
  */
 
-import type { AttachDeps } from '../mcp/attach-orchestrator.js';
+import type { AttachDeps, AttachUrlParts } from '../mcp/attach-orchestrator.js';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
+import type { QrHttpServer } from '../mcp/qr-http-server.js';
 import type { RelayConnectionFactory } from './pool.js';
 
 // NOTE: every value import below is a DYNAMIC import inside `open()`. This module
@@ -115,12 +116,16 @@ export function createRelayConnectionFactory(
 
   // Captured so close() can stop the family that open() booted.
   let family: { connection: CdpConnection; stop(): void } | undefined;
+  // QR HTTP server — started during open() when not headless, closed in close().
+  let qrServer: QrHttpServer | undefined;
 
   return {
     async open(): Promise<CdpConnection> {
       // Dynamic imports: keep the chii/cloudflared/debug-server graph OFF the
       // static import graph of this module (and the test-runner config barrel).
-      const { prepareAttach, renderAndMaybeWait } = await import('../mcp/attach-orchestrator.js');
+      const { prepareAttach, renderAndMaybeWait, mintAttachUrl } = await import(
+        '../mcp/attach-orchestrator.js'
+      );
       const { injectDebugIndicator, injectGlobals } = await import('./cell.js');
       const { loadRelaySecretReadOnly } = await import('../mcp/relay-secret-store.js');
       const { bootRelayFamily, buildRelayVerifyAuth } = await import('../mcp/debug-server.js');
@@ -134,14 +139,64 @@ export function createRelayConnectionFactory(
       const booted = await bootRelayFamily({ verifyAuth: buildRelayVerifyAuth() });
       family = booted;
 
-      // Assemble AttachDeps with no dashboard/SSE (CLI/pool is not the daemon).
+      // Track the last-captured attach parts so getDashboardState can mint a
+      // fresh attach URL on every dashboard request/SSE push (fresh TOTP at=).
+      // SECRET-HANDLING: parts contain the relay wss + scheme URL — never logged.
+      let lastAttachParts: AttachUrlParts | undefined;
+
+      // Assemble AttachDeps. We set qrHttpServer and onAttachUrlBuilt below
+      // (before prepareAttach) after optionally starting the web-QR server.
       const attachDeps: AttachDeps = {
         getTunnelStatus: booted.getTunnelStatus ?? (() => ({ up: false, wssUrl: null })),
         getTotpSecret: () => process.env.AIT_DEBUG_TOTP_SECRET,
-        qrHttpServer: undefined,
-        onAttachUrlBuilt: undefined,
+        qrHttpServer: undefined, // filled in below if web-QR server started
+        onAttachUrlBuilt: undefined, // filled in below
         canOpenBrowser: () => !headless,
       };
+
+      // Web-QR server: reuse the same loopback HTTP dashboard that the MCP
+      // start_attach path uses (src/mcp/qr-http-server.ts). This makes the QR
+      // scannable even when stdout is non-interactive (Claude Code `!` / CI),
+      // because the browser is opened by URL — not via captured stdout.
+      //
+      // Headless decision: we start the server even in --headless mode so the
+      // printed stderr URL can be opened manually. The existing
+      // canOpenBrowser: () => !headless gate inside renderAndMaybeWait prevents
+      // the auto-open; headless users see only the stderr URL.
+      //
+      // On failure we fall back gracefully to the text-QR path — do NOT crash.
+      // SECRET-HANDLING: only http://127.0.0.1:<port>/ (no secrets) goes to stderr.
+      try {
+        const { startQrHttpServer } = await import('../mcp/qr-http-server.js');
+
+        const getDashboardState = () => ({
+          tunnel: attachDeps.getTunnelStatus(),
+          pages: null, // CLI/pool: no page-list introspection needed
+          attachUrl: lastAttachParts ? mintAttachUrl(attachDeps, lastAttachParts) : null,
+          mode: 'relay-dev' as const,
+        });
+
+        qrServer = await startQrHttpServer(getDashboardState);
+
+        // Wire the QR server into attachDeps BEFORE prepareAttach is called so
+        // renderAndMaybeWait sees it and takes Path 2/3 (web-QR) instead of Path 4.
+        attachDeps.qrHttpServer = qrServer;
+
+        // Capture attach parts via onAttachUrlBuilt so getDashboardState can
+        // mint a fresh URL (fresh TOTP at= code) on every dashboard render.
+        attachDeps.onAttachUrlBuilt = (parts: AttachUrlParts) => {
+          lastAttachParts = parts;
+          qrServer?.notifyStateChange();
+        };
+
+        // Print the loopback dashboard URL to stderr — it carries no secrets
+        // (TOTP codes and relay wss live only in the in-memory HTTP response).
+        process.stderr.write(`devtools-test: QR dashboard: http://127.0.0.1:${qrServer.port}/\n`);
+      } catch {
+        // startQrHttpServer failed (e.g. port conflict, import error). Fall back
+        // to the existing text-QR path by leaving qrHttpServer: undefined.
+        // qrServer remains undefined; close() handles that with optional chaining.
+      }
 
       const prep = await prepareAttach(
         attachDeps,
@@ -219,6 +274,10 @@ export function createRelayConnectionFactory(
       // shuts down the relay + cloudflared child.
       family?.stop();
       family = undefined;
+      // Close the web-QR HTTP server if one was started during open().
+      // close() is idempotent via optional chaining + reassignment to undefined.
+      await qrServer?.close();
+      qrServer = undefined;
     },
   };
 }
