@@ -62,7 +62,7 @@ export async function injectGlobals(
  * its caller. Injection failure (e.g. page detached during inject, CSS not
  * supported) is swallowed and logged as `console.debug` — the badge is
  * informational UI and must never block attach success or test execution.
- * This is the same fire-and-forget spirit as the eruda mount in
+ * This is the same fire-and-forget spirit as the in-page console mount in
  * `src/in-app/attach.ts`.
  *
  * Call this ONLY on the manual debug paths (start_attach MCP, devtools-test

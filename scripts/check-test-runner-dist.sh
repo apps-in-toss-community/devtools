@@ -146,4 +146,22 @@ else
   echo "✓ $RELAY_FACTORY is react-free and heavy-graph-free (#696; heavy graph behind dynamic import)"
 fi
 
+# --- #711: bin calls main() guard -------------------------------------------
+# dist/test-runner/bin.js must contain an unconditional main() call. If Rolldown
+# ever reduces the bin back to a re-export wrapper (e.g. because bin.ts gains
+# an export), the main() call disappears and devtools-test / pnpm test:env3
+# silently exits 0 — the original #711 regression. This grep catches that.
+BIN_FILE="dist/test-runner/bin.js"
+if [[ ! -f "$BIN_FILE" ]]; then
+  echo "✗ $BIN_FILE missing — run 'pnpm build' first (check tsdown.config.ts #711 entry)" >&2
+  fail=1
+elif grep -q "main(" "$BIN_FILE"; then
+  echo "✓ $BIN_FILE calls main() — bin is not a silent no-op (#711)"
+else
+  echo "✗ $BIN_FILE does not call main() — bin would be a silent no-op (#711)" >&2
+  echo "  Rolldown may have hoisted bin.ts into a shared chunk (re-export wrapper)." >&2
+  echo "  Ensure src/test-runner/bin.ts has zero exports so Rolldown keeps main() in-line." >&2
+  fail=1
+fi
+
 exit "$fail"

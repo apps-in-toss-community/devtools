@@ -185,13 +185,19 @@ export default defineConfig([
   },
   {
     ...common,
-    // `devtools-test` bin: CLI entry point for running phone-relay tests.
+    // `devtools-test` bin: export-free entry so Rolldown emits main() directly
+    // rather than reducing this to a re-export wrapper (#711).
+    // cli.ts exports main/runWithConnection/shouldSuppressQr for tests and
+    // relay-factory. When cli.ts was the bin entry, Rolldown hoisted the module
+    // body into a shared chunk and the self-invoke guard (import.meta.url check)
+    // never matched — bin exited 0 silently. bin.ts has zero exports, so Rolldown
+    // has no cross-entry sharing to do and preserves the unconditional main() call.
     // Node-only. esbuild is external (resolved at runtime from node_modules).
     // chii/cloudflared/ws are reached only via relay-factory's dynamic imports —
     // keep them external so they are not inlined into the bin either.
     // Shebang via banner only — source must not carry its own shebang.
     platform: 'node',
-    entry: { 'test-runner/cli': 'src/test-runner/cli.ts' },
+    entry: { 'test-runner/bin': 'src/test-runner/bin.ts' },
     format: ['esm'],
     deps: { neverBundle: ['esbuild', 'chii', 'cloudflared', 'ws'] },
     banner: { js: '#!/usr/bin/env node' },
