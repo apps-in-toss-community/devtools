@@ -1164,6 +1164,186 @@ describe('startAttachWatcher', () => {
       vi.useRealTimers();
     }
   });
+
+  // ── issue #705-A: onDetach callback ─────────────────────────────────────────
+
+  it('#705-A: fires onDetach on non-empty→empty transition', async () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'det-1', title: 'Page', url: 'about:blank' };
+      const connection = new FakeCdpConnection([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onAttach = vi.fn();
+      const onDetach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, onAttach, onDetach);
+      // starts attached — onAttach fires immediately, onDetach does not
+      expect(onAttach).toHaveBeenCalledTimes(1);
+      expect(onDetach).not.toHaveBeenCalled();
+
+      // silent disconnect
+      connection.setTargets([]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onDetach).toHaveBeenCalledTimes(1);
+      // onAttach must NOT fire again
+      expect(onAttach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('#705-A: onDetach does NOT fire on empty→empty at startup', async () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new FakeCdpConnection([]); // starts empty
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onDetach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, undefined, onDetach);
+      // many ticks — still empty, onDetach must never fire
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onDetach).not.toHaveBeenCalled();
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('#705-A: onDetach does NOT fire on repeated empty ticks after initial detach', async () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'det-2', title: 'Page', url: 'about:blank' };
+      const connection = new FakeCdpConnection([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onDetach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, undefined, onDetach);
+
+      // first detach — onDetach fires once
+      connection.setTargets([]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onDetach).toHaveBeenCalledTimes(1);
+
+      // remains empty for more ticks — must not fire again
+      await vi.advanceTimersByTimeAsync(600);
+      expect(onDetach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // ── issue #705-B: refreshTargets per poll tick ───────────────────────────────
+
+  /**
+   * A FakeCdpConnection with a controllable refreshTargets() implementation.
+   * Lets tests simulate a relay updating the target list on each poll.
+   */
+  class FakeCdpConnectionWithRefresh extends FakeCdpConnection {
+    refreshCallCount = 0;
+    /**
+     * When set, refreshTargets() calls this function to update the target list
+     * before returning, simulating a relay-side response.
+     */
+    onRefresh: (() => void) | null = null;
+
+    async refreshTargets(): Promise<CdpTarget[]> {
+      this.refreshCallCount++;
+      this.onRefresh?.();
+      return this.listTargets();
+    }
+  }
+
+  it('#705-B: calls refreshTargets on each poll tick', async () => {
+    vi.useFakeTimers();
+    try {
+      const connection = new FakeCdpConnectionWithRefresh([]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100);
+
+      // advance a few ticks and confirm refreshTargets was called
+      await vi.advanceTimersByTimeAsync(350);
+      expect(connection.refreshCallCount).toBeGreaterThanOrEqual(3);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('#705-B: detects silent disconnect via refreshTargets and fires onDetach', async () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'silent-1', title: 'Page', url: 'about:blank' };
+      const connection = new FakeCdpConnectionWithRefresh([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onDetach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, undefined, onDetach);
+
+      // simulate relay returning an empty list on next refresh (phone backgrounded)
+      connection.onRefresh = () => {
+        connection.setTargets([]);
+        connection.onRefresh = null; // only once
+      };
+
+      // advance so the watcher polls and picks up the empty list via refreshTargets
+      await vi.advanceTimersByTimeAsync(200);
+      expect(onDetach).toHaveBeenCalledTimes(1);
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('#705-B: transient refreshTargets error does not fire onDetach (skips tick)', async () => {
+    vi.useFakeTimers();
+    try {
+      const target: CdpTarget = { id: 'silent-2', title: 'Page', url: 'about:blank' };
+      const connection = new FakeCdpConnectionWithRefresh([target]);
+      const sendToolListChanged = vi.fn().mockResolvedValue(undefined);
+      const fakeServer = {
+        sendToolListChanged,
+      } as unknown as import('@modelcontextprotocol/sdk/server/index.js').Server;
+      const onDetach = vi.fn();
+
+      const watcher = startAttachWatcher(connection, fakeServer, 100, undefined, onDetach);
+
+      // override refreshTargets to throw (relay unreachable)
+      connection.refreshTargets = async () => {
+        throw new Error('relay unreachable');
+      };
+
+      // advance several ticks — error must not cause onDetach to fire
+      await vi.advanceTimersByTimeAsync(500);
+      expect(onDetach).not.toHaveBeenCalled();
+
+      watcher.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

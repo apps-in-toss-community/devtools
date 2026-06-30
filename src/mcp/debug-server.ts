@@ -1309,15 +1309,23 @@ function errorResult(err: unknown, name: string, isLocal = false) {
  * `connection.listTargets()` and sends a `notifications/tools/list_changed`
  * notification on the given server.
  *
- * The watcher polls every `intervalMs` (default 1 000 ms). It fires
- * `server.sendToolListChanged()` + `onAttach()` whenever the sorted target-id
- * signature changes AND the new target set is non-empty. This covers:
+ * The watcher polls every `intervalMs` (default 1 000 ms). On each tick it
+ * calls `connection.refreshTargets?.()` first (fix #705-B) so that silent
+ * disconnects (no CDP event, phone backgrounded / tunnel quiet) are picked up
+ * before the signature is read. If `refreshTargets` throws — e.g. a transient
+ * relay error — the tick is skipped entirely to avoid a spurious detach signal.
+ *
+ * After the refresh, it fires `server.sendToolListChanged()` + `onAttach()`
+ * whenever the sorted target-id signature changes AND the new target set is
+ * non-empty. This covers:
  *   - 0→N first attach
  *   - 1→1 target replacement (same count, different id — e.g. rescan)
  *   - N→M any change where the result is still non-empty
  *
- * Full detach (→ empty) updates the stored signature but does NOT fire the
- * callback — `onAttach` semantics are about a live target being present.
+ * Full detach (→ empty) fires `onDetach()` (fix #705-A) on the exact
+ * non-empty→empty edge — i.e. only when the previous signature was non-empty.
+ * This lets callers push an immediate "disconnected" SSE update to the
+ * dashboard without waiting for the next periodic interval.
  *
  * The interval is **never cleared automatically** — it keeps running until
  * `stop()` is called during shutdown. This ensures that a target replacement
@@ -1325,8 +1333,8 @@ function errorResult(err: unknown, name: string, isLocal = false) {
  *
  * `onAttach` is called on every non-empty signature change (or immediately when
  * already attached). Use this to trigger side-effects such as pushing a fresh
- * SSE state to open dashboard tabs (issue #509). The callback is optional;
- * omitting it preserves the previous behaviour exactly.
+ * SSE state to open dashboard tabs (issue #509). Both callbacks are optional;
+ * omitting them preserves the previous behaviour exactly.
  *
  * SECRET-HANDLING: target `id`/`title`/`url` are not written to any log here.
  * Only an attach-detected stderr line is emitted (no target details).
@@ -1338,6 +1346,7 @@ export function startAttachWatcher(
   server: Server,
   intervalMs = 1_000,
   onAttach?: () => void,
+  onDetach?: () => void,
 ): { stop(): void } {
   /** Sorted, comma-joined target-id string — '' means no targets attached. */
   function signature(): string {
@@ -1355,16 +1364,42 @@ export function startAttachWatcher(
     onAttach?.();
   }
 
-  const handle = setInterval(() => {
+  /** Compare current vs last signature and fire the appropriate callback. */
+  function tick(): void {
     const current = signature();
     if (current !== lastSignature) {
+      const wasNonEmpty = lastSignature !== '';
       lastSignature = current;
       if (current !== '') {
         // Non-empty signature change — new or replaced target(s).
         void server.sendToolListChanged();
         onAttach?.();
+      } else if (wasNonEmpty) {
+        // Fix #705-A: genuine non-empty→empty edge — fire detach callback so
+        // the dashboard gets an immediate SSE push ("disconnected").
+        onDetach?.();
       }
-      // Empty signature (full detach): signature updated above, callback skipped.
+      // empty→empty at startup: neither callback fires.
+    }
+  }
+
+  const handle = setInterval(() => {
+    if (connection.refreshTargets) {
+      // Fix #705-B: refresh the in-memory target cache from the relay before
+      // reading the signature, so silent disconnects are detected even without
+      // a CDP event. A transient relay error causes the tick to be skipped
+      // entirely — we never treat a fetch failure as a detach.
+      connection.refreshTargets().then(
+        () => {
+          tick();
+        },
+        (_err: unknown) => {
+          // Relay unreachable this tick — skip; do not update lastSignature.
+        },
+      );
+    } else {
+      // No refreshTargets on this connection (local/test) — tick synchronously.
+      tick();
     }
   }, intervalMs);
 
@@ -1926,6 +1961,13 @@ export interface DualRouterDeps {
    */
   onPageAttach?: () => void;
   /**
+   * Called on a genuine non-empty→empty target-signature transition (silent
+   * disconnect — phone backgrounded, tunnel quiet, TOTP re-attach rejected).
+   * Used by run functions to push an immediate "disconnected" SSE update to
+   * the dashboard so it stops showing a stale "connected" page (fix #705-A).
+   */
+  onPageDetach?: () => void;
+  /**
    * Returns the stable `/inspector` URL from the QR HTTP server (issue #530).
    * Called by `armWatcher` to pass to `AutoDevtoolsOpener.open()` so it can
    * open the secret-free stable URL instead of building a direct TOTP URL.
@@ -2110,6 +2152,11 @@ export class DualConnectionRouter implements ConnectionRouter {
             env,
           });
         }
+      },
+      // Fix #705-A: notify dashboard on silent detach (non-empty→empty) so
+      // open browser tabs immediately see the "disconnected" state.
+      () => {
+        this.deps.onPageDetach?.();
       },
     );
   }
@@ -2299,6 +2346,8 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     diagnosticsCollector,
     devtoolsOpener,
     onPageAttach: () => qrServer?.notifyStateChange(),
+    // Fix #705-A: push an immediate SSE update when the phone silently disconnects.
+    onPageDetach: () => qrServer?.notifyStateChange(),
     // Stable /inspector URL for auto-open (issue #530). qrServer is set after
     // the router is created but before armWatcher fires, so the closure safely
     // captures it by reference.
@@ -2687,6 +2736,8 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
     diagnosticsCollector,
     devtoolsOpener,
     onPageAttach: () => qrServer?.notifyStateChange(),
+    // Fix #705-A: push an immediate SSE update when the phone silently disconnects.
+    onPageDetach: () => qrServer?.notifyStateChange(),
     // Stable /inspector URL for auto-open (issue #530).
     getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
     // (#610) Stale relay-sandbox rebuild: re-read the relay URL on every
@@ -3020,6 +3071,8 @@ export async function runMobileDebugServer(
     diagnosticsCollector,
     devtoolsOpener,
     onPageAttach: () => qrServer?.notifyStateChange(),
+    // Fix #705-A: push an immediate SSE update when the phone silently disconnects.
+    onPageDetach: () => qrServer?.notifyStateChange(),
     // Stable /inspector URL for auto-open (issue #530).
     getInspectorStableUrl: () => qrServer?.inspectorStableUrl ?? null,
     // (#610) Stale relay-sandbox rebuild: re-read the relay URL on every
