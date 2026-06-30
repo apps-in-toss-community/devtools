@@ -738,6 +738,68 @@ describe('it.runIf — runs only when condition is truthy', () => {
 });
 
 /* -------------------------------------------------------------------------- */
+/* toContain — array receiver + string receiver (devtools#702)                 */
+/* -------------------------------------------------------------------------- */
+
+describe('Expectation.toContain — array receiver, member present passes', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('resolved in allowed set', () => {
+        rg.expect(['resolved', 'rejected']).toContain('resolved');
+      });
+    });
+  });
+  it('1 passed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('Expectation.toContain — array receiver, member absent fails', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('pending not in set', () => {
+        rg.expect(['resolved', 'rejected']).toContain('pending');
+      });
+    });
+  });
+  it('1 failed', () => {
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('Expectation.toContain — string receiver, substring present passes (regression)', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('hello contains ell', () => {
+        rg.expect('hello').toContain('ell');
+      });
+    });
+  });
+  it('1 passed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('Expectation.toContain — string receiver, substring absent fails (regression)', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('hello does not contain xyz', () => {
+        rg.expect('hello').toContain('xyz');
+      });
+    });
+  });
+  it('1 failed', () => {
+    expect(report.failed).toBe(1);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* State reset between runTestModule calls                                     */
 /* -------------------------------------------------------------------------- */
 
