@@ -370,10 +370,17 @@ class Expectation {
     );
   }
 
-  toContain(sub: string): void {
+  toContain(sub: unknown): void {
+    if (Array.isArray(this.#received)) {
+      this.#assert(
+        this.#received.includes(sub),
+        `Expected array to contain ${JSON.stringify(sub)}, received ${JSON.stringify(this.#received)}`,
+      );
+      return;
+    }
     this.#assert(
-      typeof this.#received === 'string' && this.#received.includes(sub),
-      `Expected to contain "${sub}", received "${String(this.#received)}"`,
+      typeof this.#received === 'string' && typeof sub === 'string' && this.#received.includes(sub),
+      `Expected to contain "${String(sub)}", received "${String(this.#received)}"`,
     );
   }
 
