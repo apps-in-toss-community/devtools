@@ -32,7 +32,15 @@ USAGE
 OPTIONS
   --scheme-url <url>      intoss-private:// URL from \`ait deploy --scheme-only\`
                           (required for standalone relay attach / env3)
-  --timeout <ms>          Per-file evaluate timeout in ms (default: 30000)
+  --timeout <ms>          Per-file evaluate timeout in ms (default: 30000).
+                          Controls how long a single test file is allowed to run
+                          before it is considered hung. Does NOT affect how long
+                          the CLI waits for a human to scan the QR code — use
+                          --attach-timeout for that.
+  --attach-timeout <ms>   How long to wait for a human to scan the QR code with
+                          their phone (default: 600000 — 10 minutes). Omit to
+                          use the relay factory's generous default. Decrease for
+                          CI environments where a scan should arrive quickly.
   --cell-sdk-line <line>  SDK line to inject as __AIT_CELL__.sdkLine (2.x|3.x)
   --cell-platform <plat>  Platform to inject as __AIT_CELL__.platform
                           (mock|ios|android, default: AIT_CELL_PLATFORM env)
@@ -70,6 +78,55 @@ EXAMPLE
     --timeout 60000
 
 `.trimStart();
+
+/* -------------------------------------------------------------------------- */
+/* Timeout resolution (exported for unit tests)                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Resolved timeout values derived from raw CLI flag strings.
+ *
+ * Exported so unit tests can assert the two clocks in isolation without
+ * spawning a subprocess.
+ */
+export interface ResolvedTimeouts {
+  /** Per-file evaluate timeout (ms). From --timeout; default 30 000. */
+  evaluateTimeoutMs: number;
+  /**
+   * QR-scan wait timeout (ms), or `undefined` when --attach-timeout was not
+   * supplied. `undefined` signals "let relay-factory.ts's 600 000 ms default
+   * govern" — we intentionally do not inline that default here so the factory
+   * remains the single source of truth for it.
+   */
+  attachTimeoutMs: number | undefined;
+}
+
+/**
+ * Parses --timeout and --attach-timeout raw string values into the two
+ * distinct clocks.
+ *
+ * Returns an error string on invalid input, or the resolved timeouts on
+ * success. The caller (main) writes the error to stderr and exits 1.
+ *
+ * Exported for unit testing — main() is the only other caller.
+ */
+export function resolveTimeouts(
+  rawTimeout: string | undefined,
+  rawAttachTimeout: string | undefined,
+): ResolvedTimeouts | string {
+  const evaluateTimeoutMs = rawTimeout !== undefined ? parseInt(rawTimeout, 10) : 30_000;
+  if (Number.isNaN(evaluateTimeoutMs) || evaluateTimeoutMs <= 0) {
+    return '--timeout must be a positive integer';
+  }
+
+  const attachTimeoutMs =
+    rawAttachTimeout !== undefined ? parseInt(rawAttachTimeout, 10) : undefined;
+  if (attachTimeoutMs !== undefined && (Number.isNaN(attachTimeoutMs) || attachTimeoutMs <= 0)) {
+    return '--attach-timeout must be a positive integer';
+  }
+
+  return { evaluateTimeoutMs, attachTimeoutMs };
+}
 
 /* -------------------------------------------------------------------------- */
 /* Pure run function (testable without a real relay)                           */
@@ -134,13 +191,15 @@ export function shouldSuppressQr(noQrFlag: boolean): boolean {
  * assembly with the Vitest pool via `createRelayConnectionFactory` (single
  * source — no drift):
  *
- * 1. Parse args: globs, --timeout, --cell-sdk-line, --cell-platform,
- *    --scheme-url (required for env3), --report-dir, --no-qr-stdout,
- *    --headless, --project-root.
+ * 1. Parse args: globs, --timeout (per-file evaluate), --attach-timeout (QR
+ *    scan wait), --cell-sdk-line, --cell-platform, --scheme-url (required for
+ *    env3), --report-dir, --no-qr-stdout, --headless, --project-root.
  * 2. Discover test files; exit 1 if none.
  * 3. factory.open() — boot relay → render QR (suppressed on non-interactive
- *    stdout) → wait for phone → inject cell → enableDomains. Returns the conn.
- * 4. runWithConnection(conn, files, { timeoutMs, collectCaptures, printSummary }).
+ *    stdout) → wait for phone (up to attachTimeoutMs) → inject cell →
+ *    enableDomains. Returns the conn.
+ * 4. runWithConnection(conn, files, { evaluateTimeoutMs, collectCaptures,
+ *    printSummary }).
  * 5. With --report-dir: write the runner-agnostic report + capture files.
  * 6. factory.close(); process.exitCode = failed > 0 ? 1 : 0.
  *
@@ -160,6 +219,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       options: {
         help: { type: 'boolean', short: 'h' },
         timeout: { type: 'string' },
+        'attach-timeout': { type: 'string' },
         'scheme-url': { type: 'string' },
         'cell-sdk-line': { type: 'string' },
         'cell-platform': { type: 'string' },
@@ -185,13 +245,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // for the union `values` type when options have mixed `type` fields, so we
   // narrow each flag here.
   const vals = parsed.values;
-  const rawTimeout = typeof vals.timeout === 'string' ? vals.timeout : undefined;
-  const timeoutMs = rawTimeout !== undefined ? parseInt(rawTimeout, 10) : 30_000;
-  if (Number.isNaN(timeoutMs) || timeoutMs <= 0) {
-    process.stderr.write(`devtools-test: --timeout must be a positive integer\n`);
+
+  // Resolve the two timeout clocks via the exported pure helper (unit-tested).
+  const timeouts = resolveTimeouts(
+    typeof vals.timeout === 'string' ? vals.timeout : undefined,
+    typeof vals['attach-timeout'] === 'string' ? vals['attach-timeout'] : undefined,
+  );
+  if (typeof timeouts === 'string') {
+    process.stderr.write(`devtools-test: ${timeouts}\n`);
     process.exitCode = 1;
     return;
   }
+  const { evaluateTimeoutMs, attachTimeoutMs } = timeouts;
 
   const schemeUrl = typeof vals['scheme-url'] === 'string' ? vals['scheme-url'] : '';
   if (schemeUrl === '') {
@@ -250,7 +315,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const factory = createRelayConnectionFactory({
     schemeUrl,
     projectRoot,
-    timeoutMs,
+    // attachTimeoutMs is only forwarded when the user explicitly passed
+    // --attach-timeout; otherwise we omit it so relay-factory.ts's built-in
+    // 600 000 ms default governs (single source of truth for that value).
+    ...(attachTimeoutMs !== undefined ? { timeoutMs: attachTimeoutMs } : {}),
     headless,
     cell: hasCell ? cell : undefined,
     onQrContent: (chunks) => {
@@ -278,7 +346,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     // collectCaptures is enabled only when a report dir is given (the only sink
     // for captures) — keeps the no-report path free of listener overhead.
     const report = await runWithConnection(connection, files, {
-      timeoutMs,
+      timeoutMs: evaluateTimeoutMs,
       printSummary: true,
       collectCaptures: reportDir !== undefined,
     });
