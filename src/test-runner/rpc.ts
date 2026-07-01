@@ -12,7 +12,7 @@ import type { CdpConnection } from '../mcp/cdp-connection.js';
 import type { RunReport } from './runtime.js';
 
 /** Maximum milliseconds to wait for a single evaluate round-trip. */
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
  * Wraps bundle code in a self-executing IIFE that:
@@ -114,10 +114,22 @@ export async function injectAndRunBundle(
 ): Promise<RpcRunResult> {
   const expression = buildRunTestsExpression(bundleCode);
 
-  // Use AbortSignal-style timeout via Promise.race so we surface a clear
-  // message rather than hanging indefinitely.
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`rpc: evaluate timed out after ${timeoutMs}ms`)), timeoutMs),
+  // Use a tagged race so we can distinguish "timeout won" from "evaluate won"
+  // without relying on exception identity.  The timeout arm RETURNS a typed
+  // RpcRunResult (ok:false + EVALUATE_TIMEOUT_MARKER) so the caller (relay-
+  // worker's attempt()) can detect it via `.error.includes(EVALUATE_TIMEOUT_MARKER)`
+  // and trigger the one-retry path.
+  //
+  // Genuine CDP `exceptionDetails` (engine exceptions thrown inside the page)
+  // still THROW — those are deterministic failures that a retry cannot fix and
+  // relay-worker's catch block finalises them correctly.
+  //
+  // DO NOT change the literal string below — relay-worker.ts imports
+  // EVALUATE_TIMEOUT_MARKER = 'rpc: evaluate timed out after' and uses
+  // `.includes()` to recognise this exact prefix.
+  const TIMEOUT_SENTINEL = Symbol('timeout');
+  const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) =>
+    setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs),
   );
 
   const evalPromise = connection.send('Runtime.evaluate', {
@@ -126,7 +138,16 @@ export async function injectAndRunBundle(
     awaitPromise: true,
   });
 
-  const cdpResult = await Promise.race([evalPromise, timeoutPromise]);
+  const raceResult = await Promise.race([
+    evalPromise.then((v) => ({ tag: 'eval' as const, v })),
+    timeoutPromise.then(() => ({ tag: 'timeout' as const })),
+  ]);
+
+  if (raceResult.tag === 'timeout') {
+    return { ok: false, error: `rpc: evaluate timed out after ${timeoutMs}ms` };
+  }
+
+  const cdpResult = raceResult.v;
 
   if (cdpResult.exceptionDetails) {
     // Surface only the engine error string — not the expression or value.

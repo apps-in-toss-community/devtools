@@ -9,7 +9,7 @@
  * Single-attach constraint: only one page is active at a time. Files run
  * sequentially; parallel execution across targets is out of scope.
  *
- * The 30-second per-file timeout is inherited from `injectAndRunBundle`.
+ * The per-file timeout is inherited from `injectAndRunBundle` (default 60 s).
  * For suites that exceed it, split the file into smaller pieces.
  *
  * SECRET-HANDLING: file paths are surfaced in reports; relay URLs are not.
@@ -176,12 +176,16 @@ export async function runTestFilesOverRelay(
          * result is a genuine timeout and the caller should retry.
          *
          * We need to distinguish:
-         *   - `rpcResult.ok = false` + timeout error → retry candidate
+         *   - `rpcResult.ok = false` + timeout error → retry candidate (`return null`)
          *   - `rpcResult.ok = false` + other error   → final error, no retry
-         *   - `injectAndRunBundle` throws             → treated like a final error
-         *     (throws happen on CDP exceptionDetails, not on the Promise.race
-         *     timeout — the timeout produces `rpcResult.ok=false` with the
-         *     EVALUATE_TIMEOUT_MARKER message)
+         *   - `injectAndRunBundle` throws             → CDP exceptionDetails (page
+         *     engine threw); treated as a final (non-retryable) error.
+         *
+         * The Promise.race timeout in rpc.ts RETURNS `{ok:false, error: '…'}` (it
+         * does NOT throw/reject).  Only genuine CDP `exceptionDetails` cause a throw.
+         * This distinction is what makes the EVALUATE_TIMEOUT_MARKER gate below
+         * reachable — the timeout result surfaces as `rpcResult.ok=false` with the
+         * marker string, not as a caught exception.
          */
         const attempt = async (): Promise<FileResult | null> => {
           let rpcResult: Awaited<ReturnType<typeof injectAndRunBundle>>;
