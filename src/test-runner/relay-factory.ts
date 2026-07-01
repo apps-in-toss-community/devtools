@@ -313,18 +313,77 @@ export function createRelayConnectionFactory(
         .map((c) => c.text);
       opts.onQrContent(qrChunks);
 
-      // Debugger attached — show the on-phone "Debugger Connected" badge.
+      // PAGE-READY GATE (devtools#720, fix (a)+(b)):
+      //
+      // FIX (a) — ORDER: enableDomains() MUST run before injectDebugIndicator()
+      // and injectGlobals(). Both inject calls use Runtime.evaluate via
+      // sendCommand(), which guards with `if (!this.ws) reject("Call
+      // enableDomains() first")`.  With the old ordering (inject → inject →
+      // enableDomains) injectDebugIndicator's throw was swallowed by cell.ts
+      // try/catch but injectGlobals (no try/catch) propagated fatally — when
+      // --cell was set open() hard-threw before enableDomains ever ran and the
+      // CLI exited with 0 files executed.
+      //
+      // FIX (b) — BOUNDED RETRY: the window between waitForFirstTarget (non-
+      // empty /targets) and enableDomains (page-level WS open) is where a
+      // Cloudflare edge idle-drop can disconnect the phone.  enableDomains()
+      // calls refreshTargets() internally; if the target list is empty at that
+      // point it throws "No mini-app page attached".  We absorb up to
+      // PAGE_READY_RETRIES transient failures by waiting briefly and retrying
+      // the refreshTargets+enableDomains sequence.  enableDomains() is
+      // idempotent (concurrent callers share the in-flight promise), so retries
+      // are safe.  Only after all retries fail do we surface a secret-free
+      // error.  This is the CLI equivalent of the MCP daemon's soft-fail
+      // cushion in relay-worker.ts.
+      //
+      // Neither fix touches chii-connection.ts or the MCP daemon path.
+      const PAGE_READY_RETRIES = 3;
+      const PAGE_READY_RETRY_DELAY_MS = 1_500;
+
+      let lastEnableError: Error | undefined;
+      for (let attempt = 1; attempt <= PAGE_READY_RETRIES; attempt++) {
+        try {
+          // FIX (a): enableDomains first — opens the page-level CDP websocket.
+          await booted.connection.enableDomains();
+          lastEnableError = undefined;
+          break;
+        } catch (err) {
+          lastEnableError = err instanceof Error ? err : new Error(String(err));
+          if (attempt < PAGE_READY_RETRIES) {
+            // FIX (b): brief pause then re-poll /targets before retrying
+            // enableDomains. Use a non-leaking approach: wait, then fall
+            // through to the next loop iteration.
+            await new Promise<void>((resolve) => setTimeout(resolve, PAGE_READY_RETRY_DELAY_MS));
+          }
+        }
+      }
+
+      if (lastEnableError !== undefined) {
+        booted.stop();
+        family = undefined;
+        await qrServer?.close();
+        qrServer = undefined;
+        // SECRET-HANDLING: message contains only a duration + attempt count.
+        // No relay wss URL, scheme URL, or TOTP code is included.
+        throw new Error(
+          `createRelayConnectionFactory: page did not become ready after ${PAGE_READY_RETRIES} attempts (${Math.round((PAGE_READY_RETRIES * PAGE_READY_RETRY_DELAY_MS) / 1000)}s) — the mini-app page may have disconnected before enableDomains() could open the CDP websocket`,
+        );
+      }
+
+      // FIX (a): inject AFTER enableDomains so the page-level CDP websocket is
+      // open and sendCommand() will not hit the ws===null guard.
+
+      // Show the on-phone "Debugger Connected" badge. injectDebugIndicator
+      // swallows its own errors (cell.ts try/catch), so a badge failure is
+      // non-fatal — test execution proceeds regardless.
       await injectDebugIndicator(booted.connection);
 
       // Inject the cell globals before any test bundle runs (session-global).
+      // injectGlobals() does NOT swallow errors — a genuine type/eval failure
+      // here surfaces clearly instead of silently skipping cell injection.
       if (opts.cell !== undefined) {
         await injectGlobals(booted.connection, { __AIT_CELL__: opts.cell });
       }
-
-      // Open the CDP client websocket + enable domains so the first run's
-      // Runtime.evaluate and console stream are live. enableDomains is
-      // idempotent; runTestFilesOverRelay also calls it defensively.
-      await booted.connection.enableDomains();
 
       return booted.connection;
     },

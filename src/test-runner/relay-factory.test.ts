@@ -535,3 +535,249 @@ describe('createRelayConnectionFactory — boot-race regression (devtools#714)',
     vi.useRealTimers();
   });
 });
+
+// ── Page-ready gate regression (devtools#720) ────────────────────────────────
+//
+// These tests guard the two-part fix:
+//   (a) ORDER: enableDomains() must be called BEFORE injectDebugIndicator() and
+//       injectGlobals() — both use sendCommand() which rejects immediately when
+//       ws===null ("No mini-app page attached ... Call enableDomains() first").
+//   (b) BOUNDED RETRY: a transient disconnect between /targets non-empty and
+//       page-level WS open must be absorbed by the retry loop instead of
+//       propagating as a fatal open() rejection.
+//
+// The fake CdpConnection below records call order and simulates delayed/failing
+// enableDomains(). It is react-free and Node-only — no real relay or phone.
+// SECRET-HANDLING: all wss/scheme values in fixtures are synthetic placeholders.
+
+describe('createRelayConnectionFactory — page-ready gate (devtools#720)', () => {
+  const onQrContent = vi.fn();
+
+  // A minimal fake CdpConnection that:
+  //   - records calls to enableDomains(), injectDebugIndicator's sendCommand,
+  //     and injectGlobals' sendCommand in order
+  //   - lets the test control how many times enableDomains() rejects before
+  //     it resolves
+  function makeFakeConnection(
+    opts: {
+      enableDomainsFailCount?: number; // how many times to reject before resolving
+    } = {},
+  ) {
+    let failsRemaining = opts.enableDomainsFailCount ?? 0;
+    const callOrder: string[] = [];
+
+    const conn = {
+      kind: 'relay' as const,
+      listTargets: () => [],
+      /** Resolves after failsRemaining rejections are exhausted. */
+      enableDomains: vi.fn(async () => {
+        callOrder.push('enableDomains');
+        if (failsRemaining > 0) {
+          failsRemaining--;
+          throw new Error('No mini-app page attached to the Chii relay yet.');
+        }
+        // Resolved — ws is now "open" from the caller's perspective.
+      }),
+      /** send is used by injectDebugIndicator and injectGlobals. */
+      send: vi.fn(async (_method: string) => {
+        callOrder.push('send');
+        // If enableDomains hasn't resolved yet, the real ws guard would throw.
+        // We simulate that here: if failsRemaining is still > 0 the page is
+        // not yet ready, so send should reject just like the real code does.
+        if (failsRemaining > 0) {
+          throw new Error(
+            'No mini-app page attached to the Chii relay yet. Call enableDomains() first.',
+          );
+        }
+        return { result: { value: true } };
+      }),
+    };
+
+    return { conn, callOrder };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default prepareAttach and renderAndMaybeWait to passing values; individual
+    // tests override them when needed.
+    prepareAttachMock.mockResolvedValue(passingPrepResult());
+    renderAndMaybeWaitMock.mockResolvedValue(passingWaitResult());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // ── Test 1 (ORDER): enableDomains before inject ───────────────────────────
+  // load-bearing: if enableDomains is called LAST (old buggy order) then
+  // injectGlobals' send() would hit ws===null and throw fatally.  After the
+  // fix, enableDomains must appear before both inject calls in callOrder.
+  it('calls enableDomains() BEFORE injectDebugIndicator and injectGlobals (fix a — load-bearing)', async () => {
+    const { conn, callOrder } = makeFakeConnection({ enableDomainsFailCount: 0 });
+
+    // Override bootRelayFamily to return our fake connection.
+    bootRelayFamilyMock.mockResolvedValueOnce({
+      connection: conn,
+      stop: fakeStop,
+      getTunnelStatus: () => ({ up: true, wssUrl: null }),
+    });
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      cell: { sdkLine: '3.0', platform: 'ios' }, // forces injectGlobals call
+      onQrContent,
+    });
+
+    await factory.open();
+
+    // enableDomains must appear BEFORE any send() call.
+    const enableIdx = callOrder.indexOf('enableDomains');
+    const firstSendIdx = callOrder.indexOf('send');
+
+    expect(enableIdx).toBeGreaterThanOrEqual(0); // enableDomains was called
+    if (firstSendIdx !== -1) {
+      // If send was called at all, it must be after enableDomains.
+      expect(enableIdx).toBeLessThan(firstSendIdx);
+    }
+  });
+
+  // ── Test 2 (RETRY — load-bearing): delayed page attach ───────────────────
+  // When enableDomains() rejects transiently (simulating a drop between
+  // /targets non-empty and page-level WS open), open() must NOT throw; it
+  // must retry and eventually resolve once enableDomains succeeds.
+  it('retries enableDomains() on transient failure and resolves when page attaches (fix b — load-bearing)', async () => {
+    // Fail twice then succeed on the 3rd attempt (within PAGE_READY_RETRIES=3).
+    const { conn } = makeFakeConnection({ enableDomainsFailCount: 2 });
+
+    bootRelayFamilyMock.mockResolvedValueOnce({
+      connection: conn,
+      stop: fakeStop,
+      getTunnelStatus: () => ({ up: true, wssUrl: null }),
+    });
+
+    vi.useFakeTimers();
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    // open() is async and contains setTimeout-based retry delays.
+    const openPromise = factory.open();
+
+    // Drain microtasks, then advance past the retry delays.
+    // PAGE_READY_RETRY_DELAY_MS = 1_500ms, retries = 2 needed.
+    await vi.runAllTimersAsync();
+
+    const result = await openPromise;
+    expect(result).toBeDefined(); // open() resolved — NOT threw
+
+    // enableDomains must have been called multiple times (at least 3 — the 2
+    // failures + 1 success).
+    expect(conn.enableDomains).toHaveBeenCalledTimes(3);
+
+    vi.useRealTimers();
+  });
+
+  // ── Test 3 (--cell FATAL THROW regression) ───────────────────────────────
+  // Before fix (a): with the old order, injectGlobals ran before enableDomains,
+  // hit ws===null, and its unguarded throw crashed open(). With fix (a) the
+  // order is enableDomains → inject, so --cell must not cause a fatal throw.
+  it('--cell does not cause a fatal throw when page is delayed (fix a regression)', async () => {
+    // Page attaches with 1 transient enableDomains failure.
+    const { conn } = makeFakeConnection({ enableDomainsFailCount: 1 });
+
+    bootRelayFamilyMock.mockResolvedValueOnce({
+      connection: conn,
+      stop: fakeStop,
+      getTunnelStatus: () => ({ up: true, wssUrl: null }),
+    });
+
+    vi.useFakeTimers();
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      cell: { sdkLine: '2.x', platform: 'android' }, // triggers injectGlobals
+      onQrContent,
+    });
+
+    const openPromise = factory.open();
+    await vi.runAllTimersAsync();
+
+    // Must resolve — not throw
+    await expect(openPromise).resolves.toBeDefined();
+
+    vi.useRealTimers();
+  });
+
+  // ── Test 4 (BOUNDED FAILURE): page never attaches ────────────────────────
+  // When enableDomains() rejects on every attempt (page never comes up),
+  // open() must throw a secret-free error after PAGE_READY_RETRIES exhausted.
+  // The error message must NOT contain wss://, 'at=', or scheme-URL fragments.
+  it('throws a secret-free error after all retry attempts fail (fix b bounded failure)', async () => {
+    // Always fail — more failures than PAGE_READY_RETRIES=3.
+    const { conn } = makeFakeConnection({ enableDomainsFailCount: 10 });
+
+    bootRelayFamilyMock.mockResolvedValueOnce({
+      connection: conn,
+      stop: fakeStop,
+      getTunnelStatus: () => ({ up: true, wssUrl: null }),
+    });
+
+    vi.useFakeTimers();
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    let caughtError: Error | undefined;
+    const openPromise = factory.open().catch((e: unknown) => {
+      caughtError = e instanceof Error ? e : new Error(String(e));
+    });
+
+    await vi.runAllTimersAsync();
+    await openPromise;
+
+    expect(caughtError).toBeDefined();
+
+    // Must throw with a description — not the raw "No mini-app page..." relay error
+    expect(caughtError?.message).toMatch('page did not become ready');
+
+    // SECRET-HANDLING: message must not contain wss://, at=, or any URL.
+    expect(caughtError?.message).not.toContain('wss:');
+    expect(caughtError?.message).not.toContain('at=');
+    expect(caughtError?.message).not.toContain('intoss-private://');
+
+    // QR server must be closed on the failure path (no listener leak).
+    expect(qrServerCloseMock).toHaveBeenCalledOnce();
+
+    vi.useRealTimers();
+  });
+
+  // ── Test 5 (IMMEDIATELY RUNNABLE): no sendCommand errors after open() ─────
+  // After open() resolves the connection should be page-ready: subsequent
+  // send() calls must not hit the ws===null guard ("No mini-app page attached").
+  it('connection is page-ready after open() — send() does not hit ws===null guard', async () => {
+    const { conn } = makeFakeConnection({ enableDomainsFailCount: 0 });
+
+    bootRelayFamilyMock.mockResolvedValueOnce({
+      connection: conn,
+      stop: fakeStop,
+      getTunnelStatus: () => ({ up: true, wssUrl: null }),
+    });
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    const resolvedConn = await factory.open();
+
+    // Simulate what runTestFilesOverRelay does: issue a Runtime.evaluate.
+    // If the fix is correct, enableDomains already ran so this resolves.
+    await expect(
+      resolvedConn.send('Runtime.evaluate', { expression: '1', returnByValue: true }),
+    ).resolves.toBeDefined();
+  });
+});
