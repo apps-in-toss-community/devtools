@@ -83,6 +83,15 @@ export interface RelayRunOptions {
 }
 
 /**
+ * Sentinel string embedded in the error message by `injectAndRunBundle` when
+ * the per-file evaluate race hits the timeout. Used by the retry guard so only
+ * genuine timeouts get a second attempt — not bundle errors or parse failures.
+ *
+ * Exported for unit tests that assert the retry path is taken.
+ */
+export const EVALUATE_TIMEOUT_MARKER = 'rpc: evaluate timed out after';
+
+/**
  * Runs all `files` sequentially over the given CDP `connection`.
  *
  * For each file:
@@ -161,19 +170,69 @@ export async function runTestFilesOverRelay(
       let fileEntry: FileResult;
       try {
         const { code } = await bundleTestFile(file, opts?.bundleOptions);
-        const rpcResult = await injectAndRunBundle(connection, code, opts?.timeoutMs);
-        if (rpcResult.ok) {
-          fileEntry = { file, result: rpcResult.report };
+
+        /**
+         * Runs one evaluate attempt and returns a FileResult, or `null` when the
+         * result is a genuine timeout and the caller should retry.
+         *
+         * We need to distinguish:
+         *   - `rpcResult.ok = false` + timeout error → retry candidate
+         *   - `rpcResult.ok = false` + other error   → final error, no retry
+         *   - `injectAndRunBundle` throws             → treated like a final error
+         *     (throws happen on CDP exceptionDetails, not on the Promise.race
+         *     timeout — the timeout produces `rpcResult.ok=false` with the
+         *     EVALUATE_TIMEOUT_MARKER message)
+         */
+        const attempt = async (): Promise<FileResult | null> => {
+          let rpcResult: Awaited<ReturnType<typeof injectAndRunBundle>>;
+          try {
+            rpcResult = await injectAndRunBundle(connection, code, opts?.timeoutMs);
+          } catch (e) {
+            // injectAndRunBundle throws only for CDP exceptionDetails — treat as
+            // a final (non-retryable) error.
+            return {
+              file,
+              result: { error: e instanceof Error ? e.message : String(e) },
+            };
+          }
+
+          if (rpcResult.ok) {
+            return { file, result: rpcResult.report };
+          }
+
+          // Timed-out evaluates get one retry; other errors are final.
+          if (rpcResult.error.includes(EVALUATE_TIMEOUT_MARKER)) {
+            return null; // signal "retry"
+          }
+          return { file, result: { error: rpcResult.error } };
+        };
+
+        const firstResult = await attempt();
+        if (firstResult !== null) {
+          fileEntry = firstResult;
         } else {
-          fileEntry = { file, result: { error: rpcResult.error } };
+          // First attempt timed out — retry once.  A transient native dialog
+          // (camera picker, location permission sheet, GPS cold-fix) may have
+          // cleared by now.
+          process.stderr.write(`relay-worker: evaluate timed out for ${file} — retrying once\n`);
+          const retryResult = await attempt();
+          if (retryResult !== null) {
+            fileEntry = retryResult;
+          } else {
+            // Second timeout: build a final error entry.
+            fileEntry = {
+              file,
+              result: {
+                error: `${EVALUATE_TIMEOUT_MARKER} ${opts?.timeoutMs ?? 30_000}ms (after retry)`,
+              },
+            };
+          }
         }
       } catch (e) {
-        // Capture bundle/inject errors per-file so subsequent files still run.
+        // Capture bundle errors per-file so subsequent files still run.
         fileEntry = {
           file,
-          result: {
-            error: e instanceof Error ? e.message : String(e),
-          },
+          result: { error: e instanceof Error ? e.message : String(e) },
         };
       }
       fileResults.push(fileEntry);

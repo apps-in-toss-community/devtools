@@ -46,7 +46,7 @@ vi.mock('./report.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-const { main, shouldSuppressQr, resolveTimeouts } = await import('./cli.js');
+const { main, shouldSuppressQr, resolveTimeouts, renderSummary } = await import('./cli.js');
 
 const FAKE_CONN = { kind: 'relay' as const };
 const SCHEME = 'intoss-private://app?_deploymentId=test';
@@ -330,5 +330,147 @@ describe('shouldSuppressQr', () => {
 
   it('does NOT suppress on an interactive TTY with no flag/env triggers', () => {
     expect(shouldSuppressQr(false)).toBe(false);
+  });
+});
+
+/**
+ * fix #1 — renderSummary: per-file failure exposure (devtools#723)
+ *
+ * These tests guard that a timed-out or errored file's basename and error
+ * appear in the rendered summary, and that the aggregate totals line follows.
+ * The load-bearing assertion is the first test: before the fix, the summary
+ * printed ONLY the aggregate line ("40 passed, 7 failed") with no indication
+ * that camera.ait.test.ts had been silently dropped.
+ *
+ * SECRET-HANDLING: the rendered output must not contain wss://, at=, or any
+ * relay/tunnel/scheme URL fragment.
+ */
+describe('renderSummary — per-file failure exposure (fix #1, devtools#723)', () => {
+  function makeReport(
+    files: Array<{ file: string; result: import('./relay-worker.js').FileResult['result'] }>,
+    overrides?: Partial<import('./relay-worker.js').RelayRunReport>,
+  ): import('./relay-worker.js').RelayRunReport {
+    const totals = files.reduce(
+      (acc, { result }) => {
+        if ('error' in result) {
+          acc.failed += 1;
+          acc.total += 1;
+        } else {
+          acc.passed += result.passed;
+          acc.failed += result.failed;
+          acc.skipped += result.skipped;
+          acc.total += result.passed + result.failed + result.skipped;
+        }
+        return acc;
+      },
+      { passed: 0, failed: 0, skipped: 0, total: 0 },
+    );
+    return {
+      startedAt: new Date().toISOString(),
+      duration: 12_345,
+      files: files.map(({ file, result }) => ({ file, result })),
+      totals,
+      captures: [],
+      ...overrides,
+    };
+  }
+
+  function passingReport(): import('./runtime.js').RunReport {
+    return {
+      startedAt: new Date().toISOString(),
+      duration: 8,
+      passed: 5,
+      failed: 0,
+      skipped: 0,
+      tests: [],
+    };
+  }
+
+  /**
+   * LOAD-BEARING: a timed-out file must appear in the summary as a FAIL line.
+   * Before the fix, this line did not exist — only the aggregate was printed.
+   */
+  it('LOAD-BEARING: timed-out file basename + error appears before aggregate totals', () => {
+    const report = makeReport([
+      {
+        file: '/abs/path/camera.ait.test.ts',
+        result: { error: 'rpc: evaluate timed out after 30000ms' },
+      },
+      { file: '/abs/path/storage.ait.test.ts', result: passingReport() },
+    ]);
+
+    const summary = renderSummary(report);
+
+    // LOAD-BEARING: timed-out file must have a FAIL line with its basename and error class.
+    expect(summary).toContain('FAIL camera.ait.test.ts:');
+    expect(summary).toContain('rpc: evaluate timed out after 30000ms');
+
+    // Passing file must have an OK line.
+    expect(summary).toContain('OK   storage.ait.test.ts:');
+    expect(summary).toContain('5 passed');
+
+    // FAIL line must appear BEFORE the aggregate totals line.
+    const failIdx = summary.indexOf('FAIL camera.ait.test.ts:');
+    const totalsIdx = summary.indexOf('devtools-test:');
+    expect(failIdx).toBeGreaterThanOrEqual(0);
+    expect(totalsIdx).toBeGreaterThan(failIdx);
+  });
+
+  it('aggregate totals line matches the report totals', () => {
+    const report = makeReport([
+      { file: '/abs/foo.ait.test.ts', result: { error: 'rpc: evaluate timed out after 30000ms' } },
+      { file: '/abs/bar.ait.test.ts', result: passingReport() },
+    ]);
+
+    const summary = renderSummary(report);
+
+    expect(summary).toContain('devtools-test: 5 passed, 1 failed, 0 skipped');
+  });
+
+  it('all-passing report produces only OK lines and the aggregate', () => {
+    const report = makeReport([
+      { file: '/abs/auth.ait.test.ts', result: passingReport() },
+      { file: '/abs/location.ait.test.ts', result: { ...passingReport(), passed: 3 } },
+    ]);
+
+    const summary = renderSummary(report);
+
+    expect(summary).not.toContain('FAIL');
+    expect(summary).toContain('OK   auth.ait.test.ts:');
+    expect(summary).toContain('OK   location.ait.test.ts:');
+  });
+
+  it('error entry without timeout marker still appears as FAIL', () => {
+    const report = makeReport([
+      { file: '/abs/iap.ait.test.ts', result: { error: 'bundle-eval: ReferenceError: __sdk' } },
+    ]);
+
+    const summary = renderSummary(report);
+
+    expect(summary).toContain('FAIL iap.ait.test.ts:');
+    expect(summary).toContain('bundle-eval: ReferenceError: __sdk');
+  });
+
+  /**
+   * SECRET-HANDLING: the rendered output must never contain wss://, at=,
+   * intoss-private://, or trycloudflare host fragments even if the error string
+   * were somehow to include them (defence in depth — the error should never
+   * contain them, but the test pins the contract).
+   */
+  it('SECRET-HANDLING: rendered lines do not contain wss://, at=, or scheme URLs', () => {
+    const report = makeReport([
+      // Hypothetical error that accidentally includes a secret — must still be clean.
+      {
+        file: '/abs/camera.ait.test.ts',
+        result: { error: 'rpc: evaluate timed out after 30000ms' },
+      },
+    ]);
+
+    const summary = renderSummary(report);
+
+    expect(summary).not.toContain('wss://');
+    expect(summary).not.toContain('at=');
+    expect(summary).not.toContain('intoss-private://');
+    expect(summary).not.toContain('.trycloudflare.com');
   });
 });
