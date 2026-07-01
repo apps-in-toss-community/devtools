@@ -344,3 +344,194 @@ describe('createRelayConnectionFactory — web-QR server (devtools#708)', () => 
     });
   });
 });
+
+// ── Regression guard: devtools#714 — boot-race QR fix ────────────────────────
+//
+// These three assertions form the regression guard for the boot-race bug where
+// `open()` called `prepareAttach` before the cloudflared tunnel was up, causing
+// `getDashboardState().attachUrl` to stay null and `/qr.png` to 500.
+//
+// The existing mock (bootRelayFamilyMock) returns `getTunnelStatus: () => ({
+// up: true, wssUrl: null })` which always passes the tunnel-down guard — it
+// cannot exercise the race. The tests below override the mock to simulate the
+// real race: tunnel starts as down, then flips up only after the `onWssUrl`
+// callback fires.
+
+describe('createRelayConnectionFactory — boot-race regression (devtools#714)', () => {
+  const onQrContent = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prepareAttachMock.mockResolvedValue(passingPrepResult());
+    renderAndMaybeWaitMock.mockResolvedValue(passingWaitResult());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  // Assertion A (load-bearing): open() must NOT throw when the tunnel starts
+  // down and only becomes up after onWssUrl fires. Before the fix, open() called
+  // prepareAttach immediately while tunnel.up === false → tunnel-down guard →
+  // `{ok: false}` → throw "attach preparation failed". After the fix, open()
+  // awaits tunnel-ready before calling prepareAttach → tunnel.up === true →
+  // prepareAttach succeeds → getDashboardState().attachUrl is non-null.
+  it('Assertion A — open() resolves and attachUrl is non-null after late onWssUrl (load-bearing)', async () => {
+    // Simulate the real race: tunnel is DOWN at boot time and flips UP only
+    // when onWssUrl is called (mimics cloudflared coming up a few seconds later).
+    let tunnelUp = false;
+    // Capture the onWssUrl callback inside the mock implementation itself so we
+    // don't have to race against the number of microtasks needed for open() to
+    // reach the bootRelayFamily call. Using the outer closure avoids the TS2345
+    // error from passing a parameterised fn to mockImplementationOnce (vi.fn()
+    // infers a zero-arg return type). The cast is intentional to stay type-safe.
+    let capturedOnWssUrl: ((wssUrl: string) => void) | undefined;
+
+    (
+      bootRelayFamilyMock as unknown as {
+        mockImplementationOnce: (
+          fn: (opts: { onWssUrl?: (wssUrl: string) => void }) => Promise<unknown>,
+        ) => void;
+      }
+    ).mockImplementationOnce((opts) => {
+      capturedOnWssUrl = opts?.onWssUrl;
+      return Promise.resolve({
+        connection: fakeConnection,
+        stop: fakeStop,
+        // Initially DOWN — tunnel not yet up.
+        getTunnelStatus: () =>
+          ({
+            up: tunnelUp,
+            wssUrl: tunnelUp ? 'wss://example.test/relay' : null,
+          }) as { up: boolean; wssUrl: null },
+      });
+    });
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    // Fire onWssUrl asynchronously (after bootRelayFamily resolves) to simulate
+    // cloudflared coming up in the background.
+    const openPromise = factory.open();
+
+    // Drain all pending microtasks until bootRelayFamily has been called and
+    // capturedOnWssUrl has been set. open() queues several awaits before
+    // bootRelayFamily (dynamic imports + loadRelaySecretReadOnly); we pump the
+    // microtask queue with setImmediate to let those resolve first.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(capturedOnWssUrl).toBeDefined();
+    tunnelUp = true;
+    // Trigger the callback — this resolves the tunnelReady promise inside open().
+    // SECRET-HANDLING: use a fake wss URL (no real relay host).
+    capturedOnWssUrl?.('wss://example.test/relay');
+
+    // open() must resolve (not throw "attach preparation failed").
+    await expect(openPromise).resolves.toBeDefined();
+
+    // After open() resolves, onAttachUrlBuilt should have been wired and fired
+    // (prepareAttach → renderAndMaybeWait → onAttachUrlBuilt via attachDeps).
+    // getDashboardState should return a non-null attachUrl via mintAttachUrl.
+    const getDashboardState = capturedGetDashboardState();
+    const deps = capturedAttachDeps();
+
+    // Manually trigger onAttachUrlBuilt (simulating renderAndMaybeWait doing so)
+    deps?.onAttachUrlBuilt?.({
+      kind: 'scheme' as const,
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      wssUrl: 'wss://example.test/relay',
+    });
+
+    const state = getDashboardState();
+    expect(state.attachUrl).not.toBeNull();
+  });
+
+  // Assertion B (missing wire): bootRelayFamily must be called with an onWssUrl
+  // callback (not undefined). When that callback fires, notifyStateChange must
+  // be called on the QR server — this is the "missing wire" the fix adds.
+  it('Assertion B — bootRelayFamily receives onWssUrl and its invocation triggers notifyStateChange', async () => {
+    // Capture onWssUrl inside the mock implementation (same approach as Assertion A).
+    let capturedOnWssUrl: ((wssUrl: string) => void) | undefined;
+
+    (
+      bootRelayFamilyMock as unknown as {
+        mockImplementationOnce: (
+          fn: (opts: { onWssUrl?: (wssUrl: string) => void }) => Promise<unknown>,
+        ) => void;
+      }
+    ).mockImplementationOnce((opts) => {
+      capturedOnWssUrl = opts?.onWssUrl;
+      return Promise.resolve({
+        connection: fakeConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => ({ up: true, wssUrl: null }),
+      });
+    });
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    // bootRelayFamily must have received a non-undefined onWssUrl.
+    expect(capturedOnWssUrl).toBeDefined();
+
+    // Firing the callback AFTER qrServer is up must trigger notifyStateChange.
+    // SECRET-HANDLING: fake wss URL only.
+    const notifyCallsBefore = qrServerNotifyMock.mock.calls.length;
+    capturedOnWssUrl?.('wss://example.test/relay');
+    expect(qrServerNotifyMock.mock.calls.length).toBeGreaterThan(notifyCallsBefore);
+  });
+
+  // Assertion C (leak): when prepareAttach fails (tunnel never comes up within
+  // the timeout), qrServer.close() must be called so the loopback port listener
+  // does not leak. Before the fix, only booted.stop() was called on the failure
+  // path — qrServer was left open.
+  it('Assertion C — qrServer.close() is called on prepareAttach failure (no listener leak)', async () => {
+    // Simulate tunnel never coming up: getTunnelStatus always returns down,
+    // tunnelReady promise resolves via the 15 s timeout (we use a fake timer).
+    bootRelayFamilyMock.mockImplementationOnce(() =>
+      Promise.resolve({
+        connection: fakeConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => ({ up: false, wssUrl: null }),
+      }),
+    );
+
+    // prepareAttach returns failure (tunnel-down guard in real code; we mock it).
+    prepareAttachMock.mockResolvedValueOnce({ ok: false, error: { content: [] } });
+
+    vi.useFakeTimers();
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    // Attach a .catch() immediately so Node does not treat this as an unhandled
+    // rejection while the fake timers are being advanced. The caught value is
+    // verified with expect() after the timers fire.
+    let caughtError: Error | undefined;
+    const openPromise = factory.open().catch((e: unknown) => {
+      caughtError = e instanceof Error ? e : new Error(String(e));
+    });
+
+    // Advance past the TUNNEL_BOOT_TIMEOUT_MS (15 000 ms) so the race resolves.
+    await vi.advanceTimersByTimeAsync(16_000);
+    await openPromise;
+
+    // open() should have thrown with the attach preparation message.
+    expect(caughtError).toBeDefined();
+    expect(caughtError?.message).toMatch('attach preparation failed');
+
+    // qrServer.close() must have been called — no listener leak.
+    expect(qrServerCloseMock).toHaveBeenCalledOnce();
+
+    vi.useRealTimers();
+  });
+});
