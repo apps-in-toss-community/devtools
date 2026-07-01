@@ -136,8 +136,42 @@ export function createRelayConnectionFactory(
       // value is never logged here.
       await loadRelaySecretReadOnly({ projectRoot });
 
-      const booted = await bootRelayFamily({ verifyAuth: buildRelayVerifyAuth() });
+      // PRIMARY FIX (devtools#714): bootRelayFamily starts the cloudflared tunnel
+      // as a background promise and returns immediately with tunnel.up === false.
+      // We must NOT call prepareAttach until the tunnel is up — it fails fast when
+      // tunnel.up is false (attach-orchestrator.ts tunnel-down guard).
+      //
+      // Wire onWssUrl (mirroring the MCP daemon path in debug-server.ts) to:
+      //   1. resolve a caller-held tunnel-ready promise so open() can await it, and
+      //   2. re-push dashboard SSE on late tunnel-up events (notifyStateChange).
+      //
+      // SECRET-HANDLING: onWssUrl receives the relay wss URL — never log it.
+      let resolveTunnelUp!: () => void;
+      const tunnelReady = new Promise<void>((resolve) => {
+        resolveTunnelUp = resolve;
+      });
+
+      const booted = await bootRelayFamily({
+        verifyAuth: buildRelayVerifyAuth(),
+        onWssUrl: () => {
+          // Resolve the tunnel-ready gate so the prepareAttach call below is
+          // unblocked. qrServer may not be set yet at call time (it's started
+          // after bootRelayFamily), so we use optional chaining — if the tunnel
+          // happens to come up after qrServer is started, notifyStateChange pushes
+          // the freshly minted attachUrl to any waiting dashboard SSE clients.
+          // SECRET-HANDLING: wssUrl is NOT forwarded here — the value travels only
+          // inside the closure via getTunnelStatus().wssUrl (used by mintAttachUrl).
+          resolveTunnelUp();
+          qrServer?.notifyStateChange();
+        },
+      });
       family = booted;
+
+      // If the tunnel is already up (extremely fast boot or test double), resolve
+      // immediately so we don't stall on a promise that will never fire.
+      if (booted.getTunnelStatus?.().up) {
+        resolveTunnelUp();
+      }
 
       // Track the last-captured attach parts so getDashboardState can mint a
       // fresh attach URL on every dashboard request/SSE push (fresh TOTP at=).
@@ -198,6 +232,23 @@ export function createRelayConnectionFactory(
         // qrServer remains undefined; close() handles that with optional chaining.
       }
 
+      // PRIMARY FIX (devtools#714): await tunnel readiness before calling
+      // prepareAttach. Race: a 15 s timeout is generous — cloudflared typically
+      // comes up in < 5 s. On timeout we still call prepareAttach; it will hit
+      // the tunnel-down guard and throw a secret-free error (same as before,
+      // but now with a clear diagnostic instead of a silent WAITING freeze).
+      //
+      // Implementation: Promise.race against a 15 000 ms timeout signal. We do
+      // NOT use a timer-based early-exit because the existing code already
+      // surface-fails on tunnel-down inside prepareAttach with a secret-free
+      // message. The timeout here is purely a "give the tunnel a fair chance"
+      // gate — not a correctness boundary.
+      const TUNNEL_BOOT_TIMEOUT_MS = 15_000;
+      await Promise.race([
+        tunnelReady,
+        new Promise<void>((resolve) => setTimeout(resolve, TUNNEL_BOOT_TIMEOUT_MS)),
+      ]);
+
       const prep = await prepareAttach(
         attachDeps,
         'relay-dev',
@@ -207,6 +258,11 @@ export function createRelayConnectionFactory(
       if (!prep.ok) {
         booted.stop();
         family = undefined;
+        // SECONDARY FIX (devtools#714): close the QR server on the failure path
+        // so the loopback port listener does not leak. The normal-exit path is
+        // handled by close(); this mirrors that cleanup for the error path.
+        await qrServer?.close();
+        qrServer = undefined;
         // SECRET-HANDLING: do NOT surface `prep.error.content` in the thrown
         // message. Some prep error paths build their text from attach
         // components, and the CLI catch writes `e.message` to stderr — embedding
@@ -230,6 +286,10 @@ export function createRelayConnectionFactory(
       if (waitResult.isError) {
         booted.stop();
         family = undefined;
+        // SECONDARY FIX (devtools#714): close the QR server on the timeout path
+        // (mirrors the prep.ok failure path above).
+        await qrServer?.close();
+        qrServer = undefined;
         // SECRET-HANDLING (BLOCKER fix): `waitResult.content` is the timeout
         // result built from `buildTimeoutError(baseText, ...)`, and `baseText`
         // is `JSON.stringify({ attachUrl, relayUrl, ... })` — `attachUrl` carries

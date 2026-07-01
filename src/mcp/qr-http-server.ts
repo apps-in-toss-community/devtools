@@ -999,12 +999,32 @@ export async function startQrHttpServer(
 
     if (path === '/qr.png') {
       const encodedU = params.get('u') ?? '';
+
+      // SECONDARY FIX (devtools#714): an empty or missing `u` means the attach
+      // URL is not yet available (tunnel still booting, dashboard in WAITING
+      // state). Return 204 No Content instead of passing an empty string to
+      // QRCode.toBuffer which would reject and produce a confusing 500.
+      // The dashboard SSE will push a refresh once the attach URL is minted.
+      if (encodedU === '') {
+        res.writeHead(204, { 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+
       let attachUrl: string;
       try {
         attachUrl = decodeURIComponent(encodedU);
       } catch {
         res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('잘못된 u 파라미터입니다.');
+        return;
+      }
+
+      // Guard against an empty decoded string (e.g. `?u=` encoded as `%00`
+      // or other edge cases) — same 204 treatment as the missing-u path above.
+      if (attachUrl === '') {
+        res.writeHead(204, { 'Cache-Control': 'no-store' });
+        res.end();
         return;
       }
 
