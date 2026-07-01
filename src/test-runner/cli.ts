@@ -11,6 +11,7 @@
  * `src/mcp/cli.ts`).
  */
 
+import { basename } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
 import { discoverTestFiles } from './discover.js';
@@ -129,6 +130,55 @@ export function resolveTimeouts(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Per-file summary rendering (exported for unit tests)                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Renders per-file result lines and the aggregate totals line to a string.
+ *
+ * Each file gets one line:
+ *   - Error/timeout:  `FAIL <basename>: <error-class>`
+ *   - Pass (0 tests): `OK   <basename>: 0 passed (empty file)`
+ *   - Pass:           `OK   <basename>: N passed[, M failed][, K skipped]`
+ *
+ * The aggregate totals line always follows.
+ *
+ * SECRET-HANDLING: only `basename(file)` is used — no absolute paths, relay
+ * URLs, wss URLs, scheme URLs, or TOTP codes appear in the output. The error
+ * string comes from `result.error` which is already secret-free (relay-worker
+ * produces only error-class messages like "rpc: evaluate timed out after
+ * 30000ms").
+ *
+ * Exported so unit tests can assert the per-file lines without spawning a
+ * subprocess or going through the full relay attach flow.
+ */
+export function renderSummary(report: RelayRunReport): string {
+  const lines: string[] = [];
+
+  for (const { file, result } of report.files) {
+    const name = basename(file);
+    if ('error' in result) {
+      // Timed-out or errored file — the error string is already secret-free
+      // (relay-worker only surfaces error-class text, never URLs or codes).
+      lines.push(`FAIL ${name}: ${result.error}`);
+    } else {
+      const parts: string[] = [`${result.passed} passed`];
+      if (result.failed > 0) parts.push(`${result.failed} failed`);
+      if (result.skipped > 0) parts.push(`${result.skipped} skipped`);
+      const suffix = result.passed + result.failed + result.skipped === 0 ? ' (empty file)' : '';
+      lines.push(`OK   ${name}: ${parts.join(', ')}${suffix}`);
+    }
+  }
+
+  const { totals, duration } = report;
+  lines.push(
+    `\ndevtools-test: ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${duration}ms)`,
+  );
+
+  return lines.join('\n');
+}
+
+/* -------------------------------------------------------------------------- */
 /* Pure run function (testable without a real relay)                           */
 /* -------------------------------------------------------------------------- */
 
@@ -152,10 +202,7 @@ export async function runWithConnection(
   const report = await runTestFilesOverRelay(connection, files, opts);
 
   if (opts?.printSummary) {
-    const { totals } = report;
-    process.stdout.write(
-      `\ndevtools-test: ${totals.passed} passed, ${totals.failed} failed, ${totals.skipped} skipped (${report.duration}ms)\n`,
-    );
+    process.stdout.write(`\n${renderSummary(report)}\n`);
   }
 
   return report;
