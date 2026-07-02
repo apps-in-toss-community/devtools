@@ -39,9 +39,9 @@ OPTIONS
                           the CLI waits for a human to scan the QR code — use
                           --attach-timeout for that.
   --attach-timeout <ms>   How long to wait for a human to scan the QR code with
-                          their phone (default: 600000 — 10 minutes). Omit to
-                          use the relay factory's generous default. Decrease for
-                          CI environments where a scan should arrive quickly.
+                          their phone. Omit (default) to wait indefinitely — the
+                          runner stays up until you stop it (Ctrl-C/SIGTERM).
+                          Pass a value to bound the wait for CI/headless runs.
   --cell-sdk-line <line>  SDK line to inject as __AIT_CELL__.sdkLine (2.x|3.x)
   --cell-platform <plat>  Platform to inject as __AIT_CELL__.platform
                           (mock|ios|android, default: AIT_CELL_PLATFORM env)
@@ -95,9 +95,10 @@ export interface ResolvedTimeouts {
   evaluateTimeoutMs: number;
   /**
    * QR-scan wait timeout (ms), or `undefined` when --attach-timeout was not
-   * supplied. `undefined` signals "let relay-factory.ts's 600 000 ms default
-   * govern" — we intentionally do not inline that default here so the factory
-   * remains the single source of truth for it.
+   * supplied. `undefined` signals "let relay-factory.ts's default govern" —
+   * which is an UNBOUNDED wait (devtools#735): the runner stays up until the
+   * user stops it (Ctrl-C/SIGTERM). We intentionally do not inline that
+   * default here so the factory remains the single source of truth for it.
    */
   attachTimeoutMs: number | undefined;
 }
@@ -367,7 +368,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     projectRoot,
     // attachTimeoutMs is only forwarded when the user explicitly passed
     // --attach-timeout; otherwise we omit it so relay-factory.ts's built-in
-    // 600 000 ms default governs (single source of truth for that value).
+    // UNBOUNDED default governs (devtools#735) — single source of truth.
     ...(attachTimeoutMs !== undefined ? { timeoutMs: attachTimeoutMs } : {}),
     headless,
     cell: hasCell ? cell : undefined,

@@ -61,9 +61,12 @@ export interface RelayConnectionFactoryOptions {
   projectRoot?: string;
   /**
    * Attach wait timeout in ms — how long `open()` waits for the phone to scan
-   * the QR and attach. Defaults to 600 000 (10 min) to give time for a manual
-   * scan. (The per-file evaluate timeout is separate, passed via the pool's
-   * `run` options.)
+   * the QR and attach. Omitted (the default) means **wait indefinitely** —
+   * the runner stays up until the user stops it (Ctrl-C/SIGTERM). QR-scan
+   * wait is a human-paced action; there is no sound default bound for it
+   * (devtools#735). Pass an explicit value to opt into a bounded wait (CI/
+   * headless callers — `--attach-timeout` on the CLI). (The per-file evaluate
+   * timeout is separate, passed via the pool's `run` options.)
    */
   timeoutMs?: number;
   /** Disable browser auto-open of the QR dashboard (text QR only). */
@@ -97,11 +100,14 @@ export interface RelayConnectionFactoryOptions {
  * Builds a {@link RelayConnectionFactory} that opens a standalone env3 relay
  * connection.
  *
- * `open()` performs the full attach lifecycle and BLOCKS for tens of seconds (up
- * to `timeoutMs`) while a human scans the rendered QR with their phone — there
- * is no way around the manual scan for env3. It resolves with the live
- * `CdpConnection` once a matching page attaches; `close()` tears the relay
- * family down.
+ * `open()` performs the full attach lifecycle and BLOCKS while a human scans
+ * the rendered QR with their phone — there is no way around the manual scan
+ * for env3. By default the wait is UNBOUNDED (`opts.timeoutMs` omitted): the
+ * runner stays up until the user stops it (Ctrl-C/SIGTERM), since QR-scan is
+ * a human-paced action with no sound default bound (devtools#735). Passing an
+ * explicit `timeoutMs` opts into the old bounded behavior (CI/headless
+ * callers). It resolves with the live `CdpConnection` once a matching page
+ * attaches; `close()` tears the relay family down.
  *
  * The factory holds the booted relay family in a closure so `close()` can stop
  * it. A second `open()` on the same factory boots a fresh family (the previous
@@ -111,7 +117,10 @@ export function createRelayConnectionFactory(
   opts: RelayConnectionFactoryOptions,
 ): RelayConnectionFactory {
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const timeoutMs = opts.timeoutMs ?? 600_000;
+  // Undefined/absent → Infinity (wait forever). An explicit finite value opts
+  // into the old bounded behavior. Number.isFinite guards downstream
+  // (renderAndMaybeWait / waitForFirstTarget) treat Infinity as "no timer".
+  const timeoutMs = opts.timeoutMs ?? Number.POSITIVE_INFINITY;
   const headless = opts.headless === true;
 
   // Captured so close() can stop the family that open() booted.

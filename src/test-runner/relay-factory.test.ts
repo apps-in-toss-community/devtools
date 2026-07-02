@@ -536,6 +536,55 @@ describe('createRelayConnectionFactory — boot-race regression (devtools#714)',
   });
 });
 
+// ── Unbounded attach wait by default (devtools#735) ──────────────────────────
+//
+// The QR-scan wait is a human-paced action. `timeoutMs` omitted must forward
+// an UNBOUNDED (Infinity) timeout to `renderAndMaybeWait` — the runner stays
+// up until the user stops it. An explicit `timeoutMs` must still forward that
+// finite value (regression guard for the old bounded default).
+
+describe('createRelayConnectionFactory — attach wait default (devtools#735)', () => {
+  const onQrContent = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prepareAttachMock.mockResolvedValue(passingPrepResult());
+    renderAndMaybeWaitMock.mockResolvedValue(passingWaitResult());
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('forwards Infinity (unbounded) to renderAndMaybeWait when timeoutMs is omitted', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    expect(renderAndMaybeWaitMock).toHaveBeenCalledOnce();
+    // renderAndMaybeWait(attachDeps, prep, waitForAttach, timeoutMs, conn)
+    const forwardedTimeoutMs = renderAndMaybeWaitMock.mock.calls[0]?.[3];
+    expect(forwardedTimeoutMs).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('forwards the explicit timeoutMs when provided (bounded — regression)', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+      timeoutMs: 45_000,
+    });
+
+    await factory.open();
+
+    expect(renderAndMaybeWaitMock).toHaveBeenCalledOnce();
+    const forwardedTimeoutMs = renderAndMaybeWaitMock.mock.calls[0]?.[3];
+    expect(forwardedTimeoutMs).toBe(45_000);
+  });
+});
+
 // ── Page-ready gate regression (devtools#720) ────────────────────────────────
 //
 // These tests guard the two-part fix:

@@ -320,7 +320,11 @@ export class ChiiCdpConnection implements CdpConnection {
    * EventEmitter is missed (defensive belt-and-suspenders).
    *
    * @param filterFn  - Predicate that the returned targets must satisfy.
-   * @param timeoutMs - Reject after this many ms (default 90 000).
+   * @param timeoutMs - Reject after this many ms (default 90 000). Pass a
+   *   non-finite value (`Infinity`) to disable the rejection timer entirely —
+   *   used by the test-runner's unbounded QR-attach wait (devtools#735). Node
+   *   clamps `setTimeout(fn, Infinity)` to ~1ms, so a non-finite value MUST
+   *   skip arming the timer rather than pass it through.
    * @param pollIntervalMs - Fallback poll interval (default 500ms).
    */
   waitForFirstTarget(
@@ -339,7 +343,7 @@ export class ChiiCdpConnection implements CdpConnection {
       const settle = (targets: CdpTarget[]): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timeoutHandle);
+        if (timeoutHandle !== null) clearTimeout(timeoutHandle);
         if (pollHandle !== null) {
           clearInterval(pollHandle);
           pollHandle = null;
@@ -352,20 +356,25 @@ export class ChiiCdpConnection implements CdpConnection {
         if (filterFn(targets)) settle(targets);
       };
 
-      const timeoutHandle = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        if (pollHandle !== null) {
-          clearInterval(pollHandle);
-          pollHandle = null;
-        }
-        this.emitter.off('target:attached', onAttach);
-        reject(
-          new Error(
-            `waitForFirstTarget: 타임아웃 (${timeoutMs}ms) — 폰이 relay에 attach되지 않았습니다.`,
-          ),
-        );
-      }, timeoutMs);
+      // Non-finite timeoutMs (Infinity) means "wait forever" — do NOT arm the
+      // rejection timer. Node clamps setTimeout(fn, Infinity) to ~1ms, which
+      // would reject almost immediately if passed through unguarded.
+      const timeoutHandle: ReturnType<typeof setTimeout> | null = Number.isFinite(timeoutMs)
+        ? setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            if (pollHandle !== null) {
+              clearInterval(pollHandle);
+              pollHandle = null;
+            }
+            this.emitter.off('target:attached', onAttach);
+            reject(
+              new Error(
+                `waitForFirstTarget: 타임아웃 (${timeoutMs}ms) — 폰이 relay에 attach되지 않았습니다.`,
+              ),
+            );
+          }, timeoutMs)
+        : null;
 
       // Primary: event-driven path.
       this.emitter.on('target:attached', onAttach);
