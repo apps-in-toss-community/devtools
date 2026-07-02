@@ -221,6 +221,14 @@ export const ko = {
     'MCP server가 종료되어 이 세션이 더 이상 유효하지 않습니다. 이 탭을 닫아도 됩니다.',
   'dashboard.watchdog.close': '탭 닫기',
 
+  // qr-http-server — real-time status surfaces (#730)
+  'dashboard.conn.lost': '연결 끊김 — 재연결 시도 중…',
+  'dashboard.session.completeTitle': '테스트 실행 완료',
+  'dashboard.session.completeBody': '러너가 정상 종료되었습니다. 결과는 터미널에서 확인하세요.',
+  'dashboard.session.shutdownTitle': '디버그 서버가 종료되었습니다',
+  'dashboard.session.shutdownBody':
+    'MCP server가 종료되어 이 세션이 더 이상 유효하지 않습니다. 이 탭을 닫아도 됩니다.',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // 카피는 세션 mode별로 sandbox(환경 2) / intoss(환경 3) family로 분기한다 (#468).
   'attach.title': 'AIT 디버그 세션 — QR 스캔',

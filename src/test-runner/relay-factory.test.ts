@@ -781,3 +781,142 @@ describe('createRelayConnectionFactory — page-ready gate (devtools#720)', () =
     ).resolves.toBeDefined();
   });
 });
+
+// ── Real-time status surfaces (#730) ─────────────────────────────────────────
+//
+// These tests cover the new `phase` lifecycle wiring:
+//   - getDashboardState().phase defaults to 'active' and reflects onSessionPhase.
+//   - CLI onTunnelDown parity with the MCP daemon (relay-factory.ts was missing
+//     this wire — the daemon already has it in debug-server.ts).
+//   - close() ordering: the terminal 'complete' push + disconnected-state badge
+//     inject happen BEFORE family.stop()/qrServer.close() (load-bearing —
+//     otherwise the SSE frame/CDP inject race the teardown).
+//   - close() stays non-throwing even if the CDP inject rejects.
+
+describe('createRelayConnectionFactory — phase lifecycle (#730)', () => {
+  const onQrContent = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prepareAttachMock.mockResolvedValue(passingPrepResult());
+    renderAndMaybeWaitMock.mockResolvedValue(passingWaitResult());
+    bootRelayFamilyMock.mockImplementation(() =>
+      Promise.resolve({
+        connection: fakeConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('getDashboardState() defaults phase to "active"', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    const getDashboardState = capturedGetDashboardState() as unknown as () => { phase?: string };
+    expect(getDashboardState().phase).toBe('active');
+  });
+
+  it('onSessionPhase("running") updates phase and fires notifyStateChange', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    const notifyCallsBefore = qrServerNotifyMock.mock.calls.length;
+    factory.onSessionPhase?.('running');
+
+    expect(qrServerNotifyMock.mock.calls.length).toBeGreaterThan(notifyCallsBefore);
+    const getDashboardState = capturedGetDashboardState() as unknown as () => { phase?: string };
+    expect(getDashboardState().phase).toBe('running');
+  });
+
+  it('CLI onTunnelDown is wired to bootRelayFamily and its invocation triggers notifyStateChange (parity gap)', async () => {
+    let capturedOnTunnelDown: (() => void) | undefined;
+    (
+      bootRelayFamilyMock as unknown as {
+        mockImplementationOnce: (
+          fn: (opts: {
+            onTunnelDown?: () => void;
+            onWssUrl?: (wssUrl: string) => void;
+          }) => Promise<unknown>,
+        ) => void;
+      }
+    ).mockImplementationOnce((opts) => {
+      capturedOnTunnelDown = opts?.onTunnelDown;
+      return Promise.resolve({
+        connection: fakeConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+      });
+    });
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    // This is the regression guard: before the fix, relay-factory.ts's
+    // bootRelayFamily call wired only onWssUrl — onTunnelDown was undefined.
+    expect(capturedOnTunnelDown).toBeDefined();
+
+    const notifyCallsBefore = qrServerNotifyMock.mock.calls.length;
+    capturedOnTunnelDown?.();
+    expect(qrServerNotifyMock.mock.calls.length).toBeGreaterThan(notifyCallsBefore);
+  });
+
+  it('close() ordering — notifyStateChange (phase complete) and injectDebugIndicator(disconnected) fire BEFORE family.stop()/qrServer.close() (load-bearing)', async () => {
+    const order: string[] = [];
+    qrServerNotifyMock.mockImplementation(() => order.push('notifyStateChange'));
+    injectDebugIndicatorMock.mockImplementation(() => {
+      order.push('injectDebugIndicator');
+      return Promise.resolve();
+    });
+    fakeStop.mockImplementation(() => order.push('family.stop'));
+    qrServerCloseMock.mockImplementation(() => {
+      order.push('qrServer.close');
+      return Promise.resolve();
+    });
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    const conn = await factory.open();
+    order.length = 0; // only care about ordering from close() onward
+
+    await factory.close(conn);
+
+    expect(injectDebugIndicatorMock).toHaveBeenCalledWith(conn, { state: 'disconnected' });
+    expect(order.indexOf('notifyStateChange')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('injectDebugIndicator')).toBeLessThan(order.indexOf('family.stop'));
+    expect(order.indexOf('notifyStateChange')).toBeLessThan(order.indexOf('qrServer.close'));
+  });
+
+  it('close() is non-throwing even when injectDebugIndicator rejects', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    // open() also calls injectDebugIndicator (attached-state badge) — let that
+    // one succeed, and only reject the disconnected-state call made by close().
+    const conn = await factory.open();
+    injectDebugIndicatorMock.mockRejectedValueOnce(new Error('CDP channel already closed'));
+
+    await expect(factory.close(conn)).resolves.toBeUndefined();
+  });
+});

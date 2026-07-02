@@ -87,6 +87,32 @@ let relayAuthExpired = false;
 /** Guard against stacking multiple observer wrappers on window.WebSocket. */
 let wsObserverInstalled = false;
 
+declare global {
+  interface Window {
+    /**
+     * Set once {@link installRelayWsObserver} has wrapped `window.WebSocket`
+     * (#730). The bare CDP-injected indicator (`buildIndicatorExpression`)
+     * checks this flag to decide whether it can piggy-back on the
+     * `ait:relay-ws-state` CustomEvent this module broadcasts, instead of
+     * installing a second competing `Proxy` on `window.WebSocket`.
+     */
+    __ait_relay_ws_observed?: boolean;
+  }
+}
+
+/**
+ * Broadcasts relay-socket lifecycle to any in-page listener (#730) — the
+ * on-phone debug indicator subscribes to this instead of wrapping
+ * `window.WebSocket` a second time.
+ *
+ * SECRET-HANDLING: the CustomEvent `detail` carries ONLY the enum
+ * `'open' | 'close'` — never a close code, host, relay URL, or TOTP value.
+ */
+function broadcastRelayWsState(state: 'open' | 'close'): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('ait:relay-ws-state', { detail: { state } }));
+}
+
 /**
  * Posts the `auth-expired` block signal to the parent launcher shell, once.
  *
@@ -201,6 +227,10 @@ export function installRelayWsObserver(relayUrl: string): void {
   const relayKey = wsOriginKey(relayUrl);
   if (relayKey === null) return;
   wsObserverInstalled = true;
+  // #730: signal to the page that relay-WS lifecycle is already observed, so
+  // a CDP-injected debug indicator can subscribe to `ait:relay-ws-state`
+  // instead of installing a second Proxy on window.WebSocket.
+  window.__ait_relay_ws_observed = true;
 
   const NativeWebSocket = window.WebSocket;
   const observed = new Proxy(NativeWebSocket, {
@@ -215,7 +245,12 @@ export function installRelayWsObserver(relayUrl: string): void {
         return createFailFastSocket(url);
       }
       const ws = Reflect.construct(target, args) as WebSocket;
+      // #730: broadcast generic open/close lifecycle (any close code) so the
+      // debug indicator can flip its live badge — additive to the existing
+      // 4401-specific branch below, which is untouched.
+      ws.addEventListener('open', () => broadcastRelayWsState('open'));
       ws.addEventListener('close', (event) => {
+        broadcastRelayWsState('close');
         if ((event as CloseEvent).code === RELAY_AUTH_REJECT_CLOSE_CODE) {
           relayAuthExpired = true;
           notifyAuthExpired();

@@ -51,12 +51,16 @@ export async function injectGlobals(
 }
 
 /**
- * Injects the "Debugger Connected" on-phone indicator via `Runtime.evaluate`.
+ * Injects (or updates) the "Debugger Connected"/"Debugger Disconnected"
+ * on-phone indicator via `Runtime.evaluate` (#730).
  *
  * Uses the same CDP mechanism as {@link injectGlobals} — a single
  * `Runtime.evaluate` round-trip with the expression built by
- * {@link buildIndicatorExpression}. The indicator is a dismissible red badge
- * rendered at the bottom-left of the page (position:fixed, safe-area-aware).
+ * {@link buildIndicatorExpression}. The indicator is a LIVE badge rendered at
+ * the bottom-left of the page (position:fixed, safe-area-aware): the badge's
+ * controller is idempotent, so calling this again (e.g. right before
+ * `close()` with `{ state: 'disconnected' }`) UPDATES the existing badge in
+ * place instead of injecting a duplicate.
  *
  * **Isolation**: unlike {@link injectGlobals}, this function NEVER throws to
  * its caller. Injection failure (e.g. page detached during inject, CSS not
@@ -66,12 +70,12 @@ export async function injectGlobals(
  * `src/in-app/attach.ts`.
  *
  * Call this ONLY on the manual debug paths (start_attach MCP, devtools-test
- * CLI). Do NOT call on the `run_tests` auto-attach path — the red badge
+ * CLI). Do NOT call on the `run_tests` auto-attach path — the badge
  * would contaminate screenshots, measure_safe_area probes, and DOM snapshots
  * taken during automated measurement runs.
  *
  * SECRET-HANDLING: the injected expression contains no secrets, relay URLs,
- * wss addresses, or TOTP codes — it is pure DOM UI text built by
+ * wss addresses, or TOTP codes — it is pure DOM UI text + enum state built by
  * {@link buildIndicatorExpression}.
  *
  * @param conn - The live CDP connection (relay-attached page).
@@ -79,7 +83,7 @@ export async function injectGlobals(
  */
 export async function injectDebugIndicator(
   conn: CdpConnection,
-  opts?: { label?: string },
+  opts?: { label?: string; disconnectedLabel?: string; state?: 'attached' | 'disconnected' },
 ): Promise<void> {
   try {
     await conn.send('Runtime.evaluate', {

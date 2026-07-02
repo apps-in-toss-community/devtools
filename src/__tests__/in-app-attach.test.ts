@@ -606,6 +606,125 @@ describe('installRelayWsObserver', () => {
 });
 
 // ---------------------------------------------------------------------------
+// installRelayWsObserver — ait:relay-ws-state broadcast (#730)
+//
+// The in-app indicator badge (attach-orchestrator.ts's buildIndicatorExpression)
+// prefers this CustomEvent pub/sub over double-wrapping window.WebSocket itself.
+// These tests guard: the observed-flag is set at install time, 'open'/'close'
+// dispatch the CustomEvent with the right detail.state, and the existing 4401
+// auth-expired path (above) is untouched by this addition.
+// ---------------------------------------------------------------------------
+
+describe('installRelayWsObserver — ait:relay-ws-state broadcast (#730)', () => {
+  const RELAY_URL = 'wss://relay.example.com/';
+  let installRelayWsObserver: (relayUrl: string) => void;
+  let originalWebSocket: typeof WebSocket | undefined;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    FakeWebSocket.instances.length = 0;
+    originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    // Framed page: postMessage requires window.parent !== window.
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: vi.fn() },
+      writable: true,
+      configurable: true,
+    });
+    delete (window as unknown as Record<string, unknown>).__ait_relay_ws_observed;
+    ({ installRelayWsObserver } = await import('../in-app/attach.js'));
+  });
+
+  afterEach(() => {
+    window.WebSocket = originalWebSocket as typeof WebSocket;
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+    delete (window as unknown as Record<string, unknown>).__ait_relay_ws_observed;
+  });
+
+  it('sets window.__ait_relay_ws_observed = true at install time', () => {
+    expect((window as unknown as Record<string, unknown>).__ait_relay_ws_observed).toBeUndefined();
+    installRelayWsObserver(RELAY_URL);
+    expect((window as unknown as Record<string, unknown>).__ait_relay_ws_observed).toBe(true);
+  });
+
+  it('broadcasts ait:relay-ws-state {state:"open"} when a relay-origin socket opens', () => {
+    installRelayWsObserver(RELAY_URL);
+    const events: Array<{ state?: string }> = [];
+    window.addEventListener('ait:relay-ws-state', (e) => {
+      events.push((e as CustomEvent).detail);
+    });
+
+    const ws = new window.WebSocket('wss://relay.example.com/at/123456/target/abc');
+    ws.dispatchEvent(new Event('open'));
+
+    expect(events).toContainEqual({ state: 'open' });
+  });
+
+  it('broadcasts ait:relay-ws-state {state:"close"} on a non-4401 relay-origin close', () => {
+    installRelayWsObserver(RELAY_URL);
+    const events: Array<{ state?: string }> = [];
+    window.addEventListener('ait:relay-ws-state', (e) => {
+      events.push((e as CustomEvent).detail);
+    });
+
+    const ws = new window.WebSocket('wss://relay.example.com/target/abc');
+    ws.dispatchEvent(closeEventWithCode(1006));
+
+    expect(events).toContainEqual({ state: 'close' });
+  });
+
+  it('broadcasts ait:relay-ws-state {state:"close"} on a 4401 relay-origin close too (indicator still reflects disconnected)', () => {
+    installRelayWsObserver(RELAY_URL);
+    const events: Array<{ state?: string }> = [];
+    window.addEventListener('ait:relay-ws-state', (e) => {
+      events.push((e as CustomEvent).detail);
+    });
+
+    const ws = new window.WebSocket('wss://relay.example.com/at/123456/target/abc');
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+
+    expect(events).toContainEqual({ state: 'close' });
+  });
+
+  it('does not broadcast for non-relay-origin (app traffic) sockets', () => {
+    installRelayWsObserver(RELAY_URL);
+    const events: Array<{ state?: string }> = [];
+    window.addEventListener('ait:relay-ws-state', (e) => {
+      events.push((e as CustomEvent).detail);
+    });
+
+    const ws = new window.WebSocket('wss://api.app.example.com/live');
+    ws.dispatchEvent(new Event('open'));
+    ws.dispatchEvent(closeEventWithCode(1006));
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('regression: the existing 4401 auth-expired postMessage path is unaffected by the new broadcast', () => {
+    const postMessageSpy = vi.fn();
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: postMessageSpy },
+      writable: true,
+      configurable: true,
+    });
+
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/at/123456/target/abc');
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: 'ait:debug-attach-blocked', reason: 'auth-expired' },
+      '*',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // script.onerror fetch probe (issue #478)
 // ---------------------------------------------------------------------------
 
