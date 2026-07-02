@@ -33,7 +33,7 @@ USAGE
 OPTIONS
   --scheme-url <url>      intoss-private:// URL from \`ait deploy --scheme-only\`
                           (required for standalone relay attach / env3)
-  --timeout <ms>          Per-file evaluate timeout in ms (default: 30000).
+  --timeout <ms>          Per-file evaluate timeout in ms (default: 60000).
                           Controls how long a single test file is allowed to run
                           before it is considered hung. Does NOT affect how long
                           the CLI waits for a human to scan the QR code — use
@@ -91,7 +91,7 @@ EXAMPLE
  * spawning a subprocess.
  */
 export interface ResolvedTimeouts {
-  /** Per-file evaluate timeout (ms). From --timeout; default 30 000. */
+  /** Per-file evaluate timeout (ms). From --timeout; default 60 000. */
   evaluateTimeoutMs: number;
   /**
    * QR-scan wait timeout (ms), or `undefined` when --attach-timeout was not
@@ -115,7 +115,10 @@ export function resolveTimeouts(
   rawTimeout: string | undefined,
   rawAttachTimeout: string | undefined,
 ): ResolvedTimeouts | string {
-  const evaluateTimeoutMs = rawTimeout !== undefined ? parseInt(rawTimeout, 10) : 30_000;
+  // Default must match rpc.ts DEFAULT_TIMEOUT_MS (60_000) — the CLI's own
+  // fallback used to be 30_000, which silently overrode rpc.ts's 60s bump
+  // (#726) on every CLI invocation that omitted --timeout (#731).
+  const evaluateTimeoutMs = rawTimeout !== undefined ? parseInt(rawTimeout, 10) : 60_000;
   if (Number.isNaN(evaluateTimeoutMs) || evaluateTimeoutMs <= 0) {
     return '--timeout must be a positive integer';
   }

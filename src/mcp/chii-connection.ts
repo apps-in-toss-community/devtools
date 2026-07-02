@@ -35,6 +35,30 @@ import { generateTotp } from './totp.js';
 /** Max events retained per domain ring buffer. */
 const DEFAULT_BUFFER_SIZE = 500;
 
+/**
+ * Substrings that mark a "relay websocket is dead" class error, as produced by
+ * `handleDisconnect('relay WebSocket 연결이 끊겼습니다')` (ws close handler) and
+ * the fail-fast `sendCommand` rejection (`relay에 연결되어 있지 않습니다 (...)`).
+ *
+ * Exported so callers outside this module (e.g. `test-runner/relay-worker.ts`)
+ * can detect the same error class without hardcoding a fragile full-sentence
+ * match — mirrors the `EVALUATE_TIMEOUT_MARKER` precedent in
+ * `test-runner/relay-worker.ts`. Kept in sync with `classifyToolError`'s
+ * `relayDisconnectError` branch in `mcp/errors.ts`.
+ */
+export const RELAY_DISCONNECT_MARKERS = [
+  'relay WebSocket',
+  'relay에 연결되어 있지 않습니다',
+] as const;
+
+/**
+ * Returns true when `message` matches the relay-websocket-dead error class
+ * (socket closed, socket errored, or fail-fast "not connected" rejection).
+ */
+export function isRelayDisconnectMessage(message: string): boolean {
+  return RELAY_DISCONNECT_MARKERS.some((marker) => message.includes(marker));
+}
+
 /** A CDP message arriving over the relay websocket. */
 interface CdpInboundMessage {
   id?: number;

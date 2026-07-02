@@ -19,7 +19,7 @@ import {
   RELAY_AUTH_REJECT_CLOSE_CODE,
   RELAY_AUTH_REJECT_REASON,
 } from '../../shared/relay-auth-close.js';
-import { ChiiCdpConnection } from '../chii-connection.js';
+import { ChiiCdpConnection, isRelayDisconnectMessage } from '../chii-connection.js';
 import { generateTotp } from '../totp.js';
 
 // ---- Fake relay helpers ----------------------------------------------------
@@ -427,5 +427,29 @@ describe('ChiiCdpConnection — TOTP at= in client WS URL', () => {
       conn.close();
       await relay.close();
     }
+  });
+});
+describe('isRelayDisconnectMessage (devtools#731)', () => {
+  it('matches the ws close handler message ("relay WebSocket 연결이 끊겼습니다")', () => {
+    expect(isRelayDisconnectMessage('relay WebSocket 연결이 끊겼습니다')).toBe(true);
+  });
+
+  it('matches the ws error handler message ("relay WebSocket 오류: ...")', () => {
+    expect(isRelayDisconnectMessage('relay WebSocket 오류: ECONNRESET')).toBe(true);
+  });
+
+  it('matches the fail-fast sendCommand rejection ("relay에 연결되어 있지 않습니다 (...)")', () => {
+    expect(
+      isRelayDisconnectMessage(
+        'relay에 연결되어 있지 않습니다 (Runtime.evaluate). list_pages로 attach 상태를 확인하고 enableDomains()로 재연결하세요.',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT match an unrelated error message', () => {
+    expect(isRelayDisconnectMessage('bundle-eval: ReferenceError: __sdk is not defined')).toBe(
+      false,
+    );
+    expect(isRelayDisconnectMessage('rpc: evaluate timed out after 60000ms')).toBe(false);
   });
 });
