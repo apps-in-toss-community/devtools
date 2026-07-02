@@ -153,20 +153,26 @@ describe('devtools-test main() exit codes', () => {
  * Regression guard for #717: the single --timeout flag must NOT collapse both
  * clocks. These tests are the load-bearing assertion that proves the fix:
  *
- *   - No flags → attach-wait is undefined (factory default ≥ 600 000, NOT 30 000)
+ *   - No flags → attach-wait is undefined (factory default ≥ 600 000, NOT 60 000)
  *   - --timeout only → per-file evaluate uses that value; attach-wait stays undefined
- *   - --attach-timeout only → attach-wait uses that value; evaluate stays 30 000
+ *   - --attach-timeout only → attach-wait uses that value; evaluate stays 60 000
  *
  * The critical invariant is the first case: before the fix, passing no flags
  * caused createRelayConnectionFactory to receive timeoutMs=30_000, which tore
  * down the QR dashboard 30 s after boot — before anyone could scan it.
+ *
+ * #731: the CLI's own no-flags fallback is now 60_000, matching rpc.ts's
+ * DEFAULT_TIMEOUT_MS — before this fix the CLI's 30_000 fallback silently
+ * overrode rpc.ts's 60s bump (#726) on every CLI run that omitted --timeout.
  */
 describe('resolveTimeouts — two clocks must be independent (#717)', () => {
-  it('no flags → evaluateTimeoutMs=30000, attachTimeoutMs=undefined (factory default)', () => {
+  it('no flags → evaluateTimeoutMs=60000, attachTimeoutMs=undefined (factory default) (#731)', () => {
     const result = resolveTimeouts(undefined, undefined);
     expect(typeof result).not.toBe('string');
     if (typeof result === 'string') return; // type narrowing for tsc
-    expect(result.evaluateTimeoutMs).toBe(30_000);
+    // LOAD-BEARING (#731): must match rpc.ts DEFAULT_TIMEOUT_MS (60_000), not
+    // the old 30_000 fallback that silently undid #726's 60s bump.
+    expect(result.evaluateTimeoutMs).toBe(60_000);
     // LOAD-BEARING: must be undefined, not 30_000 — so factory's 600 000 applies.
     expect(result.attachTimeoutMs).toBeUndefined();
   });
@@ -179,11 +185,11 @@ describe('resolveTimeouts — two clocks must be independent (#717)', () => {
     expect(result.attachTimeoutMs).toBeUndefined();
   });
 
-  it('--attach-timeout 120000 → attachTimeoutMs=120000, evaluateTimeoutMs still 30000', () => {
+  it('--attach-timeout 120000 → attachTimeoutMs=120000, evaluateTimeoutMs still 60000 (#731)', () => {
     const result = resolveTimeouts(undefined, '120000');
     expect(typeof result).not.toBe('string');
     if (typeof result === 'string') return;
-    expect(result.evaluateTimeoutMs).toBe(30_000);
+    expect(result.evaluateTimeoutMs).toBe(60_000);
     expect(result.attachTimeoutMs).toBe(120_000);
   });
 

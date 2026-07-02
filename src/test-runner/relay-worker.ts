@@ -16,6 +16,7 @@
  */
 
 import type { CdpConnection, ConsoleApiCalledEvent } from '../mcp/cdp-connection.js';
+import { isRelayDisconnectMessage } from '../mcp/chii-connection.js';
 import { type BundleOptions, bundleTestFile } from './bundle.js';
 import { type AitCaptureLine, parseCaptureLines } from './capture.js';
 import { injectAndRunBundle } from './rpc.js';
@@ -64,8 +65,8 @@ export interface RelayRunOptions {
    */
   bundleOptions?: BundleOptions;
   /**
-   * Per-file evaluate timeout in milliseconds. Defaults to 30 000.
-   * Increase for long-running suites or split the file.
+   * Per-file evaluate timeout in milliseconds. Defaults to 60 000 (rpc.ts
+   * DEFAULT_TIMEOUT_MS). Increase for long-running suites or split the file.
    */
   timeoutMs?: number;
   /**
@@ -165,8 +166,55 @@ export async function runTestFilesOverRelay(
     });
   }
 
+  // Tracks whether the PREVIOUS file's final result was a WS-dead-class error
+  // (relay disconnect). When true, we attempt one `enableDomains()` reconnect
+  // before processing the NEXT file — a single dropped socket (e.g. Cloudflare
+  // edge idle-drop mid-evaluate) should not cascade into every remaining file
+  // failing instantly (#731). `enableDomains()` is idempotent (early-returns
+  // when the ws is already OPEN, shares an in-flight promise), so calling it
+  // speculatively here is safe.
+  let pendingReconnectCheck = false;
+
+  /**
+   * Attempts one `enableDomains()` reconnect. Logs the attempt and outcome to
+   * stderr. Never throws — a failed reconnect just means the caller proceeds
+   * as today (each remaining file / the retry will fail-fast on the still-dead
+   * socket).
+   *
+   * `context` selects the fixed log literal: 'next-file' for the between-files
+   * case (a file's FINAL result was a WS-dead-class error — the primary #731
+   * scenario), 'retry-precheck' for the defensive reconnect before retrying a
+   * timed-out file (cheap no-op via `enableDomains()`'s idempotency when the
+   * socket never actually died).
+   *
+   * SECRET-HANDLING: fixed literals only — no relay wss URL, TOTP code, or
+   * tunnel host.
+   */
+  const attemptReconnect = async (context: 'next-file' | 'retry-precheck'): Promise<void> => {
+    process.stderr.write(
+      context === 'next-file'
+        ? 'relay-worker: relay connection lost — attempting reconnect before next file\n'
+        : 'relay-worker: evaluate timed out — attempting reconnect before retry\n',
+    );
+    try {
+      await connection.enableDomains();
+      process.stderr.write('relay-worker: reconnect succeeded\n');
+    } catch (e) {
+      process.stderr.write(
+        `relay-worker: reconnect failed (${
+          e instanceof Error ? e.message : String(e)
+        }) — continuing, remaining files may fail\n`,
+      );
+    }
+  };
+
   try {
     for (const file of files) {
+      if (pendingReconnectCheck) {
+        await attemptReconnect('next-file');
+        pendingReconnectCheck = false;
+      }
+
       let fileEntry: FileResult;
       try {
         const { code } = await bundleTestFile(file, opts?.bundleOptions);
@@ -178,22 +226,28 @@ export async function runTestFilesOverRelay(
          * We need to distinguish:
          *   - `rpcResult.ok = false` + timeout error → retry candidate (`return null`)
          *   - `rpcResult.ok = false` + other error   → final error, no retry
-         *   - `injectAndRunBundle` throws             → CDP exceptionDetails (page
-         *     engine threw); treated as a final (non-retryable) error.
+         *   - `injectAndRunBundle` throws             → CDP exceptionDetails OR a
+         *     relay-disconnect rejection from `connection.send()` (page engine
+         *     threw, or the ws died mid-evaluate); treated as a final
+         *     (non-retryable) error either way.
          *
          * The Promise.race timeout in rpc.ts RETURNS `{ok:false, error: '…'}` (it
-         * does NOT throw/reject).  Only genuine CDP `exceptionDetails` cause a throw.
-         * This distinction is what makes the EVALUATE_TIMEOUT_MARKER gate below
-         * reachable — the timeout result surfaces as `rpcResult.ok=false` with the
-         * marker string, not as a caught exception.
+         * does NOT throw/reject).  Only genuine CDP `exceptionDetails` (or a dead
+         * `connection.send()`) cause a throw. This distinction is what makes the
+         * EVALUATE_TIMEOUT_MARKER gate below reachable — the timeout result
+         * surfaces as `rpcResult.ok=false` with the marker string, not as a
+         * caught exception.
          */
         const attempt = async (): Promise<FileResult | null> => {
           let rpcResult: Awaited<ReturnType<typeof injectAndRunBundle>>;
           try {
             rpcResult = await injectAndRunBundle(connection, code, opts?.timeoutMs);
           } catch (e) {
-            // injectAndRunBundle throws only for CDP exceptionDetails — treat as
-            // a final (non-retryable) error.
+            // injectAndRunBundle throws for CDP exceptionDetails OR a relay ws
+            // death mid-evaluate (connection.send() fail-fast rejection) —
+            // either way this attempt is final (non-retryable). The
+            // WS-dead-class check below (after `fileEntry` is assigned)
+            // arranges the between-files reconnect (#731).
             return {
               file,
               result: { error: e instanceof Error ? e.message : String(e) },
@@ -215,6 +269,17 @@ export async function runTestFilesOverRelay(
         if (firstResult !== null) {
           fileEntry = firstResult;
         } else {
+          // First attempt timed out — the retry-precheck case (#731): the
+          // dead-air during a long timeout is exactly what let the Cloudflare
+          // edge idle-drop the relay ws in the observed run (permissions:
+          // attempt 1 timed out, the retry then hit an already-dead socket).
+          // `enableDomains()` is idempotent (no-op when the ws is already
+          // OPEN), so a defensive reconnect attempt here is safe even when
+          // the socket never actually died — it only costs a wasted round
+          // trip on the common "genuinely just slow" case, and it's the only
+          // way to catch this class since `CdpConnection` does not expose a
+          // public "is the socket alive" probe.
+          await attemptReconnect('retry-precheck');
           // First attempt timed out — retry once.  A transient native dialog
           // (camera picker, location permission sheet, GPS cold-fix) may have
           // cleared by now.
@@ -227,7 +292,10 @@ export async function runTestFilesOverRelay(
             fileEntry = {
               file,
               result: {
-                error: `${EVALUATE_TIMEOUT_MARKER} ${opts?.timeoutMs ?? 30_000}ms (after retry)`,
+                // This fallback must equal rpc.ts DEFAULT_TIMEOUT_MS (60_000)
+                // so the displayed budget matches what was actually used when
+                // the caller omitted opts.timeoutMs (#731).
+                error: `${EVALUATE_TIMEOUT_MARKER} ${opts?.timeoutMs ?? 60_000}ms (after retry)`,
               },
             };
           }
@@ -239,6 +307,13 @@ export async function runTestFilesOverRelay(
           result: { error: e instanceof Error ? e.message : String(e) },
         };
       }
+
+      // If this file's FINAL result is a WS-dead-class error, arrange for a
+      // reconnect attempt before the NEXT file (#731) — do not abort the loop.
+      if ('error' in fileEntry.result && isRelayDisconnectMessage(fileEntry.result.error)) {
+        pendingReconnectCheck = true;
+      }
+
       fileResults.push(fileEntry);
     }
   } finally {

@@ -232,6 +232,41 @@ describe('relay-worker — fix #2b: per-file timeout retry (load-bearing)', () =
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe('relay-worker — devtools#731: display fallback matches rpc.ts default', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bundleTestFileMock.mockResolvedValue({ code: '/* bundled */' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * LOAD-BEARING (#731 regression test #2): when the caller omits
+   * opts.timeoutMs, the double-timeout error's displayed budget must be
+   * 60000ms (matching rpc.ts DEFAULT_TIMEOUT_MS) — not the stale 30000ms
+   * fallback, which used to lie about the actual budget used.
+   */
+  it('"(after retry)" message with no opts.timeoutMs shows 60000ms, not 30000ms', async () => {
+    injectAndRunBundleMock
+      .mockResolvedValueOnce({ ok: false, error: timeoutError(60_000) })
+      .mockResolvedValueOnce({ ok: false, error: timeoutError(60_000) });
+
+    // No opts passed at all — exercises the `opts?.timeoutMs ?? 60_000` fallback.
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/location.ait.test.ts']);
+
+    const entry = report.files[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect('error' in entry.result).toBe(true);
+    if (!('error' in entry.result)) return;
+
+    expect(entry.result.error).toContain('60000ms (after retry)');
+    expect(entry.result.error).not.toContain('30000ms');
+  });
+});
+
 describe('relay-worker — EVALUATE_TIMEOUT_MARKER export', () => {
   it('is a non-empty string that matches the rpc.ts timeout message format', () => {
     expect(typeof EVALUATE_TIMEOUT_MARKER).toBe('string');
@@ -243,6 +278,111 @@ describe('relay-worker — EVALUATE_TIMEOUT_MARKER export', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe('relay-worker — devtools#731: mid-run relay reconnect', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bundleTestFileMock.mockResolvedValue({ code: '/* bundled */' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const WS_DEAD_ERROR = 'relay WebSocket 연결이 끊겼습니다';
+  const WS_NOT_CONNECTED_ERROR =
+    'relay에 연결되어 있지 않습니다 (Runtime.evaluate). list_pages로 attach 상태를 확인하고 enableDomains()로 재연결하세요.';
+
+  /**
+   * LOAD-BEARING (#731 regression test #3): a WS-dead-class error on file 1
+   * must trigger exactly one `enableDomains()` reconnect call before file 2 is
+   * attempted, and file 2 must then succeed on the restored connection.
+   */
+  it('reconnects before the next file when the previous file hit a WS-dead error (load-bearing)', async () => {
+    injectAndRunBundleMock
+      // File 1: fails with a WS-dead-class error (final, non-retryable, non-timeout).
+      .mockResolvedValueOnce({ ok: false, error: WS_NOT_CONNECTED_ERROR })
+      // File 2: succeeds — proves the restored connection is usable.
+      .mockResolvedValueOnce({ ok: true, report: fakeRunReport(4) });
+
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, [
+      '/abs/permissions.ait.test.ts',
+      '/abs/storage.ait.test.ts',
+    ]);
+
+    // enableDomains: once up-front (always) + once for the reconnect before file 2.
+    expect(FAKE_CONN.enableDomains).toHaveBeenCalledTimes(2);
+
+    expect(report.files).toHaveLength(2);
+    const [permissions, storage] = report.files;
+    expect(permissions).toBeDefined();
+    expect(storage).toBeDefined();
+    if (!permissions || !storage) return;
+
+    expect('error' in permissions.result).toBe(true);
+    expect('error' in storage.result).toBe(false);
+    if ('error' in storage.result) return;
+    expect(storage.result.passed).toBe(4);
+  });
+
+  /**
+   * LOAD-BEARING (#731 regression test #4): when the reconnect attempt itself
+   * fails, the loop must NOT abort — the remaining file still produces a
+   * structured per-file error entry rather than throwing out of
+   * runTestFilesOverRelay.
+   */
+  it('does not abort the loop when the reconnect attempt fails', async () => {
+    FAKE_CONN.enableDomains
+      .mockResolvedValueOnce(undefined) // up-front enableDomains() succeeds
+      .mockRejectedValueOnce(new Error('No mini-app page attached to the Chii relay yet.')); // reconnect fails
+
+    injectAndRunBundleMock
+      .mockResolvedValueOnce({ ok: false, error: WS_DEAD_ERROR }) // file 1: WS-dead
+      .mockResolvedValueOnce({ ok: false, error: WS_DEAD_ERROR }); // file 2: still dead
+
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, [
+      '/abs/location.ait.test.ts',
+      '/abs/iap.ait.test.ts',
+    ]);
+
+    // Loop completed without throwing — both files produced entries.
+    expect(report.files).toHaveLength(2);
+    for (const { result } of report.files) {
+      expect('error' in result).toBe(true);
+    }
+    expect(report.totals.failed).toBe(2);
+  });
+
+  /**
+   * LOAD-BEARING (#731 regression test #5): a timed-out file's retry attempt
+   * is preceded by exactly one `enableDomains()` reconnect call — the
+   * permissions scenario from the issue (first attempt timed out during a
+   * dead-air window, the retry then hit an already-dead socket). Since
+   * `CdpConnection` exposes no public "is the socket alive" probe, the
+   * reconnect is attempted defensively before every retry (cheap + idempotent
+   * when the socket never actually died), not conditionally.
+   */
+  it('reconnects before retrying a timed-out file (retry-precheck, unconditional + idempotent)', async () => {
+    injectAndRunBundleMock
+      .mockResolvedValueOnce({ ok: false, error: timeoutError() }) // first: timeout
+      .mockResolvedValueOnce({ ok: true, report: fakeRunReport(2) }); // retry: success
+
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, [
+      '/abs/permissions.ait.test.ts',
+    ]);
+
+    // enableDomains: once up-front + once as the retry-precheck reconnect.
+    expect(FAKE_CONN.enableDomains).toHaveBeenCalledTimes(2);
+
+    expect(report.files).toHaveLength(1);
+    const entry = report.files[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
+    expect('error' in entry.result).toBe(false);
+    if ('error' in entry.result) return;
+    expect(entry.result.passed).toBe(2);
+  });
+});
 
 describe('relay-worker — devtools#726 regression: retry-gate is live', () => {
   beforeEach(() => {
