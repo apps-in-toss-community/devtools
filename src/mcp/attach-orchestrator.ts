@@ -762,39 +762,77 @@ export async function renderAndMaybeWait(
 }
 
 /**
- * Builds a self-contained IIFE DOM expression that renders a dismissible
- * "Debugger Connected" badge on the bottom-left of the phone screen.
+ * Builds a self-contained IIFE DOM expression that renders a LIVE
+ * "Debugger Connected" / "Debugger Disconnected" badge on the bottom-left of
+ * the phone screen (#730).
  *
  * **Pure function** — returns a JS expression string; does NOT inject it.
  * Injection is performed by {@link injectDebugIndicator} in `cell.ts`.
  *
  * The expression, when evaluated on the page, does the following:
- *   1. Early-returns if `#__ait_debug_indicator` already exists (idempotent —
- *      prevents duplicate badges on re-injection after page reload).
- *   2. Appends a fixed-position `<div id="__ait_debug_indicator">` at the
- *      bottom-left, accounting for safe-area insets.
- *   3. Attaches a `{ once: true }` `pointerdown` listener that removes the
- *      badge on first touch — one-tap dismiss.
+ *   1. Idempotent controller — a single `window.__ait_indicator` controller
+ *      object is created once (keyed on its presence, not on the DOM node).
+ *      Re-injection (e.g. explicit disconnect notice from `close()`) UPDATES
+ *      the existing badge's state/label in place — it never duplicates the
+ *      `<div>` or stacks a second observer.
+ *   2. Renders a fixed-position `<div id="__ait_debug_indicator">` at the
+ *      bottom-left, accounting for safe-area insets. Background/text flip
+ *      between the attached (red) and disconnected (grey) visuals.
+ *   3. A `pointerdown` listener dismisses (hides) the badge on tap — dismiss
+ *      is NON-terminal: a later state transition un-dismisses it, so a
+ *      genuine disconnect after a dismissed tap is still visible.
+ *   4. Observes relay-socket lifecycle WITHOUT opening any new connection:
+ *      - Preferred path: if the in-app module (`src/in-app/attach.ts`) has
+ *        already installed its relay-WS observer (`window.__ait_relay_ws_observed`),
+ *        subscribe to the `ait:relay-ws-state` CustomEvent it broadcasts.
+ *      - Fallback path: wrap `window.WebSocket` in a `Proxy` and match dials
+ *        by PATHNAME SHAPE only (`/target/`) — never by host/wss value — so a
+ *        bare CDP-injected badge (no in-app bundle) still reacts to the
+ *        chii target socket's own open/close lifecycle.
  *
  * The expression intentionally contains NO relay URLs, wss addresses, TOTP
- * codes, or any other secrets. It is pure DOM UI text only.
+ * codes, or any other secrets. It is pure DOM UI text + enum state only.
  *
  * SECRET-HANDLING: this expression contains no secrets, relay URLs, wss
- * addresses, or TOTP codes whatsoever — DOM label text only.
+ * addresses, or TOTP codes whatsoever — DOM label text + a structural
+ * pathname match (`/target/`) only.
  *
- * @param opts.label - Badge text (default: `'Debugger Connected'`).
+ * @param opts.label - Attached-state badge text (default: `'Debugger Connected'`).
+ * @param opts.disconnectedLabel - Disconnected-state badge text (default: `'Debugger Disconnected'`).
+ * @param opts.state - Initial/forced state for THIS injection call (default: `'attached'`).
  * @returns A JS expression string suitable for `Runtime.evaluate`.
  */
-export function buildIndicatorExpression(opts?: { label?: string }): string {
+export function buildIndicatorExpression(opts?: {
+  label?: string;
+  disconnectedLabel?: string;
+  state?: 'attached' | 'disconnected';
+}): string {
   const label = opts?.label ?? 'Debugger Connected';
-  // JSON.stringify ensures the label is safely embedded even if it contains
-  // quotes or backslashes.
+  const disconnectedLabel = opts?.disconnectedLabel ?? 'Debugger Disconnected';
+  // JSON.stringify ensures the labels/state are safely embedded even if they
+  // contain quotes or backslashes.
   const safeLabel = JSON.stringify(label);
+  const safeDisconnectedLabel = JSON.stringify(disconnectedLabel);
+  const safeState = JSON.stringify(opts?.state ?? 'attached');
   return (
     `(() => {` +
-    // Idempotent guard — prevents duplicates on re-injection.
-    `if (document.getElementById('__ait_debug_indicator')) return;` +
-    `const el = document.createElement('div');` +
+    `var W = window;` +
+    // render(c) — paints the DOM node from the controller's current state.
+    `function render(c) {` +
+    `if (c.dismissed) { c.el.style.display = 'none'; return; }` +
+    `c.el.style.display = 'block';` +
+    `var up = c.state !== 'disconnected';` +
+    `c.el.style.background = up ? '#e5484d' : '#8a8f98';` +
+    `c.el.textContent = up ? ${safeLabel} : ${safeDisconnectedLabel};` +
+    `}` +
+    // setState(c, next) — a later transition always un-dismisses the badge,
+    // so a genuine disconnect after a tap-dismiss is still surfaced.
+    `function setState(c, next) { c.state = next; c.dismissed = false; render(c); }` +
+    // Idempotent controller — re-injection updates the SAME controller/DOM
+    // node instead of creating a duplicate.
+    `var c = W.__ait_indicator;` +
+    `if (!c) {` +
+    `var el = document.createElement('div');` +
     `el.id = '__ait_debug_indicator';` +
     // Position: fixed, bottom-left with safe-area inset support.
     `el.style.cssText = [` +
@@ -802,7 +840,6 @@ export function buildIndicatorExpression(opts?: { label?: string }): string {
     `'left:max(12px,calc(env(safe-area-inset-left,0px) + 8px))',` +
     `'bottom:max(12px,calc(env(safe-area-inset-bottom,0px) + 8px))',` +
     `'z-index:2147483647',` +
-    `'background:#e5484d',` +
     `'color:#fff',` +
     `'font:bold 11px/1 system-ui,sans-serif',` +
     `'padding:5px 9px',` +
@@ -810,10 +847,44 @@ export function buildIndicatorExpression(opts?: { label?: string }): string {
     `'pointer-events:auto',` +
     `'user-select:none',` +
     `].join(';');` +
-    `el.textContent = ${safeLabel};` +
-    // One-tap dismiss — removes itself on the first touch/click.
-    `el.addEventListener('pointerdown', () => el.remove(), { once: true });` +
     `document.body.appendChild(el);` +
+    `c = { el: el, state: 'attached', dismissed: false };` +
+    // One-tap dismiss — hides the badge; NOT terminal, `setState` re-shows it.
+    `el.addEventListener('pointerdown', function () { c.dismissed = true; render(c); }, { passive: true });` +
+    `W.__ait_indicator = c;` +
+    // Observe relay-socket lifecycle without opening a new connection.
+    `if (W.__ait_relay_ws_observed) {` +
+    // Preferred: the in-app observer (src/in-app/attach.ts) already wraps
+    // window.WebSocket and broadcasts this enum-only CustomEvent — piggyback
+    // instead of installing a second Proxy.
+    `W.addEventListener('ait:relay-ws-state', function (e) {` +
+    `setState(c, e.detail && e.detail.state === 'open' ? 'attached' : 'disconnected');` +
+    `});` +
+    `} else {` +
+    // Fallback: bare CDP-injected badge with no in-app bundle present.
+    // Match relay-bound dials by PATHNAME SHAPE ONLY (`/target/`) — never by
+    // host/wss value — so no secret ever enters this expression.
+    `try {` +
+    `var Native = W.WebSocket;` +
+    `W.WebSocket = new Proxy(Native, {` +
+    `construct: function (t, a) {` +
+    `var ws = Reflect.construct(t, a);` +
+    `try {` +
+    `var u = new URL(String(a[0]), location.href);` +
+    `if (/\\/target\\//.test(u.pathname)) {` +
+    `ws.addEventListener('open', function () { setState(c, 'attached'); });` +
+    `ws.addEventListener('close', function () { setState(c, 'disconnected'); });` +
+    `ws.addEventListener('error', function () { setState(c, 'disconnected'); });` +
+    `}` +
+    `} catch (_) {}` +
+    `return ws;` +
+    `},` +
+    `});` +
+    `} catch (_) {}` +
+    `}` +
+    `}` +
+    // Apply THIS injection call's requested state (default 'attached').
+    `setState(c, ${safeState});` +
     `})()`
   );
 }

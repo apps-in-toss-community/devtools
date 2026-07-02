@@ -41,6 +41,14 @@ export interface RelayConnectionFactory {
   open(): Promise<CdpConnection>;
   /** Closes the relay connection opened by {@link open}. */
   close(connection: CdpConnection): Promise<void>;
+  /**
+   * CLI-only session-phase hook (#730) — drives the QR dashboard's `phase`
+   * field (`'running'` on run start, `'complete'` on run end) so the
+   * dashboard can push an immediate SSE update instead of waiting for a
+   * poll/watchdog. The pool (this file) has no equivalent lifecycle and
+   * omits it; only `createRelayConnectionFactory` (relay-factory.ts) sets it.
+   */
+  onSessionPhase?(phase: 'running' | 'complete'): void;
 }
 
 /** Options for {@link createRelayPool}. */

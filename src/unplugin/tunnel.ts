@@ -343,6 +343,9 @@ export async function startTunnelDashboard(
       attachUrl,
       inspectorUrl: null,
       mode: 'relay-mobile' as const,
+      // phase (#730): this dev-tunnel dashboard has no CLI run lifecycle or
+      // daemon shutdown signal to drive — it stays 'active' for its lifetime.
+      phase: 'active' as const,
     };
   };
 

@@ -87,6 +87,19 @@ export interface DashboardState {
    * `deriveEnvironment(...)`로 파생, unplugin tunnel 대시보드는 `'relay-mobile'` 고정.
    */
   mode?: McpEnvironment;
+  /**
+   * 세션 생애주기 phase (#730) — 클라이언트가 "진행 중" vs "완료" vs "종료"를
+   * SSE 데이터만으로 구분한다. `tunnel.up`과 직교: tunnel은 "터널이 살아있나",
+   * phase는 "러너/데몬 프로세스가 의도적으로 끝냈나".
+   *
+   * - `'active'`   — 평상시(기본값). attach 대기/완료, run 대기.
+   * - `'running'`  — CLI: 테스트 파일 실행 중. daemon은 사용하지 않는다(항상 `'active'`).
+   * - `'complete'` — CLI: run 종료, exitCode 확정, `close()` 직전 마지막 push.
+   * - `'shutdown'` — daemon: SIGINT/SIGTERM/SIGHUP 종료 확정, `close()` 직전 마지막 push.
+   *
+   * SECRET-HANDLING: enum 문자열은 시크릿이 아니다 — 그대로 SSE payload에 싣는다.
+   */
+  phase: 'active' | 'running' | 'complete' | 'shutdown';
 }
 
 /** mode → 어느 precompiled attach chrome family를 쓰는가 (#468). */
@@ -300,6 +313,11 @@ function buildDashboardHtml(
     watchdogTitle: JSON.stringify(s('dashboard.watchdog.title')),
     watchdogBody: JSON.stringify(s('dashboard.watchdog.body')),
     watchdogCloseLabel: JSON.stringify(s('dashboard.watchdog.close')),
+    connectionLost: JSON.stringify(s('dashboard.conn.lost')),
+    completeTitle: JSON.stringify(s('dashboard.session.completeTitle')),
+    completeBody: JSON.stringify(s('dashboard.session.completeBody')),
+    shutdownTitle: JSON.stringify(s('dashboard.session.shutdownTitle')),
+    shutdownBody: JSON.stringify(s('dashboard.session.shutdownBody')),
   };
 
   const langSwitcher = buildLangSwitcher(path, params, locale, s);
@@ -362,6 +380,20 @@ interface SseScriptStrings {
   watchdogBody: string;
   /** watchdog 폴백 UI의 "탭 닫기" 버튼 라벨 (JSON.stringify로 이미 escape됨). */
   watchdogCloseLabel: string;
+  /**
+   * SSE `onerror` 즉시 표시할 "연결 끊김" 라벨 (#730, JSON.stringify로 이미 escape됨).
+   * watchdog(최대 210s 지연)과 달리 EventSource `onerror`는 즉시 발화하므로,
+   * 서버 재시작/일시 네트워크 끊김을 사용자가 바로 알 수 있게 한다.
+   */
+  connectionLost: string;
+  /** CLI run 종료(`phase: 'complete'`) 시 표시할 terminal 배너 제목 (#730). */
+  completeTitle: string;
+  /** CLI run 종료 terminal 배너 본문 (#730). */
+  completeBody: string;
+  /** daemon 종료(`phase: 'shutdown'`) 시 표시할 terminal 배너 제목 (#730). */
+  shutdownTitle: string;
+  /** daemon 종료 terminal 배너 본문 (#730). */
+  shutdownBody: string;
 }
 
 /**
@@ -413,6 +445,14 @@ function buildSseScript(strings: SseScriptStrings): string {
       var WATCHDOG_TITLE = ${strings.watchdogTitle};
       var WATCHDOG_BODY = ${strings.watchdogBody};
       var WATCHDOG_CLOSE_LABEL = ${strings.watchdogCloseLabel};
+
+      // ── 실시간 상태 표면 상수 (#730) ───────────────────────────────────────
+      var CONN_LOST = ${strings.connectionLost};
+      var COMPLETE_TITLE = ${strings.completeTitle};
+      var COMPLETE_BODY = ${strings.completeBody};
+      var SHUTDOWN_TITLE = ${strings.shutdownTitle};
+      var SHUTDOWN_BODY = ${strings.shutdownBody};
+      var disconnectedShown = false;
 
       // ── 클립보드 복사 헬퍼 ────────────────────────────────────────────────
       function copyText(text) {
@@ -491,6 +531,36 @@ function buildSseScript(strings: SseScriptStrings): string {
         }
       }
 
+      // ── Terminal 상태 배너 (#730) ─────────────────────────────────────────
+      // "완료"/"종료"는 watchdog(최대 210s 지연)을 기다리지 않고 close() 직전에
+      // 서버가 직접 push하는 마지막 SSE 프레임으로 즉시 렌더한다. watchdogFired를
+      // 함께 세워 뒤이은 onerror의 showConnLost가 이 배너를 덮어쓰지 않게 한다.
+      function showTerminalBanner(title, body) {
+        if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+        watchdogFired = true; // 이후 watchdog/onerror 발화를 억제
+        if (document.body) {
+          document.body.innerHTML =
+            '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+            'height:100vh;font-family:sans-serif;text-align:center;padding:2rem;box-sizing:border-box;">' +
+            '<p style="font-size:1.4rem;font-weight:bold;margin-bottom:1rem;">' + title + '</p>' +
+            '<p style="color:#555;">' + body + '</p></div>';
+        }
+      }
+
+      // ── SSE onerror 즉시 신호 (#730) ──────────────────────────────────────
+      // EventSource는 "재시도 중"과 "서버 종료"를 구분하지 못하므로, onerror에서
+      // 즉시 구분되는 '연결 끊김' 상태를 tunnel-status 배지에 표시한다. 이미
+      // terminal 배너가 뜬 뒤(watchdogFired)라면 덮어쓰지 않는다.
+      function showConnLost() {
+        if (disconnectedShown || watchdogFired) return;
+        disconnectedShown = true;
+        var el = document.getElementById('tunnel-status');
+        if (el) { el.textContent = CONN_LOST; el.className = 'status status-down'; }
+      }
+      function clearConnLost() {
+        disconnectedShown = false;
+      }
+
       function fireWatchdog() {
         if (watchdogFired) return;
         watchdogFired = true;
@@ -521,7 +591,7 @@ function buildSseScript(strings: SseScriptStrings): string {
       src.onopen = function () {
         // 연결 복구 시 lastSeen 갱신 — 일시적 끊김이 watchdog을 발화시키지 않게.
         // watchdog이 이미 발화했으면 갱신하지 않는다(폴백 UI를 그대로 유지).
-        if (!watchdogFired) { lastSeen = Date.now(); }
+        if (!watchdogFired) { lastSeen = Date.now(); clearConnLost(); }
       };
       src.onmessage = function (e) {
         // SSE 메시지 수신 — lastSeen 갱신으로 watchdog 리셋.
@@ -529,6 +599,13 @@ function buildSseScript(strings: SseScriptStrings): string {
         if (!watchdogFired) { lastSeen = Date.now(); }
         try {
           var s = JSON.parse(e.data);
+          // 어떤 프레임이든 성공적으로 수신됐다는 건 서버가 살아있다는 뜻 —
+          // onerror가 세운 '연결 끊김' 표시를 해제한다 (#730).
+          clearConnLost();
+          // phase gate (#730) — 'complete'/'shutdown'은 terminal 상태이므로
+          // 나머지 필드 렌더보다 먼저 처리하고 즉시 반환한다.
+          if (s.phase === 'complete') { showTerminalBanner(COMPLETE_TITLE, COMPLETE_BODY); return; }
+          if (s.phase === 'shutdown') { showTerminalBanner(SHUTDOWN_TITLE, SHUTDOWN_BODY); return; }
           // 터널 상태 갱신
           var el = document.getElementById('tunnel-status');
           if (el) {
@@ -615,7 +692,11 @@ function buildSseScript(strings: SseScriptStrings): string {
         } catch (_) { /* 파싱 오류 무시 */ }
       };
       src.onerror = function () {
-        // 재연결은 EventSource가 자동 처리 (spec 기본 동작).
+        // EventSource는 "재시도 중"과 "서버 종료"를 구분하지 못하므로 즉시
+        // 구분되는 "연결 끊김"을 표시한다(#730). 네이티브 auto-reconnect는 그대로
+        // 진행되며 onopen/onmessage가 성공 즉시 이 상태를 해제한다. watchdog은
+        // 여전히 2차 fallback으로 남는다(최종 폴백 UI 전환).
+        showConnLost();
       };
     })();
   </script>`;
@@ -706,6 +787,11 @@ function buildAttachHtml(
     watchdogTitle: JSON.stringify(s('dashboard.watchdog.title')),
     watchdogBody: JSON.stringify(s('dashboard.watchdog.body')),
     watchdogCloseLabel: JSON.stringify(s('dashboard.watchdog.close')),
+    connectionLost: JSON.stringify(s('dashboard.conn.lost')),
+    completeTitle: JSON.stringify(s('dashboard.session.completeTitle')),
+    completeBody: JSON.stringify(s('dashboard.session.completeBody')),
+    shutdownTitle: JSON.stringify(s('dashboard.session.shutdownTitle')),
+    shutdownBody: JSON.stringify(s('dashboard.session.shutdownBody')),
   };
   const sseScript = buildSseScript(sseStrings);
   return filled.replace('</body>', `${sseScript}\n</body>`);
@@ -777,6 +863,8 @@ export async function startQrHttpServer(
       // SECRET-HANDLING: URL(relay host + TOTP at=)은 SSE payload 전달이 의도된 transport.
       // 단 stdout/로그/에러에는 절대 출력하지 않는다.
       inspectorUrl: state.inspectorUrl ?? null,
+      // phase: 세션 생애주기 enum (#730) — 시크릿 아님, 그대로 전달.
+      phase: state.phase ?? 'active',
     });
     // SSE frame: "data: <json>\n\n"
     res.write(`data: ${payload}\n\n`);
