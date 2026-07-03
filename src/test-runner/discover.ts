@@ -11,7 +11,26 @@
  */
 
 import { glob } from 'node:fs/promises';
-import { isAbsolute, resolve } from 'node:path';
+import { basename, isAbsolute, resolve } from 'node:path';
+
+/**
+ * Filename suffix that opts a test file into manual-variant scheduling
+ * (devtools#741). A file named `<name>.manual.ait.test.ts` is EXCLUDED from
+ * `discoverTestFiles`'s default output (so existing unattended runs are
+ * unaffected — the zero-diff-when-off constraint) and is only surfaced when
+ * the caller explicitly asks for manual files via {@link partitionManualTests}
+ * (wired from the CLI's `--manual-blocking` flag).
+ *
+ * This is the entire tagging contract for v1 — no separate manifest/config,
+ * just a filename convention. Documented here + in the CLI `--help` text
+ * (cli.ts USAGE) and the test-runner README.
+ */
+export const MANUAL_TEST_SUFFIX = '.manual.ait.test.ts';
+
+/** True when `file`'s basename ends with {@link MANUAL_TEST_SUFFIX}. */
+export function isManualTestFile(file: string): boolean {
+  return basename(file).endsWith(MANUAL_TEST_SUFFIX);
+}
 
 /**
  * Expands `patterns` (globs or plain paths) into a sorted, de-duplicated list of
@@ -22,14 +41,50 @@ import { isAbsolute, resolve } from 'node:path';
  * resolved against `cwd`. `bundleTestFile` requires an absolute path, so the
  * absolute output feeds it directly.
  *
+ * By default, files matching {@link MANUAL_TEST_SUFFIX} are EXCLUDED from the
+ * result (devtools#741) — blocking-UI tests opt in via that filename
+ * convention and must never appear in an unattended run unless the caller
+ * explicitly asks for them via `includeManual: true`. This keeps the
+ * default (flag-off) discovery path byte-for-byte identical to before this
+ * option existed.
+ *
  * @param patterns Glob patterns or file paths (e.g. `['src/**\/*.ait.test.ts']`).
  * @param cwd      Base directory for relative patterns/results.
+ * @param opts     `{ includeManual }` — when true, manual-tagged files are kept
+ *                 in the (still-sorted) output instead of being filtered out.
+ *                 Use {@link partitionManualTests} to separate + reorder them.
  * @returns Sorted, de-duplicated absolute file paths. Empty when nothing matches.
  */
-export async function discoverTestFiles(patterns: string[], cwd: string): Promise<string[]> {
+export async function discoverTestFiles(
+  patterns: string[],
+  cwd: string,
+  opts?: { includeManual?: boolean },
+): Promise<string[]> {
   const out = new Set<string>();
   for await (const match of glob(patterns, { cwd })) {
     out.add(isAbsolute(match) ? match : resolve(cwd, match));
   }
-  return [...out].sort();
+  const sorted = [...out].sort();
+  if (opts?.includeManual) return sorted;
+  return sorted.filter((f) => !isManualTestFile(f));
+}
+
+/**
+ * Splits an already-discovered file list into `{ regular, manual }`, each
+ * still sorted. Used by the CLI's `--manual-blocking` path to schedule manual
+ * files strictly AFTER every regular file (devtools#741) — regular files run
+ * first (and produce the unattended-shaped part of the report) and manual
+ * files run last, each preceded by a dashboard prompt.
+ *
+ * Pure partition — does not itself decide inclusion; call
+ * `discoverTestFiles(patterns, cwd, { includeManual: true })` first so manual
+ * files are present in `files` to partition.
+ */
+export function partitionManualTests(files: string[]): { regular: string[]; manual: string[] } {
+  const regular: string[] = [];
+  const manual: string[] = [];
+  for (const f of files) {
+    (isManualTestFile(f) ? manual : regular).push(f);
+  }
+  return { regular, manual };
 }

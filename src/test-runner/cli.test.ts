@@ -20,14 +20,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const discoverTestFilesMock = vi.fn();
 vi.mock('./discover.js', () => ({
   discoverTestFiles: (...args: unknown[]) => discoverTestFilesMock(...args),
+  MANUAL_TEST_SUFFIX: '.manual.ait.test.ts',
+  // Real (non-mocked) partition logic — cheap and pure, and several tests
+  // below rely on its actual filename-suffix behavior rather than a stub.
+  partitionManualTests: (files: string[]) => {
+    const regular: string[] = [];
+    const manual: string[] = [];
+    for (const f of files) {
+      (f.endsWith('.manual.ait.test.ts') ? manual : regular).push(f);
+    }
+    return { regular, manual };
+  },
 }));
 
 // The relay factory: open() returns a (fake) connection; close() tears down.
 const factoryOpenMock = vi.fn();
 const factoryCloseMock = vi.fn((..._args: unknown[]) => Promise.resolve());
+// devtools#741: spy on the dashboard manual-prompt hook so tests can assert
+// the CLI pushes (and later clears) it once per --manual-blocking run.
+const factoryOnManualPromptMock = vi.fn();
 const createRelayConnectionFactoryMock = vi.fn((..._args: unknown[]) => ({
   open: (...a: unknown[]) => factoryOpenMock(...a),
   close: (...a: unknown[]) => factoryCloseMock(...a),
+  onManualPrompt: (...a: unknown[]) => factoryOnManualPromptMock(...a),
 }));
 vi.mock('./relay-factory.js', () => ({
   createRelayConnectionFactory: (...args: unknown[]) => createRelayConnectionFactoryMock(...args),
@@ -38,7 +53,9 @@ vi.mock('./relay-worker.js', () => ({
   runTestFilesOverRelay: (...args: unknown[]) => runTestFilesOverRelayMock(...args),
 }));
 
-const writeReportArtifactMock = vi.fn((..._args: unknown[]) => Promise.resolve('/abs/report.json'));
+const writeReportArtifactMock = vi.fn((..._args: unknown[]) =>
+  Promise.resolve(['/abs/report.json']),
+);
 const writeCaptureArtifactsMock = vi.fn((..._args: unknown[]) => Promise.resolve([]));
 vi.mock('./report.js', () => ({
   writeReportArtifact: (...args: unknown[]) => writeReportArtifactMock(...args),
@@ -282,6 +299,132 @@ describe('main() — attach-wait wiring (#717)', () => {
     await main([...ARGS, '--attach-timeout', '0']);
     expect(process.exitCode).toBe(1);
     expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `--manual-blocking` (devtools#741): discovery/ordering/report-provenance is
+ * covered at the unit level in discover.test.ts and relay-worker.test.ts —
+ * these tests pin the CLI-level wiring: the flag reaches `discoverTestFiles`'s
+ * `includeManual` option, `runTestFilesOverRelay` receives `manualFiles` +
+ * `onManualFile`, and the dashboard prompt hook is pushed then cleared.
+ */
+describe('main() — --manual-blocking wiring (devtools#741)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    factoryOpenMock.mockResolvedValue(FAKE_CONN);
+    runTestFilesOverRelayMock.mockResolvedValue({
+      totals: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      duration: 5,
+      files: [],
+      captures: [],
+    });
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
+  it('without the flag: discoverTestFiles is called with includeManual absent/false', async () => {
+    discoverTestFilesMock.mockResolvedValue(['/abs/regular.ait.test.ts']);
+    await main(ARGS);
+
+    const discoverOpts = discoverTestFilesMock.mock.calls[0]?.[2] as
+      | { includeManual?: boolean }
+      | undefined;
+    expect(discoverOpts?.includeManual).not.toBe(true);
+
+    // manualFiles must be omitted entirely when the flag is off (zero-diff path).
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | { manualFiles?: Set<string> }
+      | undefined;
+    expect(runOpts?.manualFiles).toBeUndefined();
+    expect(factoryOnManualPromptMock).not.toHaveBeenCalled();
+  });
+
+  it('with --manual-blocking: discoverTestFiles is called with includeManual: true', async () => {
+    discoverTestFilesMock.mockResolvedValue([
+      '/abs/regular.ait.test.ts',
+      '/abs/camera.manual.ait.test.ts',
+    ]);
+    await main([...ARGS, '--manual-blocking']);
+
+    const discoverOpts = discoverTestFilesMock.mock.calls[0]?.[2] as
+      | { includeManual?: boolean }
+      | undefined;
+    expect(discoverOpts?.includeManual).toBe(true);
+  });
+
+  it('schedules manual files LAST and passes them as runTestFilesOverRelay manualFiles', async () => {
+    discoverTestFilesMock.mockResolvedValue([
+      '/abs/b.manual.ait.test.ts',
+      '/abs/regular.ait.test.ts',
+      '/abs/a.manual.ait.test.ts',
+    ]);
+    await main([...ARGS, '--manual-blocking']);
+
+    // files argument is the SECOND positional to runTestFilesOverRelay.
+    const files = runTestFilesOverRelayMock.mock.calls[0]?.[1] as string[] | undefined;
+    expect(files).toEqual([
+      '/abs/regular.ait.test.ts',
+      '/abs/b.manual.ait.test.ts',
+      '/abs/a.manual.ait.test.ts',
+    ]);
+
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | { manualFiles?: Set<string> }
+      | undefined;
+    expect(runOpts?.manualFiles).toBeInstanceOf(Set);
+    expect([...(runOpts?.manualFiles ?? [])].sort()).toEqual(
+      ['/abs/a.manual.ait.test.ts', '/abs/b.manual.ait.test.ts'].sort(),
+    );
+  });
+
+  it('omits manualFiles when --manual-blocking is passed but no manual files matched', async () => {
+    discoverTestFilesMock.mockResolvedValue(['/abs/regular.ait.test.ts']);
+    await main([...ARGS, '--manual-blocking']);
+
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | { manualFiles?: Set<string> }
+      | undefined;
+    expect(runOpts?.manualFiles).toBeUndefined();
+    expect(factoryOnManualPromptMock).not.toHaveBeenCalled();
+  });
+
+  it('pushes the dashboard prompt via onManualFile and clears it (null) after the run', async () => {
+    discoverTestFilesMock.mockResolvedValue([
+      '/abs/regular.ait.test.ts',
+      '/abs/camera.manual.ait.test.ts',
+    ]);
+    // Simulate relay-worker actually invoking the CLI's onManualFile callback
+    // for the one manual file, then resolving the run.
+    runTestFilesOverRelayMock.mockImplementation(
+      async (
+        _conn: unknown,
+        _files: string[],
+        opts: { onManualFile?: (...a: unknown[]) => void },
+      ) => {
+        opts.onManualFile?.('/abs/camera.manual.ait.test.ts', 1, 1);
+        return {
+          totals: { passed: 1, failed: 0, skipped: 0, total: 1 },
+          duration: 5,
+          files: [],
+          captures: [],
+        };
+      },
+    );
+
+    await main([...ARGS, '--manual-blocking']);
+
+    // First call: the in-progress prompt with the file's basename.
+    expect(factoryOnManualPromptMock).toHaveBeenNthCalledWith(1, {
+      file: 'camera.manual.ait.test.ts',
+      index: 1,
+      total: 1,
+    });
+    // Final call: cleared once the run (including the manual tail) finishes.
+    expect(factoryOnManualPromptMock).toHaveBeenLastCalledWith(null);
   });
 });
 

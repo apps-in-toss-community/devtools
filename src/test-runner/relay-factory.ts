@@ -131,6 +131,9 @@ export function createRelayConnectionFactory(
   // CLI's run start/complete and final teardown push an immediate SSE update
   // instead of the dashboard just going dark when the process exits.
   let phase: DashboardState['phase'] = 'active';
+  // Manual-blocking prompt state (devtools#741) — drives the dashboard's
+  // `manualPrompt` field. `null` outside a manual step.
+  let manualPrompt: DashboardState['manualPrompt'] = null;
 
   return {
     async open(): Promise<CdpConnection> {
@@ -229,6 +232,7 @@ export function createRelayConnectionFactory(
           attachUrl: lastAttachParts ? mintAttachUrl(attachDeps, lastAttachParts) : null,
           mode: 'relay-dev' as const,
           phase, // #730 — CLI-only 'running'/'complete' transitions via onSessionPhase
+          manualPrompt, // #741 — CLI-only --manual-blocking transitions via onManualPrompt
         });
 
         qrServer = await startQrHttpServer(getDashboardState);
@@ -413,6 +417,16 @@ export function createRelayConnectionFactory(
     // push an immediate SSE update instead of the dashboard just going dark.
     onSessionPhase(next: 'running' | 'complete'): void {
       phase = next;
+      qrServer?.notifyStateChange();
+    },
+
+    // #741: drives the dashboard's `manualPrompt` field for --manual-blocking
+    // — the CLI calls this immediately before injecting each manual file
+    // (prompt set) and once more with `null` after the last one (prompt
+    // cleared). Push is immediate (not waited on for ack) — v1 does not block
+    // on dashboard acknowledgment, only on the file's own (long) evaluate.
+    onManualPrompt(next: { file: string; index: number; total: number } | null): void {
+      manualPrompt = next;
       qrServer?.notifyStateChange();
     },
 

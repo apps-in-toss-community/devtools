@@ -501,3 +501,116 @@ describe('relay-worker — devtools#726 regression: retry-gate is live', () => {
     expect(entry.result.error).toContain('SyntaxError');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('relay-worker — manual-variant mode (devtools#741)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bundleTestFileMock.mockResolvedValue({ code: '/* bundled */' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses MANUAL_FILE_TIMEOUT_MS for a file in manualFiles, not opts.timeoutMs', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+
+    const { runTestFilesOverRelay: run, MANUAL_FILE_TIMEOUT_MS } = await import(
+      './relay-worker.js'
+    );
+
+    await run(FAKE_CONN as never, ['/abs/camera.manual.ait.test.ts'], {
+      timeoutMs: 5_000, // the regular-file timeout — must be IGNORED for this file
+      manualFiles: new Set(['/abs/camera.manual.ait.test.ts']),
+    });
+
+    expect(injectAndRunBundleMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      MANUAL_FILE_TIMEOUT_MS,
+    );
+  });
+
+  it('leaves regular (non-manual) files on opts.timeoutMs even when manualFiles is set', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+
+    await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/regular.ait.test.ts'], {
+      timeoutMs: 5_000,
+      manualFiles: new Set(['/abs/other.manual.ait.test.ts']),
+    });
+
+    expect(injectAndRunBundleMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      5_000,
+    );
+  });
+
+  it('stamps mode: "manual" on a successful manual file result', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport(1) });
+
+    const report = await runTestFilesOverRelay(
+      FAKE_CONN as never,
+      ['/abs/camera.manual.ait.test.ts'],
+      {
+        manualFiles: new Set(['/abs/camera.manual.ait.test.ts']),
+      },
+    );
+
+    expect(report.files[0]?.mode).toBe('manual');
+  });
+
+  it('stamps mode: "manual" even when the manual file ends in an error result', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: false, error: 'boom' });
+
+    const report = await runTestFilesOverRelay(
+      FAKE_CONN as never,
+      ['/abs/camera.manual.ait.test.ts'],
+      {
+        manualFiles: new Set(['/abs/camera.manual.ait.test.ts']),
+      },
+    );
+
+    expect(report.files[0]?.mode).toBe('manual');
+    expect('error' in report.files[0]!.result).toBe(true);
+  });
+
+  it('leaves mode undefined (absent) for a regular file — absence means unattended', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/regular.ait.test.ts']);
+
+    expect(report.files[0]?.mode).toBeUndefined();
+  });
+
+  it('calls onManualFile once per manual file, with 1-based index and total, BEFORE injecting', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    const onManualFile = vi.fn();
+
+    await runTestFilesOverRelay(
+      FAKE_CONN as never,
+      ['/abs/regular.ait.test.ts', '/abs/a.manual.ait.test.ts', '/abs/b.manual.ait.test.ts'],
+      {
+        manualFiles: new Set(['/abs/a.manual.ait.test.ts', '/abs/b.manual.ait.test.ts']),
+        onManualFile,
+      },
+    );
+
+    expect(onManualFile).toHaveBeenCalledTimes(2);
+    expect(onManualFile).toHaveBeenNthCalledWith(1, '/abs/a.manual.ait.test.ts', 1, 2);
+    expect(onManualFile).toHaveBeenNthCalledWith(2, '/abs/b.manual.ait.test.ts', 2, 2);
+  });
+
+  it('never calls onManualFile for a run with no manual files', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    const onManualFile = vi.fn();
+
+    await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/regular.ait.test.ts'], {
+      onManualFile,
+    });
+
+    expect(onManualFile).not.toHaveBeenCalled();
+  });
+});

@@ -59,6 +59,14 @@ export interface RunnerAgnosticFileReport {
   skipped?: number;
   /** Per-test results, when the file ran. Error strings are matcher messages only. */
   tests?: TestResult[];
+  /**
+   * Present + `'manual'` only when this file ran under `--manual-blocking`
+   * (devtools#741) — human-attended, real native envelopes. Absent (never
+   * `false`) for unattended files: absence-means-unattended is the contract,
+   * mirroring `FileResult.mode` in relay-worker.ts. A manual-stamped record
+   * must never be diffed against an unattended one as if equivalent.
+   */
+  mode?: 'manual';
 }
 
 /**
@@ -115,10 +123,11 @@ export function serializeRelayReport(
     totals: report.totals,
     files: report.files.map((f): RunnerAgnosticFileReport => {
       const file = relativise(meta.projectRoot, f.file);
+      const modeField = f.mode === 'manual' ? ({ mode: 'manual' } as const) : {};
       if ('error' in f.result) {
         // Matcher/inject error message only — rpc.ts already stripped the
         // expression/value upstream.
-        return { file, error: f.result.error };
+        return { file, error: f.result.error, ...modeField };
       }
       return {
         file,
@@ -127,6 +136,7 @@ export function serializeRelayReport(
         failed: f.result.failed,
         skipped: f.result.skipped,
         tests: f.result.tests,
+        ...modeField,
       };
     }),
   };
@@ -134,11 +144,23 @@ export function serializeRelayReport(
 
 /**
  * Writes the serialised report to `<dir>/<sdkLine>.<platform>.json`, creating
- * `dir` if needed. Returns the absolute path written.
+ * `dir` if needed. Returns the absolute path(s) written.
  *
  * The cell-suffixed filename keeps 2.x and 3.0 (and per-platform) runs as
  * distinct artifacts in the same directory; the same cell metadata is also baked
  * into the body so a renamed/moved file still carries its provenance.
+ *
+ * Manual-run provenance (devtools#741): when `report.files` contains ANY
+ * `mode: 'manual'` entry (i.e. this run included `--manual-blocking` files),
+ * the manual-tagged files are written to a SEPARATE
+ * `<dir>/<sdkLine>.<platform>.manual.json` artifact instead of the standard
+ * one — the standard `<sdkLine>.<platform>.json` filename is reserved for the
+ * regular (unattended) files only, so a manual run's presence never mutates
+ * what the unattended-baseline filename means. If ALL files in the run are
+ * regular, only the standard artifact is written (today's behavior,
+ * unchanged). If a run mixes both (regular files + `--manual-blocking`
+ * scheduled last), BOTH artifacts are written — the manual one ALONGSIDE, not
+ * replacing, the standard one.
  *
  * SECRET-HANDLING: the written body contains no relay/secret fields (the schema
  * has none). `dir`/`projectRoot` are local filesystem paths, never logged here.
@@ -146,18 +168,47 @@ export function serializeRelayReport(
  * @param report - The core relay run report.
  * @param dir    - Output directory (created recursively if missing).
  * @param meta   - Cell axes + projectRoot.
- * @returns The absolute path of the written file.
+ * @returns The absolute path(s) written, in order: standard first (if any
+ *   regular files ran), then manual (if any manual files ran). At least one
+ *   path is always returned when `report.files` is non-empty.
  */
 export async function writeReportArtifact(
   report: RelayRunReport,
   dir: string,
   meta: ReportCellMeta,
-): Promise<string> {
+): Promise<string[]> {
   const serialised = serializeRelayReport(report, meta);
   await mkdir(dir, { recursive: true });
-  const outFile = path.join(dir, `${meta.sdkLine}.${meta.platform}.json`);
-  await writeFile(outFile, `${JSON.stringify(serialised, null, 2)}\n`, 'utf8');
-  return outFile;
+
+  const regularFiles = serialised.files.filter((f) => f.mode !== 'manual');
+  const manualFiles = serialised.files.filter((f) => f.mode === 'manual');
+
+  const written: string[] = [];
+
+  // Standard artifact: written whenever there are regular files, OR when the
+  // whole run is empty (preserves the pre-#741 "always write one file"
+  // behavior for a run with zero files, e.g. an empty glob match).
+  if (regularFiles.length > 0 || serialised.files.length === 0) {
+    const outFile = path.join(dir, `${meta.sdkLine}.${meta.platform}.json`);
+    await writeFile(
+      outFile,
+      `${JSON.stringify({ ...serialised, files: regularFiles }, null, 2)}\n`,
+      'utf8',
+    );
+    written.push(outFile);
+  }
+
+  if (manualFiles.length > 0) {
+    const manualOutFile = path.join(dir, `${meta.sdkLine}.${meta.platform}.manual.json`);
+    await writeFile(
+      manualOutFile,
+      `${JSON.stringify({ ...serialised, files: manualFiles }, null, 2)}\n`,
+      'utf8',
+    );
+    written.push(manualOutFile);
+  }
+
+  return written;
 }
 
 /**

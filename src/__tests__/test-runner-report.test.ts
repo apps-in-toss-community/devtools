@@ -125,15 +125,17 @@ describe('writeReportArtifact', () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('writes <sdkLine>.<platform>.json and returns that path', async () => {
-    const outPath = await writeReportArtifact(makeReport(), dir, META);
+  it('writes <sdkLine>.<platform>.json and returns that path (array of one)', async () => {
+    const written = await writeReportArtifact(makeReport(), dir, META);
+    expect(written).toHaveLength(1);
+    const outPath = written[0] as string;
     expect(path.basename(outPath)).toBe('3.x.ios.json');
     expect(path.dirname(outPath)).toBe(dir);
   });
 
   it('writes parseable JSON whose body has the baked cell + relative paths', async () => {
-    const outPath = await writeReportArtifact(makeReport(), dir, META);
-    const parsed = JSON.parse(await readFile(outPath, 'utf8')) as {
+    const [outPath] = await writeReportArtifact(makeReport(), dir, META);
+    const parsed = JSON.parse(await readFile(outPath as string, 'utf8')) as {
       cell: { sdkLine: string; platform: string };
       files: { file: string }[];
     };
@@ -142,24 +144,70 @@ describe('writeReportArtifact', () => {
   });
 
   it('produces distinct filenames per cell so 2.x and 3.x do not collide', async () => {
-    const p3 = await writeReportArtifact(makeReport(), dir, META);
-    const p2 = await writeReportArtifact(makeReport(), dir, {
+    const [p3] = await writeReportArtifact(makeReport(), dir, META);
+    const [p2] = await writeReportArtifact(makeReport(), dir, {
       ...META,
       sdkLine: '2.x',
       platform: 'android',
     });
-    expect(path.basename(p3)).toBe('3.x.ios.json');
-    expect(path.basename(p2)).toBe('2.x.android.json');
+    expect(path.basename(p3 as string)).toBe('3.x.ios.json');
+    expect(path.basename(p2 as string)).toBe('2.x.android.json');
     expect(p3).not.toBe(p2);
   });
 
   it('does not leak the project root or any secret token into the file', async () => {
-    const outPath = await writeReportArtifact(makeReport(), dir, META);
-    const raw = (await readFile(outPath, 'utf8')).toLowerCase();
+    const [outPath] = await writeReportArtifact(makeReport(), dir, META);
+    const raw = (await readFile(outPath as string, 'utf8')).toLowerCase();
     expect(raw).not.toContain(PROJECT_ROOT.toLowerCase());
     for (const forbidden of ['wss://', 'intoss-private://', 'trycloudflare', 'totp']) {
       expect(raw).not.toContain(forbidden);
     }
+  });
+
+  it('writes a SEPARATE <sdkLine>.<platform>.manual.json when the run has manual files, alongside (not replacing) the standard report (devtools#741)', async () => {
+    const report = makeReport();
+    report.files.push({
+      file: `${PROJECT_ROOT}/src/camera.manual.ait.test.ts`,
+      result: {
+        startedAt: '2026-06-29T00:00:00.000Z',
+        duration: 90_000,
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        tests: [{ name: 'granted happy path', status: 'pass', duration: 89_000 }],
+      },
+      mode: 'manual',
+    });
+
+    const written = await writeReportArtifact(report, dir, META);
+    const names = written.map((p) => path.basename(p)).sort();
+    expect(names).toEqual(['3.x.ios.json', '3.x.ios.manual.json']);
+
+    const standard = JSON.parse(
+      await readFile(written.find((p) => p.endsWith('3.x.ios.json')) as string, 'utf8'),
+    ) as { files: { file: string; mode?: string }[] };
+    // Standard artifact stays exactly the regular (unattended) files — the
+    // manual file must not pollute the baseline.
+    expect(standard.files.map((f) => f.file)).toEqual([
+      'src/clipboard.ait.test.ts',
+      'src/broken.ait.test.ts',
+    ]);
+    expect(standard.files.some((f) => f.mode === 'manual')).toBe(false);
+
+    const manual = JSON.parse(
+      await readFile(written.find((p) => p.endsWith('.manual.json')) as string, 'utf8'),
+    ) as { files: { file: string; mode?: string }[] };
+    expect(manual.files).toHaveLength(1);
+    expect(manual.files[0]).toMatchObject({
+      file: 'src/camera.manual.ait.test.ts',
+      mode: 'manual',
+    });
+  });
+
+  it('writes only the standard artifact when all files are regular (no manual entries)', async () => {
+    const written = await writeReportArtifact(makeReport(), dir, META);
+    expect(written).toHaveLength(1);
+    expect(path.basename(written[0] as string)).toBe('3.x.ios.json');
   });
 });
 

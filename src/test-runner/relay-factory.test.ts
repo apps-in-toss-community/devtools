@@ -890,6 +890,59 @@ describe('createRelayConnectionFactory — phase lifecycle (#730)', () => {
     expect(getDashboardState().phase).toBe('running');
   });
 
+  // devtools#741 — --manual-blocking dashboard prompt wiring.
+  it('getDashboardState() defaults manualPrompt to null', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    const getDashboardState = capturedGetDashboardState() as unknown as () => {
+      manualPrompt?: unknown;
+    };
+    expect(getDashboardState().manualPrompt).toBeNull();
+  });
+
+  it('onManualPrompt(prompt) updates manualPrompt and fires notifyStateChange', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    const notifyCallsBefore = qrServerNotifyMock.mock.calls.length;
+    factory.onManualPrompt?.({ file: 'camera.manual.ait.test.ts', index: 1, total: 2 });
+
+    expect(qrServerNotifyMock.mock.calls.length).toBeGreaterThan(notifyCallsBefore);
+    const getDashboardState = capturedGetDashboardState() as unknown as () => {
+      manualPrompt?: { file: string; index: number; total: number } | null;
+    };
+    expect(getDashboardState().manualPrompt).toEqual({
+      file: 'camera.manual.ait.test.ts',
+      index: 1,
+      total: 2,
+    });
+  });
+
+  it('onManualPrompt(null) clears manualPrompt after the manual queue finishes', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+    factory.onManualPrompt?.({ file: 'camera.manual.ait.test.ts', index: 1, total: 1 });
+    factory.onManualPrompt?.(null);
+
+    const getDashboardState = capturedGetDashboardState() as unknown as () => {
+      manualPrompt?: unknown;
+    };
+    expect(getDashboardState().manualPrompt).toBeNull();
+  });
+
   it('CLI onTunnelDown is wired to bootRelayFamily and its invocation triggers notifyStateChange (parity gap)', async () => {
     let capturedOnTunnelDown: (() => void) | undefined;
     (
