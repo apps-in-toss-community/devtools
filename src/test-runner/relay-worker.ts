@@ -19,6 +19,7 @@ import type { CdpConnection, ConsoleApiCalledEvent } from '../mcp/cdp-connection
 import { isRelayDisconnectMessage } from '../mcp/chii-connection.js';
 import { type BundleOptions, bundleTestFile } from './bundle.js';
 import { type AitCaptureLine, parseCaptureLines } from './capture.js';
+import { runPermissionPreflight } from './cell.js';
 import { injectAndRunBundle } from './rpc.js';
 import type { RunReport, TestResult } from './runtime.js';
 
@@ -71,6 +72,16 @@ export interface RelayRunReport {
    * `parseCaptureLines`.
    */
   captures: AitCaptureLine[];
+  /**
+   * Permission-state preflight result (devtools#739) — the same map exposed
+   * to the page as `globalThis.__AIT_PERMS__`, collected once before the
+   * first file runs. `undefined` when the preflight failed, timed out, or
+   * `window.__sdk` was not yet installed — a non-fatal outcome that does NOT
+   * fail the run. Report provenance only: 4-cell diffs correlate test
+   * outcomes with device permission state via this field. No secrets — only
+   * `'allowed'|'denied'|'notDetermined'|'unavailable'` strings per key.
+   */
+  preflight?: { permissions: Record<string, string> };
 }
 
 /** Options for `runTestFilesOverRelay`. */
@@ -253,6 +264,16 @@ export async function runTestFilesOverRelay(
   const manualTotal = manualFiles?.size ?? 0;
   let manualIndex = 0;
 
+  // Permission-state preflight (devtools#739): run ONCE per session, before
+  // the FIRST file's bundle is injected — never per file. Non-fatal: any
+  // failure is swallowed inside `runPermissionPreflight` (one stderr line),
+  // so a broken/absent `window.__sdk` never blocks the run. Skipped entirely
+  // when `files` is empty (no bundle will run either).
+  let preflightPermissions: Record<string, string> | undefined;
+  if (files.length > 0) {
+    preflightPermissions = await runPermissionPreflight(connection);
+  }
+
   try {
     for (const file of files) {
       if (pendingReconnectCheck) {
@@ -417,6 +438,7 @@ export async function runTestFilesOverRelay(
     files: fileResults,
     totals,
     captures,
+    ...(preflightPermissions ? { preflight: { permissions: preflightPermissions } } : {}),
   };
 }
 

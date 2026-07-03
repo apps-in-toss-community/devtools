@@ -70,8 +70,16 @@ vi.mock('../../test-runner/discover.js', async (importActual) => {
 
 // Spy on injectGlobals for cell-injection assertions (issue #684 PR2).
 const injectGlobalsSpy = vi.fn((_conn?: unknown, _cell?: unknown) => Promise.resolve());
+// runPermissionPreflight (devtools#739) is called unconditionally by
+// relay-worker.ts before the first file — stub it as a non-fatal no-op
+// (resolves undefined, mirroring "preflight did not complete") so tests in
+// this file that don't care about permission state are unaffected.
+const runPermissionPreflightSpy = vi.fn((_conn?: unknown, _timeoutMs?: number) =>
+  Promise.resolve(undefined),
+);
 vi.mock('../../test-runner/cell.js', () => ({
   injectGlobals: (...args: [unknown, unknown]) => injectGlobalsSpy(...args),
+  runPermissionPreflight: (...args: [unknown, number?]) => runPermissionPreflightSpy(...args),
 }));
 
 /* -------------------------------------------------------------------------- */

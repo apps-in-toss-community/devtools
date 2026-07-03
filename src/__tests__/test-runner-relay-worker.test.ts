@@ -77,6 +77,16 @@ vi.mock('../test-runner/bundle.js', () => ({
   })),
 }));
 
+// Mock the permission preflight (devtools#739) — this file's fakes are
+// call-count/canned-result keyed on a SINGLE `Runtime.evaluate` per file, so
+// an unmocked preflight (which also sends `Runtime.evaluate`) would shift
+// call counts and double-fire console events. Preflight behavior itself is
+// covered by cell.test.ts and the dedicated describe block in
+// relay-worker.test.ts.
+vi.mock('../test-runner/cell.js', () => ({
+  runPermissionPreflight: vi.fn(() => Promise.resolve(undefined)),
+}));
+
 /* -------------------------------------------------------------------------- */
 /* runTestFilesOverRelay                                                       */
 /* -------------------------------------------------------------------------- */
