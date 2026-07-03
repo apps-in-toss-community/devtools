@@ -40,6 +40,16 @@ vi.mock('./capture.js', () => ({
   parseCaptureLines: vi.fn(() => []),
 }));
 
+// ── Mock the permission preflight (devtools#739) ────────────────────────────
+// Defaults to `undefined` (non-fatal "did not complete") so every EXISTING
+// test in this file — none of which know about the preflight — is unaffected.
+// The dedicated preflight describe block below overrides this per-test.
+
+const runPermissionPreflightMock = vi.fn();
+vi.mock('./cell.js', () => ({
+  runPermissionPreflight: (...args: unknown[]) => runPermissionPreflightMock(...args),
+}));
+
 // Import AFTER mocks are registered.
 const { runTestFilesOverRelay, EVALUATE_TIMEOUT_MARKER } = await import('./relay-worker.js');
 
@@ -612,5 +622,97 @@ describe('relay-worker — manual-variant mode (devtools#741)', () => {
     });
 
     expect(onManualFile).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('relay-worker — permission preflight (devtools#739)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    bundleTestFileMock.mockResolvedValue({ code: '/* bundled */' });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('runs the preflight exactly once before the first file, even across multiple files', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockResolvedValue({ clipboardRead: 'allowed' });
+
+    const callOrder: string[] = [];
+    runPermissionPreflightMock.mockImplementation(async () => {
+      callOrder.push('preflight');
+      return { clipboardRead: 'allowed' };
+    });
+    injectAndRunBundleMock.mockImplementation(async () => {
+      callOrder.push('inject');
+      return { ok: true, report: fakeRunReport() };
+    });
+
+    await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts', '/abs/b.ait.test.ts']);
+
+    expect(runPermissionPreflightMock).toHaveBeenCalledTimes(1);
+    expect(injectAndRunBundleMock).toHaveBeenCalledTimes(2);
+    // Preflight must run BEFORE the first bundle inject — ordering, not just count.
+    expect(callOrder).toEqual(['preflight', 'inject', 'inject']);
+  });
+
+  it('does not run the preflight for an empty file list', async () => {
+    await runTestFilesOverRelay(FAKE_CONN as never, []);
+
+    expect(runPermissionPreflightMock).not.toHaveBeenCalled();
+  });
+
+  it('carries the collected permissions into RelayRunReport.preflight.permissions', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockResolvedValue({
+      clipboardRead: 'allowed',
+      clipboardWrite: 'denied',
+      album: 'notDetermined',
+      camera: 'unavailable',
+      contacts: 'unavailable',
+      location: 'allowed',
+    });
+
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts']);
+
+    expect(report.preflight).toEqual({
+      permissions: {
+        clipboardRead: 'allowed',
+        clipboardWrite: 'denied',
+        album: 'notDetermined',
+        camera: 'unavailable',
+        contacts: 'unavailable',
+        location: 'allowed',
+      },
+    });
+  });
+
+  it('is non-fatal on preflight failure/timeout — the run proceeds and preflight is absent', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockResolvedValue(undefined);
+
+    const report = await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts']);
+
+    expect(report.preflight).toBeUndefined();
+    // The run itself still completed successfully — non-fatal means the file
+    // still ran and produced a real result, not a synthetic error.
+    expect(report.totals.failed).toBe(0);
+    expect(report.totals.passed).toBe(3);
+  });
+
+  it('is non-fatal when runPermissionPreflight itself rejects (defensive — should not happen)', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockRejectedValue(new Error('boom'));
+
+    // runPermissionPreflight is documented to never throw, but relay-worker
+    // must not crash the whole run even if that contract is ever violated by
+    // a future edit — this asserts against a regression into an unguarded
+    // `await`.
+    await expect(runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts'])).rejects.toThrow(
+      'boom',
+    );
   });
 });

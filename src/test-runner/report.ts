@@ -85,6 +85,13 @@ export interface RunnerAgnosticReport {
   totals: RelayRunReport['totals'];
   /** Per-file results with projectRoot-relative paths. */
   files: RunnerAgnosticFileReport[];
+  /**
+   * Permission-state preflight result (devtools#739), mirrored verbatim from
+   * `RelayRunReport.preflight` — see that field's docblock. Absent when the
+   * preflight did not complete (non-fatal; the run still succeeds). No
+   * secrets — permission-state strings only.
+   */
+  preflight?: { permissions: Record<string, string> };
 }
 
 /**
@@ -121,6 +128,7 @@ export function serializeRelayReport(
     startedAt: report.startedAt,
     duration: report.duration,
     totals: report.totals,
+    ...(report.preflight ? { preflight: report.preflight } : {}),
     files: report.files.map((f): RunnerAgnosticFileReport => {
       const file = relativise(meta.projectRoot, f.file);
       const modeField = f.mode === 'manual' ? ({ mode: 'manual' } as const) : {};

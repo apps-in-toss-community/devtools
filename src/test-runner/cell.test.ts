@@ -31,7 +31,12 @@ import type {
   CdpEventName,
   CdpTarget,
 } from '../mcp/cdp-connection.js';
-import { injectDebugIndicator, injectGlobals } from './cell.js';
+import {
+  buildPermissionPreflightExpression,
+  injectDebugIndicator,
+  injectGlobals,
+  runPermissionPreflight,
+} from './cell.js';
 
 /* -------------------------------------------------------------------------- */
 /* Spy fake                                                                    */
@@ -389,5 +394,200 @@ describe('injectDebugIndicator', () => {
     const { conn } = makeSpyConnection();
     const result = await injectDebugIndicator(conn);
     expect(result).toBeUndefined();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* buildPermissionPreflightExpression (devtools#739)                          */
+/* -------------------------------------------------------------------------- */
+
+describe('buildPermissionPreflightExpression', () => {
+  const expr = buildPermissionPreflightExpression();
+
+  it('returns a string (pure, no side effects)', () => {
+    expect(typeof expr).toBe('string');
+    expect(expr.length).toBeGreaterThan(0);
+  });
+
+  it('probes all six permission-carrying SDK functions', () => {
+    for (const fnName of [
+      'getClipboardText',
+      'setClipboardText',
+      'fetchAlbumPhotos',
+      'openCamera',
+      'fetchContacts',
+      'getCurrentLocation',
+    ]) {
+      expect(expr).toContain(JSON.stringify(fnName));
+    }
+  });
+
+  it('writes all six __AIT_PERMS__ contract keys', () => {
+    for (const key of [
+      'clipboardRead',
+      'clipboardWrite',
+      'album',
+      'camera',
+      'contacts',
+      'location',
+    ]) {
+      expect(expr).toContain(JSON.stringify(key));
+    }
+  });
+
+  it('guards SDK function lookup with optional chaining / defensive checks (never a bare identifier)', () => {
+    // The probe reads `globalThis.__sdk && globalThis.__sdk[fnName]` — never a
+    // bare `__sdk.foo` that would throw ReferenceError-adjacent on absence.
+    expect(expr).toContain('globalThis.__sdk && globalThis.__sdk[fnName]');
+    expect(expr).toContain("typeof fn.getPermission !== 'function'");
+  });
+
+  it('only calls getPermission() — never openPermissionDialog or requestPermission', () => {
+    expect(expr).toContain('.getPermission()');
+    expect(expr).not.toContain('openPermissionDialog');
+    expect(expr).not.toContain('requestPermission');
+  });
+
+  it('wraps every probe in try/catch so a single failing probe cannot throw', () => {
+    expect(expr).toContain('try {');
+    expect(expr).toContain('} catch (e) {');
+    expect(expr).toContain("return 'unavailable';");
+  });
+
+  it('normalises any non-tri-state result to "unavailable"', () => {
+    expect(expr).toContain(
+      "if (status === 'allowed' || status === 'denied' || status === 'notDetermined') return status;",
+    );
+  });
+
+  it('assigns the result to globalThis.__AIT_PERMS__', () => {
+    expect(expr).toContain('globalThis.__AIT_PERMS__ = result;');
+  });
+
+  it('returns a JSON string (double-serialisation, matching rpc.ts convention)', () => {
+    expect(expr).toContain('return JSON.stringify(result);');
+  });
+
+  it('is an async IIFE (awaitable via Runtime.evaluate awaitPromise)', () => {
+    expect(expr.trim().startsWith('(async () => {')).toBe(true);
+    expect(expr.trim().endsWith('})()')).toBe(true);
+  });
+
+  it('does not reference undefined bare identifiers outside globalThis/window scoping', () => {
+    // Defensive lexical check: every SDK access goes through `globalThis.__sdk`,
+    // never a bare `__sdk` identifier that would ReferenceError if unscoped.
+    expect(expr).not.toMatch(/[^.]\b__sdk\b(?!\s*[:=])/);
+  });
+
+  it('does not contain secret tokens (relay/wss/totp) — SECRET-HANDLING guard', () => {
+    expect(expr).not.toMatch(/wss:\/\//);
+    expect(expr).not.toMatch(/totp/i);
+    expect(expr).not.toMatch(/trycloudflare/i);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* runPermissionPreflight (devtools#739)                                      */
+/* -------------------------------------------------------------------------- */
+
+describe('runPermissionPreflight', () => {
+  it('sends exactly one Runtime.evaluate and returns the parsed permissions map', async () => {
+    const permissions = { clipboardRead: 'allowed', camera: 'denied' };
+    const conn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: vi.fn(
+        <M extends CdpCommandName>(): Promise<CdpCommandMap[M]['result']> =>
+          Promise.resolve({
+            result: { type: 'string', value: JSON.stringify(permissions) },
+          } as unknown as CdpCommandMap[M]['result']),
+      ),
+    };
+
+    const result = await runPermissionPreflight(conn);
+
+    expect(conn.send).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(permissions);
+  });
+
+  it('returns undefined when Runtime.evaluate resolves with exceptionDetails (non-fatal)', async () => {
+    const conn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: <M extends CdpCommandName>(): Promise<CdpCommandMap[M]['result']> =>
+        Promise.resolve({
+          result: { type: 'object' },
+          exceptionDetails: { text: 'Uncaught', exception: { description: 'boom' } },
+        } as unknown as CdpCommandMap[M]['result']),
+    };
+
+    await expect(runPermissionPreflight(conn)).resolves.toBeUndefined();
+  });
+
+  it('returns undefined when conn.send rejects (non-fatal)', async () => {
+    const conn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: () => Promise.reject(new Error('CDP: page detached')),
+    };
+
+    await expect(runPermissionPreflight(conn)).resolves.toBeUndefined();
+  });
+
+  it('returns undefined on timeout without hanging the caller', async () => {
+    vi.useFakeTimers();
+    try {
+      const conn: CdpConnection = {
+        kind: 'relay' as const,
+        enableDomains: () => Promise.resolve(),
+        listTargets: () => [],
+        getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+        on:
+          <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+          () => {},
+        // Never resolves — simulates a hung page.
+        send: () => new Promise(() => {}),
+      };
+
+      const resultPromise = runPermissionPreflight(conn, 1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      await expect(resultPromise).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns undefined when the returned value is not a JSON string', async () => {
+    const conn: CdpConnection = {
+      kind: 'relay' as const,
+      enableDomains: () => Promise.resolve(),
+      listTargets: () => [],
+      getBufferedEvents: <E extends CdpEventName>(_e: E): ReadonlyArray<CdpEventMap[E]> => [],
+      on:
+        <E extends CdpEventName>(_e: E, _l: (p: CdpEventMap[E]) => void) =>
+        () => {},
+      send: <M extends CdpCommandName>(): Promise<CdpCommandMap[M]['result']> =>
+        Promise.resolve({
+          result: { type: 'boolean', value: true },
+        } as unknown as CdpCommandMap[M]['result']),
+    };
+
+    await expect(runPermissionPreflight(conn)).resolves.toBeUndefined();
   });
 });
