@@ -49,6 +49,16 @@ export interface RelayConnectionFactory {
    * omits it; only `createRelayConnectionFactory` (relay-factory.ts) sets it.
    */
   onSessionPhase?(phase: 'running' | 'complete'): void;
+  /**
+   * CLI-only manual-blocking prompt hook (devtools#741) — pushes the QR
+   * dashboard's `manualPrompt` field before each manual-tagged file is
+   * injected, so a human watching the dashboard sees which file is next and
+   * how far along the manual queue is. Pass `null` to clear the prompt (the
+   * CLI does this once all manual files have run). The pool has no
+   * equivalent lifecycle and omits it; only `createRelayConnectionFactory`
+   * sets it.
+   */
+  onManualPrompt?(prompt: { file: string; index: number; total: number } | null): void;
 }
 
 /** Options for {@link createRelayPool}. */

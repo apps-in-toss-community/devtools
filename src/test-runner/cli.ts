@@ -14,7 +14,7 @@
 import { basename } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
-import { discoverTestFiles } from './discover.js';
+import { discoverTestFiles, MANUAL_TEST_SUFFIX, partitionManualTests } from './discover.js';
 import { createRelayConnectionFactory } from './relay-factory.js';
 import type { RelayRunOptions, RelayRunReport } from './relay-worker.js';
 import { runTestFilesOverRelay } from './relay-worker.js';
@@ -54,6 +54,24 @@ OPTIONS
   --headless              Disable browser auto-open (text QR only)
   --project-root <dir>    Project root for .ait_relay secret lookup
                           (default: current working directory)
+  --manual-blocking       Run manual-tagged test files (*.manual.ait.test.ts)
+                          LAST, after all regular files, with a human present.
+                          Before each manual file, the QR dashboard is pushed
+                          a step-by-step Korean prompt naming the file + its
+                          progress (k/n), and the same line is printed to
+                          stdout. Manual files get a 5-minute per-file evaluate
+                          timeout (vs. --timeout for everything else) since a
+                          human is expected to tap through a native sheet
+                          (photo picker, permission dialog, fullscreen ad).
+                          Without this flag (default off), *.manual.ait.test.ts
+                          files are EXCLUDED from the glob expansion entirely —
+                          existing unattended runs are byte-for-byte unaffected.
+                          With --report-dir, a run that included manual files
+                          ALSO writes <sdkLine>.<platform>.manual.json
+                          alongside (never replacing) the standard report, and
+                          each manual file's report entry is stamped
+                          mode: 'manual' — never diff a manual run against an
+                          unattended baseline as if they were equivalent.
   --help, -h              Show this help message
 
 DESCRIPTION
@@ -278,6 +296,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         'no-qr-stdout': { type: 'boolean' },
         headless: { type: 'boolean' },
         'project-root': { type: 'string' },
+        'manual-blocking': { type: 'boolean' },
       } as const,
       allowPositionals: true,
     });
@@ -324,6 +343,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     typeof vals['project-root'] === 'string' ? vals['project-root'] : process.cwd();
   const reportDir = typeof vals['report-dir'] === 'string' ? vals['report-dir'] : undefined;
   const suppressQr = shouldSuppressQr(vals['no-qr-stdout'] === true);
+  const manualBlocking = vals['manual-blocking'] === true;
 
   // Cell: --cell-sdk-line and --cell-platform (fall back to AIT_CELL_PLATFORM env).
   const cellSdkLine = typeof vals['cell-sdk-line'] === 'string' ? vals['cell-sdk-line'] : undefined;
@@ -346,13 +366,28 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
 
-  const files = await discoverTestFiles(globs, process.cwd());
-  if (files.length === 0) {
+  // Tagging contract (devtools#741): *.manual.ait.test.ts files are excluded
+  // from discovery unless --manual-blocking is passed, in which case they are
+  // included and then scheduled strictly AFTER every regular file below —
+  // this is the entire "manual-variant" ordering guarantee.
+  const discovered = await discoverTestFiles(globs, process.cwd(), {
+    includeManual: manualBlocking,
+  });
+  if (discovered.length === 0) {
     process.stderr.write(`devtools-test: no test files matched ${globs.join(', ')}\n`);
     process.exitCode = 1;
     return;
   }
-  process.stderr.write(`devtools-test: found ${files.length} test file(s)\n`);
+  const { regular, manual } = partitionManualTests(discovered);
+  // Manual files always run LAST, regardless of the discovery/glob order —
+  // `files` below is what's actually injected, in run order.
+  const files = manualBlocking ? [...regular, ...manual] : regular;
+  const manualFileSet = new Set(manual);
+  process.stderr.write(
+    manualBlocking && manual.length > 0
+      ? `devtools-test: found ${regular.length} regular + ${manual.length} manual (${MANUAL_TEST_SUFFIX}) test file(s)\n`
+      : `devtools-test: found ${files.length} test file(s)\n`,
+  );
 
   // ── Step 3: open the relay connection via the shared factory ──────────────
   // The factory boots the relay, renders the QR, waits for the phone, injects
@@ -404,17 +439,40 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       timeoutMs: evaluateTimeoutMs,
       printSummary: true,
       collectCaptures: reportDir !== undefined,
+      manualFiles: manualBlocking && manualFileSet.size > 0 ? manualFileSet : undefined,
+      // #741: before each manual file, push the dashboard prompt AND print
+      // the same Korean instruction line to stdout (human may be watching
+      // either surface). Clearing the prompt (dashboard only) happens once
+      // the whole run ends, in the finally block below — a manual file is
+      // always the tail of `files`, so there is no "next regular file" to
+      // clear it for mid-run.
+      onManualFile: (file, index, total) => {
+        const name = basename(file);
+        process.stdout.write(
+          `수동 단계: ${name} — 폰에서 네이티브 시트가 뜨면 안내에 따라 조작하세요 (${index}/${total})\n`,
+        );
+        factory.onManualPrompt?.({ file: name, index, total });
+      },
     });
+
+    // Clear the dashboard's manual prompt now that the run (including any
+    // manual tail) has finished — leaves no stale "수동 단계" banner up once
+    // the human is done.
+    if (manualBlocking && manualFileSet.size > 0) {
+      factory.onManualPrompt?.(null);
+    }
 
     // ── Step 5: persist artifacts (only with --report-dir) ──────────────────
     if (reportDir !== undefined) {
       try {
-        const reportPath = await writeReportArtifact(report, reportDir, {
+        const reportPaths = await writeReportArtifact(report, reportDir, {
           sdkLine: cell.sdkLine,
           platform: cell.platform,
           projectRoot,
         });
-        process.stderr.write(`devtools-test: wrote report ${reportPath}\n`);
+        for (const reportPath of reportPaths) {
+          process.stderr.write(`devtools-test: wrote report ${reportPath}\n`);
+        }
         const capturePaths = await writeCaptureArtifacts(
           report.captures,
           `${reportDir}/.ait-capture`,

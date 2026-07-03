@@ -22,12 +22,27 @@ import { type AitCaptureLine, parseCaptureLines } from './capture.js';
 import { injectAndRunBundle } from './rpc.js';
 import type { RunReport, TestResult } from './runtime.js';
 
+/**
+ * Per-file evaluate timeout (ms) for manual-variant files (devtools#741) — a
+ * human is expected to be tapping through a native sheet, so the timeout must
+ * be far longer than the unattended default (60s, rpc.ts DEFAULT_TIMEOUT_MS).
+ * Fixed constant (not configurable in v1) — documented here + CLI `--help`.
+ */
+export const MANUAL_FILE_TIMEOUT_MS = 5 * 60_000;
+
 /** Per-file result in the aggregate `RunReport`. */
 export interface FileResult {
   /** Absolute or relative path to the test file. */
   file: string;
   /** Full run report for this file, or an error if bundling/injection failed. */
   result: RunReport | { error: string };
+  /**
+   * Present + `'manual'` only for files run under `--manual-blocking`
+   * (devtools#741) — report provenance so a human-attended run is never
+   * confused with an unattended baseline. Absent (not `false`) for regular
+   * files — absence-means-unattended is the contract (report.ts mirrors this).
+   */
+  mode?: 'manual';
 }
 
 /** Aggregate report returned by `runTestFilesOverRelay`. */
@@ -81,6 +96,29 @@ export interface RelayRunOptions {
    * default 500-entry buffer would silently drop lines via `shift`).
    */
   collectCaptures?: boolean;
+  /**
+   * Absolute paths of files to run in MANUAL-VARIANT mode (devtools#741,
+   * `--manual-blocking`). Callers pass the `manual` half of
+   * `partitionManualTests(files)` — this set does not itself reorder `files`
+   * (the caller is responsible for placing manual files last); it only
+   * controls two per-file behaviors for members of the set:
+   *
+   *   1. the evaluate timeout is `MANUAL_FILE_TIMEOUT_MS` (5 min) instead of
+   *      `opts.timeoutMs` — a human is expected to be tapping through a
+   *      native sheet;
+   *   2. `onManualFile` fires BEFORE the file is injected, and the file's
+   *      `FileResult.mode` is stamped `'manual'`.
+   *
+   * Absent/empty = no manual files in this run (default; zero-diff path).
+   */
+  manualFiles?: ReadonlySet<string>;
+  /**
+   * Called immediately before a manual file is injected (devtools#741) —
+   * `(file, index, total)` where `index` is 1-based position among manual
+   * files. The CLI uses this to push a dashboard prompt + print to stdout.
+   * Never called for regular (non-manual) files.
+   */
+  onManualFile?: (file: string, index: number, total: number) => void;
 }
 
 /**
@@ -208,12 +246,28 @@ export async function runTestFilesOverRelay(
     }
   };
 
+  // Manual-variant bookkeeping (devtools#741): resolve the total up front so
+  // `onManualFile`'s `(index, total)` is stable even if `files` is a mix of
+  // regular + manual entries in a single call.
+  const manualFiles = opts?.manualFiles;
+  const manualTotal = manualFiles?.size ?? 0;
+  let manualIndex = 0;
+
   try {
     for (const file of files) {
       if (pendingReconnectCheck) {
         await attemptReconnect('next-file');
         pendingReconnectCheck = false;
       }
+
+      const isManual = manualFiles?.has(file) === true;
+      if (isManual) {
+        manualIndex += 1;
+        opts?.onManualFile?.(file, manualIndex, manualTotal);
+      }
+      // Manual files get a far longer evaluate timeout (a human is tapping
+      // through a native sheet) — everything else keeps opts.timeoutMs.
+      const fileTimeoutMs = isManual ? MANUAL_FILE_TIMEOUT_MS : opts?.timeoutMs;
 
       let fileEntry: FileResult;
       try {
@@ -241,7 +295,7 @@ export async function runTestFilesOverRelay(
         const attempt = async (): Promise<FileResult | null> => {
           let rpcResult: Awaited<ReturnType<typeof injectAndRunBundle>>;
           try {
-            rpcResult = await injectAndRunBundle(connection, code, opts?.timeoutMs);
+            rpcResult = await injectAndRunBundle(connection, code, fileTimeoutMs);
           } catch (e) {
             // injectAndRunBundle throws for CDP exceptionDetails OR a relay ws
             // death mid-evaluate (connection.send() fail-fast rejection) —
@@ -312,6 +366,15 @@ export async function runTestFilesOverRelay(
       // reconnect attempt before the NEXT file (#731) — do not abort the loop.
       if ('error' in fileEntry.result && isRelayDisconnectMessage(fileEntry.result.error)) {
         pendingReconnectCheck = true;
+      }
+
+      // Report provenance (devtools#741): stamp mode='manual' once, here, on
+      // whatever fileEntry ended up being (success, error, or timeout) —
+      // simpler and less error-prone than threading the flag through every
+      // return site inside `attempt()`. Absent for regular files (the
+      // contract is absence-means-unattended, not `mode: undefined`).
+      if (isManual) {
+        fileEntry.mode = 'manual';
       }
 
       fileResults.push(fileEntry);

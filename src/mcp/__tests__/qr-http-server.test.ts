@@ -2459,6 +2459,74 @@ describe('startQrHttpServer — phase 필드 SSE payload (#730)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// manual-blocking 프롬프트 — SSE payload에 manualPrompt 필드 (devtools#741)
+// ---------------------------------------------------------------------------
+
+describe('startQrHttpServer — manualPrompt 필드 SSE payload (devtools#741)', () => {
+  it('getDashboardState가 manualPrompt를 명시하면 SSE payload에 그대로 실린다', async () => {
+    const state: DashboardState = {
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+      phase: 'running',
+      manualPrompt: { file: 'camera.manual.ait.test.ts', index: 1, total: 3 },
+    };
+    const srv = await startQrHttpServer(() => state);
+    try {
+      const frame = (await readFirstSseFrame(`http://127.0.0.1:${srv.port}/events`)) as {
+        manualPrompt?: { file: string; index: number; total: number } | null;
+      };
+      expect(frame.manualPrompt).toEqual({
+        file: 'camera.manual.ait.test.ts',
+        index: 1,
+        total: 3,
+      });
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('manualPrompt 미지정 시 SSE payload에 null로 채워진다 (수동 단계 아님)', async () => {
+    const state: DashboardState = {
+      tunnel: { up: true, wssUrl: null },
+      pages: [],
+      attachUrl: null,
+      phase: 'active',
+    };
+    const srv = await startQrHttpServer(() => state);
+    try {
+      const frame = (await readFirstSseFrame(`http://127.0.0.1:${srv.port}/events`)) as {
+        manualPrompt?: unknown;
+      };
+      expect(frame.manualPrompt).toBeNull();
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('manualPrompt에는 파일명만 실린다 — relay wss/scheme/TOTP 노출 없음', async () => {
+    const state: DashboardState = {
+      tunnel: { up: true, wssUrl: 'wss://secret-relay.trycloudflare.com' },
+      pages: [],
+      attachUrl: 'intoss-private://app?_deploymentId=x&at=123456',
+      phase: 'running',
+      manualPrompt: { file: 'camera.manual.ait.test.ts', index: 1, total: 1 },
+    };
+    const srv = await startQrHttpServer(() => state);
+    try {
+      const frame = (await readFirstSseFrame(`http://127.0.0.1:${srv.port}/events`)) as {
+        manualPrompt?: { file: string };
+      };
+      expect(frame.manualPrompt?.file).toBe('camera.manual.ait.test.ts');
+      expect(frame.manualPrompt?.file).not.toContain('wss');
+      expect(frame.manualPrompt?.file).not.toContain('trycloudflare');
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe('startQrHttpServer — 클라이언트 스크립트의 terminal/onerror 처리 (#730)', () => {
   const defaultState: DashboardState = {
     tunnel: { up: true, wssUrl: 'wss://test.trycloudflare.com' },

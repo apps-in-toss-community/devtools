@@ -100,6 +100,17 @@ export interface DashboardState {
    * SECRET-HANDLING: enum 문자열은 시크릿이 아니다 — 그대로 SSE payload에 싣는다.
    */
   phase: 'active' | 'running' | 'complete' | 'shutdown';
+  /**
+   * `--manual-blocking` 수동-변형 모드(devtools#741)의 현재 프롬프트 — 사람이
+   * 대시보드를 보며 다음에 무엇을 할지 알 수 있도록 파일명 + 진행도를 싣는다.
+   *
+   * - `null`/미지정 — 수동 단계 아님(평상시).
+   * - `{ file, index, total }` — CLI가 manual 파일을 inject하기 직전에 push.
+   *   `file`은 basename만(절대경로 없음), `index`는 1-based.
+   *
+   * SECRET-HANDLING: 파일명만 담는다 — relay wss/TOTP/scheme URL 없음.
+   */
+  manualPrompt?: { file: string; index: number; total: number } | null;
 }
 
 /** mode → 어느 precompiled attach chrome family를 쓰는가 (#468). */
@@ -865,6 +876,8 @@ export async function startQrHttpServer(
       inspectorUrl: state.inspectorUrl ?? null,
       // phase: 세션 생애주기 enum (#730) — 시크릿 아님, 그대로 전달.
       phase: state.phase ?? 'active',
+      // manualPrompt: 수동-변형 모드 진행 상태 (#741) — 파일명만, 시크릿 없음.
+      manualPrompt: state.manualPrompt ?? null,
     });
     // SSE frame: "data: <json>\n\n"
     res.write(`data: ${payload}\n\n`);
