@@ -228,10 +228,22 @@ describe('buildIndicatorExpression', () => {
     expect(expr).toContain('__ait_debug_indicator');
   });
 
-  it('has an idempotent guard (getElementById early-return)', () => {
+  // #730: the badge is now a LIVE, idempotent controller — re-injection
+  // updates the same `window.__ait_indicator` controller/DOM node instead of
+  // early-returning on a duplicate-id guard (the old one-shot design).
+  it('has an idempotent controller guard (keyed on window.__ait_indicator)', () => {
     const expr = buildIndicatorExpression();
-    expect(expr).toContain("getElementById('__ait_debug_indicator')");
-    expect(expr).toContain('return');
+    expect(expr).toContain('W.__ait_indicator');
+    expect(expr).toContain('if (!c)');
+  });
+
+  it('re-injection updates state via setState rather than duplicating the DOM node', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('function setState(c, next)');
+    // The controller is only constructed inside `if (!c) { ... }` — setState
+    // is called unconditionally at the end, so a second injection with an
+    // existing controller skips DOM creation and only updates state.
+    expect(expr).toContain('setState(c, ');
   });
 
   it('uses position:fixed for fixed overlay', () => {
@@ -245,9 +257,34 @@ describe('buildIndicatorExpression', () => {
     expect(expr).toContain('left');
   });
 
-  it('uses a red background colour (#e5484d)', () => {
+  it('uses a red background colour (#e5484d) for the attached state', () => {
     const expr = buildIndicatorExpression();
     expect(expr).toContain('#e5484d');
+  });
+
+  it('uses a grey background colour (#8a8f98) for the disconnected state', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('#8a8f98');
+  });
+
+  it('embeds the default disconnected label "Debugger Disconnected"', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('Debugger Disconnected');
+  });
+
+  it('embeds a custom disconnected label', () => {
+    const expr = buildIndicatorExpression({ disconnectedLabel: 'Gone' });
+    expect(expr).toContain('"Gone"');
+  });
+
+  it('accepts an explicit initial state — disconnected', () => {
+    const expr = buildIndicatorExpression({ state: 'disconnected' });
+    expect(expr).toContain('setState(c, "disconnected")');
+  });
+
+  it('defaults the initial state to attached', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('setState(c, "attached")');
   });
 
   it('uses a high z-index (2147483647)', () => {
@@ -255,20 +292,44 @@ describe('buildIndicatorExpression', () => {
     expect(expr).toContain('2147483647');
   });
 
-  it('adds a pointerdown listener with { once: true }', () => {
+  // #730: dismiss is NO LONGER terminal — a later setState() call always
+  // un-dismisses the badge, so a genuine disconnect after a dismissed tap is
+  // still surfaced (gap #3 from the issue).
+  it('adds a passive pointerdown listener whose dismiss is non-terminal', () => {
     const expr = buildIndicatorExpression();
     expect(expr).toMatch(/pointerdown/);
-    expect(expr).toContain('once: true');
+    expect(expr).toContain('{ passive: true }');
+    // setState always resets `dismissed = false`, proving a later transition
+    // un-dismisses the badge rather than leaving it permanently hidden.
+    expect(expr).toContain('c.dismissed = false');
   });
 
-  it('does not contain secret tokens (relay/wss/totp)', () => {
+  it('observes relay-socket lifecycle via the in-app CustomEvent broadcast, without opening a new connection', () => {
     const expr = buildIndicatorExpression();
-    // These strings must never appear in the DOM expression.
+    expect(expr).toContain('ait:relay-ws-state');
+    expect(expr).toContain('__ait_relay_ws_observed');
+  });
+
+  it('falls back to a pathname-scoped WebSocket Proxy (no bare "new WebSocket(" dial)', () => {
+    const expr = buildIndicatorExpression();
+    expect(expr).toContain('new Proxy(Native');
+    expect(expr).toMatch(/\\\/target\\\//);
+    // The expression only ever wraps the constructor via Proxy/Reflect — it
+    // never dials a socket itself (no literal `new WebSocket(` call).
+    expect(expr).not.toMatch(/new WebSocket\(/);
+  });
+
+  it('does not contain secret tokens (relay/wss/totp) — load-bearing SECRET-HANDLING guard', () => {
+    const expr = buildIndicatorExpression();
+    // These strings must never appear in the DOM expression. The relay-socket
+    // match is by PATHNAME SHAPE only (`/target/`), never by host/wss value,
+    // and the CustomEvent name/detail carry no secret either.
     expect(expr).not.toMatch(/wss:\/\//);
-    expect(expr).not.toMatch(/relay/i);
     expect(expr).not.toMatch(/totp/i);
     expect(expr).not.toMatch(/at=/);
     expect(expr).not.toMatch(/AIT_DEBUG_TOTP_SECRET/);
+    expect(expr).not.toMatch(/trycloudflare/i);
+    expect(expr).not.toMatch(/:\/\//); // no embedded absolute host URL literal
   });
 });
 

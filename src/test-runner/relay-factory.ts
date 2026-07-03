@@ -37,7 +37,7 @@
 
 import type { AttachDeps, AttachUrlParts } from '../mcp/attach-orchestrator.js';
 import type { CdpConnection } from '../mcp/cdp-connection.js';
-import type { QrHttpServer } from '../mcp/qr-http-server.js';
+import type { DashboardState, QrHttpServer } from '../mcp/qr-http-server.js';
 import type { RelayConnectionFactory } from './pool.js';
 
 // NOTE: every value import below is a DYNAMIC import inside `open()`. This module
@@ -118,6 +118,10 @@ export function createRelayConnectionFactory(
   let family: { connection: CdpConnection; stop(): void } | undefined;
   // QR HTTP server — started during open() when not headless, closed in close().
   let qrServer: QrHttpServer | undefined;
+  // Session-phase state (#730) — drives the dashboard's `phase` field so the
+  // CLI's run start/complete and final teardown push an immediate SSE update
+  // instead of the dashboard just going dark when the process exits.
+  let phase: DashboardState['phase'] = 'active';
 
   return {
     async open(): Promise<CdpConnection> {
@@ -164,6 +168,13 @@ export function createRelayConnectionFactory(
           resolveTunnelUp();
           qrServer?.notifyStateChange();
         },
+        // #730: parity with the MCP daemon path (debug-server.ts's onTunnelDown
+        // wiring) — without this, a permanent tunnel drop during a standalone
+        // CLI run left the dashboard showing a dead-but-scannable QR until the
+        // watchdog (up to ~210s) finally fired.
+        onTunnelDown: () => {
+          qrServer?.notifyStateChange();
+        },
       });
       family = booted;
 
@@ -203,11 +214,12 @@ export function createRelayConnectionFactory(
       try {
         const { startQrHttpServer } = await import('../mcp/qr-http-server.js');
 
-        const getDashboardState = () => ({
+        const getDashboardState = (): DashboardState => ({
           tunnel: attachDeps.getTunnelStatus(),
           pages: null, // CLI/pool: no page-list introspection needed
           attachUrl: lastAttachParts ? mintAttachUrl(attachDeps, lastAttachParts) : null,
           mode: 'relay-dev' as const,
+          phase, // #730 — CLI-only 'running'/'complete' transitions via onSessionPhase
         });
 
         qrServer = await startQrHttpServer(getDashboardState);
@@ -388,7 +400,36 @@ export function createRelayConnectionFactory(
       return booted.connection;
     },
 
-    async close(_connection: CdpConnection): Promise<void> {
+    // #730: drives the dashboard's `phase` field so the CLI's run start/end
+    // push an immediate SSE update instead of the dashboard just going dark.
+    onSessionPhase(next: 'running' | 'complete'): void {
+      phase = next;
+      qrServer?.notifyStateChange();
+    },
+
+    async close(connection: CdpConnection): Promise<void> {
+      // #730: flip the on-phone badge to disconnected AND push the terminal
+      // dashboard frame BEFORE tearing anything down, so neither surface goes
+      // dark without explanation when the CLI exits (dog-food gaps #1 + #2).
+      // Both are best-effort over the still-open channels — the ordering
+      // (before family.stop()/qrServer.close()) is load-bearing:
+      //   - qrServer.notifyStateChange() writes synchronously to the still-open
+      //     SSE sockets, so the 'complete' frame is on the wire before the HTTP
+      //     server is closed below.
+      //   - injectDebugIndicator runs over the still-open CDP channel, so the
+      //     phone actually receives the disconnected-state update before the
+      //     relay/tunnel are torn down.
+      if (phase !== 'complete') {
+        phase = 'complete';
+        qrServer?.notifyStateChange();
+      }
+      try {
+        const { injectDebugIndicator } = await import('./cell.js');
+        await injectDebugIndicator(connection, { state: 'disconnected' });
+      } catch {
+        // Channel may already be down (e.g. attach never completed) — non-fatal,
+        // the badge is informational UI only.
+      }
       // family.stop() is synchronous best-effort: closes the CDP connection and
       // shuts down the relay + cloudflared child.
       family?.stop();

@@ -393,8 +393,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   let exitCode = 0;
   try {
     // ── Step 4: run test files ──────────────────────────────────────────────
-    // collectCaptures is enabled only when a report dir is given (the only sink
-    // for captures) — keeps the no-report path free of listener overhead.
+    // #730: mark the dashboard as 'running' before the run starts so the QR
+    // page reflects an in-progress session rather than staying 'active' the
+    // whole time. collectCaptures is enabled only when a report dir is given
+    // (the only sink for captures) — keeps the no-report path free of
+    // listener overhead.
+    factory.onSessionPhase?.('running');
     const report = await runWithConnection(connection, files, {
       timeoutMs: evaluateTimeoutMs,
       printSummary: true,
@@ -429,6 +433,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     exitCode = report.totals.failed > 0 ? 1 : 0;
   } finally {
     // ── Step 6: teardown ────────────────────────────────────────────────────
+    // #730: mark the dashboard 'complete' BEFORE close() so the terminal SSE
+    // frame reaches any open dashboard tab before the HTTP server is closed.
+    // Redundant-but-safe with close()'s own internal push (belt-and-suspenders
+    // so the frame flushes even if the two ever run in a different order).
+    factory.onSessionPhase?.('complete');
     // factory.close() stops the relay family (closes the CDP connection +
     // shuts down the relay + cloudflared child).
     await factory.close(connection);

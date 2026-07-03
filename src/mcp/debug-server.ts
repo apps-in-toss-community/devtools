@@ -2373,6 +2373,10 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
   // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
   let lastAttachParts: AttachUrlParts | null = null;
 
+  // 세션 생애주기 phase (#730) — daemon은 'shutdown' 전환 시에만 갱신한다.
+  // 'running'/'complete'는 CLI 전용(devtools-test)이라 daemon 경로는 사용하지 않는다.
+  let currentPhase: DashboardState['phase'] = 'active';
+
   // getDashboardState 클로저 — qr-http-server dashboard에 현재 상태 전달.
   // rebuildAttachUrl()로 매 호출마다 최신 TOTP 코드를 mint한 URL을 생성한다 (Defect 1).
   // inspectorUrl은 안정 /inspector URL(issue #530) — 시크릿 없으므로 출력 가능.
@@ -2391,6 +2395,7 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
       // 현재 active connection에서 매 호출마다 파생한 env — /attach 카피·환경 라벨
       // 분기(#468). start_debug family swap을 따라가도록 저장하지 않고 파생한다.
       mode: deriveEnvironment(router.active.kind, router.activeRelayOrigin),
+      phase: currentPhase, // #730
     };
   };
 
@@ -2497,6 +2502,14 @@ export async function runDebugServer(options: RunDebugServerOptions = {}): Promi
     // Idempotent: multiple simultaneous signals/exit/uncaught calls run only once.
     if (closed) return;
     closed = true;
+
+    // #730: push the terminal SSE frame FIRST — before any teardown — so the
+    // dashboard renders "서버 종료" instead of a bare connection-refused. The
+    // HTTP server (qrServer) is still alive for the rest of this synchronous
+    // function body, so notifyStateChange's res.write reaches already-open
+    // SSE sockets before qrServer.close() below severs them.
+    currentPhase = 'shutdown';
+    qrServer?.notifyStateChange();
 
     parentWatcher?.stop();
     maxAgeWatchdog?.stop();
@@ -2761,6 +2774,9 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
   let lastAttachParts: AttachUrlParts | null = null;
 
+  // 세션 생애주기 phase (#730) — daemon은 'shutdown' 전환 시에만 갱신한다.
+  let currentPhase: DashboardState['phase'] = 'active';
+
   const getDashboardState = (): DashboardState => {
     const targets = router.active.listTargets();
     // inspectorUrl — /inspector 안정 진입점 (issue #530).
@@ -2771,6 +2787,7 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
       pages: targets.map((t) => ({ id: t.id, url: t.url })),
       attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
       inspectorUrl,
+      phase: currentPhase, // #730
     };
   };
 
@@ -2870,6 +2887,12 @@ export async function runLocalDebugServer(options: RunLocalDebugServerOptions = 
   const shutdown = () => {
     if (closed) return;
     closed = true;
+
+    // #730: push the terminal SSE frame FIRST — see runDebugServer's shutdown
+    // for the full ordering rationale (mirrors that daemon variant).
+    currentPhase = 'shutdown';
+    qrServer?.notifyStateChange();
+
     parentWatcher?.stop();
     maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);
@@ -3100,6 +3123,9 @@ export async function runMobileDebugServer(
   // SECRET-HANDLING: 컴포넌트에는 tunnel/scheme host가 있으므로 로그 출력 금지.
   let lastAttachParts: AttachUrlParts | null = null;
 
+  // 세션 생애주기 phase (#730) — daemon은 'shutdown' 전환 시에만 갱신한다.
+  let currentPhase: DashboardState['phase'] = 'active';
+
   const getDashboardState = (): DashboardState => {
     const targets = router.active.listTargets();
     // inspectorUrl — /inspector 안정 진입점 (issue #530).
@@ -3110,6 +3136,7 @@ export async function runMobileDebugServer(
       pages: targets.map((t) => ({ id: t.id, url: t.url })),
       attachUrl: lastAttachParts ? rebuildAttachUrl(lastAttachParts) : null,
       inspectorUrl,
+      phase: currentPhase, // #730
     };
   };
 
@@ -3208,6 +3235,12 @@ export async function runMobileDebugServer(
   const shutdown = () => {
     if (closed) return;
     closed = true;
+
+    // #730: push the terminal SSE frame FIRST — see runDebugServer's shutdown
+    // for the full ordering rationale (mirrors that daemon variant).
+    currentPhase = 'shutdown';
+    qrServer?.notifyStateChange();
+
     parentWatcher?.stop();
     maxAgeWatchdog?.stop();
     if (totpRefreshHandle) clearInterval(totpRefreshHandle);

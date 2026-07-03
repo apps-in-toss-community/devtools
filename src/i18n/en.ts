@@ -218,6 +218,14 @@ export const en: Record<StringKey, string> = {
     'The MCP server has stopped. This session is no longer active. You may close this tab.',
   'dashboard.watchdog.close': 'Close tab',
 
+  // qr-http-server — real-time status surfaces (#730)
+  'dashboard.conn.lost': 'Connection lost — reconnecting…',
+  'dashboard.session.completeTitle': 'Test run complete',
+  'dashboard.session.completeBody': 'The runner exited cleanly. See your terminal for results.',
+  'dashboard.session.shutdownTitle': 'Debug server stopped',
+  'dashboard.session.shutdownBody':
+    'The MCP server has shut down; this session is no longer live. You can close this tab.',
+
   // qr-http-server — attach page (server-side, Node, per-request)
   // Copy branches per session mode into sandbox (env 2) / intoss (env 3) families (#468).
   'attach.title': 'AIT Debug Session — QR Scan',
