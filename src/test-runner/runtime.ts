@@ -37,6 +37,12 @@ export interface TestResult {
   duration: number;
   /** Error message (fail only). Does NOT include the expression/secret. */
   error?: string;
+  /**
+   * Optional note attached to a skip — populated when the test body itself
+   * calls `ctx.skip(cond, note)` (devtools#746), mirroring the static
+   * `it.skip`/`it.skipIf` path which has no note today. `'skip'` status only.
+   */
+  note?: string;
 }
 
 /** Aggregate report returned by `runTestModule`. */
@@ -478,13 +484,60 @@ expect.stringContaining = makeStringContaining;
 expect.stringMatching = makeStringMatching;
 
 /* -------------------------------------------------------------------------- */
+/* Vitest-4-compatible task context (devtools#746)                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Internal sentinel thrown by `ctx.skip()` to unwind the test body early.
+ * Caught by the run loop (never surfaced as a failure) — see `runTestModule`'s
+ * test-execution `catch` branch.
+ */
+class InPageSkipSentinel {
+  constructor(readonly note: string | undefined) {}
+}
+
+/**
+ * Minimal vitest-4-compatible task context passed as the first argument to a
+ * test function, e.g. `it('...', async (ctx) => { ctx.skip(cond, note); })`.
+ *
+ * Real vitest's `TestContext` is much larger (`expect`, `onTestFailed`, …) —
+ * this shim only implements what sdk-example's device-fixture suites actually
+ * use: `ctx.skip` (vitest 4 semantics below) and a trivial `ctx.task.name`.
+ */
+export interface TestContext {
+  /**
+   * `ctx.skip()` (no args) unconditionally skips the remainder of the test
+   * body. `ctx.skip(cond, note)` skips only when `cond` is truthy; when falsy,
+   * this is a no-op and the body continues normally. Skipping throws an
+   * internal sentinel — do not catch `InPageSkipSentinel` in user code.
+   */
+  skip(condition?: boolean, note?: string): void;
+  /** Trivial task descriptor — nice-to-have, mirrors vitest's `ctx.task.name`. */
+  task: { name: string };
+}
+
+function _makeTestContext(name: string): TestContext {
+  return {
+    skip(condition?: boolean, note?: string): void {
+      if (condition === undefined || condition) {
+        throw new InPageSkipSentinel(note);
+      }
+    },
+    task: { name },
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* describe / it / test registry                                               */
 /* -------------------------------------------------------------------------- */
+
+/** A test function as the user writes it — 0-arg or 1-arg (vitest task context). */
+type TestFn = (ctx: TestContext) => void | Promise<void>;
 
 interface PendingTest {
   suitePath: string[];
   name: string;
-  fn: () => void | Promise<void>;
+  fn: TestFn;
   skip: boolean;
 }
 
@@ -499,7 +552,7 @@ function describe(name: string, fn: () => void): void {
 }
 
 /** Registers a test. */
-function it(name: string, fn: () => void | Promise<void>): void {
+function it(name: string, fn: TestFn): void {
   _pendingTests.push({ suitePath: [..._suiteStack], name, fn, skip: false });
 }
 
@@ -510,7 +563,7 @@ const test = it;
 describe.skip = (name: string, _fn: () => void): void => {
   void name;
 };
-it.skip = (name: string, _fn?: () => void | Promise<void>): void => {
+it.skip = (name: string, _fn?: TestFn): void => {
   _pendingTests.push({ suitePath: [..._suiteStack], name, fn: () => {}, skip: true });
 };
 test.skip = it.skip;
@@ -521,7 +574,7 @@ test.skip = it.skip;
  * `cond` is truthy (skips otherwise). sdk-example uses
  * `it.skipIf(cell.platform === 'mock')(...)` to skip real-SDK-only cases in env1.
  */
-type ItRegistrar = (name: string, fn: () => void | Promise<void>) => void;
+type ItRegistrar = (name: string, fn: TestFn) => void;
 function _conditionalIt(skip: boolean): ItRegistrar {
   return (name, fn) => {
     _pendingTests.push({ suitePath: [..._suiteStack], name, fn, skip });
@@ -866,23 +919,37 @@ export async function runTestModule(
 
     const tStart = Date.now();
     let testErr: string | undefined;
+    let inPageSkip: InPageSkipSentinel | undefined;
 
     if (beErr) {
       testErr = `beforeEach failed: ${beErr.message}`;
     } else {
       try {
-        await pending.fn();
+        await pending.fn(_makeTestContext(fullName));
       } catch (e) {
-        testErr = e instanceof Error ? e.message : String(e);
+        if (e instanceof InPageSkipSentinel) {
+          inPageSkip = e;
+        } else {
+          testErr = e instanceof Error ? e.message : String(e);
+        }
       }
     }
 
-    // afterEach — always run even if test failed
+    // afterEach — always run even if test failed or was skipped mid-body.
     const aeFns = _hooksFor('afterEach', pending.suitePath);
     const aeErr = await _runHooks(aeFns);
-    if (aeErr && !testErr) testErr = `afterEach failed: ${aeErr.message}`;
+    if (aeErr && !testErr && !inPageSkip) testErr = `afterEach failed: ${aeErr.message}`;
 
-    if (testErr !== undefined) {
+    if (inPageSkip) {
+      // ctx.skip() unwound the body — record as skipped (not pass/fail), same
+      // as the static it.skip path. The note (if any) rides on TestResult.note.
+      results.push({
+        name: fullName,
+        status: 'skip',
+        duration: Date.now() - tStart,
+        ...(inPageSkip.note !== undefined ? { note: inPageSkip.note } : {}),
+      });
+    } else if (testErr !== undefined) {
       results.push({
         name: fullName,
         status: 'fail',

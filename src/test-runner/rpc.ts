@@ -15,6 +15,15 @@ import type { RunReport } from './runtime.js';
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 /**
+ * Extra headroom (ms) added on top of the rpc-level `timeoutMs` when telling
+ * the underlying `CdpConnection` its per-command watchdog budget (devtools#747).
+ * The rpc-level race above is the authoritative file timeout — this margin
+ * only ensures the connection's own (shorter-by-default) watchdog never fires
+ * first and masks the rpc-level timeout error with a connection-level one.
+ */
+const CONNECTION_TIMEOUT_MARGIN_MS = 5_000;
+
+/**
  * Wraps bundle code in a self-executing IIFE that:
  *   1. Evaluates the bundle (registering describe/it/test).
  *   2. Calls `__testBundle.runTestModule(...)` — the entry the runtime exports.
@@ -98,12 +107,15 @@ export function parseRunTestsResult(rawValue: unknown): RpcRunResult {
  * Injects `bundleCode` into the attached page and awaits test execution.
  *
  * Uses `Runtime.evaluate` with `awaitPromise: true` to wait for the
- * async IIFE to settle.  The 30-second CDP command timeout covers even
- * long-running test suites; split into smaller files if you hit it.
+ * async IIFE to settle. `timeoutMs` (default 60s) is the authoritative file
+ * timeout — this function races it against the evaluate call AND (devtools#747)
+ * threads it down to the underlying `CdpConnection`'s own per-command watchdog
+ * (plus a small margin) so that watchdog can never undercut this race. Split
+ * into smaller files if you hit the timeout.
  *
  * @param connection   - Active CDP connection (relay or local).
  * @param bundleCode   - IIFE bundle string from `bundleTestFile`.
- * @param timeoutMs    - Override the default 30 s timeout.
+ * @param timeoutMs    - Override the default 60 s timeout.
  *
  * SECRET-HANDLING: `bundleCode` and the raw CDP result value are never logged.
  */
@@ -132,11 +144,22 @@ export async function injectAndRunBundle(
     setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs),
   );
 
-  const evalPromise = connection.send('Runtime.evaluate', {
-    expression,
-    returnByValue: true,
-    awaitPromise: true,
-  });
+  // devtools#747: thread our own timeout budget down to the connection's
+  // per-command watchdog (ChiiCdpConnection's default is 30s and used to fire
+  // before this rpc-level race no matter how large `timeoutMs` was). A small
+  // margin keeps the connection watchdog from firing a beat before our own
+  // race settles — the rpc-level race above remains the authoritative file
+  // timeout; this override only ensures the connection layer never undercuts
+  // it. `LocalCdpConnection` ignores the option (no watchdog of its own).
+  const evalPromise = connection.send(
+    'Runtime.evaluate',
+    {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+    },
+    { timeoutMs: timeoutMs + CONNECTION_TIMEOUT_MARGIN_MS },
+  );
 
   const raceResult = await Promise.race([
     evalPromise.then((v) => ({ tag: 'eval' as const, v })),

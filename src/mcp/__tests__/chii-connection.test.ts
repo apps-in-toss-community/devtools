@@ -193,6 +193,98 @@ describe('ChiiCdpConnection — per-command timeout', () => {
   });
 });
 
+describe('ChiiCdpConnection — per-call timeout override (devtools#747)', () => {
+  it('opts.timeoutMs overrides the default watchdog for a single call', async () => {
+    const relay = await createFakeRelay();
+    // Default watchdog is short (100ms); a per-call override should let a
+    // command that would otherwise time out at 100ms survive well past it.
+    const conn = new ChiiCdpConnection({
+      relayBaseUrl: relay.baseUrl,
+      commandTimeoutMs: 100,
+    });
+
+    try {
+      await conn.enableDomains();
+      await new Promise<void>((r) => setTimeout(r, 20));
+
+      const before = relay.receivedMessages.length;
+      const cmdPromise = conn.sendCommand(
+        'Runtime.evaluate',
+        { expression: '1+1' },
+        { timeoutMs: 5_000 },
+      );
+
+      // Wait past the connection's DEFAULT 100ms watchdog — with the override
+      // in effect, the command must still be pending (not yet rejected).
+      await new Promise<void>((r) => setTimeout(r, 200));
+
+      const newMsgs = relay.receivedMessages.slice(before);
+      let capturedId: number | null = null;
+      for (const msg of newMsgs) {
+        const parsed = JSON.parse(msg) as { id?: number; method?: string };
+        if (parsed.method === 'Runtime.evaluate') {
+          capturedId = parsed.id ?? null;
+          break;
+        }
+      }
+      expect(capturedId).not.toBeNull();
+      relay.sendToClient({ id: capturedId, result: { value: 2 } });
+
+      const result = await cmdPromise;
+      expect((result as { value: number }).value).toBe(2);
+    } finally {
+      conn.close();
+      await relay.close();
+    }
+  });
+
+  it('a call WITHOUT opts.timeoutMs still uses the connection default (30s/configured)', async () => {
+    const relay = await createFakeRelay();
+    const conn = new ChiiCdpConnection({
+      relayBaseUrl: relay.baseUrl,
+      commandTimeoutMs: 100, // short "default" for test speed — stands in for 30s
+    });
+
+    try {
+      await conn.enableDomains();
+      await new Promise<void>((r) => setTimeout(r, 20));
+
+      // No opts — should time out at the connection's configured default (100ms).
+      const cmdPromise = conn.sendCommand('Runtime.evaluate', { expression: '1+1' });
+      await expect(cmdPromise).rejects.toThrow(/CDP 명령이 타임아웃됐습니다/);
+    } finally {
+      conn.close();
+      await relay.close();
+    }
+  });
+
+  it('a non-finite opts.timeoutMs (e.g. Infinity) falls back to the connection default rather than misbehaving', async () => {
+    const relay = await createFakeRelay();
+    const conn = new ChiiCdpConnection({
+      relayBaseUrl: relay.baseUrl,
+      commandTimeoutMs: 100,
+    });
+
+    try {
+      await conn.enableDomains();
+      await new Promise<void>((r) => setTimeout(r, 20));
+
+      const cmdPromise = conn.sendCommand(
+        'Runtime.evaluate',
+        { expression: '1+1' },
+        { timeoutMs: Number.POSITIVE_INFINITY },
+      );
+      // Number.isFinite(Infinity) === false, so the guard falls back to the
+      // connection's configured default (100ms) instead of an unguarded
+      // setTimeout(fn, Infinity) (which Node would clamp to ~1ms).
+      await expect(cmdPromise).rejects.toThrow(/CDP 명령이 타임아웃됐습니다/);
+    } finally {
+      conn.close();
+      await relay.close();
+    }
+  });
+});
+
 describe('ChiiCdpConnection — WebSocket close rejects pending', () => {
   it('rejects all pending commands when the relay closes the socket', async () => {
     const relay = await createFakeRelay();

@@ -238,10 +238,16 @@ export class LocalCdpConnection implements CdpConnection {
   /**
    * Issue a CDP command and resolve with its typed result. Rejects on a CDP
    * error frame or when no websocket is open.
+   *
+   * `opts.timeoutMs` is accepted for `CdpConnection` interface parity but
+   * ignored — this connection has no per-command watchdog of its own
+   * (devtools#747 only affects `ChiiCdpConnection`, which layers a
+   * relay-command watchdog on top of the caller's own race).
    */
   send<M extends CdpCommandName>(
     method: M,
     params?: CdpCommandMap[M]['params'],
+    _opts?: { timeoutMs?: number },
   ): Promise<CdpCommandMap[M]['result']> {
     return this.sendCommand(method, (params ?? {}) as Record<string, unknown>) as Promise<
       CdpCommandMap[M]['result']

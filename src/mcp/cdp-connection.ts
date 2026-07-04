@@ -259,10 +259,19 @@ export interface CdpConnection {
    * Issue a CDP command (request → response). Phase 2's DOM/snapshot/screenshot
    * tools use this; resolves with the typed result or rejects on a CDP error.
    * Implementations must have called {@link enableDomains} first.
+   *
+   * @param opts.timeoutMs - Per-call override for the connection's own command
+   *   watchdog (devtools#747). Optional — implementations without a per-command
+   *   watchdog (e.g. `LocalCdpConnection`) may ignore it. Callers that already
+   *   race `send` against their own longer timeout (e.g. the test-runner's
+   *   file-evaluate budget) MUST pass a `timeoutMs` at least as large as that
+   *   caller-side timeout, or the connection's shorter default watchdog fires
+   *   first and undercuts the caller's race.
    */
   send<M extends CdpCommandName>(
     method: M,
     params?: CdpCommandMap[M]['params'],
+    opts?: { timeoutMs?: number },
   ): Promise<CdpCommandMap[M]['result']>;
 
   /**

@@ -820,3 +820,95 @@ describe('state reset between runTestModule calls', () => {
     expect(callCount).toBe(1);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Vitest-4-compatible task context — ctx.skip (devtools#746)                  */
+/* -------------------------------------------------------------------------- */
+
+describe('ctx.skip — unconditional skip (no args) records as skipped with note', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('camera on iOS', async (ctx) => {
+        ctx.skip(undefined, 'camera unsupported on this platform');
+      });
+    });
+  });
+  it('1 skipped, 0 passed, 0 failed', () => {
+    expect(report.skipped).toBe(1);
+    expect(report.passed).toBe(0);
+    expect(report.failed).toBe(0);
+  });
+  it('note lands on the report entry', () => {
+    expect(report.tests[0].status).toBe('skip');
+    expect(report.tests[0].note).toBe('camera unsupported on this platform');
+  });
+});
+
+describe('ctx.skip(true, note) — conditional skip when condition is truthy', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('contacts on iOS', async (ctx) => {
+        ctx.skip(true, 'contacts gated behind permission on this cell');
+      });
+    });
+  });
+  it('recorded as skipped with note', () => {
+    expect(report.skipped).toBe(1);
+    expect(report.tests[0].status).toBe('skip');
+    expect(report.tests[0].note).toBe('contacts gated behind permission on this cell');
+  });
+});
+
+describe('ctx.skip(false, note) — condition falsy continues the body', () => {
+  let report: RunReport;
+  let bodyRan = false;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('runs to completion', async (ctx) => {
+        ctx.skip(false, 'should not skip');
+        bodyRan = true;
+        rg.expect(1 + 1).toBe(2);
+      });
+    });
+  });
+  it('body executed and test passed (not skipped)', () => {
+    expect(bodyRan).toBe(true);
+    expect(report.passed).toBe(1);
+    expect(report.skipped).toBe(0);
+    expect(report.tests[0].status).toBe('pass');
+  });
+});
+
+describe('ctx.skip() thrown sentinel is never reported as a failure', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('skips before any assertion', async (ctx) => {
+        ctx.skip();
+        // Unreachable — ctx.skip() with no args unconditionally throws.
+        rg.expect(true).toBe(false);
+      });
+    });
+  });
+  it('skipped, never fail', () => {
+    expect(report.skipped).toBe(1);
+    expect(report.failed).toBe(0);
+    expect(report.tests[0].status).toBe('skip');
+  });
+});
+
+describe('ctx.task — trivial task descriptor is present', () => {
+  let capturedName: string | undefined;
+  beforeAll(async () => {
+    await run(() => {
+      rg.it('task name propagates', async (ctx) => {
+        capturedName = ctx.task.name;
+      });
+    });
+  });
+  it('ctx.task.name matches the full test name', () => {
+    expect(capturedName).toBe('task name propagates');
+  });
+});
