@@ -526,12 +526,17 @@ export class ChiiCdpConnection implements CdpConnection {
   /**
    * Issue a CDP command and resolve with its result (Phase 2). Rejects on a CDP
    * error frame or when no websocket is open (no page attached yet).
+   *
+   * @param opts.timeoutMs - Per-call override for this connection's command
+   *   watchdog (devtools#747) — see the `CdpConnection.send` docblock for the
+   *   contract callers racing their own longer timeout must follow.
    */
   send<M extends CdpCommandName>(
     method: M,
     params?: CdpCommandMap[M]['params'],
+    opts?: { timeoutMs?: number },
   ): Promise<CdpCommandMap[M]['result']> {
-    return this.sendCommand(method, (params ?? {}) as Record<string, unknown>) as Promise<
+    return this.sendCommand(method, (params ?? {}) as Record<string, unknown>, opts) as Promise<
       CdpCommandMap[M]['result']
     >;
   }
@@ -545,11 +550,21 @@ export class ChiiCdpConnection implements CdpConnection {
    * auto-reconnect). Caller should re-run `list_pages` or `enableDomains` to
    * reattach.
    *
-   * Times out after `commandTimeoutMs` (default 30s, env
-   * `AIT_CDP_COMMAND_TIMEOUT_MS`). On timeout the pending entry is cleaned up
-   * and the promise rejects with a descriptive Korean error.
+   * Times out after `opts.timeoutMs` when given, else `commandTimeoutMs`
+   * (default 30s, env `AIT_CDP_COMMAND_TIMEOUT_MS`) — see devtools#747: the
+   * default 30s watchdog used to undercut the test-runner's own longer
+   * file-evaluate race no matter what `--timeout` the caller asked for. On
+   * timeout the pending entry is cleaned up and the promise rejects with a
+   * descriptive Korean error. `Number.isFinite` guards against a non-finite
+   * override (e.g. `Infinity`, mirroring `waitForFirstTarget`'s convention)
+   * so an intentional "no watchdog" override doesn't get clamped by
+   * `setTimeout`.
    */
-  sendCommand(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+  sendCommand(
+    method: string,
+    params: Record<string, unknown> = {},
+    opts?: { timeoutMs?: number },
+  ): Promise<unknown> {
     // Fail-fast: connection already known to be dead — don't write into a dead socket.
     if (this.connectionState === 'disconnected') {
       return Promise.reject(
@@ -565,7 +580,10 @@ export class ChiiCdpConnection implements CdpConnection {
     }
     const id = this.nextCommandId++;
     const ws = this.ws;
-    const timeoutMs = this.commandTimeoutMs;
+    const timeoutMs =
+      opts?.timeoutMs !== undefined && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+        ? opts.timeoutMs
+        : this.commandTimeoutMs;
     return new Promise<unknown>((resolve, reject) => {
       const handle = setTimeout(() => {
         this.pending.delete(id);
