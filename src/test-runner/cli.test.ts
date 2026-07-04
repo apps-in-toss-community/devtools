@@ -63,7 +63,8 @@ vi.mock('./report.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-const { main, shouldSuppressQr, resolveTimeouts, renderSummary } = await import('./cli.js');
+const { main, shouldSuppressQr, resolveTimeouts, resolveDashboardPort, renderSummary } =
+  await import('./cli.js');
 
 const FAKE_CONN = { kind: 'relay' as const };
 const SCHEME = 'intoss-private://app?_deploymentId=test';
@@ -241,6 +242,36 @@ describe('resolveTimeouts — two clocks must be independent (#717)', () => {
   });
 });
 
+describe('resolveDashboardPort — --dashboard-port validation (devtools#752)', () => {
+  it('omitted → undefined (factory/qr-http-server default governs)', () => {
+    expect(resolveDashboardPort(undefined)).toBeUndefined();
+  });
+
+  it('--dashboard-port 9000 → 9000', () => {
+    expect(resolveDashboardPort('9000')).toBe(9000);
+  });
+
+  it('--dashboard-port 0 → 0 (explicit ephemeral opt-out, not "omitted")', () => {
+    expect(resolveDashboardPort('0')).toBe(0);
+  });
+
+  it('--dashboard-port -1 → error string', () => {
+    const result = resolveDashboardPort('-1');
+    expect(typeof result).toBe('string');
+    expect(result as string).toMatch(/--dashboard-port/);
+  });
+
+  it('--dashboard-port 70000 (out of range) → error string', () => {
+    const result = resolveDashboardPort('70000');
+    expect(typeof result).toBe('string');
+  });
+
+  it('--dashboard-port abc (non-numeric) → error string', () => {
+    const result = resolveDashboardPort('abc');
+    expect(typeof result).toBe('string');
+  });
+});
+
 /**
  * Integration-level: verify that main() does NOT forward 30_000 to the factory
  * when no --attach-timeout is given (the exact regression from #717).
@@ -297,6 +328,63 @@ describe('main() — attach-wait wiring (#717)', () => {
 
   it('exits 1 for --attach-timeout 0 without calling the factory', async () => {
     await main([...ARGS, '--attach-timeout', '0']);
+    expect(process.exitCode).toBe(1);
+    expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `--dashboard-port` (devtools#752): pins the CLI-level wiring into the
+ * relay factory — the flag must reach `createRelayConnectionFactory`'s
+ * `dashboardPort` option, and be OMITTED entirely (not passed as
+ * `undefined`) when the user didn't pass the flag, mirroring the
+ * `--attach-timeout` wiring pattern above (single source of truth is the
+ * factory/qr-http-server default resolution).
+ */
+describe('main() — --dashboard-port wiring (devtools#752)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    discoverTestFilesMock.mockResolvedValue(['/abs/foo.ait.test.ts']);
+    factoryOpenMock.mockResolvedValue(FAKE_CONN);
+    runTestFilesOverRelayMock.mockResolvedValue({
+      totals: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      duration: 5,
+      files: [],
+      captures: [],
+    });
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
+  it('no --dashboard-port → factory receives no dashboardPort key', async () => {
+    await main(ARGS);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts).not.toHaveProperty('dashboardPort');
+  });
+
+  it('--dashboard-port 9000 → factory receives dashboardPort=9000', async () => {
+    await main([...ARGS, '--dashboard-port', '9000']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.dashboardPort).toBe(9000);
+  });
+
+  it('--dashboard-port 0 → factory receives dashboardPort=0 (not omitted)', async () => {
+    await main([...ARGS, '--dashboard-port', '0']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts).toHaveProperty('dashboardPort', 0);
+  });
+
+  it('exits 1 for --dashboard-port 70000 (out of range) without calling the factory', async () => {
+    await main([...ARGS, '--dashboard-port', '70000']);
     expect(process.exitCode).toBe(1);
     expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
   });

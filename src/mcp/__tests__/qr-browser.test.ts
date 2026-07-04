@@ -9,10 +9,17 @@
  *   - SECRET-HANDLING: at= 코드가 stderrSummary에서 redact되는지
  *   - buildAttachUrl: authorityWarning surface (기존 테스트 유지)
  *   - canOpenBrowser: platform/env 휴리스틱 (기존 테스트 유지)
+ *
+ * 포트 격리 (devtools#752): startQrHttpServer()의 기본 base 포트가 고정값으로
+ * 바뀌었으므로(qr-http-server.test.ts와 동일 이유), 이 파일에서도
+ * `AIT_DEBUG_HTTP_PORT=0`으로 순수 ephemeral 동작을 명시해 다른 테스트
+ * 파일/워커와의 고정 포트 충돌을 피한다.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TunnelStatus } from '../tools.js';
 import { buildAttachUrl, canOpenBrowser, openQrInBrowser } from '../tools.js';
+
+process.env.AIT_DEBUG_HTTP_PORT = '0';
 
 // ---------------------------------------------------------------------------
 // canOpenBrowser

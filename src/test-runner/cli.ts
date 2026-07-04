@@ -49,6 +49,11 @@ OPTIONS
                           (report: <sdkLine>.<platform>.json; captures:
                           <dir>/.ait-capture/<category>.<sdkLine>.<platform>.json).
                           Omitted = nothing saved. Enables console capture.
+  --dashboard-port <port> Base port for the QR dashboard HTTP server. On
+                          EADDRINUSE it increments (+1, up to 20 tries) before
+                          falling back to an ephemeral port. Omit to use
+                          AIT_DEBUG_HTTP_PORT env or the built-in default
+                          (8317) — pass 0 to force a random ephemeral port.
   --no-qr-stdout          Suppress the QR/attach block on stdout (auto-on for
                           non-interactive stdout / CI / AIT_NO_QR_STDOUT)
   --headless              Disable browser auto-open (text QR only)
@@ -149,6 +154,27 @@ export function resolveTimeouts(
   }
 
   return { evaluateTimeoutMs, attachTimeoutMs };
+}
+
+/**
+ * Parses the `--dashboard-port` raw string value into a validated port
+ * number, or `undefined` when the flag was omitted (letting relay-factory /
+ * qr-http-server resolve their own default — env then the built-in fixed
+ * default, devtools#752).
+ *
+ * `0` is a valid, meaningful value (explicit opt-out to pure ephemeral) and
+ * is passed through as-is — it must NOT be confused with "omitted".
+ *
+ * Returns an error string on invalid input (non-integer, negative, or
+ * >65535), or the resolved port on success. Exported for unit testing.
+ */
+export function resolveDashboardPort(raw: string | undefined): number | undefined | string {
+  if (raw === undefined) return undefined;
+  const port = parseInt(raw, 10);
+  if (Number.isNaN(port) || port < 0 || port > 65535) {
+    return '--dashboard-port must be an integer between 0 and 65535';
+  }
+  return port;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -262,7 +288,8 @@ export function shouldSuppressQr(noQrFlag: boolean): boolean {
  *
  * 1. Parse args: globs, --timeout (per-file evaluate), --attach-timeout (QR
  *    scan wait), --cell-sdk-line, --cell-platform, --scheme-url (required for
- *    env3), --report-dir, --no-qr-stdout, --headless, --project-root.
+ *    env3), --report-dir, --dashboard-port, --no-qr-stdout, --headless,
+ *    --project-root.
  * 2. Discover test files; exit 1 if none.
  * 3. factory.open() — boot relay → render QR (suppressed on non-interactive
  *    stdout) → wait for phone (up to attachTimeoutMs) → inject cell →
@@ -293,6 +320,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         'cell-sdk-line': { type: 'string' },
         'cell-platform': { type: 'string' },
         'report-dir': { type: 'string' },
+        'dashboard-port': { type: 'string' },
         'no-qr-stdout': { type: 'boolean' },
         headless: { type: 'boolean' },
         'project-root': { type: 'string' },
@@ -342,6 +370,14 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   const projectRoot =
     typeof vals['project-root'] === 'string' ? vals['project-root'] : process.cwd();
   const reportDir = typeof vals['report-dir'] === 'string' ? vals['report-dir'] : undefined;
+  const dashboardPort = resolveDashboardPort(
+    typeof vals['dashboard-port'] === 'string' ? vals['dashboard-port'] : undefined,
+  );
+  if (typeof dashboardPort === 'string') {
+    process.stderr.write(`devtools-test: ${dashboardPort}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const suppressQr = shouldSuppressQr(vals['no-qr-stdout'] === true);
   const manualBlocking = vals['manual-blocking'] === true;
 
@@ -405,6 +441,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     // --attach-timeout; otherwise we omit it so relay-factory.ts's built-in
     // UNBOUNDED default governs (devtools#735) — single source of truth.
     ...(attachTimeoutMs !== undefined ? { timeoutMs: attachTimeoutMs } : {}),
+    // dashboardPort is only forwarded when the user explicitly passed
+    // --dashboard-port; otherwise omit so relay-factory/qr-http-server's own
+    // default resolution governs (env → fixed default, devtools#752).
+    ...(dashboardPort !== undefined ? { dashboardPort } : {}),
     headless,
     cell: hasCell ? cell : undefined,
     onQrContent: (chunks) => {
