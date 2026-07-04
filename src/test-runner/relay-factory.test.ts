@@ -168,6 +168,36 @@ describe('createRelayConnectionFactory — web-QR server (devtools#708)', () => 
       expect(deps?.qrHttpServer).toBe(fakeQrServer);
     });
 
+    it('threads dashboardPort through to startQrHttpServer options (devtools#752)', async () => {
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        dashboardPort: 9000,
+        onQrContent,
+      });
+
+      await factory.open();
+
+      expect(startQrHttpServerMock).toHaveBeenCalledOnce();
+      const options = (startQrHttpServerMock.mock.calls[0] as unknown[])[1] as {
+        dashboardPort?: number;
+      };
+      expect(options?.dashboardPort).toBe(9000);
+    });
+
+    it('omitted dashboardPort → startQrHttpServer receives dashboardPort: undefined', async () => {
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+
+      await factory.open();
+
+      const options = (startQrHttpServerMock.mock.calls[0] as unknown[])[1] as {
+        dashboardPort?: number;
+      };
+      expect(options?.dashboardPort).toBeUndefined();
+    });
+
     it('sets onAttachUrlBuilt so notifyStateChange fires when parts arrive', async () => {
       const factory = createRelayConnectionFactory({
         schemeUrl: SYNTHETIC_SCHEME_URL,

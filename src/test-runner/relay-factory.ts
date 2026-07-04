@@ -78,6 +78,14 @@ export interface RelayConnectionFactoryOptions {
    */
   cell?: { sdkLine: string; platform: string };
   /**
+   * Overrides the dashboard HTTP server's bind base port (devtools#752).
+   * Threaded straight through to `startQrHttpServer`'s `dashboardPort`
+   * option — see that option's doc for the increment-on-EADDRINUSE scan
+   * behaviour and the `AIT_DEBUG_HTTP_PORT` env fallback. Omitted means
+   * `startQrHttpServer` resolves its own default (env → fixed default).
+   */
+  dashboardPort?: number;
+  /**
    * Receives the QR/attach render content (text chunks) from
    * `renderAndMaybeWait`, so the caller decides whether to print them — e.g.
    * suppress on non-interactive stdout.
@@ -235,7 +243,9 @@ export function createRelayConnectionFactory(
           manualPrompt, // #741 — CLI-only --manual-blocking transitions via onManualPrompt
         });
 
-        qrServer = await startQrHttpServer(getDashboardState);
+        qrServer = await startQrHttpServer(getDashboardState, {
+          dashboardPort: opts.dashboardPort,
+        });
 
         // Wire the QR server into attachDeps BEFORE prepareAttach is called so
         // renderAndMaybeWait sees it and takes Path 2/3 (web-QR) instead of Path 4.

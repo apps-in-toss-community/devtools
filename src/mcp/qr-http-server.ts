@@ -839,16 +839,113 @@ export interface QrHttpServerOptions {
   getDirectInspectorUrl?: () =>
     | { ok: true; url: string }
     | { ok: false; reason: 'relayDown' | 'noTarget' | 'totpUnavailable' };
+  /**
+   * 대시보드 bind base 포트 override. 미지정 시 `AIT_DEBUG_HTTP_PORT` env →
+   * {@link DEFAULT_DASHBOARD_PORT} 순으로 결정한다 (devtools#752).
+   *
+   * `0`을 명시하면 기존 순수 ephemeral 동작(매 run 랜덤 포트)을 유지한다 —
+   * 증가 스캔을 타지 않는다.
+   */
+  dashboardPort?: number;
+  /**
+   * bind 재시도 스캔 폭 (테스트 전용 주입). 미지정 시 {@link PORT_SCAN_RANGE}.
+   * 20개 실 소켓을 점유하지 않고 "범위 소진 → ephemeral fallback" 경로를
+   * 검증하기 위한 internal testability hook — 사용자 대면 옵션이 아니다.
+   */
+  portScanRange?: number;
 }
 
 /**
- * 로컬 HTTP 서버를 127.0.0.1 random port(또는 `AIT_DEBUG_HTTP_PORT` env)로 시작한다.
+ * 대시보드 기본 base 포트. 흔히 쓰이는 포트와 충돌하지 않는 임의의 값 —
+ * 테스트/문서에서 참조할 수 있도록 named export로 유지한다 (devtools#752).
+ */
+export const DEFAULT_DASHBOARD_PORT = 8317;
+
+/**
+ * base 포트에서 EADDRINUSE 시 시도할 증가 스캔 폭. base, base+1, …,
+ * base+(PORT_SCAN_RANGE-1)까지 시도하고 전부 점유면 ephemeral(0)로 폴백한다.
+ */
+export const PORT_SCAN_RANGE = 20;
+
+/**
+ * base 포트부터 EADDRINUSE 시 +1씩 증가하며 bind를 시도한다. EADDRINUSE가
+ * 아닌 에러는 즉시 reject한다(스캔 대상 아님). `range`번 모두 점유 상태면
+ * ephemeral(포트 0)로 폴백하고 한국어 안내를 stderr에 1회 출력한다.
+ *
+ * 매 시도마다 이전에 등록한 `error` 리스너를 제거한다 — 성공 시 listener가
+ * 누적돼 다음 실패에서 중복 reject/EventEmitter 경고가 나는 것을 방지한다.
+ *
+ * `basePort === 0`이면 스캔 없이 즉시 ephemeral bind (명시적 opt-out, 기존
+ * 순수 랜덤 포트 동작 유지).
+ */
+async function bindWithIncrement(
+  server: Server,
+  basePort: number,
+  range: number = PORT_SCAN_RANGE,
+): Promise<void> {
+  if (basePort === 0) {
+    return new Promise<void>((resolve, reject) => {
+      const onError = (err: Error) => reject(err);
+      server.once('error', onError);
+      server.listen(0, '127.0.0.1', () => {
+        server.removeListener('error', onError);
+        resolve();
+      });
+    });
+  }
+
+  for (let attempt = 0; attempt < range; attempt++) {
+    const candidatePort = basePort + attempt;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: NodeJS.ErrnoException) => {
+          server.removeListener('error', onError);
+          reject(err);
+        };
+        server.once('error', onError);
+        server.listen(candidatePort, '127.0.0.1', () => {
+          server.removeListener('error', onError);
+          resolve();
+        });
+      });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EADDRINUSE') throw err;
+      // 다음 후보 포트로 계속 — EADDRINUSE만 스캔 대상.
+    }
+  }
+
+  // range 전부 점유 — ephemeral로 폴백 + 안내 1회.
+  process.stderr.write(
+    `devtools: 대시보드 포트 ${basePort}~${basePort + range - 1}이 모두 사용 중이라 임의 포트로 대체합니다.\n`,
+  );
+  return new Promise<void>((resolve, reject) => {
+    const onError = (err: Error) => reject(err);
+    server.once('error', onError);
+    server.listen(0, '127.0.0.1', () => {
+      server.removeListener('error', onError);
+      resolve();
+    });
+  });
+}
+
+/**
+ * 로컬 HTTP 서버를 127.0.0.1에 고정 base 포트({@link DEFAULT_DASHBOARD_PORT},
+ * `AIT_DEBUG_HTTP_PORT` env, 또는 `options.dashboardPort`)에서 시작한다.
+ * base 포트가 점유(EADDRINUSE) 상태면 +1씩 증가하며 재시도하고(최대
+ * {@link PORT_SCAN_RANGE}회), 전부 점유면 ephemeral 포트로 폴백한다 —
+ * rerun 시 대시보드 URL이 안정적으로 유지되어 브라우저 탭/북마크가
+ * run마다 무효화되지 않는다 (devtools#752). base 포트를 명시적으로 `0`으로
+ * 주면(env 또는 옵션) 기존 순수 ephemeral 동작을 유지한다.
+ *
  * MCP debug server 생애주기에 묶어 사용 — `runDebugServer` shutdown 시 `close()`로 정리.
  *
  * @param getDashboardState - dashboard 상태를 반환하는 클로저. 주입 시 `GET /` dashboard와
  *   `GET /events` SSE 스트림이 활성화된다. 미주입 시 두 라우트는 204/서비스 없음으로 응답.
  * @param options - 서버 옵션. `sseRefreshIntervalMs`로 idle 탭 TOTP 만료 방지 주기를 조정.
  *   `getDirectInspectorUrl`로 /inspector 라우트에서 직접 조립 URL을 제공해 redirect 루프를 방지.
+ *   `dashboardPort`로 bind base 포트를 override.
  */
 export async function startQrHttpServer(
   getDashboardState?: () => DashboardState,
@@ -1149,12 +1246,16 @@ export async function startQrHttpServer(
     res.end('Not Found');
   });
 
-  const listenPort = Number(process.env.AIT_DEBUG_HTTP_PORT ?? 0);
+  // base 포트 결정 순서: options.dashboardPort → AIT_DEBUG_HTTP_PORT env →
+  // DEFAULT_DASHBOARD_PORT. 0은 명시적 opt-out(순수 ephemeral) — env/옵션
+  // 어느 쪽에서 와도 동일하게 취급한다 (devtools#752).
+  const basePort =
+    options?.dashboardPort ??
+    (process.env.AIT_DEBUG_HTTP_PORT !== undefined
+      ? Number(process.env.AIT_DEBUG_HTTP_PORT)
+      : DEFAULT_DASHBOARD_PORT);
 
-  await new Promise<void>((resolve, reject) => {
-    server.listen(listenPort, '127.0.0.1', () => resolve());
-    server.once('error', reject);
-  });
+  await bindWithIncrement(server, basePort, options?.portScanRange);
 
   const address = server.address();
   if (!address || typeof address === 'string') {
