@@ -19,6 +19,7 @@ import { createRelayConnectionFactory } from './relay-factory.js';
 import type { RelayRunOptions, RelayRunReport } from './relay-worker.js';
 import { runTestFilesOverRelay } from './relay-worker.js';
 import { writeCaptureArtifacts, writeReportArtifact } from './report.js';
+import { armExitBackstop, runTeardownSteps } from './teardown.js';
 
 /* -------------------------------------------------------------------------- */
 /* CLI help                                                                    */
@@ -102,6 +103,16 @@ EXAMPLE
     --timeout 60000
 
 `.trimStart();
+
+/**
+ * Grace period (ms) for the exit backstop armed around Step 6 teardown
+ * (devtools#755). See `teardown.ts`'s module doc for the root-cause writeup
+ * — the two upstream `http.Server#close()` hangs are fixed at the source, so
+ * this backstop is a last-mile safety net that should never fire in
+ * practice. Exported so tests can assert the backstop is armed with the
+ * expected value without hardcoding the literal twice.
+ */
+export const EXIT_BACKSTOP_GRACE_MS = 3_000;
 
 /* -------------------------------------------------------------------------- */
 /* Timeout resolution (exported for unit tests)                                */
@@ -531,15 +542,38 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
     exitCode = report.totals.failed > 0 ? 1 : 0;
   } finally {
-    // ── Step 6: teardown ────────────────────────────────────────────────────
+    // ── Step 6: teardown (devtools#755) ─────────────────────────────────────
     // #730: mark the dashboard 'complete' BEFORE close() so the terminal SSE
     // frame reaches any open dashboard tab before the HTTP server is closed.
     // Redundant-but-safe with close()'s own internal push (belt-and-suspenders
     // so the frame flushes even if the two ever run in a different order).
     factory.onSessionPhase?.('complete');
+
+    // Bounded backstop (devtools#755): arm BEFORE the teardown steps run, so
+    // even a step that hangs past its own per-step timeout cannot leave the
+    // process running forever. The two known root causes of the run7~10 hang
+    // (dashboard SSE tab + relay WS leg blocking http.Server#close()) are
+    // fixed at the source (qr-http-server.ts, chii-relay.ts) — this backstop
+    // exists for any OTHER handle outside those two files' control and
+    // should not fire in normal operation.
+    const backstop = armExitBackstop({ graceMs: EXIT_BACKSTOP_GRACE_MS, exitCode });
+
     // factory.close() stops the relay family (closes the CDP connection +
-    // shuts down the relay + cloudflared child).
-    await factory.close(connection);
+    // shuts down the relay + cloudflared child) and closes the QR HTTP
+    // server. Wrapped in a single named step so a hang here cannot silently
+    // block process exit — runTeardownSteps bounds it and the outer backstop
+    // covers anything runTeardownSteps itself cannot enumerate.
+    await runTeardownSteps([
+      {
+        name: 'factory.close',
+        close: () => factory.close(connection),
+      },
+    ]);
+
+    // Happy path: teardown finished within its own bounds — disarm the
+    // backstop so the process exits naturally at process.exitCode instead of
+    // waiting out the full grace period.
+    backstop.disarm();
     process.exitCode = exitCode;
   }
 }

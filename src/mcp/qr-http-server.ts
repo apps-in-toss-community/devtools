@@ -1306,6 +1306,16 @@ export async function startQrHttpServer(
     },
     close(): Promise<void> {
       clearInterval(refreshHandle);
+      // devtools#755: `GET /events`(SSE)로 열린 대시보드 탭 연결은
+      // `Connection: keep-alive`로 응답 헤더를 쓴 채 절대 res.end()를 부르지
+      // 않는다 — 즉 `server.close()`만 호출하면 새 연결만 막힐 뿐, 이미 열려
+      // 있는 SSE 소켓은 클라이언트가 스스로 끊을 때까지 살아남는다. 대시보드
+      // 탭을 닫지 않은 채(또는 test-runner CLI 종료 시점에 브라우저가 여전히
+      // 열려 있는 채) close()를 부르면 그 콜백이 영원히 안 불려 이벤트 루프가
+      // 붙잡힌다(devtools-test CLI run7~10 재현). `closeAllConnections()`로
+      // 열려 있는 소켓을 즉시 강제 종료한 뒤 `close()`를 불러 항상 resolve를
+      // 보장한다 — SSE 탭이 없을 때도 no-op이라 회귀 없음.
+      server.closeAllConnections();
       return new Promise((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
