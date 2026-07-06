@@ -98,6 +98,24 @@ describe('serializeRelayReport', () => {
     });
   });
 
+  it('carries mode: "stubbed" through to the serialised file entry (devtools#740)', () => {
+    const report = makeReport();
+    report.files.push({
+      file: `${PROJECT_ROOT}/src/ads.manual.ait.test.ts`,
+      result: {
+        startedAt: '2026-06-29T00:00:00.000Z',
+        duration: 5,
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        tests: [{ name: 'stub', status: 'pass', duration: 1 }],
+      },
+      mode: 'stubbed',
+    });
+    const out = serializeRelayReport(report, META);
+    expect(out.files.at(-1)).toMatchObject({ mode: 'stubbed' });
+  });
+
   it('exposes no relay wss/scheme/TOTP/relayUrl keys anywhere in the body', () => {
     const out = serializeRelayReport(makeReport(), META);
     const blob = JSON.stringify(out).toLowerCase();
@@ -208,6 +226,87 @@ describe('writeReportArtifact', () => {
     const written = await writeReportArtifact(makeReport(), dir, META);
     expect(written).toHaveLength(1);
     expect(path.basename(written[0] as string)).toBe('3.x.ios.json');
+  });
+
+  it('writes a SEPARATE <sdkLine>.<platform>.stubbed.json for stubbed files, stamped cell.bridgeStub:true (devtools#740)', async () => {
+    const report = makeReport();
+    report.files.push({
+      file: `${PROJECT_ROOT}/src/ads.manual.ait.test.ts`,
+      result: {
+        startedAt: '2026-06-29T00:00:00.000Z',
+        duration: 120,
+        passed: 1,
+        failed: 0,
+        skipped: 0,
+        tests: [
+          {
+            name: 'showFullScreenAd rejects with 1006 when not loaded',
+            status: 'pass',
+            duration: 5,
+          },
+        ],
+      },
+      mode: 'stubbed',
+    });
+
+    const written = await writeReportArtifact(report, dir, META);
+    const names = written.map((p) => path.basename(p)).sort();
+    expect(names).toEqual(['3.x.ios.json', '3.x.ios.stubbed.json']);
+
+    const standard = JSON.parse(
+      await readFile(written.find((p) => p.endsWith('3.x.ios.json')) as string, 'utf8'),
+    ) as { files: { file: string; mode?: string }[]; cell: { bridgeStub?: boolean } };
+    // Standard artifact stays exactly the regular (unattended) files — the
+    // stubbed file must not pollute the baseline, and cell.bridgeStub must be
+    // ABSENT (never `false`) on the non-stubbed artifact.
+    expect(standard.files.some((f) => f.mode === 'stubbed')).toBe(false);
+    expect(standard.cell.bridgeStub).toBeUndefined();
+
+    const stubbed = JSON.parse(
+      await readFile(written.find((p) => p.endsWith('.stubbed.json')) as string, 'utf8'),
+    ) as { files: { file: string; mode?: string }[]; cell: { bridgeStub?: boolean } };
+    expect(stubbed.files).toHaveLength(1);
+    expect(stubbed.files[0]).toMatchObject({
+      file: 'src/ads.manual.ait.test.ts',
+      mode: 'stubbed',
+    });
+    // The mandatory HYBRID-cell provenance stamp (devtools#740) — a stubbed
+    // result must never be silently mixed into the real-device baseline.
+    expect(stubbed.cell.bridgeStub).toBe(true);
+  });
+
+  it('writes three SEPARATE artifacts when a run mixes regular + manual + stubbed files', async () => {
+    const report = makeReport();
+    report.files.push(
+      {
+        file: `${PROJECT_ROOT}/src/camera.manual.ait.test.ts`,
+        result: {
+          startedAt: '2026-06-29T00:00:00.000Z',
+          duration: 90_000,
+          passed: 1,
+          failed: 0,
+          skipped: 0,
+          tests: [{ name: 'granted happy path', status: 'pass', duration: 89_000 }],
+        },
+        mode: 'manual',
+      },
+      {
+        file: `${PROJECT_ROOT}/src/ads.manual.ait.test.ts`,
+        result: {
+          startedAt: '2026-06-29T00:00:00.000Z',
+          duration: 100,
+          passed: 1,
+          failed: 0,
+          skipped: 0,
+          tests: [{ name: 'showFullScreenAd stub', status: 'pass', duration: 5 }],
+        },
+        mode: 'stubbed',
+      },
+    );
+
+    const written = await writeReportArtifact(report, dir, META);
+    const names = written.map((p) => path.basename(p)).sort();
+    expect(names).toEqual(['3.x.ios.json', '3.x.ios.manual.json', '3.x.ios.stubbed.json']);
   });
 });
 

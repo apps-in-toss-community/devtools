@@ -130,6 +130,16 @@ const SDK_IMPORT_FILTER = new RegExp(`^${SDK_PACKAGE.replace(/[.*+?^${}()|[\]\\]
  *
  * If `window.__sdk` is absent (non-dog-food build), every access throws a
  * descriptive error rather than returning `undefined` silently.
+ *
+ * Bridge-stub interception (devtools#740, DT-2): the virtual module runs the
+ * resolved `window.__sdk` object through `wrapSdkWithStub` before exporting
+ * it. `wrapSdkWithStub` is a pass-through (returns the same object,
+ * unwrapped) unless `isStubBlockingEnabled()` reads `true` off
+ * `globalThis.__AIT_STUB_BLOCKING__` — an opt-in flag injected the same way
+ * `__AIT_CELL__` is (`cell.ts#injectGlobals`, wired from the CLI's
+ * `--stub-blocking` flag). Default off => zero behavior change: every existing
+ * (non-stub) test run resolves the exact same `window.__sdk` reference it did
+ * before this plugin learned about stubbing.
  */
 function sdkRedirectPlugin(): esbuild.Plugin {
   return {
@@ -148,17 +158,29 @@ function sdkRedirectPlugin(): esbuild.Plugin {
         // via property access on the module.exports object — which is our Proxy.
         // This means `import { getPlatformOS } from '...'` becomes
         // `__proxy.getPlatformOS` at runtime, which correctly reads from window.__sdk.
+        //
+        // The bridge-stub import is a STATIC import of the real `bridge-stub.ts`
+        // module (not inlined JS) so esbuild bundles it once and the fixture
+        // registry has a single source of truth shared with its own unit tests.
         contents: `
-var __proxy = (typeof window !== 'undefined' && window.__sdk)
+import { wrapSdkWithStub, isStubBlockingEnabled } from ${JSON.stringify(getBridgeStubPath())};
+var __rawSdk = (typeof window !== 'undefined' && window.__sdk)
   ? window.__sdk
   : new Proxy({}, {
       get: function(_t, p) {
         throw new Error('window.__sdk is not installed — run in a dog-food build. Missing: ' + String(p));
       }
     });
+var __proxy = wrapSdkWithStub(__rawSdk, isStubBlockingEnabled());
 module.exports = __proxy;
 `,
         loader: 'js',
+        // resolveDir is required so esbuild can resolve the absolute
+        // getBridgeStubPath() import above from a filesystem base — a virtual
+        // module has no implicit directory of its own. process.cwd() is a
+        // safe base for an ABSOLUTE import specifier (it is never used to
+        // resolve anything relative).
+        resolveDir: process.cwd(),
       }));
     },
   };
@@ -355,8 +377,9 @@ function userFactoryPlugin(absPath: string): esbuild.Plugin {
 }
 
 /**
- * Returns the absolute filesystem path to the test-runner runtime module
- * (dist/test-runner/runtime.js — a fully self-contained page-side bundle).
+ * Returns the absolute filesystem path to a page-side leaf module shipped
+ * alongside `bundle.ts` in dist (e.g. `runtime.js`, `bridge-stub.js`) — a
+ * fully self-contained module with no further page-side deps of its own.
  *
  * Rolldown code-splitting duplicates this bundling logic into shared chunks
  * emitted at ARBITRARY dist depths: the `devtools-test` CLI pulls it from
@@ -366,29 +389,33 @@ function userFactoryPlugin(absPath: string): esbuild.Plugin {
  * is therefore wrong from at least one chunk — the live #697 regression.
  *
  * This resolves WITHOUT assuming chunk depth: from `import.meta.url`'s dir it
- * probes the co-located `runtime.js` and the nested `test-runner/runtime.js`,
+ * probes the co-located `<name>.js` and the nested `test-runner/<name>.js`,
  * then ascends one directory at a time (bounded) repeating both probes. The
- * nested probe catches dist/test-runner/runtime.js from the dist/ root level no
+ * nested probe catches dist/test-runner/<name>.js from the dist/ root level no
  * matter which depth the chunk was hoisted to (root, dist/mcp/, or a future
- * relocation). The build always emits dist/test-runner/runtime.js (tsdown entry
- * `'test-runner/runtime'`; guarded by scripts/check-test-runner-dist.sh).
+ * relocation). The build always emits dist/test-runner/<name>.js (tsdown entry
+ * `'test-runner/<name>'`; guarded by scripts/check-test-runner-dist.sh for
+ * `runtime`).
  *
  * An ABSOLUTE path is returned deliberately: esbuild loads it as a literal file
  * read, bypassing Node module resolution entirely, so this works identically in
  * the npx-daemon context (its own dist tree) and the consumer-CLI context
  * (the mini-app's installed @ait-co/devtools dist) — neither needs the package
  * to be node-resolvable from the caller.
+ *
+ * @param moduleName - The leaf module's basename without extension, e.g.
+ *   `'runtime'` or `'bridge-stub'`.
  */
-function getRuntimePath(): string {
+function getPageSideModulePath(moduleName: string): string {
   const startDir = path.dirname(fileURLToPath(import.meta.url));
   // .js first so a SHIPPED chunk never feeds esbuild raw TypeScript; the .ts
-  // probe is last, for the source-tree (tsx) dev case where runtime.ts sits
+  // probe is last, for the source-tree (tsx) dev case where the module sits
   // beside bundle.ts and no dist exists.
   const RELATIVE_PROBES: string[][] = [
-    ['runtime.js'],
-    ['test-runner', 'runtime.js'],
-    ['runtime.ts'],
-    ['test-runner', 'runtime.ts'],
+    [`${moduleName}.js`],
+    ['test-runner', `${moduleName}.js`],
+    [`${moduleName}.ts`],
+    ['test-runner', `${moduleName}.ts`],
   ];
   // Bounded ascent: a package's dist is only a few levels deep. 12 is far more
   // than any real layout (root chunk → dist is 0 hops; dist/mcp → dist is 1)
@@ -410,7 +437,21 @@ function getRuntimePath(): string {
   }
   // Nothing matched — return the co-located path so esbuild emits a clear
   // "Could not resolve" against a concrete path rather than failing cryptically.
-  return path.join(startDir, 'runtime.js');
+  return path.join(startDir, `${moduleName}.js`);
+}
+
+/** Absolute path to the test-runner page-side runtime (describe/it/test/expect). */
+function getRuntimePath(): string {
+  return getPageSideModulePath('runtime');
+}
+
+/**
+ * Absolute path to the bridge-stub interceptor (devtools#740, DT-2) —
+ * `wrapSdkWithStub`/`isStubBlockingEnabled`, statically imported by the
+ * `sdk-redirect` virtual module.
+ */
+function getBridgeStubPath(): string {
+  return getPageSideModulePath('bridge-stub');
 }
 
 /**

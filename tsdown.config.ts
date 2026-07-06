@@ -158,6 +158,9 @@ export default defineConfig([
       // Must be emitted to dist/ so it exists in the published package
       // (the src/ tree is not shipped).
       'test-runner/runtime': 'src/test-runner/runtime.ts',
+      // Page-side bridge-stub interceptor (devtools#740, DT-2). Resolved the
+      // same way as runtime.ts above (getBridgeStubPath() -> getPageSideModulePath()).
+      'test-runner/bridge-stub': 'src/test-runner/bridge-stub.ts',
       'test-runner/rpc': 'src/test-runner/rpc.ts',
       'test-runner/relay-worker': 'src/test-runner/relay-worker.ts',
       'test-runner/pool': 'src/test-runner/pool.ts',

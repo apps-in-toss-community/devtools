@@ -60,13 +60,18 @@ export interface RunnerAgnosticFileReport {
   /** Per-test results, when the file ran. Error strings are matcher messages only. */
   tests?: TestResult[];
   /**
-   * Present + `'manual'` only when this file ran under `--manual-blocking`
-   * (devtools#741) — human-attended, real native envelopes. Absent (never
-   * `false`) for unattended files: absence-means-unattended is the contract,
-   * mirroring `FileResult.mode` in relay-worker.ts. A manual-stamped record
-   * must never be diffed against an unattended one as if equivalent.
+   * Present only when this file ran under `--manual-blocking` or
+   * `--stub-blocking`. Absent (never `false`) for unattended files:
+   * absence-means-unattended is the contract, mirroring `FileResult.mode` in
+   * relay-worker.ts.
+   *
+   *   - `'manual'`  — devtools#741, human-attended, real native envelopes.
+   *   - `'stubbed'` — devtools#740 (DT-2), unattended, blocking-UI calls
+   *     answered from fixtures. A manual/stubbed-stamped record must never be
+   *     diffed against an unattended (or each other's) baseline as if
+   *     equivalent.
    */
-  mode?: 'manual';
+  mode?: 'manual' | 'stubbed';
 }
 
 /**
@@ -75,8 +80,17 @@ export interface RunnerAgnosticFileReport {
  * load-bearing (SECRET-HANDLING) and must not be "completed" by a future edit.
  */
 export interface RunnerAgnosticReport {
-  /** Cell axes this run belongs to — baked into the body for portability. */
-  cell: { sdkLine: string; platform: string };
+  /**
+   * Cell axes this run belongs to — baked into the body for portability.
+   * `bridgeStub` is present + `true` ONLY on the artifact written for
+   * stub-blocking files (devtools#740, DT-2) — see `writeReportArtifact`'s
+   * doc for why this is a SEPARATE `.stubbed.json` artifact rather than a
+   * flag inside the standard/`.manual.json` report. Absent (never `false`)
+   * on every other artifact — this is the mandatory HYBRID-cell provenance
+   * stamp the issue calls for: a stubbed run must never be silently mixed
+   * into the real-device baseline report.
+   */
+  cell: { sdkLine: string; platform: string; bridgeStub?: true };
   /** ISO timestamp of when the run started (from the core report). */
   startedAt: string;
   /** Total wall-clock ms (bundling + sequential injection). */
@@ -131,7 +145,8 @@ export function serializeRelayReport(
     ...(report.preflight ? { preflight: report.preflight } : {}),
     files: report.files.map((f): RunnerAgnosticFileReport => {
       const file = relativise(meta.projectRoot, f.file);
-      const modeField = f.mode === 'manual' ? ({ mode: 'manual' } as const) : {};
+      const modeField =
+        f.mode === 'manual' || f.mode === 'stubbed' ? ({ mode: f.mode } as const) : {};
       if ('error' in f.result) {
         // Matcher/inject error message only — rpc.ts already stripped the
         // expression/value upstream.
@@ -164,11 +179,21 @@ export function serializeRelayReport(
  * `<dir>/<sdkLine>.<platform>.manual.json` artifact instead of the standard
  * one — the standard `<sdkLine>.<platform>.json` filename is reserved for the
  * regular (unattended) files only, so a manual run's presence never mutates
- * what the unattended-baseline filename means. If ALL files in the run are
- * regular, only the standard artifact is written (today's behavior,
- * unchanged). If a run mixes both (regular files + `--manual-blocking`
- * scheduled last), BOTH artifacts are written — the manual one ALONGSIDE, not
- * replacing, the standard one.
+ * what the unattended-baseline filename means.
+ *
+ * Stub-blocking provenance (devtools#740, DT-2): `mode: 'stubbed'` files are
+ * written to a THIRD, separate `<dir>/<sdkLine>.<platform>.stubbed.json`
+ * artifact — never merged into the standard file (it is unattended, like the
+ * standard file, so a naive filename split could conflate the two) and never
+ * merged into `.manual.json` (it did NOT have a human present). Its body is
+ * ALSO stamped `cell.bridgeStub: true` — the mandatory HYBRID-cell provenance
+ * from the issue: a stubbed result must never be silently mixed into the
+ * real-device baseline report.
+ *
+ * If ALL files in the run are regular, only the standard artifact is written
+ * (today's behavior, unchanged). Any combination of the three modes present
+ * in a single run writes ONLY the corresponding artifacts — each is additive,
+ * never replacing another.
  *
  * SECRET-HANDLING: the written body contains no relay/secret fields (the schema
  * has none). `dir`/`projectRoot` are local filesystem paths, never logged here.
@@ -177,8 +202,9 @@ export function serializeRelayReport(
  * @param dir    - Output directory (created recursively if missing).
  * @param meta   - Cell axes + projectRoot.
  * @returns The absolute path(s) written, in order: standard first (if any
- *   regular files ran), then manual (if any manual files ran). At least one
- *   path is always returned when `report.files` is non-empty.
+ *   regular files ran), then manual (if any manual files ran), then stubbed
+ *   (if any stubbed files ran). At least one path is always returned when
+ *   `report.files` is non-empty.
  */
 export async function writeReportArtifact(
   report: RelayRunReport,
@@ -188,8 +214,9 @@ export async function writeReportArtifact(
   const serialised = serializeRelayReport(report, meta);
   await mkdir(dir, { recursive: true });
 
-  const regularFiles = serialised.files.filter((f) => f.mode !== 'manual');
+  const regularFiles = serialised.files.filter((f) => f.mode === undefined);
   const manualFiles = serialised.files.filter((f) => f.mode === 'manual');
+  const stubbedFiles = serialised.files.filter((f) => f.mode === 'stubbed');
 
   const written: string[] = [];
 
@@ -214,6 +241,24 @@ export async function writeReportArtifact(
       'utf8',
     );
     written.push(manualOutFile);
+  }
+
+  if (stubbedFiles.length > 0) {
+    const stubbedOutFile = path.join(dir, `${meta.sdkLine}.${meta.platform}.stubbed.json`);
+    await writeFile(
+      stubbedOutFile,
+      `${JSON.stringify(
+        {
+          ...serialised,
+          cell: { ...serialised.cell, bridgeStub: true as const },
+          files: stubbedFiles,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+    written.push(stubbedOutFile);
   }
 
   return written;

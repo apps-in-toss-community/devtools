@@ -78,6 +78,24 @@ OPTIONS
                           each manual file's report entry is stamped
                           mode: 'manual' — never diff a manual run against an
                           unattended baseline as if they were equivalent.
+  --stub-blocking         Run manual-tagged test files (*.manual.ait.test.ts)
+                          UNATTENDED (devtools#740, DT-2) by intercepting a
+                          fixed allowlist of blocking-UI SDK calls (ads
+                          show*, openPermissionDialog/requestPermission,
+                          saveBase64Data) in the page and answering them from
+                          fixtures captured by a real --manual-blocking run,
+                          instead of forwarding them to native UI. Implies
+                          --manual-blocking (manual files are included in the
+                          run); no human presence or QR-dashboard prompt is
+                          needed for them. HYBRID cell, not pure env3 — every
+                          other SDK call in the same run still hits the real
+                          native bridge. With --report-dir, files that ran
+                          under the stub are written to a SEPARATE
+                          <sdkLine>.<platform>.stubbed.json artifact (never
+                          merged into the standard or .manual.json report) and
+                          the report body is stamped cell.bridgeStub: true —
+                          never diff a stubbed run against a real device
+                          baseline (manual or unattended) as if equivalent.
   --help, -h              Show this help message
 
 DESCRIPTION
@@ -336,6 +354,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         headless: { type: 'boolean' },
         'project-root': { type: 'string' },
         'manual-blocking': { type: 'boolean' },
+        'stub-blocking': { type: 'boolean' },
       } as const,
       allowPositionals: true,
     });
@@ -390,7 +409,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     return;
   }
   const suppressQr = shouldSuppressQr(vals['no-qr-stdout'] === true);
-  const manualBlocking = vals['manual-blocking'] === true;
+  // devtools#740 (DT-2): --stub-blocking IMPLIES --manual-blocking (manual
+  // files must be discovered/included for there to be anything to stub) —
+  // a user who passes --stub-blocking alone should not have to also
+  // remember --manual-blocking for it to do anything.
+  const stubBlocking = vals['stub-blocking'] === true;
+  const manualBlocking = vals['manual-blocking'] === true || stubBlocking;
 
   // Cell: --cell-sdk-line and --cell-platform (fall back to AIT_CELL_PLATFORM env).
   const cellSdkLine = typeof vals['cell-sdk-line'] === 'string' ? vals['cell-sdk-line'] : undefined;
@@ -445,6 +469,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   if (hasCell) {
     process.stderr.write(`devtools-test: injecting __AIT_CELL__ = ${JSON.stringify(cell)}\n`);
   }
+  if (stubBlocking) {
+    process.stderr.write(
+      'devtools-test: --stub-blocking enabled — blocking-UI calls in manual-tagged ' +
+        'files will be answered from fixtures (devtools#740), not forwarded to native UI\n',
+    );
+  }
   const factory = createRelayConnectionFactory({
     schemeUrl,
     projectRoot,
@@ -458,6 +488,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     ...(dashboardPort !== undefined ? { dashboardPort } : {}),
     headless,
     cell: hasCell ? cell : undefined,
+    stubBlocking,
     onQrContent: (chunks) => {
       if (suppressQr) {
         process.stdout.write('QR suppressed (non-interactive)\n');
@@ -491,6 +522,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       printSummary: true,
       collectCaptures: reportDir !== undefined,
       manualFiles: manualBlocking && manualFileSet.size > 0 ? manualFileSet : undefined,
+      // devtools#740 (DT-2): same file set as manualFiles when --stub-blocking
+      // is on — stubBlockingFiles takes precedence in relay-worker.ts, so
+      // these files run unattended (regular timeout, no dashboard prompt,
+      // mode: 'stubbed') even though they are also present in manualFileSet.
+      stubBlockingFiles: stubBlocking && manualFileSet.size > 0 ? manualFileSet : undefined,
       // #741: before each manual file, push the dashboard prompt AND print
       // the same Korean instruction line to stdout (human may be watching
       // either surface). Clearing the prompt (dashboard only) happens once

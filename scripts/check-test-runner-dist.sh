@@ -28,6 +28,11 @@ cd "$(dirname "$0")/.."
 REQUIRED=(
   "dist/test-runner/runtime.js"
   "dist/test-runner/runtime.d.ts"
+  # devtools#740 (DT-2): bridge-stub is resolved via the SAME depth-robust
+  # getPageSideModulePath() helper as runtime.js (bundle.ts) — must exist in
+  # dist for the same reason runtime.js must.
+  "dist/test-runner/bridge-stub.js"
+  "dist/test-runner/bridge-stub.d.ts"
 )
 
 fail=0
@@ -56,9 +61,12 @@ const walk = (d) => readdirSync(d).flatMap((e) => {
   const p = path.join(d, e);
   return statSync(p).isDirectory() ? walk(p) : (e.endsWith(".js") ? [p] : []);
 });
-// Marker: the joined nested candidate the fixed getRuntimePath emits.
-const MARKER = /"test-runner",\s*"runtime\.js"/;
-// Replicate the resolver (.js-first, bounded ascent).
+// Marker: getPageSideModulePath (shared by getRuntimePath/getBridgeStubPath,
+// devtools#740) builds its nested probe from a template literal, not a
+// literal "runtime.js" string — match the generic shape instead.
+const MARKER = /\[\s*"test-runner",\s*`\$\{moduleName\}\.js`\s*\]/;
+// Replicate the resolver (.js-first, bounded ascent) — mirrors
+// getPageSideModulePath called with moduleName="runtime".
 const resolve = (startDir) => {
   const probes = [["runtime.js"],["test-runner","runtime.js"],["runtime.ts"],["test-runner","runtime.ts"]];
   let dir = startDir;
@@ -70,14 +78,14 @@ const resolve = (startDir) => {
 };
 const carriers = walk(DIST).filter((f) => MARKER.test(readFileSync(f, "utf8")));
 if (carriers.length === 0) {
-  console.error("✗ no dist chunk carries getRuntimePath nested probe — marker drift or build shape changed (#697)");
+  console.error("✗ no dist chunk carries getPageSideModulePath nested probe — marker drift or build shape changed (#697)");
   process.exit(1);
 }
 let bad = 0;
 for (const c of carriers) {
   const got = resolve(path.dirname(c));
   if (got !== EXPECTED) {
-    console.error(`✗ ${path.relative(DIST, c)}: getRuntimePath resolves to ${path.relative(DIST, got)} (want test-runner/runtime.js) — chunk-graph shift re-broke resolution (#697)`);
+    console.error(`✗ ${path.relative(DIST, c)}: runtime resolves to ${path.relative(DIST, got)} (want test-runner/runtime.js) — chunk-graph shift re-broke resolution (#697)`);
     bad++;
   } else {
     console.log(`✓ ${path.relative(DIST, c)}: runtime resolves to test-runner/runtime.js`);
