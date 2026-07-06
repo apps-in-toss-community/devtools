@@ -38,12 +38,19 @@ export interface FileResult {
   /** Full run report for this file, or an error if bundling/injection failed. */
   result: RunReport | { error: string };
   /**
-   * Present + `'manual'` only for files run under `--manual-blocking`
-   * (devtools#741) — report provenance so a human-attended run is never
-   * confused with an unattended baseline. Absent (not `false`) for regular
-   * files — absence-means-unattended is the contract (report.ts mirrors this).
+   * Present only for files run under `--manual-blocking` or `--stub-blocking`
+   * — report provenance so an attended/stubbed run is never confused with an
+   * unattended baseline. Absent (not `false`) for regular files —
+   * absence-means-unattended is the contract (report.ts mirrors this).
+   *
+   *   - `'manual'`  — devtools#741, human-attended, real native envelopes.
+   *   - `'stubbed'` — devtools#740 (DT-2), unattended, blocking-UI calls
+   *     answered from `bridge-stub.ts` fixtures instead of native UI. A
+   *     HYBRID cell, not pure env3 — see `bridge-stub.ts`'s module doc for the
+   *     full honesty contract. Never diffed against `'manual'`/unattended as
+   *     if equivalent.
    */
-  mode?: 'manual';
+  mode?: 'manual' | 'stubbed';
 }
 
 /** Aggregate report returned by `runTestFilesOverRelay`. */
@@ -127,9 +134,36 @@ export interface RelayRunOptions {
    * Called immediately before a manual file is injected (devtools#741) —
    * `(file, index, total)` where `index` is 1-based position among manual
    * files. The CLI uses this to push a dashboard prompt + print to stdout.
-   * Never called for regular (non-manual) files.
+   * Never called for regular (non-manual) files OR for files in
+   * `stubBlockingFiles` (devtools#740) — a stubbed file needs no human
+   * prompt.
    */
   onManualFile?: (file: string, index: number, total: number) => void;
+  /**
+   * Absolute paths of files to run in STUB-BLOCKING mode (devtools#740,
+   * DT-2, `--stub-blocking`). Typically the SAME set as `manualFiles` — the
+   * whole point is to run the manual-tagged suite unattended — but kept as a
+   * separate option so a caller could in principle stub a subset. Members of
+   * this set:
+   *
+   *   1. use `opts.timeoutMs` (the REGULAR per-file timeout), never
+   *      `MANUAL_FILE_TIMEOUT_MS` — the fixture answers synchronously, no
+   *      human is tapping through anything;
+   *   2. do NOT trigger `onManualFile` (no dashboard prompt / stdout banner —
+   *      there is no human to prompt);
+   *   3. are stamped `FileResult.mode = 'stubbed'` instead of `'manual'`.
+   *
+   * A file present in BOTH `manualFiles` and `stubBlockingFiles` is treated
+   * as stubbed (rule 1-3 above win) — `stubBlockingFiles` takes precedence.
+   * The actual blocking-UI interception happens PAGE-SIDE
+   * (`bridge-stub.ts`'s `wrapSdkWithStub`, gated by the
+   * `__AIT_STUB_BLOCKING__` global the caller injects via
+   * `relay-factory.ts`'s `stubBlocking` option) — this set only controls the
+   * two Node-side behaviors above; it does not itself flip the page-side gate.
+   *
+   * Absent/empty = no stubbed files in this run (default; zero-diff path).
+   */
+  stubBlockingFiles?: ReadonlySet<string>;
 }
 
 /**
@@ -263,6 +297,9 @@ export async function runTestFilesOverRelay(
   const manualFiles = opts?.manualFiles;
   const manualTotal = manualFiles?.size ?? 0;
   let manualIndex = 0;
+  // Stub-blocking bookkeeping (devtools#740, DT-2) — see stubBlockingFiles's
+  // doc for why this takes precedence over manualFiles membership.
+  const stubBlockingFiles = opts?.stubBlockingFiles;
 
   // Permission-state preflight (devtools#739): run ONCE per session, before
   // the FIRST file's bundle is injected — never per file. Non-fatal: any
@@ -281,13 +318,19 @@ export async function runTestFilesOverRelay(
         pendingReconnectCheck = false;
       }
 
-      const isManual = manualFiles?.has(file) === true;
+      const isStubbed = stubBlockingFiles?.has(file) === true;
+      // stubBlockingFiles takes precedence over manualFiles membership (see
+      // that option's doc) — a stubbed file needs no human prompt and no
+      // extended timeout even if it also appears in manualFiles (the normal
+      // case: the CLI passes the same set to both when --stub-blocking is on).
+      const isManual = !isStubbed && manualFiles?.has(file) === true;
       if (isManual) {
         manualIndex += 1;
         opts?.onManualFile?.(file, manualIndex, manualTotal);
       }
       // Manual files get a far longer evaluate timeout (a human is tapping
-      // through a native sheet) — everything else keeps opts.timeoutMs.
+      // through a native sheet) — everything else (including stubbed files,
+      // which resolve synchronously from a fixture) keeps opts.timeoutMs.
       const fileTimeoutMs = isManual ? MANUAL_FILE_TIMEOUT_MS : opts?.timeoutMs;
 
       let fileEntry: FileResult;
@@ -389,12 +432,15 @@ export async function runTestFilesOverRelay(
         pendingReconnectCheck = true;
       }
 
-      // Report provenance (devtools#741): stamp mode='manual' once, here, on
-      // whatever fileEntry ended up being (success, error, or timeout) —
-      // simpler and less error-prone than threading the flag through every
-      // return site inside `attempt()`. Absent for regular files (the
-      // contract is absence-means-unattended, not `mode: undefined`).
-      if (isManual) {
+      // Report provenance (devtools#741 / devtools#740): stamp mode once,
+      // here, on whatever fileEntry ended up being (success, error, or
+      // timeout) — simpler and less error-prone than threading the flag
+      // through every return site inside `attempt()`. Absent for regular
+      // files (the contract is absence-means-unattended, not `mode:
+      // undefined`). isStubbed takes precedence — see stubBlockingFiles's doc.
+      if (isStubbed) {
+        fileEntry.mode = 'stubbed';
+      } else if (isManual) {
         fileEntry.mode = 'manual';
       }
 

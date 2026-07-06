@@ -78,6 +78,16 @@ export interface RelayConnectionFactoryOptions {
    */
   cell?: { sdkLine: string; platform: string };
   /**
+   * When `true`, injects `__AIT_STUB_BLOCKING__ = true` before the first test
+   * bundle runs (devtools#740, DT-2) — `bundle.ts`'s sdk-redirect module reads
+   * this flag via `isStubBlockingEnabled()` and answers the blocking-UI APIs
+   * in `bridge-stub.ts`'s `STUB_REGISTRY` from fixtures instead of forwarding
+   * them to native. Optional — omitted/false means no flag is injected, which
+   * is byte-for-byte the pre-#740 behavior (the sdk-redirect module treats
+   * absence the same as `false`). Not a secret.
+   */
+  stubBlocking?: boolean;
+  /**
    * Overrides the dashboard HTTP server's bind base port (devtools#752).
    * Threaded straight through to `startQrHttpServer`'s `dashboardPort`
    * option — see that option's doc for the increment-on-EADDRINUSE scan
@@ -418,6 +428,15 @@ export function createRelayConnectionFactory(
       // here surfaces clearly instead of silently skipping cell injection.
       if (opts.cell !== undefined) {
         await injectGlobals(booted.connection, { __AIT_CELL__: opts.cell });
+      }
+
+      // devtools#740 (DT-2): inject the bridge-stub gate before any test
+      // bundle runs, session-global like __AIT_CELL__ above. Only injected
+      // when explicitly requested — omitted/false means the sdk-redirect
+      // module's `isStubBlockingEnabled()` reads `undefined`, which is
+      // treated identically to `false` (zero-diff-when-off).
+      if (opts.stubBlocking === true) {
+        await injectGlobals(booted.connection, { __AIT_STUB_BLOCKING__: true });
       }
 
       return booted.connection;
