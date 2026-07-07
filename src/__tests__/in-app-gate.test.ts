@@ -16,6 +16,7 @@ import {
   isDebugAllowedHost,
   isLocalhostHost,
   isPrivateAppsHost,
+  isTossminiHost,
   isTrycloudflareHost,
 } from '../in-app/gate.js';
 
@@ -66,10 +67,13 @@ function gate(searchParams: URLSearchParams, hostname: string = VALID_HOST) {
 // ---------------------------------------------------------------------------
 
 describe('Layer B1 — host allowlist', () => {
-  it('blocks a production host (no .private-apps. segment)', () => {
+  it('3.0-family host passes B1 but blocks at C3 without an at= code (#760)', () => {
+    // Pre-#760 this host was blocked at B1 outright ('host'). The 3.0 loader
+    // serves dogfood candidates from the same tossmini family, so B1 now
+    // passes and the #665 invariant moves to C3: missing `at=` → 'auth'.
     const result = gate(VALID_PARAMS, 'aitc-sdk-example.apps.tossmini.com');
     expect(result.attach).toBe(false);
-    if (!result.attach) expect(result.reason).toBe('host');
+    if (!result.attach) expect(result.reason).toBe('auth');
   });
 
   it('blocks an arbitrary unrelated host', () => {
@@ -91,10 +95,13 @@ describe('Layer B1 — host allowlist', () => {
     if (!result.attach) expect(result.reason).toBe('host');
   });
 
-  it('blocks a bare private-apps.tossmini.com with no mini-app subdomain', () => {
+  it('bare private-apps.tossmini.com is not a private-apps host — 3.0-family C3 applies (#760)', () => {
+    // No mini-app subdomain → isPrivateAppsHost is false, but the host still
+    // ends in `.tossmini.com`, so B1 passes on the family filter and the
+    // mandatory-TOTP C3 branch applies: VALID_PARAMS has no `at=` → 'auth'.
     const result = gate(VALID_PARAMS, 'private-apps.tossmini.com');
     expect(result.attach).toBe(false);
-    if (!result.attach) expect(result.reason).toBe('host');
+    if (!result.attach) expect(result.reason).toBe('auth');
   });
 
   it('passes a *.private-apps.tossmini.com dogfood host', () => {
@@ -103,7 +110,7 @@ describe('Layer B1 — host allowlist', () => {
   });
 
   it('is checked before the entry gate — a bad host blocks even with no _deploymentId', () => {
-    const result = gate(params('debug=1&relay=wss://r.example.com/'), 'apps.tossmini.com');
+    const result = gate(params('debug=1&relay=wss://r.example.com/'), 'example.com');
     expect(result.attach).toBe(false);
     if (!result.attach) expect(result.reason).toBe('host');
   });
@@ -501,8 +508,16 @@ describe('Full decision matrix', () => {
   // release bundles. There is nothing to assert about it here; the guarantee
   // is the absence of code, verified by the consumer's bundle output.
 
-  it('row: production host / any / any → BLOCKED (host)', () => {
+  it('row: tossmini(3.0) host / at absent → BLOCKED (auth — TOTP mandatory, #760)', () => {
+    // Pre-#760 this row was BLOCKED (host). The 3.0 loader serves dogfood
+    // candidates from this family, so the block moved from B1 to C3.
     const result = gate(VALID_PARAMS, 'aitc-sdk-example.apps.tossmini.com');
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('row: non-tossmini host / any / any → BLOCKED (host)', () => {
+    const result = gate(VALID_PARAMS, 'example.com');
     expect(result.attach).toBe(false);
     if (!result.attach) expect(result.reason).toBe('host');
   });
@@ -573,23 +588,131 @@ describe('isDebugAllowedHost — positive-allowlist kill-switch (#665)', () => {
     expect(isDebugAllowedHost('my-app.private-apps.tossmini.com')).toBe(true);
   });
 
-  // ── Blocked hosts — env 4 / production ────────────────────────────────────
+  // ── tossmini family — #760: the 3.0 loader serves dogfood candidates from
+  // non-private-apps tossmini hosts, so the family passes the coarse filter.
+  // The #665 "no naked attach on production" invariant is enforced at Layer
+  // C3 instead (mandatory at= code) — see the evaluateDebugGate #760 block.
 
-  it('blocks apps.tossmini.com (production host, env 4 removed #665)', () => {
-    expect(isDebugAllowedHost('apps.tossmini.com')).toBe(false);
+  it('allows apps.tossmini.com family (3.0 unified serving, gated by C3 TOTP — #760)', () => {
+    expect(isDebugAllowedHost('apps.tossmini.com')).toBe(true);
+    expect(isDebugAllowedHost('aitc-sdk-example.apps.tossmini.com')).toBe(true);
   });
 
-  it('blocks subdomain of apps.tossmini.com', () => {
-    expect(isDebugAllowedHost('aitc-sdk-example.apps.tossmini.com')).toBe(false);
-  });
+  // ── Blocked hosts ──────────────────────────────────────────────────────────
 
   it('blocks arbitrary external host', () => {
     expect(isDebugAllowedHost('example.com')).toBe(false);
     expect(isDebugAllowedHost('evil.trycloudflare.com.attacker.com')).toBe(false);
   });
 
-  it('blocks bare tossmini.com (not private-apps or trycloudflare)', () => {
+  it('blocks bare tossmini.com (no subdomain label)', () => {
     expect(isDebugAllowedHost('tossmini.com')).toBe(false);
+  });
+
+  it('blocks a spoofed tossmini suffix that is not a real subdomain segment', () => {
+    expect(isDebugAllowedHost('x.tossmini.com.evil.example')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isTossminiHost (#760)
+// ---------------------------------------------------------------------------
+
+describe('isTossminiHost', () => {
+  it('accepts private-apps hosts (2.x family is a subset)', () => {
+    expect(isTossminiHost('aitc-sdk-example.private-apps.tossmini.com')).toBe(true);
+  });
+
+  it('accepts a 3.0 unified serving host (non-private-apps subdomain)', () => {
+    expect(isTossminiHost('aitc-sdk-example.apps.tossmini.com')).toBe(true);
+    expect(isTossminiHost('apps.tossmini.com')).toBe(true);
+  });
+
+  it('rejects bare tossmini.com (leading dot forces a subdomain label)', () => {
+    expect(isTossminiHost('tossmini.com')).toBe(false);
+  });
+
+  it('rejects a spoofed suffix (endsWith, not includes)', () => {
+    expect(isTossminiHost('x.tossmini.com.evil.example')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3.0-family gate flow (#760) — non-private-apps tossmini hosts
+//
+// Live observation (2026-07-08, mini-app 31146, 3.0-beta bundle): the 3.0
+// loader serves the page from a 4-label *.tossmini.com host whose middle
+// label is not `private-apps`, consumes `_deploymentId` natively (not
+// propagated to location.search), and DOES propagate appended debug/relay/at
+// params. So on these hosts: B1 passes on the family filter, B2 must not
+// require `_deploymentId`, and C3 makes the `at=` code mandatory even
+// without an injected verifier (the relay stays the authoritative verifier).
+// ---------------------------------------------------------------------------
+
+describe('3.0-family gate flow (#760)', () => {
+  const HOST_30 = 'aitc-sdk-example.apps.tossmini.com';
+  const RELAY = 'relay=wss%3A%2F%2Fabc.trycloudflare.com%2F';
+
+  it('attaches with debug + wss relay + at code, no _deploymentId', () => {
+    const result = gate(params(`debug=1&${RELAY}&at=123456`), HOST_30);
+    expect(result.attach).toBe(true);
+    if (result.attach) expect(result.deploymentId).toBe('');
+  });
+
+  it('reports _deploymentId when the loader does propagate it', () => {
+    const result = gate(params(`_deploymentId=abc-123&debug=1&${RELAY}&at=123456`), HOST_30);
+    expect(result.attach).toBe(true);
+    if (result.attach) expect(result.deploymentId).toBe('abc-123');
+  });
+
+  it('blocks without an at= code even when no verifier is injected (mandatory TOTP)', () => {
+    const result = gate(params(`debug=1&${RELAY}`), HOST_30);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('blocks an empty at= value the same as an absent one', () => {
+    const result = gate(params(`debug=1&${RELAY}&at=`), HOST_30);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('still requires debug=1 opt-in', () => {
+    const result = gate(params(`${RELAY}&at=123456`), HOST_30);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('opt-in');
+  });
+
+  it('still rejects a non-wss relay', () => {
+    const result = gate(
+      params('debug=1&relay=https%3A%2F%2Fabc.trycloudflare.com%2F&at=123456'),
+      HOST_30,
+    );
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('invalid-relay');
+  });
+
+  it('an injected verifier still runs and can reject the code value', () => {
+    const result = evaluateDebugGate({
+      hostname: HOST_30,
+      searchParams: params(`debug=1&${RELAY}&at=999999`),
+      verifyTotpCode: () => false,
+    });
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('auth');
+  });
+
+  it('private-apps hosts keep 2.x behavior — no at= required without a verifier', () => {
+    // Regression guard: the mandatory-TOTP branch must NOT leak into the
+    // 2.x private-apps path (VALID_PARAMS has no at= and must still attach).
+    const result = gate(VALID_PARAMS, VALID_HOST);
+    expect(result.attach).toBe(true);
+  });
+
+  it('private-apps hosts still require _deploymentId (B2 unchanged for 2.x)', () => {
+    const result = gate(params(`debug=1&${RELAY}&at=123456`), VALID_HOST);
+    expect(result.attach).toBe(false);
+    if (!result.attach) expect(result.reason).toBe('entry');
   });
 });
 

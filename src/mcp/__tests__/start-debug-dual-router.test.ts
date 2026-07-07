@@ -359,9 +359,19 @@ describe('connectionHostsAllowed — positive-allowlist kill-switch unit', () =>
     expect(connectionHostsAllowed(conn)).toBe(true);
   });
 
-  it('(b) apps.tossmini.com target → 거부 (production host not in allowlist)', () => {
+  it('(b) apps.tossmini.com target → 허용 (3.0 통합 서빙 계열, #760)', () => {
+    // #760 이전에는 거부(production host). 3.0 로더가 dogfood candidate를
+    // 같은 tossmini 계열에서 서빙하므로 MCP 쪽도 계열 필터로 넓힌다 —
+    // attach 자체는 여전히 in-app gate의 C 레이어(TOTP 필수)가 지킨다.
     const conn = new FakeConn('relay', [
       { id: 'p1', title: 'prod', url: 'https://apps.tossmini.com/app' },
+    ]);
+    expect(connectionHostsAllowed(conn)).toBe(true);
+  });
+
+  it('(b2) 비-tossmini 외부 host target → 거부', () => {
+    const conn = new FakeConn('relay', [
+      { id: 'x1', title: 'ext', url: 'https://example.com/app' },
     ]);
     expect(connectionHostsAllowed(conn)).toBe(false);
   });

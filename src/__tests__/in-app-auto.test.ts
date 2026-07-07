@@ -238,14 +238,14 @@ describe('host-gate kill-switch (#665)', () => {
     delete window.__sdkCall;
   });
 
-  it('비허용 host(apps.tossmini.com)에서 maybeAttach 미호출 + window.__sdk 미설치', async () => {
+  it('비허용 host(example.com)에서 maybeAttach 미호출 + window.__sdk 미설치', async () => {
     vi.resetModules();
     vi.clearAllMocks();
 
     // window.location.hostname을 비허용 host로 설정
     Object.defineProperty(window, 'location', {
       value: {
-        hostname: 'apps.tossmini.com',
+        hostname: 'example.com',
         search: '?debug=1&relay=wss://r.example.com/',
       },
       writable: true,
@@ -263,6 +263,39 @@ describe('host-gate kill-switch (#665)', () => {
     // window.__sdk 미설치
     expect(window.__sdk).toBeUndefined();
     expect(window.__sdkCall).toBeUndefined();
+
+    // 복구
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', search: '' },
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  it('3.0 계열 host(apps.tossmini.com)는 coarse gate를 통과해 maybeAttach에 위임한다 (#760)', async () => {
+    // #760 이전에는 이 host가 coarse allowlist에서 잘려 maybeAttach가 아예
+    // 안 불렸다. 이제 tossmini 계열은 통과하고, 실제 차단은 maybeAttach 안의
+    // 전체 gate(C3 — at= 없으면 'auth')가 담당한다. 여기서 attach.js는 mock이라
+    // gate 결과 자체는 in-app-gate.test.ts의 #760 블록이 검증한다.
+    vi.resetModules();
+    vi.clearAllMocks();
+
+    Object.defineProperty(window, 'location', {
+      value: {
+        hostname: 'apps.tossmini.com',
+        search: '?debug=1&relay=wss://r.example.com/',
+      },
+      writable: true,
+      configurable: true,
+    });
+
+    await import('../in-app/auto.js');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const attachMod = (await import('../in-app/attach.js')) as unknown as {
+      maybeAttach: ReturnType<typeof vi.fn>;
+    };
+    expect(attachMod.maybeAttach).toHaveBeenCalledTimes(1);
 
     // 복구
     Object.defineProperty(window, 'location', {
