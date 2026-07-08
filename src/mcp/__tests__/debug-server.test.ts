@@ -354,6 +354,62 @@ describe('start_attach — wait_for_attach', () => {
     expect(text).toContain('pages');
   });
 
+  it('matches a 3.0-runtime page by relay wss when _deploymentId is not propagated (#763)', async () => {
+    // The 3.0 loader consumes _deploymentId natively (absent from the page
+    // URL), but the appended relay= param IS propagated (percent-encoded).
+    // The page must match via this run's relay wss despite the missing id.
+    const connection = new FakeCdpConnection([
+      {
+        id: 'target-3x',
+        title: 'sdk-example',
+        url: 'https://app.apps.tossmini.com/?debug=1&relay=wss%3A%2F%2Fabc123.trycloudflare.com&at=000000',
+      },
+    ]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+    });
+
+    const result = await client.callTool({
+      name: 'start_attach',
+      arguments: {
+        scheme_url: 'intoss-private://miniapp?_deploymentId=not-in-page-url',
+      },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = getContent(result)[0]!.text!;
+    expect(text).toContain('target-3x');
+  });
+
+  it('still rejects a stale page carrying neither the deploymentId nor this run relay (#763)', async () => {
+    const connection = new FakeCdpConnection([
+      {
+        id: 'stale-target',
+        title: 'old-run',
+        url: 'https://app.apps.tossmini.com/?debug=1&relay=wss%3A%2F%2Fold-run.trycloudflare.com&at=000000',
+      },
+    ]);
+    const client = await makeClient({
+      getTunnelStatus: () => tunnelUp,
+      connection,
+      waitForAttachTimeoutMs: 50,
+    });
+
+    const result = await client.callTool(
+      {
+        name: 'start_attach',
+        arguments: {
+          scheme_url: 'intoss-private://miniapp?_deploymentId=fresh-id',
+        },
+      },
+      undefined,
+      { timeout: 5000 },
+    );
+
+    expect(result.isError).toBe(true);
+  });
+
   it('returns isError with list_pages hint after timeout when no page attaches', async () => {
     // Use a tiny timeout (50ms) so the test finishes quickly without fake timers
     // (fake timers conflict with MCP SDK's own request timeout mechanism).

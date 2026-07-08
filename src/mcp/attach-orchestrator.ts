@@ -542,10 +542,23 @@ export async function prepareAttach(
       msg: 'no _deploymentId in scheme_url; matching on presence only',
     });
   }
+  // Run-scoped relay match (#763): the deep-link appends `relay=<wss>` to the
+  // page URL, and BOTH runtime lines propagate it to location.search — unlike
+  // `_deploymentId`, which the 3.0 loader consumes natively and does NOT
+  // propagate (devtools#760 live observation). Requiring the deploymentId in
+  // the page URL therefore never matches on 3.0 and the attach wait hangs
+  // forever. The relay wss URL is minted fresh per run (quick tunnel), so
+  // "page URL carries THIS run's relay" is a precise staleness filter on both
+  // lines; the deploymentId match is kept as an OR for 2.x pages. The page URL
+  // carries the relay percent-encoded (URLSearchParams), so both encodings are
+  // checked. SECRET-HANDLING: neither the wss URL nor page URLs are logged.
+  const wssForMatch = tunnelForBuild.wssUrl;
+  const matchesRelay = (url: string): boolean =>
+    url.includes(wssForMatch) || url.includes(encodeURIComponent(wssForMatch));
   const isMatchingPage = (pages: ReturnType<CdpConnection['listTargets']>): boolean => {
     if (pages.length === 0) return false;
     if (deploymentId === null) return true;
-    return pages.some((p) => p.url.includes(deploymentId));
+    return pages.some((p) => p.url.includes(deploymentId) || matchesRelay(p.url));
   };
   const buildTimeoutError = (
     baseText: string,
