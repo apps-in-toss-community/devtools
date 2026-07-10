@@ -69,6 +69,7 @@ const {
   resolveTimeouts,
   resolveDashboardPort,
   resolvePace,
+  normalizePaceArgv,
   renderSummary,
 } = await import('./cli.js');
 
@@ -311,6 +312,30 @@ describe('resolvePace — --pace / AIT_PACE validation (devtools#767)', () => {
   });
 });
 
+describe('normalizePaceArgv — space-syntax negative value rewrite (devtools#768 review)', () => {
+  it('--pace -1 (space syntax) → rewritten to --pace=-1', () => {
+    expect(normalizePaceArgv(['--pace', '-1'])).toEqual(['--pace=-1']);
+  });
+
+  it('--pace=-1 (already = syntax) → passed through unchanged', () => {
+    expect(normalizePaceArgv(['--pace=-1'])).toEqual(['--pace=-1']);
+  });
+
+  it('--pace 400 (positive value) → passed through unchanged (no rewrite needed)', () => {
+    expect(normalizePaceArgv(['--pace', '400'])).toEqual(['--pace', '400']);
+  });
+
+  it('--pace with no following value → passed through unchanged', () => {
+    expect(normalizePaceArgv(['--pace'])).toEqual(['--pace']);
+  });
+
+  it('leaves other flags/positionals untouched around a rewritten --pace', () => {
+    expect(
+      normalizePaceArgv(['**/*.ait.test.ts', '--pace', '-1', '--headless', '--timeout', '5000']),
+    ).toEqual(['**/*.ait.test.ts', '--pace=-1', '--headless', '--timeout', '5000']);
+  });
+});
+
 /**
  * Integration-level: verify that main() does NOT forward 30_000 to the factory
  * when no --attach-timeout is given (the exact regression from #717).
@@ -499,6 +524,36 @@ describe('main() — --pace wiring (devtools#767)', () => {
     await main([...ARGS, '--pace', '-1']);
     expect(process.exitCode).toBe(1);
     expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+
+  // devtools#768 review: `--pace -1` (space syntax) used to reach Node's own
+  // parseArgs "ambiguous option" error instead of resolvePace's friendly
+  // message — normalizePaceArgv rewrites it to `--pace=-1` before parseArgs
+  // ever sees it. Asserts the ACTUAL stderr line a real CLI invocation
+  // produces, not just the (coincidentally correct) exit code.
+  it("--pace -1 (space syntax) surfaces resolvePace's message, not a Node parser error", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await main([...ARGS, '--pace', '-1']);
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toContain('--pace must be a non-negative integer');
+    expect(written).not.toContain('ambiguous');
+    stderrSpy.mockRestore();
+  });
+
+  it('--pace 400 → preflightSdkLine defaults to cell.sdkLine (2.x) in run options', async () => {
+    await main([...ARGS, '--pace', '400']);
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runOpts?.preflightSdkLine).toBe('2.x');
+  });
+
+  it('--cell-sdk-line 3.x → preflightSdkLine forwarded as 3.x in run options', async () => {
+    await main([...ARGS, '--cell-sdk-line', '3.x']);
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runOpts?.preflightSdkLine).toBe('3.x');
   });
 });
 

@@ -79,10 +79,11 @@ const PROBE_RETRY_BACKOFF_MS = [500, 1000] as const;
  * backoff time budget).
  *
  * Worst-case budget with 6 probes, each requiring the full retry ladder:
- *   - inter-probe spacing: 6 × {@link PROBE_INTER_CALL_DELAY_MS} = 1 500ms
+ *   - inter-probe spacing: only BEFORE probes 2‑6 (none before the first) =
+ *     5 × {@link PROBE_INTER_CALL_DELAY_MS} = 1 250ms
  *   - per-probe backoff (both retries taken): 6 × (500 + 1000) = 9 000ms
  *   - probe round-trips themselves (headroom, not just the sleeps): ~4 500ms
- *   total ≈ 15 000ms, rounded up to a clean 20 000ms for headroom.
+ *   total ≈ 14 750ms, rounded up to a clean 20 000ms for headroom.
  */
 export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 20_000;
 
@@ -112,6 +113,17 @@ export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 20_000;
  * BOTH `e.code === 'APP_BRIDGE_THROTTLED'` and a message substring match, the
  * same two signals `isThrottledError` checks.
  *
+ * devtools#767 acceptance criteria 2 ("3.x run duration은 유의미하게 늘지 않음,
+ * pacing은 opt-in 또는 throttle-adaptive") requires this NOT be an unconditional
+ * cost — `pace` (default `true`, matching the pre-existing sequential+spacing
+ * behavior for 2.x/unknown cells) lets a 3.x caller skip BOTH the inter-probe
+ * `sleep(250)` AND the retry backoff ladder, since `APP_BRIDGE_THROTTLED` is a
+ * 2.x-bridge-only limiter (see `--pace`'s own doc in `cli.ts`: "3.x cells are
+ * unaffected by that limiter"). When `pace` is `false`, probes still run
+ * sequentially (never a parallel burst) but back-to-back with no added delay,
+ * and a THROTTLED result resolves to `'unavailable'` immediately (no retry) —
+ * this matches the 3.x runtime, which never emits `APP_BRIDGE_THROTTLED`.
+ *
  * Tests (sdk-example#265) read `globalThis.__AIT_PERMS__` to branch
  * deterministically per permission state instead of blanket outcome-branching.
  *
@@ -122,15 +134,20 @@ export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 20_000;
  *
  * Pure function — no I/O, no CDP call. Callers pass the returned string to
  * `Runtime.evaluate`.
+ *
+ * @param pace - Defaults to `true` (today's sequential+spacing+backoff
+ *   behavior). Pass `false` for a 3.x cell to skip the inter-probe delay and
+ *   the THROTTLED retry ladder entirely.
  */
-export function buildPermissionPreflightExpression(): string {
+export function buildPermissionPreflightExpression(pace = true): string {
   const probeKeys = Object.keys(PERMISSION_PROBE_MAP);
   const probeCalls = probeKeys
     .map((key, i) => {
       const fnName = PERMISSION_PROBE_MAP[key];
       // Every probe after the first waits PROBE_INTER_CALL_DELAY_MS first —
-      // sequential execution with spacing, never a parallel burst.
-      const spacing = i === 0 ? '' : `    await sleep(${PROBE_INTER_CALL_DELAY_MS});\n`;
+      // sequential execution with spacing, never a parallel burst. Skipped
+      // entirely when `pace` is false (3.x cell — no native limiter to dodge).
+      const spacing = i === 0 || !pace ? '' : `    await sleep(${PROBE_INTER_CALL_DELAY_MS});\n`;
       return (
         `${spacing}` +
         `    result[${JSON.stringify(key)}] = await probeWithRetry(${JSON.stringify(fnName)});`
@@ -138,7 +155,11 @@ export function buildPermissionPreflightExpression(): string {
     })
     .join('\n');
 
-  const backoffArray = `[${PROBE_RETRY_BACKOFF_MS.join(',')}]`;
+  // 3.x cells never emit APP_BRIDGE_THROTTLED (it's a 2.x-bridge-only native
+  // limiter) — an empty backoff ladder makes `probeWithRetry` resolve any
+  // throw (throttled or not) to 'unavailable' on the FIRST attempt, with zero
+  // retry sleeps, satisfying devtools#767 acceptance criteria 2.
+  const backoffArray = pace ? `[${PROBE_RETRY_BACKOFF_MS.join(',')}]` : '[]';
 
   return (
     `(async () => {` +
@@ -201,10 +222,17 @@ export function buildPermissionPreflightExpression(): string {
  *
  * @param conn      - The live CDP connection (relay-attached page).
  * @param timeoutMs - Round-trip bound. Defaults to {@link PERMISSION_PREFLIGHT_TIMEOUT_MS}.
+ * @param pace      - Forwarded to {@link buildPermissionPreflightExpression}.
+ *   Defaults to `true` (today's sequential+spacing+backoff behavior, correct
+ *   for 2.x/unknown cells). Callers that know the cell is 3.x should pass
+ *   `false` — devtools#767 acceptance criteria 2 requires 3.x run duration not
+ *   grow from this preflight, and 3.x never hits the 2.x-only
+ *   `APP_BRIDGE_THROTTLED` limiter this pacing exists to dodge.
  */
 export async function runPermissionPreflight(
   conn: CdpConnection,
   timeoutMs = PERMISSION_PREFLIGHT_TIMEOUT_MS,
+  pace = true,
 ): Promise<Record<string, string> | undefined> {
   const TIMEOUT_SENTINEL = Symbol('permission-preflight-timeout');
   const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) =>
@@ -213,7 +241,7 @@ export async function runPermissionPreflight(
 
   try {
     const evalPromise = conn.send('Runtime.evaluate', {
-      expression: buildPermissionPreflightExpression(),
+      expression: buildPermissionPreflightExpression(pace),
       returnByValue: true,
       awaitPromise: true,
     });

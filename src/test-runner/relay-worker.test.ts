@@ -48,6 +48,9 @@ vi.mock('./capture.js', () => ({
 const runPermissionPreflightMock = vi.fn();
 vi.mock('./cell.js', () => ({
   runPermissionPreflight: (...args: unknown[]) => runPermissionPreflightMock(...args),
+  // Real value (not a mock) — relay-worker.ts imports this as the explicit
+  // timeoutMs it forwards positionally to runPermissionPreflight.
+  PERMISSION_PREFLIGHT_TIMEOUT_MS: 20_000,
 }));
 
 // Import AFTER mocks are registered.
@@ -714,6 +717,33 @@ describe('relay-worker — permission preflight (devtools#739)', () => {
     await expect(runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts'])).rejects.toThrow(
       'boom',
     );
+  });
+
+  // devtools#767 acceptance criteria 2: preflight pacing must not be an
+  // unconditional cost on a 3.x cell — `preflightSdkLine: '3.x'` is the
+  // opt-out signal threaded from the CLI's `cell.sdkLine`.
+  it('preflightSdkLine omitted (or any non-3.x value) → preflight paced (pace=true)', async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockResolvedValue({ clipboardRead: 'allowed' });
+
+    await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts']);
+    expect(runPermissionPreflightMock).toHaveBeenLastCalledWith(FAKE_CONN, 20_000, true);
+
+    await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts'], {
+      preflightSdkLine: '2.x',
+    });
+    expect(runPermissionPreflightMock).toHaveBeenLastCalledWith(FAKE_CONN, 20_000, true);
+  });
+
+  it("preflightSdkLine: '3.x' → preflight unpaced (pace=false)", async () => {
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockResolvedValue({ clipboardRead: 'allowed' });
+
+    await runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts'], {
+      preflightSdkLine: '3.x',
+    });
+
+    expect(runPermissionPreflightMock).toHaveBeenLastCalledWith(FAKE_CONN, 20_000, false);
   });
 });
 

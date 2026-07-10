@@ -19,7 +19,7 @@ import type { CdpConnection, ConsoleApiCalledEvent } from '../mcp/cdp-connection
 import { isRelayDisconnectMessage } from '../mcp/chii-connection.js';
 import { type BundleOptions, bundleTestFile } from './bundle.js';
 import { type AitCaptureLine, parseCaptureLines } from './capture.js';
-import { runPermissionPreflight } from './cell.js';
+import { PERMISSION_PREFLIGHT_TIMEOUT_MS, runPermissionPreflight } from './cell.js';
 import { injectAndRunBundle } from './rpc.js';
 import type { RunReport, TestResult } from './runtime.js';
 
@@ -173,6 +173,22 @@ export interface RelayRunOptions {
    * `undefined`/`0` — no added delay, byte-for-byte today's behavior.
    */
   paceMs?: number;
+  /**
+   * SDK line of the cell under test (devtools#767 acceptance criteria 2). The
+   * one-time permission preflight (`cell.ts#runPermissionPreflight`) paces its
+   * probes (inter-probe delay + THROTTLED retry backoff) to dodge the 2.x-only
+   * native `APP_BRIDGE_THROTTLED` bridge rate limit — that limiter does not
+   * exist on 3.x, so pacing it too would be a pure, unconditional cost with no
+   * corresponding benefit, violating "3.x run duration이 유의미하게 늘지 않음
+   * (pacing은 opt-in 또는 throttle-adaptive)".
+   *
+   * `'3.x'` skips preflight pacing entirely (unpaced sequential probes, no
+   * retry ladder). Any other value (including `undefined`/omitted, e.g. the
+   * MCP `run_tests` auto-attach path which does not thread a typed cell
+   * through this option) keeps today's paced behavior — the conservative
+   * default for a cell that might be 2.x.
+   */
+  preflightSdkLine?: string;
 }
 
 /**
@@ -315,9 +331,18 @@ export async function runTestFilesOverRelay(
   // failure is swallowed inside `runPermissionPreflight` (one stderr line),
   // so a broken/absent `window.__sdk` never blocks the run. Skipped entirely
   // when `files` is empty (no bundle will run either).
+  //
+  // devtools#767 acceptance criteria 2: preflight pacing (inter-probe delay +
+  // THROTTLED retry backoff) is skipped for a known-3.x cell — see
+  // `preflightSdkLine`'s doc for why any other value keeps pacing on.
   let preflightPermissions: Record<string, string> | undefined;
   if (files.length > 0) {
-    preflightPermissions = await runPermissionPreflight(connection);
+    const preflightPace = opts?.preflightSdkLine !== '3.x';
+    preflightPermissions = await runPermissionPreflight(
+      connection,
+      PERMISSION_PREFLIGHT_TIMEOUT_MS,
+      preflightPace,
+    );
   }
 
   // devtools#767 --pace: runner-side (file-to-file) half of pacing. Positive

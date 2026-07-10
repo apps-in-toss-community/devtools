@@ -541,6 +541,36 @@ describe('buildPermissionPreflightExpression — sequential pacing + THROTTLED b
 });
 
 /* -------------------------------------------------------------------------- */
+/* buildPermissionPreflightExpression(pace=false) — 3.x opt-out (devtools#767 */
+/* acceptance criteria 2: 3.x run duration must not grow from this preflight) */
+/* -------------------------------------------------------------------------- */
+
+describe('buildPermissionPreflightExpression(false) — 3.x unpaced (devtools#767 AC2)', () => {
+  const expr = buildPermissionPreflightExpression(false);
+
+  it('inserts NO inter-probe sleep(250) calls', () => {
+    expect(expr.match(/await sleep\(250\)/g)).toBeNull();
+  });
+
+  it('uses an empty backoff ladder (zero THROTTLED retries)', () => {
+    expect(expr).toContain('const backoff = []');
+  });
+
+  it('still probes every permission sequentially through probeWithRetry', () => {
+    for (const fnName of [
+      'getClipboardText',
+      'setClipboardText',
+      'fetchAlbumPhotos',
+      'openCamera',
+      'fetchContacts',
+      'getCurrentLocation',
+    ]) {
+      expect(expr).toContain(`await probeWithRetry(${JSON.stringify(fnName)})`);
+    }
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* runPermissionPreflight (devtools#739)                                      */
 /* -------------------------------------------------------------------------- */
 
