@@ -60,6 +60,16 @@ OPTIONS
   --headless              Disable browser auto-open (text QR only)
   --project-root <dir>    Project root for .ait_relay secret lookup
                           (default: current working directory)
+  --pace <ms>             Minimum delay in ms between test-to-test AND
+                          file-to-file bridge calls (default: 0, i.e. no
+                          added delay — today's behavior byte-for-byte).
+                          Falls back to the AIT_PACE env var when omitted
+                          (--pace takes precedence over the env var when both
+                          are given). Use on a 2.x cell scan when the native
+                          per-method bridge rate limit (APP_BRIDGE_THROTTLED,
+                          devtools#767) is rejecting rapid same-method calls —
+                          3.x cells are unaffected by that limiter and do not
+                          need this flag.
   --manual-blocking       Run manual-tagged test files (*.manual.ait.test.ts)
                           LAST, after all regular files, with a human present.
                           Before each manual file, the QR dashboard is pushed
@@ -206,6 +216,68 @@ export function resolveDashboardPort(raw: string | undefined): number | undefine
   return port;
 }
 
+/**
+ * Rewrites a lone `--pace <value>` pair from space syntax to `=` syntax
+ * (`--pace=<value>`) when `<value>` starts with `-` (devtools#768 review).
+ *
+ * Node's `util.parseArgs` treats a `type: 'string'` option's value as
+ * "ambiguous" and throws its OWN parser error whenever that value starts with
+ * a dash and was passed via the space form (`--pace -1`) — it never reaches
+ * this module's `resolvePace`, so the friendly
+ * `'--pace must be a non-negative integer'` message (and its unit-tested path
+ * in `resolvePace`) was unreachable from the real CLI entry point for the
+ * single most natural way a user would try a negative value, even though
+ * every other flag in {@link USAGE} is documented in space syntax.
+ *
+ * Scoped narrowly to `--pace`/`--pace=...` tokens only — every other flag is
+ * untouched, and positionals/other options keep flowing through `parseArgs`
+ * unchanged. Only rewrites the space form; `--pace=-1` already parses fine
+ * and is passed through untouched.
+ *
+ * Exported for unit testing.
+ */
+export function normalizePaceArgv(argv: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    const next = argv[i + 1];
+    if (arg === '--pace' && next !== undefined && next.startsWith('-') && next !== '--') {
+      out.push(`--pace=${next}`);
+      i++; // consume the value token too
+      continue;
+    }
+    out.push(arg);
+  }
+  return out;
+}
+
+/**
+ * Parses `--pace` (falling back to the `AIT_PACE` env var when the flag is
+ * omitted) into a validated millisecond delay (devtools#767).
+ *
+ * Opt-in, zero-diff-when-absent: BOTH omitted resolves to `0` — no pacing —
+ * which is byte-for-byte today's behavior (`runtime.ts` treats `0`/absent
+ * `__AIT_PACE_MS__` identically, and `relay-worker.ts`'s file-to-file gap is
+ * skipped entirely when the resolved value is 0). `--pace` takes precedence
+ * over `AIT_PACE` when both are present, mirroring `--cell-platform` /
+ * `AIT_CELL_PLATFORM`'s existing flag-over-env precedent.
+ *
+ * Returns an error string on invalid input (non-integer or negative), or the
+ * resolved delay (`>= 0`) on success. Exported for unit testing.
+ */
+export function resolvePace(
+  rawFlag: string | undefined,
+  rawEnv: string | undefined,
+): number | string {
+  const raw = rawFlag ?? rawEnv;
+  if (raw === undefined) return 0;
+  const ms = parseInt(raw, 10);
+  if (Number.isNaN(ms) || ms < 0) {
+    return '--pace must be a non-negative integer';
+  }
+  return ms;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Per-file summary rendering (exported for unit tests)                        */
 /* -------------------------------------------------------------------------- */
@@ -340,7 +412,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   let parsed: ReturnType<typeof parseArgs>;
   try {
     parsed = parseArgs({
-      args: argv,
+      // devtools#768 review: rewrite `--pace -1` (space syntax) to
+      // `--pace=-1` before parseArgs sees it — otherwise Node's parser throws
+      // its own "ambiguous option" error for a leading-dash value passed via
+      // space syntax, and resolvePace's friendly validation message (below)
+      // is never reached for that natural invocation. See normalizePaceArgv.
+      args: normalizePaceArgv(argv),
       options: {
         help: { type: 'boolean', short: 'h' },
         timeout: { type: 'string' },
@@ -353,6 +430,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         'no-qr-stdout': { type: 'boolean' },
         headless: { type: 'boolean' },
         'project-root': { type: 'string' },
+        pace: { type: 'string' },
         'manual-blocking': { type: 'boolean' },
         'stub-blocking': { type: 'boolean' },
       } as const,
@@ -405,6 +483,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   );
   if (typeof dashboardPort === 'string') {
     process.stderr.write(`devtools-test: ${dashboardPort}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const paceMs = resolvePace(
+    typeof vals.pace === 'string' ? vals.pace : undefined,
+    process.env.AIT_PACE,
+  );
+  if (typeof paceMs === 'string') {
+    process.stderr.write(`devtools-test: ${paceMs}\n`);
     process.exitCode = 1;
     return;
   }
@@ -475,6 +562,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         'files will be answered from fixtures (devtools#740), not forwarded to native UI\n',
     );
   }
+  if (paceMs > 0) {
+    process.stderr.write(`devtools-test: --pace ${paceMs}ms enabled (devtools#767)\n`);
+  }
   const factory = createRelayConnectionFactory({
     schemeUrl,
     projectRoot,
@@ -489,6 +579,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     headless,
     cell: hasCell ? cell : undefined,
     stubBlocking,
+    paceMs,
     onQrContent: (chunks) => {
       if (suppressQr) {
         process.stdout.write('QR suppressed (non-interactive)\n');
@@ -521,6 +612,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       timeoutMs: evaluateTimeoutMs,
       printSummary: true,
       collectCaptures: reportDir !== undefined,
+      // devtools#767: runner-side (file-to-file) half of --pace. 0 (default)
+      // is forwarded as-is — relay-worker.ts's own `paceMs > 0` guard treats
+      // it identically to omitted.
+      paceMs,
+      // devtools#767 acceptance criteria 2: tells the permission preflight
+      // whether to pace its probes. `cell.sdkLine` defaults to '2.x' (see
+      // above) when the user didn't pass --cell-sdk-line, which keeps pacing
+      // ON by default — only an explicit '3.x' cell skips it.
+      preflightSdkLine: cell.sdkLine,
       manualFiles: manualBlocking && manualFileSet.size > 0 ? manualFileSet : undefined,
       // devtools#740 (DT-2): same file set as manualFiles when --stub-blocking
       // is on — stubBlockingFiles takes precedence in relay-worker.ts, so

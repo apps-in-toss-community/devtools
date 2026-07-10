@@ -15,16 +15,35 @@
  * @vitest-environment node
  */
 
-import { beforeAll, describe, expect, it } from 'vitest';
-import type { RunReport } from '../test-runner/runtime.js';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { RunReport, RunTestModuleOptions } from '../test-runner/runtime.js';
 import { runtimeGlobals as rg, runTestModule } from '../test-runner/runtime.js';
 
 /* -------------------------------------------------------------------------- */
 /* Helper                                                                      */
 /* -------------------------------------------------------------------------- */
 
-async function run(factory: () => void | Promise<void>): Promise<RunReport> {
-  return runTestModule(factory);
+async function run(
+  factory: () => void | Promise<void>,
+  opts?: RunTestModuleOptions,
+): Promise<RunReport> {
+  return runTestModule(factory, opts);
+}
+
+/**
+ * A fake sleep that resolves immediately but records every requested delay —
+ * lets THROTTLED-retry / --pace tests assert exact backoff timing without
+ * taking real wall-clock seconds.
+ */
+function fakeSleep(): { sleep: (ms: number) => Promise<void>; calls: number[] } {
+  const calls: number[] = [];
+  return {
+    sleep: (ms: number) => {
+      calls.push(ms);
+      return Promise.resolve();
+    },
+    calls,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -910,5 +929,280 @@ describe('ctx.task — trivial task descriptor is present', () => {
   });
   it('ctx.task.name matches the full test name', () => {
     expect(capturedName).toBe('task name propagates');
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* THROTTLED-aware test retry (devtools#767)                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Native 2.x bridge envelope shape for an APP_BRIDGE_THROTTLED rejection. */
+function throttledError(method = 'getClipboardText'): {
+  name: string;
+  code: string;
+  message: string;
+  userInfo: unknown;
+  moduleName: string;
+  __isError: true;
+} {
+  return {
+    name: 'Error',
+    code: 'APP_BRIDGE_THROTTLED',
+    message: `Too many app bridge calls from ${method}.`,
+    userInfo: {},
+    moduleName: 'web-bridge',
+    __isError: true,
+  };
+}
+
+describe('runTestModule — THROTTLED retry: succeeds on the 2nd attempt (load-bearing)', () => {
+  let report: RunReport;
+  let attempts: number;
+  let sleepCalls: number[];
+
+  beforeAll(async () => {
+    attempts = 0;
+    const fake = fakeSleep();
+    sleepCalls = fake.calls;
+    report = await run(
+      () => {
+        rg.it('flaky clipboard read', () => {
+          attempts += 1;
+          if (attempts === 1) throw throttledError();
+        });
+      },
+      { sleep: fake.sleep },
+    );
+  });
+
+  it('retried exactly once (2 total attempts)', () => {
+    expect(attempts).toBe(2);
+  });
+
+  it('backs off 1000ms before the retry', () => {
+    expect(sleepCalls).toEqual([1_000]);
+  });
+
+  it('reports the test as passed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(0);
+    expect(report.tests[0].status).toBe('pass');
+  });
+
+  it('stamps throttleRetries: 1 on the passing result (provenance survives a pass)', () => {
+    expect(report.tests[0].throttleRetries).toBe(1);
+  });
+});
+
+describe('runTestModule — THROTTLED retry: exhausts both retries then fails (load-bearing)', () => {
+  let report: RunReport;
+  let attempts: number;
+  let sleepCalls: number[];
+
+  beforeAll(async () => {
+    attempts = 0;
+    const fake = fakeSleep();
+    sleepCalls = fake.calls;
+    report = await run(
+      () => {
+        rg.it('always throttled', () => {
+          attempts += 1;
+          throw throttledError('fetchContacts');
+        });
+      },
+      { sleep: fake.sleep },
+    );
+  });
+
+  it('attempted exactly 3 times (initial + 2 retries)', () => {
+    expect(attempts).toBe(3);
+  });
+
+  it('backs off 1000ms then 2000ms', () => {
+    expect(sleepCalls).toEqual([1_000, 2_000]);
+  });
+
+  it('reports the test as failed with the throttled message', () => {
+    expect(report.failed).toBe(1);
+    expect(report.tests[0].status).toBe('fail');
+    expect(report.tests[0].error).toContain('Too many app bridge calls from fetchContacts.');
+  });
+
+  it('stamps throttleRetries: 2 (both retries were consumed)', () => {
+    expect(report.tests[0].throttleRetries).toBe(2);
+  });
+});
+
+describe('runTestModule — non-THROTTLED failure is never retried', () => {
+  let report: RunReport;
+  let attempts: number;
+  let sleepCalls: number[];
+
+  beforeAll(async () => {
+    attempts = 0;
+    const fake = fakeSleep();
+    sleepCalls = fake.calls;
+    report = await run(
+      () => {
+        rg.it('plain assertion failure', () => {
+          attempts += 1;
+          rg.expect(1).toBe(2);
+        });
+      },
+      { sleep: fake.sleep },
+    );
+  });
+
+  it('attempted exactly once — no retry', () => {
+    expect(attempts).toBe(1);
+  });
+
+  it('never slept', () => {
+    expect(sleepCalls).toEqual([]);
+  });
+
+  it('reports failed with no throttleRetries field', () => {
+    expect(report.failed).toBe(1);
+    expect(report.tests[0].throttleRetries).toBeUndefined();
+  });
+});
+
+describe('runTestModule — THROTTLED retry: detects via message substring even without .code', () => {
+  let report: RunReport;
+  let attempts: number;
+
+  beforeAll(async () => {
+    attempts = 0;
+    const fake = fakeSleep();
+    report = await run(
+      () => {
+        rg.it('message-only throttle signal', () => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error('Too many app bridge calls from openCamera.');
+          }
+        });
+      },
+      { sleep: fake.sleep },
+    );
+  });
+
+  it('retries a plain Error whose message matches the throttle substring', () => {
+    expect(attempts).toBe(2);
+    expect(report.passed).toBe(1);
+  });
+});
+
+describe('runTestModule — THROTTLED retry: beforeEach/afterEach run exactly once per test (capture non-duplication)', () => {
+  let report: RunReport;
+  let beforeEachCalls: number;
+  let afterEachCalls: number;
+  let bodyAttempts: number;
+
+  beforeAll(async () => {
+    beforeEachCalls = 0;
+    afterEachCalls = 0;
+    bodyAttempts = 0;
+    const fake = fakeSleep();
+    report = await run(
+      () => {
+        rg.beforeEach(() => {
+          beforeEachCalls += 1;
+        });
+        rg.afterEach(() => {
+          afterEachCalls += 1;
+        });
+        rg.it('retried body, single-fire hooks', () => {
+          bodyAttempts += 1;
+          if (bodyAttempts < 3) throw throttledError();
+        });
+      },
+      { sleep: fake.sleep },
+    );
+  });
+
+  it('body ran 3 times (initial + 2 retries) but hooks ran exactly once each', () => {
+    expect(bodyAttempts).toBe(3);
+    expect(beforeEachCalls).toBe(1);
+    expect(afterEachCalls).toBe(1);
+  });
+
+  it('test ultimately passes', () => {
+    expect(report.passed).toBe(1);
+    expect(report.tests[0].throttleRetries).toBe(2);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* --pace inter-test spacing (devtools#767)                                   */
+/* -------------------------------------------------------------------------- */
+
+describe('runTestModule — __AIT_PACE_MS__ inter-test pacing', () => {
+  afterEach(() => {
+    delete (globalThis as { __AIT_PACE_MS__?: unknown }).__AIT_PACE_MS__;
+  });
+
+  it('defaults to zero pacing when __AIT_PACE_MS__ is unset — no sleep calls', async () => {
+    const fake = fakeSleep();
+    await run(
+      () => {
+        rg.it('t1', () => {});
+        rg.it('t2', () => {});
+        rg.it('t3', () => {});
+      },
+      { sleep: fake.sleep },
+    );
+    expect(fake.calls).toEqual([]);
+  });
+
+  it('waits __AIT_PACE_MS__ before every test AFTER the first', async () => {
+    (globalThis as { __AIT_PACE_MS__?: unknown }).__AIT_PACE_MS__ = 500;
+    const fake = fakeSleep();
+    const order: string[] = [];
+    const report = await run(
+      () => {
+        rg.it('t1', () => {
+          order.push('t1');
+        });
+        rg.it('t2', () => {
+          order.push('t2');
+        });
+        rg.it('t3', () => {
+          order.push('t3');
+        });
+      },
+      { sleep: fake.sleep },
+    );
+    // 3 tests → 2 inter-test waits (none before the first).
+    expect(fake.calls).toEqual([500, 500]);
+    expect(order).toEqual(['t1', 't2', 't3']);
+    expect(report.passed).toBe(3);
+  });
+
+  it('does not pace before a skipped test (skips never reach the wait)', async () => {
+    (globalThis as { __AIT_PACE_MS__?: unknown }).__AIT_PACE_MS__ = 250;
+    const fake = fakeSleep();
+    await run(
+      () => {
+        rg.it.skip('skipped');
+        rg.it('runs first (skips do not count)', () => {});
+      },
+      { sleep: fake.sleep },
+    );
+    // Only one test actually executes — no "previous test" to pace after.
+    expect(fake.calls).toEqual([]);
+  });
+
+  it('non-numeric/zero/negative __AIT_PACE_MS__ is treated as disabled', async () => {
+    (globalThis as { __AIT_PACE_MS__?: unknown }).__AIT_PACE_MS__ = 0;
+    const fakeZero = fakeSleep();
+    await run(
+      () => {
+        rg.it('a', () => {});
+        rg.it('b', () => {});
+      },
+      { sleep: fakeZero.sleep },
+    );
+    expect(fakeZero.calls).toEqual([]);
   });
 });

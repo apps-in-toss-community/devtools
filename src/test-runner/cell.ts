@@ -19,6 +19,8 @@
  * Node-only. react-free. CdpConnection only.
  */
 
+import { THROTTLED_ERROR_CODE, THROTTLED_MESSAGE_SUBSTRING } from './throttle.js';
+
 /**
  * `__AIT_PERMS__` key → SDK function name whose `.getPermission()` is probed
  * (devtools#739). This is the exact contract sdk-example#265 consumes — do
@@ -45,8 +47,45 @@ const PERMISSION_PROBE_MAP: Record<string, string> = {
   location: 'getCurrentLocation',
 };
 
-/** Non-fatal bound for the permission preflight `Runtime.evaluate` round-trip. */
-export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 10_000;
+/**
+ * Inter-probe spacing (ms) applied BEFORE every probe after the first
+ * (devtools#767). The native per-method bridge rate limit observed
+ * 2026-07-10 rejects a SECOND call to the same method within a short window
+ * with `APP_BRIDGE_THROTTLED` — the permission preflight's un-paced burst
+ * (6 probes fired back-to-back) was the FIRST trigger of that limiter in the
+ * wild (only the first probe passed; the remaining 5 came back throttled →
+ * `unavailable`, cascading into skipped `__AIT_PERMS__`-branching tests).
+ * Sequential-with-spacing is cheap insurance even though each probe targets a
+ * DIFFERENT method — the limiter's exact scope (per-method vs. a shared
+ * bridge-wide window) was not reverse-engineered (explicitly out of scope,
+ * devtools#767) so spacing every probe is the conservative choice.
+ */
+const PROBE_INTER_CALL_DELAY_MS = 250;
+
+/**
+ * Backoff delays (ms) between retry attempts when a probe is throttled. Its
+ * `.length` IS the max retry count (devtools#767: "최대 2회 재시도") — the
+ * generated page-side expression below derives `attempt < backoff.length`
+ * from this same array (via `backoffArray`), so there is a single source for
+ * both the delay ladder and the retry count; no separate max-retries
+ * constant is kept in this module (unlike `runtime.ts`'s `TEST_MAX_RETRIES`,
+ * which IS consumed directly by a Node-side loop condition).
+ */
+const PROBE_RETRY_BACKOFF_MS = [500, 1000] as const;
+
+/**
+ * Non-fatal bound for the permission preflight `Runtime.evaluate` round-trip
+ * (devtools#767: raised from the pre-pacing 10s to cover the new sequential +
+ * backoff time budget).
+ *
+ * Worst-case budget with 6 probes, each requiring the full retry ladder:
+ *   - inter-probe spacing: only BEFORE probes 2‑6 (none before the first) =
+ *     5 × {@link PROBE_INTER_CALL_DELAY_MS} = 1 250ms
+ *   - per-probe backoff (both retries taken): 6 × (500 + 1000) = 9 000ms
+ *   - probe round-trips themselves (headroom, not just the sleeps): ~4 500ms
+ *   total ≈ 14 750ms, rounded up to a clean 20 000ms for headroom.
+ */
+export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 20_000;
 
 /**
  * Builds the `Runtime.evaluate` expression for the permission-state preflight
@@ -62,6 +101,29 @@ export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 10_000;
  * caller, and a single slow/broken permission must not fail the others (each
  * probe is awaited independently, not short-circuited).
  *
+ * devtools#767: probes run SEQUENTIALLY (not a parallel burst) with a
+ * {@link PROBE_INTER_CALL_DELAY_MS} gap before each probe after the first, and
+ * a probe that comes back `APP_BRIDGE_THROTTLED` (native per-method bridge
+ * rate limit) is retried up to {@link PROBE_RETRY_BACKOFF_MS}`.length` times
+ * with the same {@link PROBE_RETRY_BACKOFF_MS} ladder before falling back to
+ * `'unavailable'`.
+ * The THROTTLED detection mirrors `throttle.ts#isThrottledError` inline (this
+ * expression is raw JS text evaluated via CDP, not an esbuild-bundled module,
+ * so it cannot statically `import` that helper) — kept in sync by checking
+ * BOTH `e.code === 'APP_BRIDGE_THROTTLED'` and a message substring match, the
+ * same two signals `isThrottledError` checks.
+ *
+ * devtools#767 acceptance criteria 2 ("3.x run duration은 유의미하게 늘지 않음,
+ * pacing은 opt-in 또는 throttle-adaptive") requires this NOT be an unconditional
+ * cost — `pace` (default `true`, matching the pre-existing sequential+spacing
+ * behavior for 2.x/unknown cells) lets a 3.x caller skip BOTH the inter-probe
+ * `sleep(250)` AND the retry backoff ladder, since `APP_BRIDGE_THROTTLED` is a
+ * 2.x-bridge-only limiter (see `--pace`'s own doc in `cli.ts`: "3.x cells are
+ * unaffected by that limiter"). When `pace` is `false`, probes still run
+ * sequentially (never a parallel burst) but back-to-back with no added delay,
+ * and a THROTTLED result resolves to `'unavailable'` immediately (no retry) —
+ * this matches the 3.x runtime, which never emits `APP_BRIDGE_THROTTLED`.
+ *
  * Tests (sdk-example#265) read `globalThis.__AIT_PERMS__` to branch
  * deterministically per permission state instead of blanket outcome-branching.
  *
@@ -72,30 +134,71 @@ export const PERMISSION_PREFLIGHT_TIMEOUT_MS = 10_000;
  *
  * Pure function — no I/O, no CDP call. Callers pass the returned string to
  * `Runtime.evaluate`.
+ *
+ * @param pace - Defaults to `true` (today's sequential+spacing+backoff
+ *   behavior). Pass `false` for a 3.x cell to skip the inter-probe delay and
+ *   the THROTTLED retry ladder entirely.
  */
-export function buildPermissionPreflightExpression(): string {
-  const probeEntries = Object.entries(PERMISSION_PROBE_MAP)
-    .map(
-      ([key, fnName]) =>
-        `    result[${JSON.stringify(key)}] = await probe(${JSON.stringify(fnName)});`,
-    )
+export function buildPermissionPreflightExpression(pace = true): string {
+  const probeKeys = Object.keys(PERMISSION_PROBE_MAP);
+  const probeCalls = probeKeys
+    .map((key, i) => {
+      const fnName = PERMISSION_PROBE_MAP[key];
+      // Every probe after the first waits PROBE_INTER_CALL_DELAY_MS first —
+      // sequential execution with spacing, never a parallel burst. Skipped
+      // entirely when `pace` is false (3.x cell — no native limiter to dodge).
+      const spacing = i === 0 || !pace ? '' : `    await sleep(${PROBE_INTER_CALL_DELAY_MS});\n`;
+      return (
+        `${spacing}` +
+        `    result[${JSON.stringify(key)}] = await probeWithRetry(${JSON.stringify(fnName)});`
+      );
+    })
     .join('\n');
+
+  // 3.x cells never emit APP_BRIDGE_THROTTLED (it's a 2.x-bridge-only native
+  // limiter) — an empty backoff ladder makes `probeWithRetry` resolve any
+  // throw (throttled or not) to 'unavailable' on the FIRST attempt, with zero
+  // retry sleeps, satisfying devtools#767 acceptance criteria 2.
+  const backoffArray = pace ? `[${PROBE_RETRY_BACKOFF_MS.join(',')}]` : '[]';
 
   return (
     `(async () => {` +
+    `  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));` +
+    `  const isThrottled = (e) => {` +
+    `    if (!e) return false;` +
+    `    if (e.code === ${JSON.stringify(THROTTLED_ERROR_CODE)}) return true;` +
+    `    const msg = typeof e.message === 'string' ? e.message : '';` +
+    `    return msg.indexOf(${JSON.stringify(THROTTLED_MESSAGE_SUBSTRING)}) !== -1;` +
+    `  };` +
     `  const probe = async (fnName) => {` +
-    `    try {` +
-    `      const fn = globalThis.__sdk && globalThis.__sdk[fnName];` +
-    `      if (!fn || typeof fn.getPermission !== 'function') return 'unavailable';` +
-    `      const status = await fn.getPermission();` +
-    `      if (status === 'allowed' || status === 'denied' || status === 'notDetermined') return status;` +
-    `      return 'unavailable';` +
-    `    } catch (e) {` +
-    `      return 'unavailable';` +
+    `    const fn = globalThis.__sdk && globalThis.__sdk[fnName];` +
+    `    if (!fn || typeof fn.getPermission !== 'function') return { ok: true, value: 'unavailable' };` +
+    `    const status = await fn.getPermission();` +
+    `    if (status === 'allowed' || status === 'denied' || status === 'notDetermined') return { ok: true, value: status };` +
+    `    return { ok: true, value: 'unavailable' };` +
+    `  };` +
+    // probeWithRetry: up to PROBE_RETRY_BACKOFF_MS.length retries on THROTTLED,
+    // backing off per PROBE_RETRY_BACKOFF_MS. Any OTHER throw (or a
+    // non-throttled outcome) resolves to 'unavailable' immediately — only
+    // THROTTLED gets a retry.
+    `  const backoff = ${backoffArray};` +
+    `  const probeWithRetry = async (fnName) => {` +
+    `    for (let attempt = 0; attempt <= backoff.length; attempt++) {` +
+    `      try {` +
+    `        const r = await probe(fnName);` +
+    `        return r.value;` +
+    `      } catch (e) {` +
+    `        if (isThrottled(e) && attempt < backoff.length) {` +
+    `          await sleep(backoff[attempt]);` +
+    `          continue;` +
+    `        }` +
+    `        return 'unavailable';` +
+    `      }` +
     `    }` +
+    `    return 'unavailable';` +
     `  };` +
     `  const result = {};` +
-    `${probeEntries}\n` +
+    `${probeCalls}\n` +
     `  globalThis.__AIT_PERMS__ = result;` +
     `  return JSON.stringify(result);` +
     `})()`
@@ -119,10 +222,17 @@ export function buildPermissionPreflightExpression(): string {
  *
  * @param conn      - The live CDP connection (relay-attached page).
  * @param timeoutMs - Round-trip bound. Defaults to {@link PERMISSION_PREFLIGHT_TIMEOUT_MS}.
+ * @param pace      - Forwarded to {@link buildPermissionPreflightExpression}.
+ *   Defaults to `true` (today's sequential+spacing+backoff behavior, correct
+ *   for 2.x/unknown cells). Callers that know the cell is 3.x should pass
+ *   `false` — devtools#767 acceptance criteria 2 requires 3.x run duration not
+ *   grow from this preflight, and 3.x never hits the 2.x-only
+ *   `APP_BRIDGE_THROTTLED` limiter this pacing exists to dodge.
  */
 export async function runPermissionPreflight(
   conn: CdpConnection,
   timeoutMs = PERMISSION_PREFLIGHT_TIMEOUT_MS,
+  pace = true,
 ): Promise<Record<string, string> | undefined> {
   const TIMEOUT_SENTINEL = Symbol('permission-preflight-timeout');
   const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) =>
@@ -131,7 +241,7 @@ export async function runPermissionPreflight(
 
   try {
     const evalPromise = conn.send('Runtime.evaluate', {
-      expression: buildPermissionPreflightExpression(),
+      expression: buildPermissionPreflightExpression(pace),
       returnByValue: true,
       awaitPromise: true,
     });

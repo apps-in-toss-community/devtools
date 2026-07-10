@@ -456,7 +456,7 @@ describe('buildPermissionPreflightExpression', () => {
 
   it('normalises any non-tri-state result to "unavailable"', () => {
     expect(expr).toContain(
-      "if (status === 'allowed' || status === 'denied' || status === 'notDetermined') return status;",
+      "if (status === 'allowed' || status === 'denied' || status === 'notDetermined') return { ok: true, value: status };",
     );
   });
 
@@ -483,6 +483,90 @@ describe('buildPermissionPreflightExpression', () => {
     expect(expr).not.toMatch(/wss:\/\//);
     expect(expr).not.toMatch(/totp/i);
     expect(expr).not.toMatch(/trycloudflare/i);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* buildPermissionPreflightExpression — sequential + backoff (devtools#767)   */
+/* -------------------------------------------------------------------------- */
+
+describe('buildPermissionPreflightExpression — sequential pacing + THROTTLED backoff (devtools#767)', () => {
+  const expr = buildPermissionPreflightExpression();
+
+  it('spaces every probe after the first with a sleep(250) call', () => {
+    // 6 probes → 5 inter-probe sleeps (none before the first probe).
+    const sleepCalls = expr.match(/await sleep\(250\)/g) ?? [];
+    expect(sleepCalls).toHaveLength(5);
+  });
+
+  it('does NOT sleep before the first probe (clipboardRead/getClipboardText)', () => {
+    const firstProbeIdx = expr.indexOf('await probeWithRetry("getClipboardText")');
+    const firstSleepIdx = expr.indexOf('await sleep(250)');
+    expect(firstProbeIdx).toBeGreaterThan(-1);
+    // The first sleep call (if any precedes the SECOND probe) must come AFTER
+    // the first probe call in source order.
+    expect(firstSleepIdx === -1 || firstSleepIdx > firstProbeIdx).toBe(true);
+  });
+
+  it('probes run through probeWithRetry (not the bare probe) — every probe call site', () => {
+    for (const fnName of [
+      'getClipboardText',
+      'setClipboardText',
+      'fetchAlbumPhotos',
+      'openCamera',
+      'fetchContacts',
+      'getCurrentLocation',
+    ]) {
+      expect(expr).toContain(`await probeWithRetry(${JSON.stringify(fnName)})`);
+    }
+  });
+
+  it('detects APP_BRIDGE_THROTTLED via both the native code AND the message substring', () => {
+    expect(expr).toContain('e.code === "APP_BRIDGE_THROTTLED"');
+    expect(expr).toContain('Too many app bridge calls');
+  });
+
+  it('retries a throttled probe up to 2 times with a [500,1000] backoff ladder', () => {
+    expect(expr).toContain('const backoff = [500,1000]');
+    // The retry loop bounds attempts by backoff.length (2) — i.e. up to 2 retries.
+    expect(expr).toContain('attempt < backoff.length');
+    expect(expr).toContain('await sleep(backoff[attempt])');
+  });
+
+  it('a non-throttled probe exception still resolves to "unavailable" (no retry)', () => {
+    // The catch branch's fallback path — reached when isThrottled(e) is false
+    // OR the retry budget is exhausted.
+    expect(expr).toMatch(/return 'unavailable';\s*}\s*}\s*return 'unavailable';/);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* buildPermissionPreflightExpression(pace=false) — 3.x opt-out (devtools#767 */
+/* acceptance criteria 2: 3.x run duration must not grow from this preflight) */
+/* -------------------------------------------------------------------------- */
+
+describe('buildPermissionPreflightExpression(false) — 3.x unpaced (devtools#767 AC2)', () => {
+  const expr = buildPermissionPreflightExpression(false);
+
+  it('inserts NO inter-probe sleep(250) calls', () => {
+    expect(expr.match(/await sleep\(250\)/g)).toBeNull();
+  });
+
+  it('uses an empty backoff ladder (zero THROTTLED retries)', () => {
+    expect(expr).toContain('const backoff = []');
+  });
+
+  it('still probes every permission sequentially through probeWithRetry', () => {
+    for (const fnName of [
+      'getClipboardText',
+      'setClipboardText',
+      'fetchAlbumPhotos',
+      'openCamera',
+      'fetchContacts',
+      'getCurrentLocation',
+    ]) {
+      expect(expr).toContain(`await probeWithRetry(${JSON.stringify(fnName)})`);
+    }
   });
 });
 

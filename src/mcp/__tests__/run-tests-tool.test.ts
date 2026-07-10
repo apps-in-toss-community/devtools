@@ -74,12 +74,16 @@ const injectGlobalsSpy = vi.fn((_conn?: unknown, _cell?: unknown) => Promise.res
 // relay-worker.ts before the first file — stub it as a non-fatal no-op
 // (resolves undefined, mirroring "preflight did not complete") so tests in
 // this file that don't care about permission state are unaffected.
-const runPermissionPreflightSpy = vi.fn((_conn?: unknown, _timeoutMs?: number) =>
+const runPermissionPreflightSpy = vi.fn((_conn?: unknown, _timeoutMs?: number, _pace?: boolean) =>
   Promise.resolve(undefined),
 );
 vi.mock('../../test-runner/cell.js', () => ({
   injectGlobals: (...args: [unknown, unknown]) => injectGlobalsSpy(...args),
-  runPermissionPreflight: (...args: [unknown, number?]) => runPermissionPreflightSpy(...args),
+  runPermissionPreflight: (...args: [unknown, number?, boolean?]) =>
+    runPermissionPreflightSpy(...args),
+  // Real value (not a mock) — relay-worker.ts (devtools#767) imports this as
+  // the explicit timeoutMs it forwards positionally to runPermissionPreflight.
+  PERMISSION_PREFLIGHT_TIMEOUT_MS: 20_000,
 }));
 
 /* -------------------------------------------------------------------------- */

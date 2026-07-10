@@ -88,6 +88,18 @@ export interface RelayConnectionFactoryOptions {
    */
   stubBlocking?: boolean;
   /**
+   * Injects `__AIT_PACE_MS__ = paceMs` before the first test bundle runs
+   * (devtools#767) — `runtime.ts`'s test-execution loop reads this page
+   * global and waits `paceMs` before every test after the first one that
+   * actually runs. Optional — omitted/0 means no flag is injected, which is
+   * byte-for-byte the pre-#767 behavior (the loop treats an absent/non-
+   * positive value as "no pacing"). Not a secret. This is the PAGE-side half
+   * of `--pace`; the RUNNER-side (file-to-file) half is a plain `opts.paceMs`
+   * forwarded to `runTestFilesOverRelay` by the caller (cli.ts) — this
+   * factory only owns the page-global injection.
+   */
+  paceMs?: number;
+  /**
    * Overrides the dashboard HTTP server's bind base port (devtools#752).
    * Threaded straight through to `startQrHttpServer`'s `dashboardPort`
    * option — see that option's doc for the increment-on-EADDRINUSE scan
@@ -437,6 +449,15 @@ export function createRelayConnectionFactory(
       // treated identically to `false` (zero-diff-when-off).
       if (opts.stubBlocking === true) {
         await injectGlobals(booted.connection, { __AIT_STUB_BLOCKING__: true });
+      }
+
+      // devtools#767: inject the page-side --pace pacing value, session-global
+      // like __AIT_CELL__/__AIT_STUB_BLOCKING__ above. Only injected when
+      // positive — omitted/0 means runtime.ts's own `__AIT_PACE_MS__` read
+      // sees `undefined`, which its `typeof raw === 'number' && raw > 0` guard
+      // treats identically to a literal `0` (zero-diff-when-off).
+      if (opts.paceMs !== undefined && opts.paceMs > 0) {
+        await injectGlobals(booted.connection, { __AIT_PACE_MS__: opts.paceMs });
       }
 
       return booted.connection;

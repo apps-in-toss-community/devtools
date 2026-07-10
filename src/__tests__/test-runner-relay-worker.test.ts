@@ -85,6 +85,9 @@ vi.mock('../test-runner/bundle.js', () => ({
 // relay-worker.test.ts.
 vi.mock('../test-runner/cell.js', () => ({
   runPermissionPreflight: vi.fn(() => Promise.resolve(undefined)),
+  // Real value (not a mock) — relay-worker.ts (devtools#767) imports this as
+  // the explicit timeoutMs it forwards positionally to runPermissionPreflight.
+  PERMISSION_PREFLIGHT_TIMEOUT_MS: 20_000,
 }));
 
 /* -------------------------------------------------------------------------- */

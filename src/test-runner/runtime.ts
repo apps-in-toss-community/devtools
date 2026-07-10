@@ -20,6 +20,8 @@
  * at runtime on the Node side — only the types are used.
  */
 
+import { isThrottledError } from './throttle.js';
+
 /* -------------------------------------------------------------------------- */
 /* Public result types (used by rpc.ts and relay-worker.ts)                   */
 /* -------------------------------------------------------------------------- */
@@ -43,6 +45,15 @@ export interface TestResult {
    * `it.skip`/`it.skipIf` path which has no note today. `'skip'` status only.
    */
   note?: string;
+  /**
+   * Number of throttle-aware re-executions of the test BODY (devtools#767) —
+   * present only when at least one retry was attempted (`>= 1`); omitted
+   * (never `0`) for every test that never hit `APP_BRIDGE_THROTTLED`, so
+   * existing consumers (sdk-example's diff script) see byte-identical reports
+   * for the common case. A test that eventually PASSES after retrying still
+   * carries this field — it is provenance, not a failure flag.
+   */
+  throttleRetries?: number;
 }
 
 /** Aggregate report returned by `runTestModule`. */
@@ -55,6 +66,57 @@ export interface RunReport {
   failed: number;
   skipped: number;
   tests: TestResult[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* THROTTLED-aware test retry (devtools#767)                                  */
+/* -------------------------------------------------------------------------- */
+
+/** Backoff delays (ms) between throttle-retry attempts: 1s, then 2s. */
+const TEST_RETRY_BACKOFF_MS = [1_000, 2_000] as const;
+
+/** Max retry attempts per test after the initial run (devtools#767: "최대 2회 재시도"). */
+const TEST_MAX_RETRIES = TEST_RETRY_BACKOFF_MS.length;
+
+/** Real `setTimeout`-backed sleep — the production default for {@link RunTestModuleOptions.sleep}. */
+const DEFAULT_SLEEP = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Test-only override surface for `runTestModule`. Never populated by the
+ * generated bundle — see that function's doc.
+ */
+export interface RunTestModuleOptions {
+  /**
+   * Overrides the backoff/pacing sleep implementation. Defaults to a real
+   * `setTimeout`-backed sleep. Unit tests pass a fake (e.g. an
+   * immediately-resolving spy) so retry/pacing tests don't take real
+   * wall-clock seconds.
+   */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Renders a thrown value into a `TestResult.error` string. Handles three
+ * shapes:
+ *   - a real `Error` (or subclass) — its `.message`;
+ *   - an error-LIKE plain object with a string `.message` (the 2.x native
+ *     bridge envelope this test-runner observes, e.g.
+ *     `{name, code, userInfo, moduleName, __isError}` — devtools#767's
+ *     `APP_BRIDGE_THROTTLED` rejections are exactly this shape, not an
+ *     `Error` instance) — its `.message` field;
+ *   - anything else — `String(e)` (the pre-#767 fallback, unchanged).
+ *
+ * Without the middle case, a native envelope's `.message` (the only useful
+ * diagnostic text) was discarded in favor of the useless `"[object Object]"`.
+ */
+function stringifyThrown(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'object' && e !== null) {
+    const rec = e as { message?: unknown };
+    if (typeof rec.message === 'string') return rec.message;
+  }
+  return String(e);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -781,10 +843,17 @@ export const runtimeGlobals = {
  * @param moduleFactory - A zero-argument function that contains the user's
  *   top-level test code (describe/it/test calls). The bundler wraps the entire
  *   test module so that its top-level statements become the body of this factory.
+ * @param opts - Test-only overrides (see {@link RunTestModuleOptions}). Never
+ *   passed by the generated bundle (`rpc.ts#buildRunTestsExpression` calls
+ *   `runTestModule(__userFactory)` with exactly one argument) — this second
+ *   parameter exists so unit tests can inject a fake sleep and assert the
+ *   THROTTLED-retry timing without real delays.
  */
 export async function runTestModule(
   moduleFactory?: () => void | Promise<void>,
+  opts?: RunTestModuleOptions,
 ): Promise<RunReport> {
+  const sleep = opts?.sleep ?? DEFAULT_SLEEP;
   // Reset state for re-entrant calls within the same page context.
   _pendingTests.length = 0;
   _suiteStack.length = 0;
@@ -881,6 +950,17 @@ export async function runTestModule(
     }
   }
 
+  // devtools#767 --pace: read the page-global __AIT_PACE_MS__ (injected by
+  // relay-factory.ts the same way __AIT_CELL__ is, via cell.ts#injectGlobals)
+  // ONCE per run. Absent/0 (the default) means zero behavior change — the
+  // wait below becomes a no-op sleep(0) that resolves on the next microtask
+  // tick, same as today's unpaced loop for every existing caller.
+  const paceMs = (() => {
+    const raw = (globalThis as { __AIT_PACE_MS__?: unknown }).__AIT_PACE_MS__;
+    return typeof raw === 'number' && raw > 0 ? raw : 0;
+  })();
+  let ranFirstTest = false;
+
   for (let i = 0; i < _pendingTests.length; i++) {
     const pending = _pendingTests[i];
     const fullName = [...pending.suitePath, pending.name].join(' > ');
@@ -889,6 +969,15 @@ export async function runTestModule(
       results.push({ name: fullName, status: 'skip', duration: 0 });
       continue;
     }
+
+    // --pace inter-test spacing: wait BEFORE every test after the first one
+    // that actually runs (skipped tests above never reach here). Mirrors the
+    // permission preflight's "no wait before the first probe" pacing model
+    // (cell.ts#buildPermissionPreflightExpression).
+    if (paceMs > 0 && ranFirstTest) {
+      await sleep(paceMs);
+    }
+    ranFirstTest = true;
 
     // Fire suite-scoped beforeAll for any new scopes entered by this test
     for (let depth = 1; depth <= pending.suitePath.length; depth++) {
@@ -920,17 +1009,36 @@ export async function runTestModule(
     const tStart = Date.now();
     let testErr: string | undefined;
     let inPageSkip: InPageSkipSentinel | undefined;
+    let throttleRetries = 0;
 
     if (beErr) {
       testErr = `beforeEach failed: ${beErr.message}`;
     } else {
-      try {
-        await pending.fn(_makeTestContext(fullName));
-      } catch (e) {
-        if (e instanceof InPageSkipSentinel) {
-          inPageSkip = e;
-        } else {
-          testErr = e instanceof Error ? e.message : String(e);
+      // THROTTLED-aware retry (devtools#767): only the test BODY is retried —
+      // beforeEach (above) and afterEach (below) each run exactly once
+      // regardless of how many times the body is attempted. This keeps any
+      // capture-emitting hook (e.g. sdk-example's flushCapture) firing exactly
+      // once per test, so a retried body can never duplicate a capture record
+      // (see relay-worker.ts's harvesting model — it's a passive listener over
+      // the whole run, not a per-attempt flush/drain, so this invariant is what
+      // keeps a retry from polluting the capture stream).
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await pending.fn(_makeTestContext(fullName));
+          testErr = undefined;
+          break;
+        } catch (e) {
+          if (e instanceof InPageSkipSentinel) {
+            inPageSkip = e;
+            break;
+          }
+          testErr = stringifyThrown(e);
+          if (isThrottledError(e) && attempt < TEST_MAX_RETRIES) {
+            throttleRetries += 1;
+            await sleep(TEST_RETRY_BACKOFF_MS[attempt]);
+            continue;
+          }
+          break;
         }
       }
     }
@@ -955,9 +1063,15 @@ export async function runTestModule(
         status: 'fail',
         duration: Date.now() - tStart,
         error: testErr,
+        ...(throttleRetries > 0 ? { throttleRetries } : {}),
       });
     } else {
-      results.push({ name: fullName, status: 'pass', duration: Date.now() - tStart });
+      results.push({
+        name: fullName,
+        status: 'pass',
+        duration: Date.now() - tStart,
+        ...(throttleRetries > 0 ? { throttleRetries } : {}),
+      });
     }
 
     // Fire suite-scoped afterAll when this is the last test in each scope

@@ -19,7 +19,7 @@ import type { CdpConnection, ConsoleApiCalledEvent } from '../mcp/cdp-connection
 import { isRelayDisconnectMessage } from '../mcp/chii-connection.js';
 import { type BundleOptions, bundleTestFile } from './bundle.js';
 import { type AitCaptureLine, parseCaptureLines } from './capture.js';
-import { runPermissionPreflight } from './cell.js';
+import { PERMISSION_PREFLIGHT_TIMEOUT_MS, runPermissionPreflight } from './cell.js';
 import { injectAndRunBundle } from './rpc.js';
 import type { RunReport, TestResult } from './runtime.js';
 
@@ -164,6 +164,31 @@ export interface RelayRunOptions {
    * Absent/empty = no stubbed files in this run (default; zero-diff path).
    */
   stubBlockingFiles?: ReadonlySet<string>;
+  /**
+   * Minimum delay in milliseconds inserted BEFORE every file after the first
+   * one that actually runs (devtools#767, `--pace`). This is the RUNNER-side
+   * (file-to-file) half of `--pace` — the PAGE-side (test-to-test) half is
+   * `__AIT_PACE_MS__`, injected separately by `relay-factory.ts`'s `paceMs`
+   * option and consumed by `runtime.ts`'s own test loop. Defaults to
+   * `undefined`/`0` — no added delay, byte-for-byte today's behavior.
+   */
+  paceMs?: number;
+  /**
+   * SDK line of the cell under test (devtools#767 acceptance criteria 2). The
+   * one-time permission preflight (`cell.ts#runPermissionPreflight`) paces its
+   * probes (inter-probe delay + THROTTLED retry backoff) to dodge the 2.x-only
+   * native `APP_BRIDGE_THROTTLED` bridge rate limit — that limiter does not
+   * exist on 3.x, so pacing it too would be a pure, unconditional cost with no
+   * corresponding benefit, violating "3.x run duration이 유의미하게 늘지 않음
+   * (pacing은 opt-in 또는 throttle-adaptive)".
+   *
+   * `'3.x'` skips preflight pacing entirely (unpaced sequential probes, no
+   * retry ladder). Any other value (including `undefined`/omitted, e.g. the
+   * MCP `run_tests` auto-attach path which does not thread a typed cell
+   * through this option) keeps today's paced behavior — the conservative
+   * default for a cell that might be 2.x.
+   */
+  preflightSdkLine?: string;
 }
 
 /**
@@ -306,10 +331,25 @@ export async function runTestFilesOverRelay(
   // failure is swallowed inside `runPermissionPreflight` (one stderr line),
   // so a broken/absent `window.__sdk` never blocks the run. Skipped entirely
   // when `files` is empty (no bundle will run either).
+  //
+  // devtools#767 acceptance criteria 2: preflight pacing (inter-probe delay +
+  // THROTTLED retry backoff) is skipped for a known-3.x cell — see
+  // `preflightSdkLine`'s doc for why any other value keeps pacing on.
   let preflightPermissions: Record<string, string> | undefined;
   if (files.length > 0) {
-    preflightPermissions = await runPermissionPreflight(connection);
+    const preflightPace = opts?.preflightSdkLine !== '3.x';
+    preflightPermissions = await runPermissionPreflight(
+      connection,
+      PERMISSION_PREFLIGHT_TIMEOUT_MS,
+      preflightPace,
+    );
   }
+
+  // devtools#767 --pace: runner-side (file-to-file) half of pacing. Positive
+  // only when the caller explicitly opted in — 0/undefined skips the wait
+  // entirely (no per-file branch cost added to the default path).
+  const paceMs = opts?.paceMs;
+  let ranFirstFile = false;
 
   try {
     for (const file of files) {
@@ -317,6 +357,14 @@ export async function runTestFilesOverRelay(
         await attemptReconnect('next-file');
         pendingReconnectCheck = false;
       }
+
+      // --pace file-to-file spacing: wait BEFORE every file after the first
+      // one that actually runs. Mirrors runtime.ts's own inter-test pacing
+      // model (no wait before the first item).
+      if (paceMs !== undefined && paceMs > 0 && ranFirstFile) {
+        await new Promise<void>((resolve) => setTimeout(resolve, paceMs));
+      }
+      ranFirstFile = true;
 
       const isStubbed = stubBlockingFiles?.has(file) === true;
       // stubBlockingFiles takes precedence over manualFiles membership (see
