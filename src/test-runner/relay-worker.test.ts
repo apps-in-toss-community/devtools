@@ -716,3 +716,74 @@ describe('relay-worker — permission preflight (devtools#739)', () => {
     );
   });
 });
+
+describe('relay-worker — --pace file-to-file spacing (devtools#767)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    bundleTestFileMock.mockResolvedValue({ code: '/* bundled */' });
+    injectAndRunBundleMock.mockResolvedValue({ ok: true, report: fakeRunReport() });
+    runPermissionPreflightMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('paceMs omitted → no wait between files (default, byte-for-byte)', async () => {
+    const promise = runTestFilesOverRelay(FAKE_CONN as never, [
+      '/abs/a.ait.test.ts',
+      '/abs/b.ait.test.ts',
+      '/abs/c.ait.test.ts',
+    ]);
+    // No timers to advance — if a wait were inserted, this would hang.
+    await vi.advanceTimersByTimeAsync(0);
+    const report = await promise;
+    expect(injectAndRunBundleMock).toHaveBeenCalledTimes(3);
+    expect(report.totals.failed).toBe(0);
+  });
+
+  it('paceMs: 0 explicit → no wait between files', async () => {
+    const promise = runTestFilesOverRelay(
+      FAKE_CONN as never,
+      ['/abs/a.ait.test.ts', '/abs/b.ait.test.ts'],
+      { paceMs: 0 },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+    expect(injectAndRunBundleMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('paceMs: 300 waits before every file AFTER the first, not before the first', async () => {
+    const callTimestamps: number[] = [];
+    injectAndRunBundleMock.mockImplementation(async () => {
+      callTimestamps.push(Date.now());
+      return { ok: true, report: fakeRunReport() };
+    });
+
+    const promise = runTestFilesOverRelay(
+      FAKE_CONN as never,
+      ['/abs/a.ait.test.ts', '/abs/b.ait.test.ts', '/abs/c.ait.test.ts'],
+      { paceMs: 300 },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    await promise;
+
+    expect(injectAndRunBundleMock).toHaveBeenCalledTimes(3);
+    // First file has no leading wait; each subsequent file is spaced by 300ms.
+    expect(callTimestamps[1] - callTimestamps[0]).toBe(300);
+    expect(callTimestamps[2] - callTimestamps[1]).toBe(300);
+  });
+
+  it('a single file never waits regardless of paceMs (no "next" file to space against)', async () => {
+    const promise = runTestFilesOverRelay(FAKE_CONN as never, ['/abs/a.ait.test.ts'], {
+      paceMs: 5_000,
+    });
+    // If the implementation ever waited before the FIRST file, this would
+    // still be pending after a 0ms timer flush.
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+    expect(injectAndRunBundleMock).toHaveBeenCalledTimes(1);
+  });
+});

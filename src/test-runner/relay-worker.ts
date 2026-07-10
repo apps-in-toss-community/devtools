@@ -164,6 +164,15 @@ export interface RelayRunOptions {
    * Absent/empty = no stubbed files in this run (default; zero-diff path).
    */
   stubBlockingFiles?: ReadonlySet<string>;
+  /**
+   * Minimum delay in milliseconds inserted BEFORE every file after the first
+   * one that actually runs (devtools#767, `--pace`). This is the RUNNER-side
+   * (file-to-file) half of `--pace` — the PAGE-side (test-to-test) half is
+   * `__AIT_PACE_MS__`, injected separately by `relay-factory.ts`'s `paceMs`
+   * option and consumed by `runtime.ts`'s own test loop. Defaults to
+   * `undefined`/`0` — no added delay, byte-for-byte today's behavior.
+   */
+  paceMs?: number;
 }
 
 /**
@@ -311,12 +320,26 @@ export async function runTestFilesOverRelay(
     preflightPermissions = await runPermissionPreflight(connection);
   }
 
+  // devtools#767 --pace: runner-side (file-to-file) half of pacing. Positive
+  // only when the caller explicitly opted in — 0/undefined skips the wait
+  // entirely (no per-file branch cost added to the default path).
+  const paceMs = opts?.paceMs;
+  let ranFirstFile = false;
+
   try {
     for (const file of files) {
       if (pendingReconnectCheck) {
         await attemptReconnect('next-file');
         pendingReconnectCheck = false;
       }
+
+      // --pace file-to-file spacing: wait BEFORE every file after the first
+      // one that actually runs. Mirrors runtime.ts's own inter-test pacing
+      // model (no wait before the first item).
+      if (paceMs !== undefined && paceMs > 0 && ranFirstFile) {
+        await new Promise<void>((resolve) => setTimeout(resolve, paceMs));
+      }
+      ranFirstFile = true;
 
       const isStubbed = stubBlockingFiles?.has(file) === true;
       // stubBlockingFiles takes precedence over manualFiles membership (see

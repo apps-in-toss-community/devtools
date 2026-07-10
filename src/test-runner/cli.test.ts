@@ -63,8 +63,14 @@ vi.mock('./report.js', () => ({
 }));
 
 // Import AFTER mocks are registered.
-const { main, shouldSuppressQr, resolveTimeouts, resolveDashboardPort, renderSummary } =
-  await import('./cli.js');
+const {
+  main,
+  shouldSuppressQr,
+  resolveTimeouts,
+  resolveDashboardPort,
+  resolvePace,
+  renderSummary,
+} = await import('./cli.js');
 
 const FAKE_CONN = { kind: 'relay' as const };
 const SCHEME = 'intoss-private://app?_deploymentId=test';
@@ -272,6 +278,39 @@ describe('resolveDashboardPort — --dashboard-port validation (devtools#752)', 
   });
 });
 
+describe('resolvePace — --pace / AIT_PACE validation (devtools#767)', () => {
+  it('both omitted → 0 (zero-diff default)', () => {
+    expect(resolvePace(undefined, undefined)).toBe(0);
+  });
+
+  it('--pace 500 → 500', () => {
+    expect(resolvePace('500', undefined)).toBe(500);
+  });
+
+  it('--pace 0 → 0 (explicit no-op, same as omitted)', () => {
+    expect(resolvePace('0', undefined)).toBe(0);
+  });
+
+  it('AIT_PACE env used when --pace omitted', () => {
+    expect(resolvePace(undefined, '300')).toBe(300);
+  });
+
+  it('--pace takes precedence over AIT_PACE when both are given', () => {
+    expect(resolvePace('500', '300')).toBe(500);
+  });
+
+  it('--pace -1 (negative) → error string', () => {
+    const result = resolvePace('-1', undefined);
+    expect(typeof result).toBe('string');
+    expect(result as string).toMatch(/--pace/);
+  });
+
+  it('--pace abc (non-numeric) → error string', () => {
+    const result = resolvePace('abc', undefined);
+    expect(typeof result).toBe('string');
+  });
+});
+
 /**
  * Integration-level: verify that main() does NOT forward 30_000 to the factory
  * when no --attach-timeout is given (the exact regression from #717).
@@ -385,6 +424,79 @@ describe('main() — --dashboard-port wiring (devtools#752)', () => {
 
   it('exits 1 for --dashboard-port 70000 (out of range) without calling the factory', async () => {
     await main([...ARGS, '--dashboard-port', '70000']);
+    expect(process.exitCode).toBe(1);
+    expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `--pace` (devtools#767): the resolved value must reach BOTH halves of
+ * pacing — the factory's `paceMs` (page-side `__AIT_PACE_MS__` injection) and
+ * `runTestFilesOverRelay`'s `paceMs` (runner-side file-to-file spacing) — from
+ * the SAME resolved number, and must be entirely absent-as-zero when the flag
+ * (and AIT_PACE) are omitted (byte-for-byte pre-#767 behavior).
+ */
+describe('main() — --pace wiring (devtools#767)', () => {
+  const ORIGINAL_AIT_PACE = process.env.AIT_PACE;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    delete process.env.AIT_PACE;
+    discoverTestFilesMock.mockResolvedValue(['/abs/foo.ait.test.ts']);
+    factoryOpenMock.mockResolvedValue(FAKE_CONN);
+    runTestFilesOverRelayMock.mockResolvedValue({
+      totals: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      duration: 5,
+      files: [],
+      captures: [],
+    });
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+    if (ORIGINAL_AIT_PACE === undefined) {
+      delete process.env.AIT_PACE;
+    } else {
+      process.env.AIT_PACE = ORIGINAL_AIT_PACE;
+    }
+  });
+
+  it('no --pace / no AIT_PACE → factory and runner both receive paceMs: 0', async () => {
+    await main(ARGS);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMs).toBe(0);
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runOpts?.paceMs).toBe(0);
+  });
+
+  it('--pace 400 → factory and runner both receive paceMs: 400', async () => {
+    await main([...ARGS, '--pace', '400']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMs).toBe(400);
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runOpts?.paceMs).toBe(400);
+  });
+
+  it('AIT_PACE=250 env (no --pace flag) → wired through as 250', async () => {
+    process.env.AIT_PACE = '250';
+    await main(ARGS);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMs).toBe(250);
+  });
+
+  it('exits 1 for --pace -1 (invalid) without calling the factory', async () => {
+    await main([...ARGS, '--pace', '-1']);
     expect(process.exitCode).toBe(1);
     expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
   });
