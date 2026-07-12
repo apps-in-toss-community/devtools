@@ -144,12 +144,18 @@ function buildPacedFunction(
  * zero-diff-when-off contract holds under strict-equality checks, matching
  * `wrapSdkWithStub`'s own `enabled === false` fast path.
  *
- * **Memoization**: wrapper functions are cached per (sdk object, name) pair
- * via a `WeakMap<object, Map<string, Function>>` so repeated property access
- * on the same underlying `sdk` object returns the SAME wrapper reference —
- * mirroring `window.__sdk` itself being a stable singleton the runtime
- * installs once. This keeps function identity stable for callers that might
- * memoize/compare SDK function references across calls.
+ * **Memoization**: wrapper functions are cached per name in a `Map` local to
+ * this call's `Proxy` (`wrapperCache` below), so repeated property access on
+ * the SAME `sdk` object within a single `wrapWithMethodPacing` call returns
+ * the SAME wrapper reference. This cache does NOT persist across separate
+ * `wrapWithMethodPacing` calls — each call (e.g. the sdk-redirect virtual
+ * module re-evaluated per test file bundle) gets its own fresh `Map` and
+ * therefore its own wrapper function instances, even for the same method
+ * name. That's fine for pacing correctness: the actual timing state lives in
+ * the page-global `getRegistry()` map (keyed by method name, not by wrapper
+ * identity), so cross-bundle pacing still works. But callers should NOT
+ * assume cross-call function identity — only "same wrapper within one call"
+ * is guaranteed.
  */
 export function wrapWithMethodPacing(
   sdk: Record<string, unknown>,
