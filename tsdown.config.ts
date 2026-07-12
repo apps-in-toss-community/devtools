@@ -161,6 +161,9 @@ export default defineConfig([
       // Page-side bridge-stub interceptor (devtools#740, DT-2). Resolved the
       // same way as runtime.ts above (getBridgeStubPath() -> getPageSideModulePath()).
       'test-runner/bridge-stub': 'src/test-runner/bridge-stub.ts',
+      // Page-side per-method pacing wrapper (devtools#769). Resolved the same
+      // way as bridge-stub.ts above (getMethodPacePath() -> getPageSideModulePath()).
+      'test-runner/method-pace': 'src/test-runner/method-pace.ts',
       'test-runner/rpc': 'src/test-runner/rpc.ts',
       'test-runner/relay-worker': 'src/test-runner/relay-worker.ts',
       'test-runner/pool': 'src/test-runner/pool.ts',

@@ -70,6 +70,18 @@ OPTIONS
                           devtools#767) is rejecting rapid same-method calls —
                           3.x cells are unaffected by that limiter and do not
                           need this flag.
+  --pace-method <ms>      Minimum delay in ms BETWEEN calls to the SAME named
+                          SDK function — paces a same-method burst WITHIN a
+                          single test body (e.g. a clipboard happy-path loop
+                          calling setClipboardText/getClipboardText 8 times
+                          back to back), which --pace's test/file spacing
+                          cannot reach (devtools#769). Falls back to the
+                          AIT_PACE_METHOD env var when omitted (--pace-method
+                          takes precedence over the env var when both are
+                          given). Default: 250ms when --cell-sdk-line is 2.x
+                          (unset --cell-sdk-line also defaults to 2.x — see
+                          --cell-sdk-line), 0 (no added delay) otherwise. Pass
+                          --pace-method 0 to opt out even on a 2.x cell.
   --manual-blocking       Run manual-tagged test files (*.manual.ait.test.ts)
                           LAST, after all regular files, with a human present.
                           Before each manual file, the QR dashboard is pushed
@@ -217,22 +229,25 @@ export function resolveDashboardPort(raw: string | undefined): number | undefine
 }
 
 /**
- * Rewrites a lone `--pace <value>` pair from space syntax to `=` syntax
- * (`--pace=<value>`) when `<value>` starts with `-` (devtools#768 review).
+ * Rewrites a lone `--pace <value>` or `--pace-method <value>` pair from space
+ * syntax to `=` syntax (`--pace=<value>` / `--pace-method=<value>`) when
+ * `<value>` starts with `-` (devtools#768 review; extended to `--pace-method`
+ * in devtools#769).
  *
  * Node's `util.parseArgs` treats a `type: 'string'` option's value as
  * "ambiguous" and throws its OWN parser error whenever that value starts with
  * a dash and was passed via the space form (`--pace -1`) — it never reaches
- * this module's `resolvePace`, so the friendly
- * `'--pace must be a non-negative integer'` message (and its unit-tested path
- * in `resolvePace`) was unreachable from the real CLI entry point for the
- * single most natural way a user would try a negative value, even though
- * every other flag in {@link USAGE} is documented in space syntax.
+ * this module's `resolvePace`/`resolvePaceMethod`, so the friendly
+ * `'--pace must be a non-negative integer'` message (and its unit-tested path)
+ * was unreachable from the real CLI entry point for the single most natural
+ * way a user would try a negative value, even though every other flag in
+ * {@link USAGE} is documented in space syntax.
  *
- * Scoped narrowly to `--pace`/`--pace=...` tokens only — every other flag is
- * untouched, and positionals/other options keep flowing through `parseArgs`
- * unchanged. Only rewrites the space form; `--pace=-1` already parses fine
- * and is passed through untouched.
+ * Scoped narrowly to `--pace`/`--pace=...` and `--pace-method`/
+ * `--pace-method=...` tokens only — every other flag is untouched, and
+ * positionals/other options keep flowing through `parseArgs` unchanged. Only
+ * rewrites the space form; `--pace=-1`/`--pace-method=-1` already parse fine
+ * and are passed through untouched.
  *
  * Exported for unit testing.
  */
@@ -241,8 +256,13 @@ export function normalizePaceArgv(argv: string[]): string[] {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     const next = argv[i + 1];
-    if (arg === '--pace' && next !== undefined && next.startsWith('-') && next !== '--') {
-      out.push(`--pace=${next}`);
+    if (
+      (arg === '--pace' || arg === '--pace-method') &&
+      next !== undefined &&
+      next.startsWith('-') &&
+      next !== '--'
+    ) {
+      out.push(`${arg}=${next}`);
       i++; // consume the value token too
       continue;
     }
@@ -274,6 +294,61 @@ export function resolvePace(
   const ms = parseInt(raw, 10);
   if (Number.isNaN(ms) || ms < 0) {
     return '--pace must be a non-negative integer';
+  }
+  return ms;
+}
+
+/**
+ * The sdkLine-aware default for `--pace-method` when the flag AND
+ * `AIT_PACE_METHOD` are both omitted (devtools#769 acceptance criteria):
+ * `250` for a 2.x cell, `0` (no added delay) for everything else. This is the
+ * SAME 250ms preflight-proven-safe value `cell.ts#PROBE_INTER_CALL_DELAY_MS`
+ * uses — not re-derived, just referenced by value, since `cell.ts` is not
+ * imported here to avoid pulling its heavier CDP-typed graph onto this
+ * string-only resolver. `resolvedCellSdkLine` mirrors the same '2.x' fallback
+ * `main()` applies when `--cell-sdk-line` is omitted (`cell.sdkLine`, below)
+ * — an unspecified cell is treated as 2.x, the conservative default that also
+ * governs the permission preflight's own pacing (`cell.ts`'s
+ * `preflightSdkLine` doc).
+ *
+ * Exported for unit testing.
+ */
+export const DEFAULT_PACE_METHOD_MS_2X = 250;
+
+/**
+ * Parses `--pace-method` (falling back to the `AIT_PACE_METHOD` env var when
+ * the flag is omitted) into a validated millisecond per-method minimum
+ * interval (devtools#769).
+ *
+ * Precedence, highest first: `--pace-method` flag > `AIT_PACE_METHOD` env >
+ * sdkLine-aware default (`{@link DEFAULT_PACE_METHOD_MS_2X}` for a 2.x cell,
+ * `0` otherwise) — an EXPLICIT flag or env value always wins, including
+ * `--pace-method 0` to opt out on a 2.x cell. Mirrors `resolvePace`'s
+ * flag-over-env precedent, with the sdkLine default spliced in only when
+ * BOTH are absent.
+ *
+ * Returns an error string on invalid input (non-integer or negative), or the
+ * resolved delay (`>= 0`) on success. Exported for unit testing.
+ *
+ * @param rawFlag        - The raw `--pace-method` string value, if passed.
+ * @param rawEnv         - The raw `AIT_PACE_METHOD` env value, if set.
+ * @param resolvedCellSdkLine - The effective `cell.sdkLine` value (already
+ *   defaulted to '2.x' by the caller when `--cell-sdk-line` was omitted — see
+ *   `main()`'s `cell` construction) — used ONLY to pick the sdkLine-aware
+ *   default when both `rawFlag` and `rawEnv` are absent.
+ */
+export function resolvePaceMethod(
+  rawFlag: string | undefined,
+  rawEnv: string | undefined,
+  resolvedCellSdkLine: string,
+): number | string {
+  const raw = rawFlag ?? rawEnv;
+  if (raw === undefined) {
+    return resolvedCellSdkLine === '2.x' ? DEFAULT_PACE_METHOD_MS_2X : 0;
+  }
+  const ms = parseInt(raw, 10);
+  if (Number.isNaN(ms) || ms < 0) {
+    return '--pace-method must be a non-negative integer';
   }
   return ms;
 }
@@ -431,6 +506,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         headless: { type: 'boolean' },
         'project-root': { type: 'string' },
         pace: { type: 'string' },
+        'pace-method': { type: 'string' },
         'manual-blocking': { type: 'boolean' },
         'stub-blocking': { type: 'boolean' },
       } as const,
@@ -515,6 +591,22 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   // absent so artifacts still get a stable, meaningful cell suffix.
   const cell = { sdkLine: cellSdkLine ?? '2.x', platform: cellPlatform ?? 'mock' };
 
+  // devtools#769: sdkLine-aware default (250ms on a 2.x cell, 0 otherwise) —
+  // resolved AFTER `cell` above so `cell.sdkLine`'s own '2.x' fallback (when
+  // --cell-sdk-line is omitted) feeds the default. An explicit --pace-method
+  // flag or AIT_PACE_METHOD env always takes precedence over that default,
+  // including --pace-method 0 to opt out on a 2.x cell.
+  const paceMethodMs = resolvePaceMethod(
+    typeof vals['pace-method'] === 'string' ? vals['pace-method'] : undefined,
+    process.env.AIT_PACE_METHOD,
+    cell.sdkLine,
+  );
+  if (typeof paceMethodMs === 'string') {
+    process.stderr.write(`devtools-test: ${paceMethodMs}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
   // ── Step 2: discover test files ───────────────────────────────────────────
   const globs = parsed.positionals;
   if (globs.length === 0) {
@@ -565,6 +657,9 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   if (paceMs > 0) {
     process.stderr.write(`devtools-test: --pace ${paceMs}ms enabled (devtools#767)\n`);
   }
+  if (paceMethodMs > 0) {
+    process.stderr.write(`devtools-test: --pace-method ${paceMethodMs}ms enabled (devtools#769)\n`);
+  }
   const factory = createRelayConnectionFactory({
     schemeUrl,
     projectRoot,
@@ -580,6 +675,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     cell: hasCell ? cell : undefined,
     stubBlocking,
     paceMs,
+    paceMethodMs,
     onQrContent: (chunks) => {
       if (suppressQr) {
         process.stdout.write('QR suppressed (non-interactive)\n');

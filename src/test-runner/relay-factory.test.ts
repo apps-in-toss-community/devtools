@@ -1052,3 +1052,62 @@ describe('createRelayConnectionFactory — phase lifecycle (#730)', () => {
     await expect(factory.close(conn)).resolves.toBeUndefined();
   });
 });
+
+// ── __AIT_PACE_METHOD_MS__ page-global injection (devtools#769) ─────────────
+
+describe('createRelayConnectionFactory — paceMethodMs page-global injection (devtools#769)', () => {
+  const onQrContent = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prepareAttachMock.mockResolvedValue(passingPrepResult());
+    renderAndMaybeWaitMock.mockResolvedValue(passingWaitResult());
+    bootRelayFamilyMock.mockResolvedValue({
+      connection: fakeConnection,
+      stop: fakeStop,
+      getTunnelStatus: () => fakeTunnelStatus,
+    });
+  });
+
+  it('omitted paceMethodMs → injectGlobals is never called with __AIT_PACE_METHOD_MS__', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+    await factory.open();
+
+    const paceMethodCalls = injectGlobalsMock.mock.calls.filter((call) => {
+      const arg1 = (call as unknown[])[1];
+      return typeof arg1 === 'object' && arg1 !== null && '__AIT_PACE_METHOD_MS__' in arg1;
+    });
+    expect(paceMethodCalls).toHaveLength(0);
+  });
+
+  it('paceMethodMs: 0 → injectGlobals is never called with __AIT_PACE_METHOD_MS__ (zero-diff-when-off)', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      paceMethodMs: 0,
+      onQrContent,
+    });
+    await factory.open();
+
+    const paceMethodCalls = injectGlobalsMock.mock.calls.filter((call) => {
+      const arg1 = (call as unknown[])[1];
+      return typeof arg1 === 'object' && arg1 !== null && '__AIT_PACE_METHOD_MS__' in arg1;
+    });
+    expect(paceMethodCalls).toHaveLength(0);
+  });
+
+  it('paceMethodMs: 250 → injectGlobals is called with __AIT_PACE_METHOD_MS__: 250', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      paceMethodMs: 250,
+      onQrContent,
+    });
+    await factory.open();
+
+    expect(injectGlobalsMock).toHaveBeenCalledWith(fakeConnection, {
+      __AIT_PACE_METHOD_MS__: 250,
+    });
+  });
+});

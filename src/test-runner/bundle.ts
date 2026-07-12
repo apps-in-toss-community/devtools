@@ -140,7 +140,64 @@ const SDK_IMPORT_FILTER = new RegExp(`^${SDK_PACKAGE.replace(/[.*+?^${}()|[\]\\]
  * `--stub-blocking` flag). Default off => zero behavior change: every existing
  * (non-stub) test run resolves the exact same `window.__sdk` reference it did
  * before this plugin learned about stubbing.
+ *
+ * Per-method pacing (devtools#769): BEFORE the stub wrap, `window.__sdk` is
+ * run through `wrapWithMethodPacing`, which enforces a minimum interval
+ * between calls to the SAME named SDK function (`getPaceMethodMs()` reads the
+ * `__AIT_PACE_METHOD_MS__` page global — see `method-pace.ts`). Composition
+ * order is pacing INSIDE the stub (`wrapSdkWithStub(wrapWithMethodPacing(sdk,
+ * gap), enabled)`): a stubbed name resolves instantly from
+ * `bridge-stub.ts`'s fixtures without ever reaching the paced wrapper, and
+ * only calls that fall through to the real bridge — the ones that can
+ * actually trigger `APP_BRIDGE_THROTTLED` — pay the pacing cost. `gapMs <= 0`
+ * (default, no `--pace-method` / non-2.x cell) is a no-op fast path — see
+ * `method-pace.ts#wrapWithMethodPacing`'s doc for the full contract.
  */
+/**
+ * Builds the virtual CommonJS-style module contents the `sdk-redirect`
+ * esbuild plugin loads for every `@apps-in-toss/web-framework` import.
+ *
+ * Pulled out to a pure, exported function (rather than inlined at the
+ * `build.onLoad` call site) so unit tests can assert the exact composition
+ * order (pacing wraps the raw SDK; the stub wraps the paced result) as a
+ * string-level contract, independent of esbuild — esbuild cannot run inside
+ * this repo's jsdom vitest environment (see `bundleTestFile`'s module doc's
+ * lazy-import note), so a real bundling round-trip is out of unit-test reach
+ * here; `wrapSdkWithStub`/`wrapWithMethodPacing`'s own composed-call behavior
+ * is covered directly (see `bundle.test.ts`).
+ *
+ * Generates a virtual CommonJS-style module so that esbuild does NOT perform
+ * strict named-export matching. When `format:'iife'` bundles a CJS module, it
+ * wraps it with its own `__toCommonJS` helper and satisfies named imports via
+ * property access on the `module.exports` object — which is our Proxy. This
+ * means `import { getPlatformOS } from '...'` becomes
+ * `__proxy.getPlatformOS` at runtime, which correctly reads from
+ * `window.__sdk`.
+ *
+ * The bridge-stub and method-pace imports are STATIC imports of the real
+ * `bridge-stub.ts`/`method-pace.ts` modules (not inlined JS) so esbuild
+ * bundles each once and the fixture registry / pacing registry have a single
+ * source of truth shared with their own unit tests.
+ *
+ * Exported for unit testing.
+ */
+export function buildSdkRedirectModuleContents(): string {
+  return `
+import { wrapSdkWithStub, isStubBlockingEnabled } from ${JSON.stringify(getBridgeStubPath())};
+import { wrapWithMethodPacing, getPaceMethodMs } from ${JSON.stringify(getMethodPacePath())};
+var __rawSdk = (typeof window !== 'undefined' && window.__sdk)
+  ? window.__sdk
+  : new Proxy({}, {
+      get: function(_t, p) {
+        throw new Error('window.__sdk is not installed — run in a dog-food build. Missing: ' + String(p));
+      }
+    });
+var __pacedSdk = wrapWithMethodPacing(__rawSdk, getPaceMethodMs());
+var __proxy = wrapSdkWithStub(__pacedSdk, isStubBlockingEnabled());
+module.exports = __proxy;
+`;
+}
+
 function sdkRedirectPlugin(): esbuild.Plugin {
   return {
     name: 'sdk-redirect',
@@ -152,34 +209,13 @@ function sdkRedirectPlugin(): esbuild.Plugin {
       }));
 
       build.onLoad({ filter: /.*/, namespace: 'sdk-redirect' }, () => ({
-        // Generate a virtual CommonJS-style module so that esbuild does NOT perform
-        // strict named-export matching. When `format:'iife'` bundles a CJS module,
-        // it wraps it with its own __toCommonJS helper and satisfies named imports
-        // via property access on the module.exports object — which is our Proxy.
-        // This means `import { getPlatformOS } from '...'` becomes
-        // `__proxy.getPlatformOS` at runtime, which correctly reads from window.__sdk.
-        //
-        // The bridge-stub import is a STATIC import of the real `bridge-stub.ts`
-        // module (not inlined JS) so esbuild bundles it once and the fixture
-        // registry has a single source of truth shared with its own unit tests.
-        contents: `
-import { wrapSdkWithStub, isStubBlockingEnabled } from ${JSON.stringify(getBridgeStubPath())};
-var __rawSdk = (typeof window !== 'undefined' && window.__sdk)
-  ? window.__sdk
-  : new Proxy({}, {
-      get: function(_t, p) {
-        throw new Error('window.__sdk is not installed — run in a dog-food build. Missing: ' + String(p));
-      }
-    });
-var __proxy = wrapSdkWithStub(__rawSdk, isStubBlockingEnabled());
-module.exports = __proxy;
-`,
+        contents: buildSdkRedirectModuleContents(),
         loader: 'js',
         // resolveDir is required so esbuild can resolve the absolute
-        // getBridgeStubPath() import above from a filesystem base — a virtual
-        // module has no implicit directory of its own. process.cwd() is a
-        // safe base for an ABSOLUTE import specifier (it is never used to
-        // resolve anything relative).
+        // getBridgeStubPath()/getMethodPacePath() imports above from a
+        // filesystem base — a virtual module has no implicit directory of
+        // its own. process.cwd() is a safe base for an ABSOLUTE import
+        // specifier (it is never used to resolve anything relative).
         resolveDir: process.cwd(),
       }));
     },
@@ -452,6 +488,15 @@ function getRuntimePath(): string {
  */
 function getBridgeStubPath(): string {
   return getPageSideModulePath('bridge-stub');
+}
+
+/**
+ * Absolute path to the per-method pacing wrapper (devtools#769) —
+ * `wrapWithMethodPacing`/`getPaceMethodMs`, statically imported by the
+ * `sdk-redirect` virtual module.
+ */
+function getMethodPacePath(): string {
+  return getPageSideModulePath('method-pace');
 }
 
 /**
