@@ -69,6 +69,7 @@ const {
   resolveTimeouts,
   resolveDashboardPort,
   resolvePace,
+  resolvePaceMethod,
   normalizePaceArgv,
   renderSummary,
 } = await import('./cli.js');
@@ -312,7 +313,48 @@ describe('resolvePace — --pace / AIT_PACE validation (devtools#767)', () => {
   });
 });
 
-describe('normalizePaceArgv — space-syntax negative value rewrite (devtools#768 review)', () => {
+describe('resolvePaceMethod — --pace-method / AIT_PACE_METHOD validation (devtools#769)', () => {
+  it('both omitted, 2.x cell → sdkLine-aware default 250', () => {
+    expect(resolvePaceMethod(undefined, undefined, '2.x')).toBe(250);
+  });
+
+  it('both omitted, 3.x cell → default 0', () => {
+    expect(resolvePaceMethod(undefined, undefined, '3.x')).toBe(0);
+  });
+
+  it('both omitted, unrecognized sdkLine → default 0 (only exact "2.x" gets 250)', () => {
+    expect(resolvePaceMethod(undefined, undefined, 'unknown')).toBe(0);
+  });
+
+  it('--pace-method 400 on a 2.x cell → explicit flag wins over the sdkLine default', () => {
+    expect(resolvePaceMethod('400', undefined, '2.x')).toBe(400);
+  });
+
+  it('--pace-method 0 on a 2.x cell → explicit opt-out wins over the sdkLine default', () => {
+    expect(resolvePaceMethod('0', undefined, '2.x')).toBe(0);
+  });
+
+  it('AIT_PACE_METHOD env used when --pace-method omitted, wins over sdkLine default', () => {
+    expect(resolvePaceMethod(undefined, '300', '2.x')).toBe(300);
+  });
+
+  it('--pace-method takes precedence over AIT_PACE_METHOD when both are given', () => {
+    expect(resolvePaceMethod('500', '300', '2.x')).toBe(500);
+  });
+
+  it('--pace-method -1 (negative) → error string', () => {
+    const result = resolvePaceMethod('-1', undefined, '2.x');
+    expect(typeof result).toBe('string');
+    expect(result as string).toMatch(/--pace-method/);
+  });
+
+  it('--pace-method abc (non-numeric) → error string', () => {
+    const result = resolvePaceMethod('abc', undefined, '2.x');
+    expect(typeof result).toBe('string');
+  });
+});
+
+describe('normalizePaceArgv — space-syntax negative value rewrite (devtools#768 review; devtools#769 extends to --pace-method)', () => {
   it('--pace -1 (space syntax) → rewritten to --pace=-1', () => {
     expect(normalizePaceArgv(['--pace', '-1'])).toEqual(['--pace=-1']);
   });
@@ -333,6 +375,25 @@ describe('normalizePaceArgv — space-syntax negative value rewrite (devtools#76
     expect(
       normalizePaceArgv(['**/*.ait.test.ts', '--pace', '-1', '--headless', '--timeout', '5000']),
     ).toEqual(['**/*.ait.test.ts', '--pace=-1', '--headless', '--timeout', '5000']);
+  });
+
+  it('--pace-method -1 (space syntax) → rewritten to --pace-method=-1', () => {
+    expect(normalizePaceArgv(['--pace-method', '-1'])).toEqual(['--pace-method=-1']);
+  });
+
+  it('--pace-method=-1 (already = syntax) → passed through unchanged', () => {
+    expect(normalizePaceArgv(['--pace-method=-1'])).toEqual(['--pace-method=-1']);
+  });
+
+  it('--pace-method 400 (positive value) → passed through unchanged (no rewrite needed)', () => {
+    expect(normalizePaceArgv(['--pace-method', '400'])).toEqual(['--pace-method', '400']);
+  });
+
+  it('handles --pace and --pace-method together, each rewritten independently', () => {
+    expect(normalizePaceArgv(['--pace', '-1', '--pace-method', '-2'])).toEqual([
+      '--pace=-1',
+      '--pace-method=-2',
+    ]);
   });
 });
 
@@ -554,6 +615,122 @@ describe('main() — --pace wiring (devtools#767)', () => {
       | Record<string, unknown>
       | undefined;
     expect(runOpts?.preflightSdkLine).toBe('3.x');
+  });
+});
+
+/**
+ * `--pace-method` (devtools#769): the resolved value must reach the
+ * factory's `paceMethodMs` (page-side `__AIT_PACE_METHOD_MS__` injection) —
+ * this is a PAGE-only pacing mechanism (unlike `--pace`, it has no
+ * runner-side/`runTestFilesOverRelay` half) — and must default to 250ms on a
+ * 2.x cell (including the unspecified-cell fallback, which is also '2.x'),
+ * 0 otherwise, unless an explicit flag/env overrides it.
+ */
+describe('main() — --pace-method wiring (devtools#769)', () => {
+  const ORIGINAL_AIT_PACE_METHOD = process.env.AIT_PACE_METHOD;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    delete process.env.AIT_PACE_METHOD;
+    discoverTestFilesMock.mockResolvedValue(['/abs/foo.ait.test.ts']);
+    factoryOpenMock.mockResolvedValue(FAKE_CONN);
+    runTestFilesOverRelayMock.mockResolvedValue({
+      totals: { passed: 1, failed: 0, skipped: 0, total: 1 },
+      duration: 5,
+      files: [],
+      captures: [],
+    });
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+    if (ORIGINAL_AIT_PACE_METHOD === undefined) {
+      delete process.env.AIT_PACE_METHOD;
+    } else {
+      process.env.AIT_PACE_METHOD = ORIGINAL_AIT_PACE_METHOD;
+    }
+  });
+
+  it('no --pace-method / no AIT_PACE_METHOD, no --cell-sdk-line → factory receives paceMethodMs: 250 (2.x default fallback)', async () => {
+    await main(ARGS);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(250);
+  });
+
+  it('--cell-sdk-line 3.x, no --pace-method → factory receives paceMethodMs: 0', async () => {
+    await main([...ARGS, '--cell-sdk-line', '3.x']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(0);
+  });
+
+  it('--cell-sdk-line 2.x (explicit), no --pace-method → factory receives paceMethodMs: 250', async () => {
+    await main([...ARGS, '--cell-sdk-line', '2.x']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(250);
+  });
+
+  it('--pace-method 400 on a 2.x cell → explicit flag overrides the sdkLine default', async () => {
+    await main([...ARGS, '--pace-method', '400']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(400);
+  });
+
+  it('--pace-method 0 on a 2.x cell → explicit opt-out overrides the sdkLine default', async () => {
+    await main([...ARGS, '--pace-method', '0']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(0);
+  });
+
+  it('AIT_PACE_METHOD=300 env (no --pace-method flag) → wired through as 300, overriding the sdkLine default', async () => {
+    process.env.AIT_PACE_METHOD = '300';
+    await main(ARGS);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(300);
+  });
+
+  it('--pace-method takes precedence over AIT_PACE_METHOD when both are given', async () => {
+    process.env.AIT_PACE_METHOD = '300';
+    await main([...ARGS, '--pace-method', '500']);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(factoryOpts?.paceMethodMs).toBe(500);
+  });
+
+  it('exits 1 for --pace-method -1 (invalid) without calling the factory', async () => {
+    await main([...ARGS, '--pace-method', '-1']);
+    expect(process.exitCode).toBe(1);
+    expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+
+  it("--pace-method -1 (space syntax) surfaces resolvePaceMethod's message, not a Node parser error", async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await main([...ARGS, '--pace-method', '-1']);
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toContain('--pace-method must be a non-negative integer');
+    expect(written).not.toContain('ambiguous');
+    stderrSpy.mockRestore();
+  });
+
+  it('paceMethodMs is NOT forwarded to runTestFilesOverRelay — it is a page-only pacing mechanism', async () => {
+    await main([...ARGS, '--pace-method', '400']);
+    const runOpts = runTestFilesOverRelayMock.mock.calls[0]?.[2] as
+      | Record<string, unknown>
+      | undefined;
+    expect(runOpts?.paceMethodMs).toBeUndefined();
   });
 });
 

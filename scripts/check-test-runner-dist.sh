@@ -33,6 +33,11 @@ REQUIRED=(
   # dist for the same reason runtime.js must.
   "dist/test-runner/bridge-stub.js"
   "dist/test-runner/bridge-stub.d.ts"
+  # devtools#769: method-pace is resolved via the SAME depth-robust
+  # getPageSideModulePath() helper as runtime.js/bridge-stub.js (bundle.ts) —
+  # must exist in dist for the same reason those must.
+  "dist/test-runner/method-pace.js"
+  "dist/test-runner/method-pace.d.ts"
 )
 
 fail=0

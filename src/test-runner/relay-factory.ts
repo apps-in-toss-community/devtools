@@ -100,6 +100,18 @@ export interface RelayConnectionFactoryOptions {
    */
   paceMs?: number;
   /**
+   * Injects `__AIT_PACE_METHOD_MS__ = paceMethodMs` before the first test
+   * bundle runs (devtools#769) — `bundle.ts`'s sdk-redirect virtual module
+   * reads this page global via `method-pace.ts#getPaceMethodMs()` and paces
+   * every SDK call to a minimum interval BETWEEN calls to the SAME named
+   * function, independent of `--pace`'s test-to-test/file-to-file spacing.
+   * Optional — omitted/0 means no flag is injected, which is byte-for-byte
+   * the pre-#769 behavior (`getPaceMethodMs()` treats an absent/non-positive
+   * value as "no pacing", and `wrapWithMethodPacing` returns the SDK object
+   * untouched in that case). Not a secret.
+   */
+  paceMethodMs?: number;
+  /**
    * Overrides the dashboard HTTP server's bind base port (devtools#752).
    * Threaded straight through to `startQrHttpServer`'s `dashboardPort`
    * option — see that option's doc for the increment-on-EADDRINUSE scan
@@ -458,6 +470,16 @@ export function createRelayConnectionFactory(
       // treats identically to a literal `0` (zero-diff-when-off).
       if (opts.paceMs !== undefined && opts.paceMs > 0) {
         await injectGlobals(booted.connection, { __AIT_PACE_MS__: opts.paceMs });
+      }
+
+      // devtools#769: inject the page-side --pace-method pacing value,
+      // session-global like __AIT_PACE_MS__ above. Only injected when
+      // positive — omitted/0 means method-pace.ts's own
+      // `__AIT_PACE_METHOD_MS__` read sees `undefined`, which its
+      // `typeof raw === 'number' && raw > 0` guard treats identically to a
+      // literal `0` (zero-diff-when-off).
+      if (opts.paceMethodMs !== undefined && opts.paceMethodMs > 0) {
+        await injectGlobals(booted.connection, { __AIT_PACE_METHOD_MS__: opts.paceMethodMs });
       }
 
       return booted.connection;
