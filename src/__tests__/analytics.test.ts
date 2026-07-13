@@ -42,6 +42,26 @@ describe('Analytics mock', () => {
     expect(logs[0].params).toEqual({ log_name: 'purchase', item: 'gem', count: 100 });
   });
 
+  // 실기기(2.x×iOS) capture는 이 네 메서드가 `undefined`가 아니라 `null`로 resolve됨을
+  // 보였다(devtools#770) — env1↔env3 반환-shape 동치를 여기서 고정한다.
+  it('Analytics.screen: null로 resolve된다 (실기기 동치)', async () => {
+    await expect(Analytics.screen({ log_name: 'home' })).resolves.toBeNull();
+  });
+
+  it('Analytics.impression: null로 resolve된다 (실기기 동치)', async () => {
+    await expect(Analytics.impression({ log_name: 'banner' })).resolves.toBeNull();
+  });
+
+  it('Analytics.click: null로 resolve된다 (실기기 동치)', async () => {
+    await expect(Analytics.click({ log_name: 'cta_button' })).resolves.toBeNull();
+  });
+
+  it('eventLog: null로 resolve된다 (실기기 동치)', async () => {
+    await expect(
+      eventLog({ log_name: 'purchase', log_type: 'event', params: {} }),
+    ).resolves.toBeNull();
+  });
+
   it('여러 이벤트가 순서대로 쌓인다', async () => {
     await Analytics.screen({ log_name: 'page1' });
     await Analytics.click({ log_name: 'btn1' });

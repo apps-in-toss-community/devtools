@@ -115,6 +115,13 @@ describe('Device mock', () => {
         expect(text).toBe('hello');
       });
 
+      // 실기기(2.x×iOS) capture는 setClipboardText가 `undefined`가 아니라
+      // `{ text: <설정한 문자열> }` 객체로 resolve됨을 보였다(devtools#770,
+      // returnType: "object", valueKeys: ["text"]) — env1↔env3 반환-shape 동치를 여기서 고정한다.
+      it('setClipboardText: { text }로 resolve된다 (실기기 동치)', async () => {
+        await expect(setClipboardText('hello')).resolves.toEqual({ text: 'hello' });
+      });
+
       it('reset 후 clipboardText가 초기화된다', async () => {
         await setClipboardText('test');
         aitState.reset();
