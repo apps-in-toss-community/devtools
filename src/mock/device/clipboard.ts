@@ -28,10 +28,12 @@ const _setClipboardText = async (text: string): Promise<void> => {
   const mode = aitState.state.deviceModes.clipboard;
   if (mode === 'mock') {
     aitState.patch('mockData', { clipboardText: text });
+    // biome-ignore lint/suspicious/noConfusingVoidType: 원본 SDK 시그니처(Promise<void>) 유지 + 실측({text}) 캐스트
     return { text } as unknown as void;
   }
   // web mode (default)
   await navigator.clipboard.writeText(text);
+  // biome-ignore lint/suspicious/noConfusingVoidType: 원본 SDK 시그니처(Promise<void>) 유지 + 실측({text}) 캐스트
   return { text } as unknown as void;
 };
 export const setClipboardText = withPermission(_setClipboardText, 'clipboard');

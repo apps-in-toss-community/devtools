@@ -16,14 +16,17 @@ type LoggerParams = { log_name?: string } & Record<string, Primitive>;
 export const Analytics = {
   screen: (params?: LoggerParams): Promise<void> | undefined => {
     aitState.logAnalytics({ type: 'screen', params: params ?? {} });
+    // biome-ignore lint/suspicious/noConfusingVoidType: 원본 SDK 시그니처(Promise<void>) 유지 + 실측(null) 캐스트
     return Promise.resolve(null as unknown as void);
   },
   impression: (params?: LoggerParams): Promise<void> | undefined => {
     aitState.logAnalytics({ type: 'impression', params: params ?? {} });
+    // biome-ignore lint/suspicious/noConfusingVoidType: 원본 SDK 시그니처(Promise<void>) 유지 + 실측(null) 캐스트
     return Promise.resolve(null as unknown as void);
   },
   click: (params?: LoggerParams): Promise<void> | undefined => {
     aitState.logAnalytics({ type: 'click', params: params ?? {} });
+    // biome-ignore lint/suspicious/noConfusingVoidType: 원본 SDK 시그니처(Promise<void>) 유지 + 실측(null) 캐스트
     return Promise.resolve(null as unknown as void);
   },
 };
@@ -37,5 +40,6 @@ export async function eventLog(params: {
     type: params.log_type,
     params: { log_name: params.log_name, ...params.params },
   });
+  // biome-ignore lint/suspicious/noConfusingVoidType: 원본 SDK 시그니처(Promise<void>) 유지 + 실측(null) 캐스트
   return null as unknown as void;
 }
