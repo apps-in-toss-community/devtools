@@ -2,12 +2,21 @@
  * 인증/로그인 mock
  */
 
+import { buildNativeError } from '../native-error.js';
 import { aitState } from '../state.js';
 
 export async function appLogin(): Promise<{
   authorizationCode: string;
   referrer: 'DEFAULT' | 'SANDBOX';
 }> {
+  // 실패-모드 다이얼 (devtools#770): aitState.patch('failureModes', { appLogin: 'APP_LOGIN' })
+  // 로 설정하면 실기기 프로비저닝 실패(APP_LOGIN)를 그대로 재현한다. 미설정 시 기존처럼
+  // 항상 resolve (zero behavior change).
+  const failureCode = aitState.state.failureModes.appLogin;
+  if (failureCode) {
+    throw buildNativeError(failureCode);
+  }
+
   return {
     authorizationCode: `mock-auth-${crypto.randomUUID()}`,
     referrer: aitState.state.environment === 'toss' ? 'DEFAULT' : 'SANDBOX',
