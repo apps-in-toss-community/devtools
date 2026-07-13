@@ -1111,3 +1111,149 @@ describe('createRelayConnectionFactory — paceMethodMs page-global injection (d
     });
   });
 });
+
+// ── env-2 launcher-attach mode (devtools#774) ────────────────────────────────
+//
+// `attachLauncher: true` must route through prepareAttach's `relay-mobile`
+// branch (the env-2 launcher path, #378) instead of `relay-dev`, threading the
+// consumer dev-server tunnel URL via AIT_TUNNEL_BASE_URL. The relay boot / QR /
+// dashboard / attach-wait wiring is unchanged — only the env + attach-URL family
+// differ. The default (no flag) must stay byte-for-byte the env-3 scheme path.
+//
+// SECRET-HANDLING: appUrl is a synthetic placeholder tunnel host; assertions
+// verify it is passed via env (read by the mocked prepareAttach) and NOT
+// written to stderr.
+
+describe('createRelayConnectionFactory — env-2 launcher-attach mode (devtools#774)', () => {
+  const onQrContent = vi.fn();
+  /** Synthetic consumer dev-server tunnel URL — no real host. */
+  const SYNTHETIC_APP_URL = 'https://synthetic-placeholder.trycloudflare.com';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prepareAttachMock.mockResolvedValue(passingPrepResult());
+    renderAndMaybeWaitMock.mockResolvedValue(passingWaitResult());
+    bootRelayFamilyMock.mockResolvedValue({
+      connection: fakeConnection,
+      stop: fakeStop,
+      getTunnelStatus: () => fakeTunnelStatus,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    // The factory restores AIT_TUNNEL_BASE_URL itself, but clear it defensively
+    // so a bug leaking it cannot bleed across tests.
+    delete process.env.AIT_TUNNEL_BASE_URL;
+  });
+
+  it('calls prepareAttach with env "relay-mobile" (not "relay-dev")', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: '',
+      attachLauncher: true,
+      appUrl: SYNTHETIC_APP_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    expect(prepareAttachMock).toHaveBeenCalledOnce();
+    // prepareAttach(deps, env, args, conn) — 2nd positional is the env.
+    expect(prepareAttachMock.mock.calls[0]?.[1]).toBe('relay-mobile');
+    // args must NOT carry a scheme_url in launcher mode.
+    const args = prepareAttachMock.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(args?.scheme_url).toBeUndefined();
+  });
+
+  it('sets AIT_TUNNEL_BASE_URL from appUrl while prepareAttach runs, then restores it', async () => {
+    // Capture the env value AS SEEN inside prepareAttach (the relay-mobile
+    // branch reads process.env.AIT_TUNNEL_BASE_URL). Restore afterwards so the
+    // factory's own restore is observable.
+    let envDuringPrepare: string | undefined;
+    prepareAttachMock.mockImplementationOnce(() => {
+      envDuringPrepare = process.env.AIT_TUNNEL_BASE_URL;
+      return Promise.resolve(passingPrepResult());
+    });
+
+    const priorValue = 'prior-placeholder';
+    process.env.AIT_TUNNEL_BASE_URL = priorValue;
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: '',
+      attachLauncher: true,
+      appUrl: SYNTHETIC_APP_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    // During prepareAttach, the env var reflects appUrl.
+    expect(envDuringPrepare).toBe(SYNTHETIC_APP_URL);
+    // After open(), the prior value is restored (no leak past this attach).
+    expect(process.env.AIT_TUNNEL_BASE_URL).toBe(priorValue);
+  });
+
+  it('restores AIT_TUNNEL_BASE_URL to undefined when it was unset before', async () => {
+    delete process.env.AIT_TUNNEL_BASE_URL;
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: '',
+      attachLauncher: true,
+      appUrl: SYNTHETIC_APP_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    expect(process.env.AIT_TUNNEL_BASE_URL).toBeUndefined();
+  });
+
+  it('getDashboardState() reports mode "relay-mobile" in launcher mode', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: '',
+      attachLauncher: true,
+      appUrl: SYNTHETIC_APP_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    const getDashboardState = capturedGetDashboardState();
+    expect(getDashboardState().mode).toBe('relay-mobile');
+  });
+
+  it('does NOT write the appUrl (tunnel host) to stderr (SECRET-HANDLING)', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    const factory = createRelayConnectionFactory({
+      schemeUrl: '',
+      attachLauncher: true,
+      appUrl: SYNTHETIC_APP_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    const allStderr = stderrSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(allStderr).not.toContain(SYNTHETIC_APP_URL);
+    expect(allStderr).not.toContain('trycloudflare.com');
+
+    stderrSpy.mockRestore();
+  });
+
+  it('default (no attachLauncher) still uses env-3 scheme path — mode relay-dev, prepareAttach relay-dev', async () => {
+    const factory = createRelayConnectionFactory({
+      schemeUrl: SYNTHETIC_SCHEME_URL,
+      onQrContent,
+    });
+
+    await factory.open();
+
+    expect(prepareAttachMock.mock.calls[0]?.[1]).toBe('relay-dev');
+    const args = prepareAttachMock.mock.calls[0]?.[2] as Record<string, unknown>;
+    expect(args?.scheme_url).toBe(SYNTHETIC_SCHEME_URL);
+    expect(capturedGetDashboardState()().mode).toBe('relay-dev');
+    // Env-3 path must never touch AIT_TUNNEL_BASE_URL.
+    expect(process.env.AIT_TUNNEL_BASE_URL).toBeUndefined();
+  });
+});

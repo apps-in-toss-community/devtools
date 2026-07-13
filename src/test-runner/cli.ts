@@ -33,7 +33,21 @@ USAGE
 
 OPTIONS
   --scheme-url <url>      intoss-private:// URL from \`ait deploy --scheme-only\`
-                          (required for standalone relay attach / env3)
+                          (required for standalone relay attach / env3). Unused
+                          and ignored when --attach-launcher is set.
+  --attach-launcher       Attach over the env-2 AITC Sandbox PWA launcher
+                          (real-device WebKit) instead of the env-3 intoss
+                          scheme deep-link. The relay/QR/dashboard/attach-wait
+                          are identical; only the QR is a launcher deep-link.
+                          Requires --app-url. The SDK still hits the mock in
+                          env 2, so this measures the mock + standard Web API
+                          layer's engine-attributable behavior (env1↔env2
+                          equivalence), NOT native-bridge fidelity (that is env3).
+  --app-url <url>         The consumer dev server's HTTP tunnel URL (e.g. the
+                          *.trycloudflare.com URL from \`pnpm dev:phone:cdp\`)
+                          that the launcher PWA frames. REQUIRED with
+                          --attach-launcher; ignored otherwise. SECRET: a tunnel
+                          host — never printed; it rides only inside the QR.
   --timeout <ms>          Per-file evaluate timeout in ms (default: 60000).
                           Controls how long a single test file is allowed to run
                           before it is considered hung. Does NOT affect how long
@@ -45,7 +59,10 @@ OPTIONS
                           Pass a value to bound the wait for CI/headless runs.
   --cell-sdk-line <line>  SDK line to inject as __AIT_CELL__.sdkLine (2.x|3.x)
   --cell-platform <plat>  Platform to inject as __AIT_CELL__.platform
-                          (mock|ios|android, default: AIT_CELL_PLATFORM env)
+                          (mock|ios|android|ios-pwa, default: AIT_CELL_PLATFORM
+                          env). Use ios-pwa for env-2 (--attach-launcher) runs
+                          so env1(mock@desktop) and env2(mock@WebKit) captures
+                          stay distinguishable. An unknown value is rejected.
   --report-dir <dir>      Persist a runner-agnostic report + captures to <dir>
                           (report: <sdkLine>.<platform>.json; captures:
                           <dir>/.ait-capture/<category>.<sdkLine>.<platform>.json).
@@ -134,13 +151,21 @@ DESCRIPTION
   The test files run against the live relay connection started by this process;
   no separate MCP daemon is required.
 
-EXAMPLE
+EXAMPLE (env 3 — intoss-private scheme)
   devtools-test 'src/**/*.ait.test.ts' \\
     --scheme-url "intoss-private://..." \\
     --cell-sdk-line 3.x \\
     --cell-platform ios \\
     --report-dir .ait-report \\
     --timeout 60000
+
+EXAMPLE (env 2 — AITC Sandbox PWA launcher)
+  devtools-test 'src/**/*.ait.test.ts' \\
+    --attach-launcher \\
+    --app-url "https://<subdomain>.trycloudflare.com" \\
+    --cell-sdk-line 3.x \\
+    --cell-platform ios-pwa \\
+    --report-dir .ait-report
 
 `.trimStart();
 
@@ -354,6 +379,56 @@ export function resolvePaceMethod(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Cell platform validation (exported for unit tests)                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The set of `__AIT_CELL__.platform` values the runner accepts (devtools#774).
+ *
+ * `mock`/`ios`/`android` mirror sdk-example `aitCapture`'s existing `Platform`
+ * union; `ios-pwa` is the new env-2 axis value (issue #774) — env 1 is
+ * mock@desktop-Chromium and env 2 is mock@real-device-WebKit, so the two share
+ * `sdkLine`/`ios` but must be DISTINGUISHABLE in the capture cell to diff
+ * engine-attributable differences. `ios-pwa` names "mock SDK, real-device iOS
+ * WebKit via the launcher PWA" — it is NOT `ios` (which is env 3's native
+ * bridge). The consuming `aitCapture` type extension is a separate sdk-example
+ * PR (out of scope here); the runner only needs to inject + validate the label.
+ *
+ * Kept as a validated allowlist (rather than a free string) purely as a
+ * typo guard: `platform` flows into report/capture FILENAMES
+ * (`<sdkLine>.<platform>.json`), so a silent typo would fork the artifact set
+ * and break offline diffing. This is the first validation on `--cell-platform`
+ * — before #774 it was an unvalidated free string defaulting to `mock`.
+ */
+export const ALLOWED_CELL_PLATFORMS = ['mock', 'ios', 'android', 'ios-pwa'] as const;
+
+/**
+ * Validates a resolved `--cell-platform` value against {@link ALLOWED_CELL_PLATFORMS}.
+ *
+ * `undefined` (flag + `AIT_CELL_PLATFORM` env both absent) passes through as
+ * `{ ok: true, value: undefined }` — the caller applies its own `'mock'`
+ * default, so an omitted platform is never an error. A present-but-unknown
+ * value returns `{ ok: false, error }` naming the allowed set.
+ *
+ * Uses a tagged result (not the `string`-is-error convention of
+ * `resolveDashboardPort`/`resolvePace`) because BOTH the success value and the
+ * error message are strings here — a bare `string` return would be ambiguous.
+ * Exported for unit testing.
+ */
+export function resolveCellPlatform(
+  raw: string | undefined,
+): { ok: true; value: string | undefined } | { ok: false; error: string } {
+  if (raw === undefined) return { ok: true, value: undefined };
+  if ((ALLOWED_CELL_PLATFORMS as readonly string[]).includes(raw)) {
+    return { ok: true, value: raw };
+  }
+  return {
+    ok: false,
+    error: `--cell-platform must be one of ${ALLOWED_CELL_PLATFORMS.join('|')} (got "${raw}")`,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Per-file summary rendering (exported for unit tests)                        */
 /* -------------------------------------------------------------------------- */
 
@@ -464,8 +539,8 @@ export function shouldSuppressQr(noQrFlag: boolean): boolean {
  *
  * 1. Parse args: globs, --timeout (per-file evaluate), --attach-timeout (QR
  *    scan wait), --cell-sdk-line, --cell-platform, --scheme-url (required for
- *    env3), --report-dir, --dashboard-port, --no-qr-stdout, --headless,
- *    --project-root.
+ *    env3) OR --attach-launcher + --app-url (env2, devtools#774), --report-dir,
+ *    --dashboard-port, --no-qr-stdout, --headless, --project-root.
  * 2. Discover test files; exit 1 if none.
  * 3. factory.open() — boot relay → render QR (suppressed on non-interactive
  *    stdout) → wait for phone (up to attachTimeoutMs) → inject cell →
@@ -498,6 +573,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         timeout: { type: 'string' },
         'attach-timeout': { type: 'string' },
         'scheme-url': { type: 'string' },
+        'attach-launcher': { type: 'boolean' },
+        'app-url': { type: 'string' },
         'cell-sdk-line': { type: 'string' },
         'cell-platform': { type: 'string' },
         'report-dir': { type: 'string' },
@@ -540,11 +617,27 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
   const { evaluateTimeoutMs, attachTimeoutMs } = timeouts;
 
+  // env-2 (launcher, devtools#774) vs env-3 (scheme) attach selection. In
+  // launcher mode --scheme-url is unused/ignored and --app-url (the consumer
+  // dev server's tunnel URL) is required; otherwise --scheme-url is required.
+  const attachLauncher = vals['attach-launcher'] === true;
   const schemeUrl = typeof vals['scheme-url'] === 'string' ? vals['scheme-url'] : '';
-  if (schemeUrl === '') {
+  const appUrl = typeof vals['app-url'] === 'string' ? vals['app-url'] : '';
+  if (attachLauncher) {
+    if (appUrl === '') {
+      process.stderr.write(
+        `devtools-test: --app-url is required with --attach-launcher (env 2).\n` +
+          `  Pass the consumer dev server's tunnel URL (e.g. the HTTP *.trycloudflare.com\n` +
+          `  URL printed by \`pnpm dev:phone:cdp\`). --scheme-url is not used in this mode.\n`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+  } else if (schemeUrl === '') {
     process.stderr.write(
       `devtools-test: --scheme-url is required for standalone relay attach.\n` +
-        `  Pass the intoss-private:// URL from \`ait deploy --scheme-only\`.\n`,
+        `  Pass the intoss-private:// URL from \`ait deploy --scheme-only\`.\n` +
+        `  (For env 2 / AITC Sandbox PWA, use --attach-launcher --app-url <tunnel-url> instead.)\n`,
     );
     process.exitCode = 1;
     return;
@@ -581,10 +674,20 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
 
   // Cell: --cell-sdk-line and --cell-platform (fall back to AIT_CELL_PLATFORM env).
   const cellSdkLine = typeof vals['cell-sdk-line'] === 'string' ? vals['cell-sdk-line'] : undefined;
-  const cellPlatform =
+  // devtools#774: validate --cell-platform against the allowed set (typo guard —
+  // platform flows into report/capture filenames). 'ios-pwa' is the new env-2
+  // value. An omitted platform stays undefined and gets the 'mock' default below.
+  const cellPlatformResult = resolveCellPlatform(
     typeof vals['cell-platform'] === 'string'
       ? vals['cell-platform']
-      : process.env.AIT_CELL_PLATFORM;
+      : process.env.AIT_CELL_PLATFORM,
+  );
+  if (!cellPlatformResult.ok) {
+    process.stderr.write(`devtools-test: ${cellPlatformResult.error}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const cellPlatform = cellPlatformResult.value;
   const hasCell = cellSdkLine !== undefined || cellPlatform !== undefined;
   // The cell injected onto the page and the report/capture filename suffix.
   // sdk-example's own fallbacks are '2.x'/'mock'; mirror them when a flag is
@@ -662,6 +765,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   }
   const factory = createRelayConnectionFactory({
     schemeUrl,
+    // devtools#774: env 2 (launcher) attach. When set, the factory builds a
+    // launcher deep-link from appUrl instead of an intoss-private scheme URL.
+    // SECRET-HANDLING: appUrl is a tunnel host — passed to the factory only,
+    // never logged here or by the factory.
+    ...(attachLauncher ? { attachLauncher: true, appUrl } : {}),
     projectRoot,
     // attachTimeoutMs is only forwarded when the user explicitly passed
     // --attach-timeout; otherwise we omit it so relay-factory.ts's built-in
