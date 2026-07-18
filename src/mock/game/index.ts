@@ -10,12 +10,18 @@ import type {
 import { aitState } from '../state.js';
 
 // SDK: grantPromotionReward(params: GrantPromotionRewardParams): Promise<GrantPromotionRewardResponse>
-// 이전 mock의 sentinel('ERROR'|undefined) 리턴값은 실제 SDK 타입에 없는 것이었으므로 제거.
+// 실기기(2.x×iOS) capture는 grantPromotionReward가 선언된 { key } 타입이 아니라
+// { errorCode, message } soft-failure shape로 resolve됨을 보였다(devtools#770). 원본 SDK
+// 타입 선언은 여전히 { key: string }이므로 시그니처는 그대로 두고, 런타임 반환값만
+// 실측과 동치시킨다 — errorCode/message 값 자체는 placeholder(shape만 유효).
 export async function grantPromotionReward(
   params: GrantPromotionRewardParams,
 ): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionReward:', params.params);
-  return { key: `mock-reward-${Date.now()}` };
+  return {
+    errorCode: 'MOCK',
+    message: 'mock promotion result',
+  } as unknown as GrantPromotionRewardResponse;
 }
 
 // SDK: grantPromotionRewardForGame = typeof grantPromotionReward
@@ -23,7 +29,10 @@ export async function grantPromotionRewardForGame(
   params: GrantPromotionRewardParams,
 ): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionRewardForGame:', params.params);
-  return { key: `mock-reward-${Date.now()}` };
+  return {
+    errorCode: 'MOCK',
+    message: 'mock promotion result',
+  } as unknown as GrantPromotionRewardResponse;
 }
 
 export async function submitGameCenterLeaderBoardScore(params: {
@@ -41,6 +50,9 @@ export async function submitGameCenterLeaderBoardScore(params: {
   return { statusCode: 'SUCCESS' };
 }
 
+// 실기기(2.x×iOS) capture는 getGameCenterGameProfile이 { statusCode, gameSessionId,
+// nickname, profileImageUri } 4개 키로 resolve됨을 보였다(devtools#770) — 선언된 SDK
+// 타입엔 gameSessionId가 없으므로 시그니처는 그대로 두고 런타임 반환값만 캐스트한다.
 export async function getGameCenterGameProfile(): Promise<
   | { statusCode: 'SUCCESS'; nickname: string; profileImageUri: string }
   | { statusCode: 'PROFILE_NOT_FOUND' }
@@ -50,9 +62,10 @@ export async function getGameCenterGameProfile(): Promise<
   if (!profile) return { statusCode: 'PROFILE_NOT_FOUND' };
   return {
     statusCode: 'SUCCESS',
+    gameSessionId: 'mock-session',
     nickname: profile.nickname,
     profileImageUri: profile.profileImageUri,
-  };
+  } as unknown as { statusCode: 'SUCCESS'; nickname: string; profileImageUri: string };
 }
 
 export async function openGameCenterLeaderboard(): Promise<void> {

@@ -29,8 +29,12 @@ function buildLocation(): MockLocation {
 
 // -- getCurrentLocation --
 
+// 실기기(2.x×iOS) capture는 getCurrentLocation이 { coords, timestamp }만 반환하고
+// accessLocation은 포함하지 않음을 보였다(devtools#770). aitState.state.location에는
+// accessLocation을 계속 유지하되(상태 모델은 그대로), 이 함수의 반환값에서만 제외한다.
 async function getCurrentLocationMock(): Promise<MockLocation> {
-  return buildLocation();
+  const { coords, timestamp } = buildLocation();
+  return { coords, timestamp };
 }
 
 async function getCurrentLocationWeb(): Promise<MockLocation> {

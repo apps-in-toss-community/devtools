@@ -13,17 +13,28 @@ describe('Game mock', () => {
     aitState.reset();
   });
 
-  it('grantPromotionReward: reward key를 반환한다', async () => {
+  // 실기기(2.x×iOS) capture는 grantPromotionReward가 { key }가 아니라
+  // { errorCode, message } shape로 resolve됨을 보였다(devtools#770) — env1↔env3
+  // 반환-shape 동치를 여기서 고정한다. 값 자체는 placeholder(shape만 검증).
+  it('grantPromotionReward: { errorCode, message } shape로 resolve된다 (실기기 동치)', async () => {
     const result = await grantPromotionReward({
       params: { promotionCode: 'PROMO1', amount: 100 },
     });
-    expect(result).toHaveProperty('key', expect.stringMatching(/^mock-reward-/));
+    expect(Object.keys(result as object).sort()).toEqual(['errorCode', 'message']);
   });
 
   describe('getGameCenterGameProfile', () => {
-    it('프로필이 있으면 SUCCESS와 함께 반환한다', async () => {
+    // 실기기(2.x×iOS) capture는 { statusCode, gameSessionId, nickname, profileImageUri }
+    // 4개 키로 resolve됨을 보였다(devtools#770).
+    it('프로필이 있으면 4개 키(statusCode, gameSessionId, nickname, profileImageUri)로 resolve된다 (실기기 동치)', async () => {
       const result = await getGameCenterGameProfile();
-      expect(result).toMatchObject({ statusCode: 'SUCCESS', nickname: 'MockPlayer' });
+      expect(Object.keys(result as object).sort()).toEqual([
+        'gameSessionId',
+        'nickname',
+        'profileImageUri',
+        'statusCode',
+      ]);
+      expect((result as { nickname: string }).nickname).toBe('MockPlayer');
     });
 
     it('프로필이 없으면 PROFILE_NOT_FOUND를 반환한다', async () => {
@@ -41,11 +52,11 @@ describe('Game mock', () => {
     );
   });
 
-  it('grantPromotionRewardForGame: reward key를 반환한다', async () => {
+  it('grantPromotionRewardForGame: { errorCode, message } shape로 resolve된다 (실기기 동치)', async () => {
     const result = await grantPromotionRewardForGame({
       params: { promotionCode: 'GAME1', amount: 50 },
     });
-    expect(result).toHaveProperty('key', expect.stringMatching(/^mock-reward-/));
+    expect(Object.keys(result as object).sort()).toEqual(['errorCode', 'message']);
   });
 
   it('openGameCenterLeaderboard: 에러 없이 실행된다', async () => {
