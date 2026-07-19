@@ -126,6 +126,38 @@ describe('Device mock', () => {
       });
       expect(clickSpy).toHaveBeenCalled();
     });
+
+    it('빈 data는 native envelope으로 거부한다 (실측: env3 run11 → INVALID_DATA)', async () => {
+      // 실기기는 { data: '', fileName: '', mimeType: '' }를
+      // rejected / Error / INVALID_DATA / moduleName 'RNFileSystem'로 떨어뜨린다.
+      // mock은 anchor click만 해서 무조건 resolve했고 그 발산이 실측과 어긋났다.
+      await expect(saveBase64Data({ data: '', fileName: '', mimeType: '' })).rejects.toMatchObject({
+        name: 'Error',
+        code: 'INVALID_DATA',
+        moduleName: 'RNFileSystem',
+        __isError: true,
+      });
+    });
+
+    it('data가 있으면 fileName/mimeType이 비어도 통과한다 — 게이트를 넓히지 않는다', async () => {
+      // 빈 fileName/mimeType 단독으로 실기기가 무엇을 내는지는 관측이 없다.
+      // 근거 없이 조건을 넓히면 env1이 실기기에 없는 실패를 만들어낸다.
+      const clickSpy = vi.fn();
+      const originalCreateElement = document.createElement.bind(document);
+      vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+        if (tag === 'a') {
+          return {
+            set href(_v: string) {},
+            set download(_v: string) {},
+            click: clickSpy,
+          } as unknown as HTMLAnchorElement;
+        }
+        return originalCreateElement(tag);
+      });
+
+      await saveBase64Data({ data: 'AAAA', fileName: '', mimeType: '' });
+      expect(clickSpy).toHaveBeenCalled();
+    });
   });
 
   describe('Device API Modes', () => {
