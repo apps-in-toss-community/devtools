@@ -144,26 +144,47 @@ describe('Permissions mock', () => {
         },
       });
 
-      // 다이얼이 걸린 이름 — reject
-      await expect(getPermission({ name: 'geolocation', access: 'access' })).rejects.toMatchObject({
+      // 다이얼이 걸린 이름 — reject. `access: 'read'`로 검사한다: `'access'`는
+      // 상태 조회라 다이얼을 아예 안 타기 때문이다(아래 access 축 테스트 참조).
+      await expect(getPermission({ name: 'geolocation', access: 'read' })).rejects.toMatchObject({
         name: 'Error',
         code: 'NO_PERMISSION',
         userInfo: {},
         __isError: true,
       });
-      await expect(getPermission({ name: 'camera', access: 'access' })).rejects.toMatchObject({
+      await expect(getPermission({ name: 'camera', access: 'read' })).rejects.toMatchObject({
         name: 'Error',
         code: 'NO_PERMISSION',
       });
-      await expect(getPermission({ name: 'microphone', access: 'access' })).rejects.toMatchObject({
+      await expect(getPermission({ name: 'microphone', access: 'read' })).rejects.toMatchObject({
         name: 'Error',
         code: 'NO_PERMISSION',
       });
 
       // 다이얼이 안 걸린 이름 — 전역 차단 회귀 방지: 기존처럼 resolve
-      await expect(getPermission({ name: 'clipboard', access: 'access' })).resolves.toBe('allowed');
-      await expect(getPermission({ name: 'contacts', access: 'access' })).resolves.toBe('allowed');
-      await expect(getPermission({ name: 'photos', access: 'access' })).resolves.toBe('allowed');
+      await expect(getPermission({ name: 'clipboard', access: 'read' })).resolves.toBe('allowed');
+      await expect(getPermission({ name: 'contacts', access: 'read' })).resolves.toBe('allowed');
+      await expect(getPermission({ name: 'photos', access: 'read' })).resolves.toBe('allowed');
+    });
+
+    it("access 축: 다이얼이 걸린 이름이라도 access: 'access'는 통과하고 read/write만 거부한다 (실측: env3 happy-each-access)", async () => {
+      // env3 run11 실측 — geolocation 고정 + PermissionAccess 3종 순회:
+      //   read → rejected NO_PERMISSION / write → rejected NO_PERMISSION / access → resolved
+      // "상태 조회는 선언 여부와 무관하게 허용, 실제 capability 요구만 게이트"라는
+      // 읽기다. 이게 없으면 env1이 3회 전부 거부해 env3와 1건 어긋난다.
+      aitState.patch('failureModes', {
+        getPermission: { geolocation: 'NO_PERMISSION' },
+      });
+
+      await expect(getPermission({ name: 'geolocation', access: 'read' })).rejects.toMatchObject({
+        code: 'NO_PERMISSION',
+      });
+      await expect(getPermission({ name: 'geolocation', access: 'write' })).rejects.toMatchObject({
+        code: 'NO_PERMISSION',
+      });
+      await expect(getPermission({ name: 'geolocation', access: 'access' })).resolves.toBe(
+        'allowed',
+      );
     });
 
     it('failureModes.sdkLine이 3.x면 맨 Error로 평탄화된 reject를 던진다', async () => {
@@ -174,7 +195,7 @@ describe('Permissions mock', () => {
 
       let caught: unknown;
       try {
-        await getPermission({ name: 'geolocation', access: 'access' });
+        await getPermission({ name: 'geolocation', access: 'read' });
       } catch (e) {
         caught = e;
       }
@@ -184,12 +205,17 @@ describe('Permissions mock', () => {
       expect((caught as { __isError?: boolean }).__isError).toBeUndefined();
     });
 
-    it('withPermission이 부착한 .getPermission()도 같은 배선을 탄다', async () => {
+    it("withPermission이 부착한 .getPermission()은 access: 'access' 경로라 다이얼을 타지 않는다", async () => {
+      // `withPermission(...).getPermission()`은 `access: 'access'`로 고정 호출한다
+      // (= 상태 조회 편의 헬퍼). 위 access 축 계약대로 상태 조회는 선언 게이트를
+      // 안 타므로, 다이얼이 걸린 이름이라도 여기서는 resolve하는 게 맞다 — 실기기도
+      // 같은 경로를 통과시킨다. 다이얼이 이 헬퍼를 통해 거부되길 원한다면 그건
+      // access 축 모델을 어기는 것이므로, 그 기대를 여기서 못박아 둔다.
       aitState.patch('failureModes', { getPermission: { camera: 'NO_PERMISSION' } });
       const fn = async () => 'result';
       const enhanced = withPermission(fn, 'camera');
 
-      await expect(enhanced.getPermission()).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+      await expect(enhanced.getPermission()).resolves.toBe('allowed');
     });
   });
 });

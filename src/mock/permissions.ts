@@ -100,7 +100,23 @@ export async function getPermission(permission: {
   // 아니라 이름 단위 맵 — 다이얼이 걸린 이름만 reject하고 나머지는 기존대로
   // resolve (zero behavior change). withPermission()이 부착하는 `.getPermission()`
   // 도 이 함수를 그대로 호출하므로 배선 지점은 여기 하나뿐이다.
-  const failureCode = aitState.state.failureModes.getPermission?.[permission.name];
+  //
+  // `access` 축 (devtools#783 잔여 해소): 다이얼은 `read`/`write`에만 건다.
+  // 실측(env3 run11, `happy-each-access` — geolocation 고정 + access 3종 순회):
+  //   { geolocation, read }   → rejected NO_PERMISSION
+  //   { geolocation, write }  → rejected NO_PERMISSION
+  //   { geolocation, access } → resolved
+  // `PermissionAccess`는 `'read' | 'write' | 'access'`이고, `'access'`만 통과하는
+  // 그림은 "권한 *상태 조회*는 선언 여부와 무관하게 허용, 실제 capability 요구
+  // (`read`/`write`)만 선언 게이트를 탄다"로 읽힌다. 그래서 이름 단위 맵을
+  // access 축과 곱하지 않고, `'access'`일 때 다이얼 자체를 건너뛴다 —
+  // 이름×access 2차원 맵으로 확장할 근거(이름별로 access 프로파일이 다르다는
+  // 관측)는 아직 없고, 근거 없는 확장은 #783에서 이름 단위 맵을 택한 원칙에
+  // 어긋난다.
+  const failureCode =
+    permission.access === 'access'
+      ? undefined
+      : aitState.state.failureModes.getPermission?.[permission.name];
   if (failureCode) {
     throw buildNativeError(failureCode);
   }
