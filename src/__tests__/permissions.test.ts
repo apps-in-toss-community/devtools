@@ -127,4 +127,69 @@ describe('Permissions mock', () => {
       expect(() => checkPermission('microphone', 'unknownApi')).toThrow(PermissionError);
     });
   });
+
+  describe('실패-모드 다이얼 (devtools#783)', () => {
+    it('failureModes.getPermission 미설정 시 기존처럼 상태 값을 resolve한다', async () => {
+      await expect(getPermission({ name: 'geolocation', access: 'access' })).resolves.toBe(
+        'allowed',
+      );
+    });
+
+    it('failureModes.getPermission 설정 시 다이얼이 걸린 이름만 2.x native envelope으로 reject한다 (실측: geolocation/camera/microphone → rejected/Error/NO_PERMISSION, clipboard/contacts/photos → resolved)', async () => {
+      aitState.patch('failureModes', {
+        getPermission: {
+          geolocation: 'NO_PERMISSION',
+          camera: 'NO_PERMISSION',
+          microphone: 'NO_PERMISSION',
+        },
+      });
+
+      // 다이얼이 걸린 이름 — reject
+      await expect(getPermission({ name: 'geolocation', access: 'access' })).rejects.toMatchObject({
+        name: 'Error',
+        code: 'NO_PERMISSION',
+        userInfo: {},
+        __isError: true,
+      });
+      await expect(getPermission({ name: 'camera', access: 'access' })).rejects.toMatchObject({
+        name: 'Error',
+        code: 'NO_PERMISSION',
+      });
+      await expect(getPermission({ name: 'microphone', access: 'access' })).rejects.toMatchObject({
+        name: 'Error',
+        code: 'NO_PERMISSION',
+      });
+
+      // 다이얼이 안 걸린 이름 — 전역 차단 회귀 방지: 기존처럼 resolve
+      await expect(getPermission({ name: 'clipboard', access: 'access' })).resolves.toBe('allowed');
+      await expect(getPermission({ name: 'contacts', access: 'access' })).resolves.toBe('allowed');
+      await expect(getPermission({ name: 'photos', access: 'access' })).resolves.toBe('allowed');
+    });
+
+    it('failureModes.sdkLine이 3.x면 맨 Error로 평탄화된 reject를 던진다', async () => {
+      aitState.patch('failureModes', {
+        getPermission: { geolocation: 'NO_PERMISSION' },
+        sdkLine: '3.x',
+      });
+
+      let caught: unknown;
+      try {
+        await getPermission({ name: 'geolocation', access: 'access' });
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as { code?: string }).code).toBeUndefined();
+      expect((caught as { __isError?: boolean }).__isError).toBeUndefined();
+    });
+
+    it('withPermission이 부착한 .getPermission()도 같은 배선을 탄다', async () => {
+      aitState.patch('failureModes', { getPermission: { camera: 'NO_PERMISSION' } });
+      const fn = async () => 'result';
+      const enhanced = withPermission(fn, 'camera');
+
+      await expect(enhanced.getPermission()).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+    });
+  });
 });

@@ -11,6 +11,7 @@
  * error가 아닌 event type으로 표현한다).
  */
 
+import { buildNativeError } from './native-error.js';
 import { aitState } from './state.js';
 import type { NotificationAgreementResult } from './types.js';
 
@@ -27,6 +28,17 @@ const _requestNotificationAgreementImpl = (
 
   Promise.resolve().then(async () => {
     if (cancelled) return;
+
+    // 실패-모드 다이얼 (devtools#783): aitState.patch('failureModes',
+    // { requestNotificationAgreement: '4000' })로 실기기 실측(env3 run11, 2.x/iOS —
+    // happy-force-*/A1-empty-templateCode 시나리오 전부 rejected/`Error`/`4000`)을
+    // 재현한다. 미설정 시 기존처럼 onEvent 경로 그대로 (zero behavior change).
+    const failureCode = aitState.state.failureModes.requestNotificationAgreement;
+    if (failureCode) {
+      await params.onError(buildNativeError(failureCode));
+      return;
+    }
+
     const type = aitState.state.notification.nextResult;
 
     console.log(

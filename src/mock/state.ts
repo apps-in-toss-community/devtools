@@ -195,6 +195,26 @@ export interface FailureModes {
   loadAdMob?: NativeErrorCode;
   /** loadFullScreenAd 실패 코드 (예: 'EXECUTION_ERROR'). */
   loadFullScreenAd?: NativeErrorCode;
+  /**
+   * getIsTossLoginIntegratedService 실패 코드 (devtools#783 실측: env3 run11,
+   * 2.x/iOS `A1-awaited-is-boolean` 시나리오 — rejected/`Error`/`EXECUTION_ERROR`).
+   */
+  getIsTossLoginIntegratedService?: NativeErrorCode;
+  /**
+   * requestNotificationAgreement 실패 코드 (devtools#783 실측: env3 run11,
+   * 2.x/iOS `happy-force-*`/`A1-empty-templateCode` 시나리오 전부 —
+   * rejected/`Error`/`4000`).
+   */
+  requestNotificationAgreement?: NativeErrorCode;
+  /**
+   * 권한 이름별 실패 코드 (devtools#783 실측: env3 run11, 2.x/iOS
+   * `permissions.ait.test.ts` PERMISSION_NAMES 순회 — `geolocation`/`camera`/
+   * `microphone`만 rejected/`Error`/`NO_PERMISSION`, `clipboard`/`contacts`/
+   * `photos`는 resolved. 31146의 `granite.config.ts`가 `permissions: []`라
+   * 선언 안 된 권한만 거부되는 그림과 정합 — 전역 on/off가 아니라 이름 단위 맵.
+   * 설정된 이름만 reject, 나머지는 기존대로 resolve.
+   */
+  getPermission?: Partial<Record<PermissionName, NativeErrorCode>>;
 }
 
 const DEFAULT_STATE: AitDevtoolsState = {

@@ -8,6 +8,7 @@ import type {
   PermissionName,
   PermissionStatus,
 } from '@apps-in-toss/web-framework';
+import { buildNativeError } from './native-error.js';
 import { aitState } from './state.js';
 
 // --- PermissionError 계층 (web-framework 3.0+ 신규) ---
@@ -92,6 +93,18 @@ export async function getPermission(permission: {
   name: PermissionName;
   access: PermissionAccess;
 }): Promise<PermissionStatus> {
+  // 실패-모드 다이얼 (devtools#783): aitState.patch('failureModes',
+  // { getPermission: { geolocation: 'NO_PERMISSION' } })로 실기기 실측(env3 run11,
+  // 2.x/iOS — geolocation/camera/microphone만 rejected/`Error`/`NO_PERMISSION`,
+  // clipboard/contacts/photos는 resolved)을 권한 이름별로 재현한다. 전역 on/off가
+  // 아니라 이름 단위 맵 — 다이얼이 걸린 이름만 reject하고 나머지는 기존대로
+  // resolve (zero behavior change). withPermission()이 부착하는 `.getPermission()`
+  // 도 이 함수를 그대로 호출하므로 배선 지점은 여기 하나뿐이다.
+  const failureCode = aitState.state.failureModes.getPermission?.[permission.name];
+  if (failureCode) {
+    throw buildNativeError(failureCode);
+  }
+
   return aitState.state.permissions[permission.name];
 }
 

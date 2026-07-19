@@ -24,6 +24,15 @@ export async function appLogin(): Promise<{
 }
 
 export async function getIsTossLoginIntegratedService(): Promise<boolean | undefined> {
+  // 실패-모드 다이얼 (devtools#783): aitState.patch('failureModes',
+  // { getIsTossLoginIntegratedService: 'EXECUTION_ERROR' })로 실기기 실측(env3 run11,
+  // 2.x/iOS `A1-awaited-is-boolean` → rejected/`Error`/`EXECUTION_ERROR`)을 재현한다.
+  // 미설정 시 기존처럼 항상 resolve (zero behavior change).
+  const failureCode = aitState.state.failureModes.getIsTossLoginIntegratedService;
+  if (failureCode) {
+    throw buildNativeError(failureCode);
+  }
+
   return aitState.state.auth.isTossLoginIntegrated;
 }
 
