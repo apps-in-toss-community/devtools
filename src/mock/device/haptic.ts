@@ -12,6 +12,7 @@
  *   - 시그니처 불변 — __typecheck.ts의 Assert<Mock, Original> 통과.
  */
 
+import { buildNativeError } from '../native-error.js';
 import { aitState } from '../state.js';
 import type { HapticFeedbackType } from '../types.js';
 
@@ -74,6 +75,20 @@ export async function saveBase64Data(params: {
   fileName: string;
   mimeType: string;
 }): Promise<void> {
+  // 빈 `data`는 native가 거부한다 — 실측(env3 run11, 2.x/iOS):
+  //   { data: '', fileName: '', mimeType: '' }
+  //     → rejected / Error / INVALID_DATA / moduleName 'RNFileSystem'
+  // mock은 anchor를 만들어 click하기만 해서 무조건 resolve했고, 그 발산은
+  // 시나리오 이름이 자동/manual 슈트에서 갈려 있어 커버리지 갭 뒤에 가려져
+  // 있었다(sdk-example#313에서 키를 통일하며 드러남).
+  //
+  // 게이트를 `data`에만 거는 건 관측이 거기까지만 뒷받침하기 때문이다 —
+  // 코드가 `INVALID_DATA`이고, 빈 fileName/mimeType 단독으로 무엇이 나오는지는
+  // 관측이 없다. 근거 없이 조건을 넓히면 env1이 실기기에 없는 실패를 만든다.
+  if (params.data === '') {
+    throw buildNativeError('INVALID_DATA');
+  }
+
   const a = document.createElement('a');
   a.href = `data:${params.mimeType};base64,${params.data}`;
   a.download = params.fileName;
