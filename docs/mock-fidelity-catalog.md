@@ -128,7 +128,7 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 | `closeView` | `window.history.back()` | 미니앱 뷰 종료 | 🟡 partial | ✗ | 브라우저에선 히스토리 뒤로. 실제 종료(앱 컨테이너 dismiss)와 의미 다름. |
 | `openURL` | `window.open(_, '_blank')` | 외부 브라우저/딥링크 | 🟡 partial | ✗ | 새 탭. 토스 in-app 브라우저 동작과 다름. |
 | `share` | `navigator.share` 있으면 위임, 없으면 log | 네이티브 공유 시트 | 🟡 partial | ✗ | 브라우저 Web Share에 의존. |
-| `getTossShareLink` | `https://toss.im/share/mock<path>` 고정 | 실제 공유 단축 URL | 🟡 partial | ✗ | 형태만 흉내, 실 링크 아님. |
+| `getTossShareLink` | `https://toss.im/share/mock<path>` 고정 | 실제 공유 단축 URL | 🟡 partial | ✗ | 형태만 흉내, 실 링크 아님. scheme 없는 bare path(`/some/path`)는 실기기와 동일하게 `EXECUTION_ERROR`로 reject한다([#780](https://github.com/apps-in-toss-community/devtools/issues/780)). |
 | `getNetworkStatus` | mode-aware (`mock`/`web`) | 실 네트워크 상태 | 🟡 partial | ✓ | web mode는 `navigator.connection`으로 추정(`device/network.ts`). WIFI/5G/WWAN 감지 불가 — Network Information API 한계. |
 | `getServerTime` | `Date.now()` | 토스 서버 시각 | 🟡 partial | ✗ | 로컬 시각. 서버 시각 skew 미반영. |
 | `isMinVersionSupported` | `appVersion` state로 계산 | 실 앱 버전 비교 | 🟢 faithful | (state 의존) | 로직 충실. 입력값(`appVersion` default)에만 의존. |
@@ -176,7 +176,7 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 |---|---|---|---|---|---|
 | `GoogleAdMob.loadAppsInTossAdMob` | 200ms 후 `forceNoFill`이면 error, 아니면 `isLoaded=true` + `loaded` 이벤트 | 실 AdMob 로드 | 🟢 faithful | ✓ sdkCallLog | 패널 `forceNoFill` 토글로 no-fill 시험. |
 | `GoogleAdMob.showAppsInTossAdMob` | `isLoaded` 체크 후 requested→show→impression→reward→dismissed 시퀀스 emit | 실 광고 노출 + 리워드 | 🟢 faithful | ✓ sdkCallLog | 이벤트 타임라인 재현. reward는 `state.ads.rewardUnitType`/`rewardAmount`로 파라미터화 (#196). |
-| `GoogleAdMob.isAppsInTossAdMobLoaded` | `ads.isLoaded` 반환 | 실 로드 상태 | 🟢 faithful | ✓ sdkCallLog | 상태 기반. |
+| `GoogleAdMob.isAppsInTossAdMobLoaded` | `ads.isLoaded` 반환 | 실 로드 상태 | 🟢 faithful | ✓ sdkCallLog | 상태 기반. `adGroupId`가 빈 문자열/공백뿐이면 실기기와 동일하게 `INVALID_REQUEST`로 reject한다(필드 자체가 없는 호출은 하위호환으로 통과, [#780](https://github.com/apps-in-toss-community/devtools/issues/780)). |
 | `TossAds.initialize` | `onInitialized` 발화. `forceNoFill=true`이면 `onInitializationFailed` 발화 (#196) | 실 SDK 초기화 | 🟢 faithful | ✓ sdkCallLog | 콜백 발화 완성. 패널 Load 버튼이 initialize를 통해 `isLoaded=true` + `loaded` 이벤트 기록. |
 | `TossAds.attach` | DOM에 placeholder div 삽입 | 실 광고 렌더 | 🟡 partial | ✓ sdkCallLog | 시각적 placeholder. 실 광고 콘텐츠 아님. |
 | `TossAds.attachBanner` | DOM에 placeholder 삽입 + `BannerSlotCallbacks` 발화(onAdRendered/onAdImpression 기본; forceNoFill이면 onNoFill/onAdFailedToRender). AttachBannerOptions(theme/tone/variant) 스타일 반영. 반환 `{destroy}`가 실제 `el.remove()` (#196) | 실 광고 렌더 + 콜백 | 🟢 faithful | ✓ sdkCallLog | 패널 TossAds 배너 섹션에서 Render/No-fill/Click/Destroy 버튼으로 결정론적 발화. |
@@ -240,7 +240,7 @@ iPhone 15 Pro 실 web-relevant 스펙(devtools#190 relay 실측): CSS viewport *
 |---|---|---|---|---|---|
 | `getClipboardText` / `setClipboardText` | mode 분기: `mock`(state) / `web`(`navigator.clipboard`, default) | 네이티브 클립보드 | 🟢 faithful | ✓ (mock mode) | web mode는 브라우저 권한 프롬프트·HTTPS 필요. permission gate 부착. |
 | `fetchContacts` | `contacts` state slice 페이지네이션 + `contains` 필터 | 실 주소록 | 🟢 faithful | ✓ | 패널 contacts 편집. offset/size/query 충실. |
-| `generateHapticFeedback` | `analyticsLog` 기록 + 10종 타입→`navigator.vibrate` 패턴 매핑(best-effort) + `sdkCallLog` 🟡 기록(hapticType + vibrated) + 패널 Device 탭 마지막 haptic 행·트리거 버튼 | 실 햅틱 진동 | 🟡 partial | ✓ sdkCallLog | 진동 자체는 native API라 브라우저 표현이 다름. `navigator.vibrate` 지원 여부에 따라 실제 진동 여부(`vibrated: boolean`)가 sdkCallLog에 기록되어 관측 가능. ([#197](https://github.com/apps-in-toss-community/devtools/issues/197)) |
+| `generateHapticFeedback` | `analyticsLog` 기록 + 10종 타입→`navigator.vibrate` 패턴 매핑(best-effort) + `sdkCallLog` 🟡 기록(hapticType + vibrated) + 패널 Device 탭 마지막 haptic 행·트리거 버튼 | 실 햅틱 진동 | 🟡 partial | ✓ sdkCallLog | 진동 자체는 native API라 브라우저 표현이 다름. `navigator.vibrate` 지원 여부에 따라 실제 진동 여부(`vibrated: boolean`)가 sdkCallLog에 기록되어 관측 가능. ([#197](https://github.com/apps-in-toss-community/devtools/issues/197)) `HapticFeedbackType` union 밖의 알 수 없는 `type`은 실기기와 동일하게 `EXECUTION_ERROR`로 reject한다([#780](https://github.com/apps-in-toss-community/devtools/issues/780)). |
 | `saveBase64Data` | `<a download>` 트리거(브라우저 다운로드) | 네이티브 파일 저장 | 🟡 partial | ✗ | 브라우저 다운로드로 근사. 저장 위치 다름. |
 | `openPDFViewer` | `await Promise.resolve()` 후 `'CLOSE'` | 네이티브 PDF 뷰어 | 🔴 inert | ✗ | 즉시 CLOSE 반환, 실제 뷰어 없음. 권한·모드 분기 없음. |
 

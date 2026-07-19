@@ -157,4 +157,49 @@ describe('generateHapticFeedback', () => {
       }
     });
   });
+
+  // devtools#780: 실기기(env3)는 알 수 없는 haptic type을 reject한다. mock은 과거
+  // 30ms fallback 패턴으로 조용히 resolve했다 — env1↔env3 capture diff 실측에 맞춰
+  // reject로 갱신.
+  describe('알 수 없는 type — devtools#780', () => {
+    it('SDK 타입 union 밖의 type 문자열은 EXECUTION_ERROR로 reject된다', async () => {
+      const bogusType = 'not-a-real-haptic-type' as Parameters<
+        typeof generateHapticFeedback
+      >[0]['type'];
+
+      await expect(generateHapticFeedback({ type: bogusType })).rejects.toThrow();
+
+      try {
+        await generateHapticFeedback({ type: bogusType });
+        expect.unreachable('reject되어야 한다');
+      } catch (err) {
+        // 캡처 하네스(aitCapture.extractErrorShape)는 errorName을 err.constructor.name,
+        // errorCode를 err.code ?? err.errorCode에서 뽑는다. 실기기 실측이
+        // errorName: "Error"이므로 서브클래스가 아닌 평범한 Error여야 한다.
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).constructor.name).toBe('Error');
+        expect((err as Error & { errorCode?: string }).errorCode).toBe('EXECUTION_ERROR');
+      }
+    });
+
+    it('알 수 없는 type이 거부되어도 유효한 type 호출은 계속 통과한다', async () => {
+      await expect(generateHapticFeedback({ type: 'success' })).resolves.toBeUndefined();
+    });
+
+    it.each([
+      'constructor',
+      'toString',
+      '__proto__',
+      'hasOwnProperty',
+      'valueOf',
+    ])('Object.prototype 예약 이름 "%s"도 거부된다', async (reserved) => {
+      // 판정을 `in`으로 하면 프로토타입 체인까지 보므로 이 이름들이 유효한
+      // haptic type으로 통과한다 — 이 함수가 막으려는 바로 그 부류(실기기가
+      // 거부할 입력을 mock이 조용히 수락)가 재발한다. `Object.hasOwn`이라야
+      // 자기 키만 본다. 타입 시그니처는 이걸 못 막는다: MCP `call_sdk`가
+      // 타입 없는 인자를 그대로 런타임까지 실어 보내기 때문이다.
+      const type = reserved as Parameters<typeof generateHapticFeedback>[0]['type'];
+      await expect(generateHapticFeedback({ type })).rejects.toThrow();
+    });
+  });
 });

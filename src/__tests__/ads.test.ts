@@ -172,6 +172,54 @@ describe('Ads mock', () => {
         expect(err.code).toBeUndefined();
       });
     });
+
+    // devtools#780: 실기기(env3)는 형식이 잘못된 adGroupId를 reject한다
+    // (errorCode: INVALID_REQUEST). mock은 과거 어떤 값이든 조용히 boolean을
+    // resolve했다 — env1↔env3 capture diff 실측에 맞춰 reject로 갱신.
+    describe('isAppsInTossAdMobLoaded — 형식이 잘못된 adGroupId (devtools#780)', () => {
+      it('adGroupId가 빈 문자열이면 INVALID_REQUEST로 reject된다', async () => {
+        await expect(GoogleAdMob.isAppsInTossAdMobLoaded({ adGroupId: '' })).rejects.toThrow();
+
+        try {
+          await GoogleAdMob.isAppsInTossAdMobLoaded({ adGroupId: '' });
+          expect.unreachable('reject되어야 한다');
+        } catch (err) {
+          // 캡처 하네스(aitCapture.extractErrorShape)는 errorName을
+          // err.constructor.name, errorCode를 err.code ?? err.errorCode에서 뽑는다.
+          // 실기기 실측이 errorName: "Error"이므로 서브클래스가 아닌 평범한
+          // Error여야 한다.
+          expect(err).toBeInstanceOf(Error);
+          expect((err as Error).constructor.name).toBe('Error');
+          expect((err as Error & { errorCode?: string }).errorCode).toBe('INVALID_REQUEST');
+        }
+      });
+
+      it('adGroupId가 공백뿐이면 INVALID_REQUEST로 reject된다', async () => {
+        await expect(
+          GoogleAdMob.isAppsInTossAdMobLoaded({ adGroupId: '   ' }),
+        ).rejects.toMatchObject({ errorCode: 'INVALID_REQUEST' });
+      });
+
+      it('유효한 adGroupId는 여전히 boolean으로 resolve된다', async () => {
+        await expect(
+          GoogleAdMob.isAppsInTossAdMobLoaded({ adGroupId: 'mock-group' }),
+        ).resolves.toBe(false);
+      });
+
+      it('adGroupId 자체가 없는 호출은 하위호환으로 계속 통과한다', async () => {
+        await expect(GoogleAdMob.isAppsInTossAdMobLoaded({})).resolves.toBe(false);
+      });
+
+      it('인자 없는 호출도 TypeError로 죽지 않고 하위호환으로 통과한다', async () => {
+        // 이 검사가 들어오기 전에는 구현이 `_options`를 아예 안 건드려서
+        // 인자 없는 호출이 그냥 resolve됐다. 옵션을 dereference하게 되면서
+        // `Cannot read properties of undefined`로 죽을 수 있게 됐으므로,
+        // 잘못된 입력을 거부하는 것과 별개로 기존 호출을 깨지 않는지 못박는다.
+        const callWithNoArgs =
+          GoogleAdMob.isAppsInTossAdMobLoaded as unknown as () => Promise<boolean>;
+        await expect(callWithNoArgs()).resolves.toBe(false);
+      });
+    });
   });
 
   describe('TossAds', () => {

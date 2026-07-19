@@ -26,7 +26,24 @@ export async function share(message: { message: string }): Promise<void> {
   console.log('[@ait-co/devtools] share:', message.message);
 }
 
+// RFC 3986 scheme 문법(ALPHA *(ALPHA / DIGIT / "+" / "-" / ".") ":")만 확인한다 — 특정
+// scheme 이름(intoss 등)을 하드코딩하지 않아 애매한 케이스는 통과시킨다(보수적 규칙,
+// devtools#780). "intoss://my-app" 같은 mini-app 딥링크는 통과, "/some/path" 같은
+// scheme 없는 bare path는 거부.
+const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
 export async function getTossShareLink(path: string, _ogImageUrl?: string): Promise<string> {
+  // 실기기(env3)는 scheme 없는 bare path를 reject(errorCode: EXECUTION_ERROR)한다 —
+  // mock은 과거 어떤 문자열이든 조용히 resolve했다(devtools#780, env1↔env3 capture
+  // diff 실측). string.resolve(path)로 만든 "mock 링크"가 유효한 mini-app 딥링크가
+  // 아닌데도 성공한 것처럼 보이면 개발자가 dev에서 통과한 코드를 실기기에서 깨뜨린다.
+  if (!URI_SCHEME_PATTERN.test(path)) {
+    const err = new Error(
+      `[@ait-co/devtools] getTossShareLink: "${path}" is not a valid link — a URI scheme is required (e.g. "intoss://...")`,
+    );
+    (err as Error & { errorCode?: string }).errorCode = 'EXECUTION_ERROR';
+    throw err;
+  }
   return `https://toss.im/share/mock${path}`;
 }
 

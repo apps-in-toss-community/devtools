@@ -126,9 +126,26 @@ describe('Navigation mock', () => {
     expect(openSpy).toHaveBeenCalledWith('https://example.com', '_blank');
   });
 
-  it('getTossShareLink: mock share link를 반환한다', async () => {
-    const link = await getTossShareLink('/path');
-    expect(link).toBe('https://toss.im/share/mock/path');
+  it('getTossShareLink: scheme이 있는 유효한 경로는 mock share link를 반환한다', async () => {
+    // devtools#780 이전엔 '/path'(scheme 없는 bare path)로도 테스트했으나, 실기기(env3)는
+    // 이런 입력을 reject한다 — 유효 입력(scheme 포함)으로 갱신.
+    const link = await getTossShareLink('intoss://path');
+    expect(link).toBe('https://toss.im/share/mockintoss://path');
+  });
+
+  it('getTossShareLink: scheme 없는 bare path는 EXECUTION_ERROR로 reject된다 (devtools#780)', async () => {
+    await expect(getTossShareLink('/some/path')).rejects.toThrow();
+    try {
+      await getTossShareLink('/some/path');
+      expect.unreachable('reject되어야 한다');
+    } catch (err) {
+      // 캡처 하네스(aitCapture.extractErrorShape)는 errorName을 err.constructor.name,
+      // errorCode를 err.code ?? err.errorCode에서 뽑는다. 실기기 실측이
+      // errorName: "Error"이므로 서브클래스가 아닌 평범한 Error여야 한다.
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).constructor.name).toBe('Error');
+      expect((err as Error & { errorCode?: string }).errorCode).toBe('EXECUTION_ERROR');
+    }
   });
 
   it('setScreenAwakeMode: 설정한 값을 반환한다', async () => {

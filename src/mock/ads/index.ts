@@ -119,7 +119,23 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
     observe(
       'GoogleAdMob.isAppsInTossAdMobLoaded',
       'faithful',
-      async (_options: { adGroupId?: string }): Promise<boolean> => aitState.state.ads.isLoaded,
+      async (_options: { adGroupId?: string }): Promise<boolean> => {
+        // 실기기(env3)는 형식이 잘못된 adGroupId를 reject(errorCode: INVALID_REQUEST)한다
+        // — mock은 과거 어떤 값이든 조용히 boolean을 resolve했다(devtools#780, env1↔env3
+        // capture diff 실측). SDK 타입 선언(GetCachedStatusAppsInTossAdmobParams)은
+        // adGroupId를 필수 string으로 요구하지만, 이 mock은 필드 자체가 없는 호출은
+        // 하위호환을 위해 계속 통과시킨다(기존 스모크 테스트가 `{}`로 호출) — "값은
+        // 있는데 빈 문자열/공백뿐"만 명백히 잘못된 것으로 보고 거부한다. false-reject가
+        // false-accept보다 나쁘므로 애매한 형식(길이·문자셋 제약 등)은 판정하지 않는다.
+        if (_options?.adGroupId !== undefined && _options.adGroupId.trim() === '') {
+          const err = new Error(
+            `[@ait-co/devtools] GoogleAdMob.isAppsInTossAdMobLoaded: malformed adGroupId "${_options.adGroupId}"`,
+          );
+          (err as Error & { errorCode?: string }).errorCode = 'INVALID_REQUEST';
+          throw err;
+        }
+        return aitState.state.ads.isLoaded;
+      },
     ),
   ),
 });
