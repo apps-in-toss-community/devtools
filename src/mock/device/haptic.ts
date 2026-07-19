@@ -59,7 +59,12 @@ export async function generateHapticFeedback(options: { type: HapticFeedbackType
   // (devtools#780, env1↔env3 capture diff 실측). 유효 판정은 SDK 타입 선언
   // (HapticFeedbackType, 10종 union)을 그대로 쓴다 — 이 mock의 HAPTIC_VIBRATE_PATTERN
   // 키 집합이 그 union과 정확히 일치하므로 별도 허용 목록을 새로 만들지 않는다.
-  if (!(options.type in HAPTIC_VIBRATE_PATTERN)) {
+  // `in`이 아니라 `Object.hasOwn`인 이유: `in`은 프로토타입 체인까지 보므로
+  // `'constructor'`·`'toString'`·`'__proto__'` 같은 예약 이름이 유효 type으로
+  // 통과해버린다 — 이 함수가 막으려는 바로 그 부류(실기기가 거부할 입력을 mock이
+  // 조용히 수락)가 그 집합에서 재발한다. 타입 시그니처가 막아줄 것 같지만
+  // MCP `call_sdk`는 타입 없는 인자를 그대로 실어 보내므로 런타임에 도달한다.
+  if (!Object.hasOwn(HAPTIC_VIBRATE_PATTERN, options.type)) {
     const err = new Error(
       `[@ait-co/devtools] generateHapticFeedback: unknown haptic type "${options.type}"`,
     );

@@ -209,6 +209,16 @@ describe('Ads mock', () => {
       it('adGroupId 자체가 없는 호출은 하위호환으로 계속 통과한다', async () => {
         await expect(GoogleAdMob.isAppsInTossAdMobLoaded({})).resolves.toBe(false);
       });
+
+      it('인자 없는 호출도 TypeError로 죽지 않고 하위호환으로 통과한다', async () => {
+        // 이 검사가 들어오기 전에는 구현이 `_options`를 아예 안 건드려서
+        // 인자 없는 호출이 그냥 resolve됐다. 옵션을 dereference하게 되면서
+        // `Cannot read properties of undefined`로 죽을 수 있게 됐으므로,
+        // 잘못된 입력을 거부하는 것과 별개로 기존 호출을 깨지 않는지 못박는다.
+        const callWithNoArgs =
+          GoogleAdMob.isAppsInTossAdMobLoaded as unknown as () => Promise<boolean>;
+        await expect(callWithNoArgs()).resolves.toBe(false);
+      });
     });
   });
 

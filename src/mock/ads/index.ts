@@ -127,7 +127,7 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
         // 하위호환을 위해 계속 통과시킨다(기존 스모크 테스트가 `{}`로 호출) — "값은
         // 있는데 빈 문자열/공백뿐"만 명백히 잘못된 것으로 보고 거부한다. false-reject가
         // false-accept보다 나쁘므로 애매한 형식(길이·문자셋 제약 등)은 판정하지 않는다.
-        if (_options.adGroupId !== undefined && _options.adGroupId.trim() === '') {
+        if (_options?.adGroupId !== undefined && _options.adGroupId.trim() === '') {
           const err = new Error(
             `[@ait-co/devtools] GoogleAdMob.isAppsInTossAdMobLoaded: malformed adGroupId "${_options.adGroupId}"`,
           );

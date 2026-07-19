@@ -185,5 +185,21 @@ describe('generateHapticFeedback', () => {
     it('알 수 없는 type이 거부되어도 유효한 type 호출은 계속 통과한다', async () => {
       await expect(generateHapticFeedback({ type: 'success' })).resolves.toBeUndefined();
     });
+
+    it.each([
+      'constructor',
+      'toString',
+      '__proto__',
+      'hasOwnProperty',
+      'valueOf',
+    ])('Object.prototype 예약 이름 "%s"도 거부된다', async (reserved) => {
+      // 판정을 `in`으로 하면 프로토타입 체인까지 보므로 이 이름들이 유효한
+      // haptic type으로 통과한다 — 이 함수가 막으려는 바로 그 부류(실기기가
+      // 거부할 입력을 mock이 조용히 수락)가 재발한다. `Object.hasOwn`이라야
+      // 자기 키만 본다. 타입 시그니처는 이걸 못 막는다: MCP `call_sdk`가
+      // 타입 없는 인자를 그대로 런타임까지 실어 보내기 때문이다.
+      const type = reserved as Parameters<typeof generateHapticFeedback>[0]['type'];
+      await expect(generateHapticFeedback({ type })).rejects.toThrow();
+    });
   });
 });
