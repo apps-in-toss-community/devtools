@@ -77,8 +77,14 @@ const CODE_META: Record<NativeErrorCode, { message: string; moduleName: string }
  * - `'3.x'`: 같은 실패가 "맨 Error"로 평탄화된 것을 재현 — envelope 필드 없이
  *   message만 실린 순수 `Error` 인스턴스.
  *
- * 다이얼이 설정되지 않은 한 어떤 mock 도메인도 이 함수를 호출하지 않으므로,
- * 호출부가 명시적으로 다이얼 값을 확인한 뒤에만 사용한다(zero behavior change).
+ * 호출부는 두 종류다:
+ *
+ * - **다이얼 게이트 뒤**(대부분): 프로비저닝처럼 환경에 따라 갈리는 실패는
+ *   다이얼이 설정된 경우에만 재현한다 — 미설정 시 기존 동작 무변화
+ *   (zero behavior change). 호출 전에 다이얼 값을 명시적으로 확인한다.
+ * - **무조건**(입력 검증): 빈 `data`나 알 수 없는 haptic type처럼 환경과 무관하게
+ *   실기기가 **항상** 거부하는 입력은 다이얼 없이 바로 던진다. 이건 "가끔 일어나는
+ *   실패"의 시뮬레이션이 아니라 결정적 계약이므로 opt-in 대상이 아니다.
  */
 export function buildNativeError(code: NativeErrorCode): Error {
   const meta = CODE_META[code];
