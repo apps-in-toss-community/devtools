@@ -174,7 +174,7 @@ describe('Ads mock', () => {
     });
 
     // devtools#780: 실기기(env3)는 형식이 잘못된 adGroupId를 reject한다
-    // (errorCode: INVALID_REQUEST). mock은 과거 어떤 값이든 조용히 boolean을
+    // (code: INVALID_REQUEST). mock은 과거 어떤 값이든 조용히 boolean을
     // resolve했다 — env1↔env3 capture diff 실측에 맞춰 reject로 갱신.
     describe('isAppsInTossAdMobLoaded — 형식이 잘못된 adGroupId (devtools#780)', () => {
       it('adGroupId가 빈 문자열이면 INVALID_REQUEST로 reject된다', async () => {
@@ -190,14 +190,24 @@ describe('Ads mock', () => {
           // Error여야 한다.
           expect(err).toBeInstanceOf(Error);
           expect((err as Error).constructor.name).toBe('Error');
-          expect((err as Error & { errorCode?: string }).errorCode).toBe('INVALID_REQUEST');
+          expect((err as Error & { code?: string }).code).toBe('INVALID_REQUEST');
+          // devtools#788: 손수 만든 `{errorCode}` 대신 buildNativeError의 실기기
+          // 2.x native envelope을 얹으므로, key-set도 env3 캡처와 필드 단위로
+          // 일치해야 한다 (Object.keys 발산이 sdk-example capture-diff가 잡아낸 회귀).
+          expect(Object.keys(err as object).sort()).toEqual([
+            '__isError',
+            'code',
+            'moduleName',
+            'name',
+            'userInfo',
+          ]);
         }
       });
 
       it('adGroupId가 공백뿐이면 INVALID_REQUEST로 reject된다', async () => {
         await expect(
           GoogleAdMob.isAppsInTossAdMobLoaded({ adGroupId: '   ' }),
-        ).rejects.toMatchObject({ errorCode: 'INVALID_REQUEST' });
+        ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
       });
 
       it('유효한 adGroupId는 여전히 boolean으로 resolve된다', async () => {
