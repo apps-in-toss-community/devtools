@@ -116,6 +116,62 @@ describe('Ads mock', () => {
         aitState.state.sdkCallLog.some((e) => e.method === 'GoogleAdMob.showAppsInTossAdMob'),
       ).toBe(true);
     });
+
+    describe('실패-모드 다이얼 (devtools#770)', () => {
+      it('failureModes.loadAdMob 미설정 시 기존처럼 happy-load된다', async () => {
+        const onEvent = vi.fn();
+        const onError = vi.fn();
+        GoogleAdMob.loadAppsInTossAdMob({
+          options: { adGroupId: 'mock-group' },
+          onEvent,
+          onError,
+        });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'loaded' }));
+        expect(onError).not.toHaveBeenCalled();
+      });
+
+      it('failureModes.loadAdMob 설정 시 2.x native envelope으로 onError한다', async () => {
+        aitState.patch('failureModes', { loadAdMob: 'PLACEMENT_ID_FETCH_FAILED' });
+        const onEvent = vi.fn();
+        const onError = vi.fn();
+        GoogleAdMob.loadAppsInTossAdMob({
+          options: { adGroupId: 'mock-group' },
+          onEvent,
+          onError,
+        });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(onEvent).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(
+          expect.objectContaining({
+            code: 'PLACEMENT_ID_FETCH_FAILED',
+            __isError: true,
+          }),
+        );
+        expect(aitState.state.ads.isLoaded).toBe(false);
+      });
+
+      it('failureModes.sdkLine이 3.x면 맨 Error로 onError한다', async () => {
+        aitState.patch('failureModes', {
+          loadAdMob: 'PLACEMENT_ID_FETCH_FAILED',
+          sdkLine: '3.x',
+        });
+        const onError = vi.fn();
+        GoogleAdMob.loadAppsInTossAdMob({
+          options: { adGroupId: 'mock-group' },
+          onEvent: vi.fn(),
+          onError,
+        });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(onError).toHaveBeenCalledTimes(1);
+        const err = onError.mock.calls[0][0] as Error & { code?: string };
+        expect(err).toBeInstanceOf(Error);
+        expect(err.code).toBeUndefined();
+      });
+    });
   });
 
   describe('TossAds', () => {
@@ -343,6 +399,47 @@ describe('Ads mock', () => {
       });
       await vi.advanceTimersByTimeAsync(200);
       expect(aitState.state.sdkCallLog.some((e) => e.method === 'loadFullScreenAd')).toBe(true);
+    });
+
+    describe('실패-모드 다이얼 (devtools#770)', () => {
+      it('failureModes.loadFullScreenAd 미설정 시 기존처럼 happy-load된다', async () => {
+        const onEvent = vi.fn();
+        const onError = vi.fn();
+        loadFullScreenAd({ options: { adGroupId: 'mock-group' }, onEvent, onError });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'loaded' }));
+        expect(onError).not.toHaveBeenCalled();
+      });
+
+      it('failureModes.loadFullScreenAd 설정 시 2.x native envelope으로 onError한다', async () => {
+        aitState.patch('failureModes', { loadFullScreenAd: 'EXECUTION_ERROR' });
+        const onEvent = vi.fn();
+        const onError = vi.fn();
+        loadFullScreenAd({ options: { adGroupId: 'mock-group' }, onEvent, onError });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(onEvent).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(
+          expect.objectContaining({ code: 'EXECUTION_ERROR', __isError: true }),
+        );
+        expect(aitState.state.ads.isLoaded).toBe(false);
+      });
+
+      it('failureModes.sdkLine이 3.x면 맨 Error로 onError한다', async () => {
+        aitState.patch('failureModes', {
+          loadFullScreenAd: 'EXECUTION_ERROR',
+          sdkLine: '3.x',
+        });
+        const onError = vi.fn();
+        loadFullScreenAd({ options: { adGroupId: 'mock-group' }, onEvent: vi.fn(), onError });
+        await vi.advanceTimersByTimeAsync(200);
+
+        expect(onError).toHaveBeenCalledTimes(1);
+        const err = onError.mock.calls[0][0] as Error & { code?: string };
+        expect(err).toBeInstanceOf(Error);
+        expect(err.code).toBeUndefined();
+      });
     });
   });
 });

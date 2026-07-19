@@ -19,6 +19,7 @@ import type {
   ShowFullScreenAdEvent,
   ShowFullScreenAdOptions,
 } from '@apps-in-toss/web-framework';
+import { buildNativeError } from '../native-error.js';
 import { observe } from '../observe.js';
 import { createMockProxy } from '../proxy.js';
 import { aitState } from '../state.js';
@@ -60,6 +61,14 @@ export const GoogleAdMob = createMockProxy('GoogleAdMob', {
         onError: (error: unknown) => void;
       }): (() => void) => {
         setTimeout(() => {
+          // 실패-모드 다이얼 (devtools#770): aitState.patch('failureModes',
+          // { loadAdMob: 'PLACEMENT_ID_FETCH_FAILED' })로 실기기 프로비저닝 실패를
+          // 재현한다. 미설정 시 forceNoFill/happy-load 기존 동작 그대로.
+          const failureCode = aitState.state.failureModes.loadAdMob;
+          if (failureCode) {
+            args.onError(buildNativeError(failureCode));
+            return;
+          }
           if (aitState.state.ads.forceNoFill) {
             args.onError(new Error('No fill'));
             return;
@@ -296,6 +305,14 @@ export const loadFullScreenAd = withIsSupported(
       onError: (error: unknown) => void;
     }): (() => void) => {
       setTimeout(() => {
+        // 실패-모드 다이얼 (devtools#770): aitState.patch('failureModes',
+        // { loadFullScreenAd: 'EXECUTION_ERROR' })로 실기기 프로비저닝 실패를 재현한다.
+        // 미설정 시 forceNoFill/happy-load 기존 동작 그대로.
+        const failureCode = aitState.state.failureModes.loadFullScreenAd;
+        if (failureCode) {
+          args.onError(buildNativeError(failureCode));
+          return;
+        }
         if (aitState.state.ads.forceNoFill) {
           args.onError(new Error('No fill'));
           return;

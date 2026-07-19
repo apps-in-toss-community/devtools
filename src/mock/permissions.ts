@@ -8,6 +8,7 @@ import type {
   PermissionName,
   PermissionStatus,
 } from '@apps-in-toss/web-framework';
+import { buildNativeError, type NativeErrorCode } from './native-error.js';
 import { aitState } from './state.js';
 
 // --- PermissionError 계층 (web-framework 3.0+ 신규) ---
@@ -92,14 +93,83 @@ export async function getPermission(permission: {
   name: PermissionName;
   access: PermissionAccess;
 }): Promise<PermissionStatus> {
+  // 실패-모드 다이얼 (devtools#783): aitState.patch('failureModes',
+  // { getPermission: { geolocation: 'NO_PERMISSION' } })로 실기기 실측(env3 run11,
+  // 2.x/iOS — geolocation/camera/microphone만 rejected/`Error`/`NO_PERMISSION`,
+  // clipboard/contacts/photos는 resolved)을 권한 이름별로 재현한다. 전역 on/off가
+  // 아니라 이름 단위 맵 — 다이얼이 걸린 이름만 reject하고 나머지는 기존대로
+  // resolve (zero behavior change). withPermission()이 부착하는 `.getPermission()`
+  // 도 이 함수를 그대로 호출하므로 배선 지점은 여기 하나뿐이다.
+  //
+  // `access` 축 (devtools#783 잔여 해소): 다이얼은 `read`/`write`에만 건다.
+  // 실측(env3 run11, `happy-each-access` — geolocation 고정 + access 3종 순회):
+  //   { geolocation, read }   → rejected NO_PERMISSION
+  //   { geolocation, write }  → rejected NO_PERMISSION
+  //   { geolocation, access } → resolved
+  // `PermissionAccess`는 `'read' | 'write' | 'access'`이고, `'access'`만 통과하는
+  // 그림은 "권한 *상태 조회*는 선언 여부와 무관하게 허용, 실제 capability 요구
+  // (`read`/`write`)만 선언 게이트를 탄다"로 읽힌다. 그래서 이름 단위 맵을
+  // access 축과 곱하지 않고, `'access'`일 때 다이얼 자체를 건너뛴다 —
+  // 이름×access 2차원 맵으로 확장할 근거(이름별로 access 프로파일이 다르다는
+  // 관측)는 아직 없고, 근거 없는 확장은 #783에서 이름 단위 맵을 택한 원칙에
+  // 어긋난다.
+  const failureCode = permissionGateCode(permission);
+  if (failureCode) {
+    throw buildNativeError(failureCode);
+  }
+
   return aitState.state.permissions[permission.name];
 }
+
+/**
+ * 선언 게이트에 걸리는 이름·access 조합이면 다이얼에 등록된 native errorCode를
+ * 돌려준다. 세 권한 API(`getPermission`/`requestPermission`/`openPermissionDialog`)가
+ * **걸리는 조건**은 공유하지만 **떨어지는 코드**는 공유하지 않는다 — 아래 참조.
+ */
+function permissionGateCode(permission: {
+  name: PermissionName;
+  access: PermissionAccess;
+}): NativeErrorCode | undefined {
+  if (permission.access === 'access') {
+    return undefined;
+  }
+  return aitState.state.failureModes.getPermission?.[permission.name];
+}
+
+/**
+ * `openPermissionDialog`가 선언 게이트에 걸렸을 때의 코드.
+ *
+ * 형제 API와 갈린다 — env3 run11 실측(2.x/iOS, sdk-example#313에서 시나리오 키가
+ * 통일되며 비교 대상에 들어온 값):
+ *
+ *   getPermission        { geolocation, read }   → rejected NO_PERMISSION
+ *   requestPermission    { geolocation, read }   → rejected NO_PERMISSION
+ *   openPermissionDialog { geolocation, read }   → rejected INVALID_REQUEST
+ *   openPermissionDialog { camera, access }      → resolved
+ *
+ * 즉 **걸리는 조건은 셋이 같고(access 축 모델 그대로) 코드만 갈린다.** 처음엔
+ * `requestPermission`이 `openPermissionDialog`에 위임하니 게이트도 위임하면
+ * 된다고 보고 한 지점에만 배선했는데, 그 모델은 코드 층위에서 실측과 어긋났다
+ * (env1 NO_PERMISSION ↔ env3 INVALID_REQUEST). 그래서 `requestPermission`은
+ * 위임 **전에** 자기 게이트를 먼저 타고, 다이얼로그를 여는 호출만 이 코드를 쓴다.
+ *
+ * 관측이 geolocation/read 한 조합뿐이라 이름·access별 분기는 두지 않는다 —
+ * 근거 없는 확장은 #783에서 이름 단위 맵을 택한 원칙에 어긋난다.
+ */
+const OPEN_DIALOG_GATE_CODE: NativeErrorCode = 'INVALID_REQUEST';
 
 // SDK 시그니처: openPermissionDialog(permission: { name: PermissionName; access: PermissionAccess }): Promise<Exclude<PermissionStatus, "notDetermined">>
 export async function openPermissionDialog(permission: {
   name: PermissionName;
   access: PermissionAccess;
 }): Promise<'allowed' | 'denied'> {
+  // 선언 게이트는 다이얼로그를 열기 **전에** 탄다 — 미선언 권한은 실기기에서
+  // 프롬프트 자체가 뜨지 않고 native 오류로 떨어진다. 코드는 형제 API와 갈린다
+  // (`OPEN_DIALOG_GATE_CODE` 참조).
+  if (permissionGateCode(permission)) {
+    throw buildNativeError(OPEN_DIALOG_GATE_CODE);
+  }
+
   const current = aitState.state.permissions[permission.name];
   if (current === 'allowed') return 'allowed';
   // notDetermined나 denied일 때 — Panel에서 설정된 값을 사용
@@ -113,6 +183,15 @@ export async function requestPermission(permission: {
   name: PermissionName;
   access: PermissionAccess;
 }): Promise<'allowed' | 'denied'> {
+  // 게이트를 위임 **전에** 직접 탄다 — 실기기에서 이 API는 다이얼로그를 여는
+  // 쪽(INVALID_REQUEST)이 아니라 `getPermission`과 같은 코드(NO_PERMISSION)로
+  // 떨어진다(`OPEN_DIALOG_GATE_CODE` 참조). 게이트를 통과한 뒤의 상태 전이만
+  // `openPermissionDialog`에 위임한다.
+  const failureCode = permissionGateCode(permission);
+  if (failureCode) {
+    throw buildNativeError(failureCode);
+  }
+
   return openPermissionDialog(permission);
 }
 

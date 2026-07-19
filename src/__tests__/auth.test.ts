@@ -45,4 +45,71 @@ describe('Auth mock', () => {
   it('appsInTossSignTossCert: 에러 없이 실행된다', async () => {
     await expect(appsInTossSignTossCert({ txId: 'mock-tx' })).resolves.toBeUndefined();
   });
+
+  describe('실패-모드 다이얼 (devtools#770)', () => {
+    it('failureModes.appLogin 미설정 시 기존처럼 항상 resolve한다', async () => {
+      await expect(appLogin()).resolves.toEqual(expect.objectContaining({ referrer: 'SANDBOX' }));
+    });
+
+    it('failureModes.appLogin 설정 시 2.x native envelope으로 reject한다', async () => {
+      aitState.patch('failureModes', { appLogin: 'APP_LOGIN' });
+
+      await expect(appLogin()).rejects.toMatchObject({
+        name: 'Error',
+        code: 'APP_LOGIN',
+        userInfo: {},
+        __isError: true,
+      });
+    });
+
+    it('failureModes.sdkLine이 3.x면 맨 Error로 평탄화된 reject를 던진다', async () => {
+      aitState.patch('failureModes', { appLogin: 'APP_LOGIN', sdkLine: '3.x' });
+
+      let caught: unknown;
+      try {
+        await appLogin();
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as { code?: string }).code).toBeUndefined();
+      expect((caught as { __isError?: boolean }).__isError).toBeUndefined();
+    });
+  });
+
+  describe('실패-모드 다이얼 (devtools#783)', () => {
+    it('failureModes.getIsTossLoginIntegratedService 미설정 시 기존처럼 상태 값을 resolve한다', async () => {
+      await expect(getIsTossLoginIntegratedService()).resolves.toBe(true);
+    });
+
+    it('failureModes.getIsTossLoginIntegratedService 설정 시 2.x native envelope으로 reject한다 (실측: rejected/Error/EXECUTION_ERROR)', async () => {
+      aitState.patch('failureModes', { getIsTossLoginIntegratedService: 'EXECUTION_ERROR' });
+
+      await expect(getIsTossLoginIntegratedService()).rejects.toMatchObject({
+        name: 'Error',
+        code: 'EXECUTION_ERROR',
+        userInfo: {},
+        __isError: true,
+      });
+    });
+
+    it('failureModes.sdkLine이 3.x면 맨 Error로 평탄화된 reject를 던진다', async () => {
+      aitState.patch('failureModes', {
+        getIsTossLoginIntegratedService: 'EXECUTION_ERROR',
+        sdkLine: '3.x',
+      });
+
+      let caught: unknown;
+      try {
+        await getIsTossLoginIntegratedService();
+      } catch (e) {
+        caught = e;
+      }
+
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as { code?: string }).code).toBeUndefined();
+      expect((caught as { __isError?: boolean }).__isError).toBeUndefined();
+    });
+  });
 });

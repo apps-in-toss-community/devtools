@@ -4,6 +4,7 @@
  */
 
 import type { AitSdkCall } from '../mcp/ait-source.js';
+import type { NativeErrorCode } from './native-error.js';
 import type {
   AnalyticsLogEntry,
   DeviceModes,
@@ -23,6 +24,7 @@ import type {
 } from './types.js';
 
 export type { AitSdkCall, AitSdkCallFidelity } from '../mcp/ait-source.js';
+export type { NativeErrorCode, NativeErrorEnvelope } from './native-error.js';
 export type {
   AitNavBarType,
   AnalyticsLogEntry,
@@ -170,6 +172,49 @@ export interface AitDevtoolsState {
 
   // 뷰포트 시뮬레이션 (devtools 전용, SDK와 무관)
   viewport: ViewportState;
+
+  // 실패-모드 다이얼 (devtools#770) — env1이 env3의 프로비저닝-의존 reject를
+  // 재현하도록 per-API 실패 코드를 프로그래매틱하게 설정한다. 패널 UI 노출은
+  // 범위 밖(1차는 aitState.patch 표면만). 값이 없는 API는 기존처럼 낙관적으로
+  // resolve — 다이얼 미사용 시 zero behavior change.
+  failureModes: FailureModes;
+}
+
+/**
+ * per-API 실패 코드 다이얼. 값이 설정된 API만 mock이 reject하고, 나머지는
+ * 기존 낙관적 resolve를 유지한다. `sdkLine`은 envelope shape 분기 축 —
+ * `'2.x'`(기본)는 native envelope(`{name,code,userInfo,moduleName,__isError}`),
+ * `'3.x'`는 맨 Error로 평탄화(sdk-example#284 매트릭스 "패턴 ① envelope 평탄화").
+ */
+export interface FailureModes {
+  /** 네이티브 실패 envelope의 라인 축. 기본 '2.x'. */
+  sdkLine: '2.x' | '3.x';
+  /** appLogin 실패 코드 (예: 'APP_LOGIN'). 미설정 시 기존처럼 항상 resolve. */
+  appLogin?: NativeErrorCode;
+  /** GoogleAdMob.loadAppsInTossAdMob 실패 코드 (예: 'PLACEMENT_ID_FETCH_FAILED'). */
+  loadAdMob?: NativeErrorCode;
+  /** loadFullScreenAd 실패 코드 (예: 'EXECUTION_ERROR'). */
+  loadFullScreenAd?: NativeErrorCode;
+  /**
+   * getIsTossLoginIntegratedService 실패 코드 (devtools#783 실측: env3 run11,
+   * 2.x/iOS `A1-awaited-is-boolean` 시나리오 — rejected/`Error`/`EXECUTION_ERROR`).
+   */
+  getIsTossLoginIntegratedService?: NativeErrorCode;
+  /**
+   * requestNotificationAgreement 실패 코드 (devtools#783 실측: env3 run11,
+   * 2.x/iOS `happy-force-*`/`A1-empty-templateCode` 시나리오 전부 —
+   * rejected/`Error`/`4000`).
+   */
+  requestNotificationAgreement?: NativeErrorCode;
+  /**
+   * 권한 이름별 실패 코드 (devtools#783 실측: env3 run11, 2.x/iOS
+   * `permissions.ait.test.ts` PERMISSION_NAMES 순회 — `geolocation`/`camera`/
+   * `microphone`만 rejected/`Error`/`NO_PERMISSION`, `clipboard`/`contacts`/
+   * `photos`는 resolved. 31146의 `granite.config.ts`가 `permissions: []`라
+   * 선언 안 된 권한만 거부되는 그림과 정합 — 전역 on/off가 아니라 이름 단위 맵.
+   * 설정된 이름만 reject, 나머지는 기존대로 resolve.
+   */
+  getPermission?: Partial<Record<PermissionName, NativeErrorCode>>;
 }
 
 const DEFAULT_STATE: AitDevtoolsState = {
@@ -309,6 +354,11 @@ const DEFAULT_STATE: AitDevtoolsState = {
     frame: false,
     aitNavBar: true,
     aitNavBarType: 'partner',
+  },
+
+  // 다이얼 전부 미설정 = 기존 낙관적 resolve 그대로 (zero behavior change).
+  failureModes: {
+    sdkLine: '2.x',
   },
 };
 
