@@ -13,14 +13,16 @@ describe('Game mock', () => {
     aitState.reset();
   });
 
-  // 실기기(2.x×iOS) capture는 grantPromotionReward가 { key }가 아니라
-  // { errorCode, message } shape로 resolve됨을 보였다(devtools#770) — env1↔env3
-  // 반환-shape 동치를 여기서 고정한다. 값 자체는 placeholder(shape만 검증).
-  it('grantPromotionReward: { errorCode, message } shape로 resolve된다 (실기기 동치)', async () => {
+  // 실기기(2.x×iOS) capture는 { errorCode, message } soft-failure shape를 보였지만
+  // 그건 **미등록 promotionCode** 상태의 결과다 — 프로비저닝 의존 실패이지 이 API의
+  // 무조건적 계약이 아니다. 그래서 기본값은 SDK 선언대로 성공(`{ key }`)으로 두고,
+  // soft-failure 재현은 실패-모드 다이얼로 넘긴다(devtools#785). 기본값을 실패로
+  // 뒤집으면 선언된 성공 분기가 mock에서 도달 불가능해진다.
+  it('grantPromotionReward: 기본값은 선언 타입대로 { key }로 resolve된다', async () => {
     const result = await grantPromotionReward({
       params: { promotionCode: 'PROMO1', amount: 100 },
     });
-    expect(Object.keys(result as object).sort()).toEqual(['errorCode', 'message']);
+    expect(Object.keys(result as object)).toEqual(['key']);
   });
 
   describe('getGameCenterGameProfile', () => {
@@ -52,11 +54,11 @@ describe('Game mock', () => {
     );
   });
 
-  it('grantPromotionRewardForGame: { errorCode, message } shape로 resolve된다 (실기기 동치)', async () => {
+  it('grantPromotionRewardForGame: 기본값은 선언 타입대로 { key }로 resolve된다', async () => {
     const result = await grantPromotionRewardForGame({
       params: { promotionCode: 'GAME1', amount: 50 },
     });
-    expect(Object.keys(result as object).sort()).toEqual(['errorCode', 'message']);
+    expect(Object.keys(result as object)).toEqual(['key']);
   });
 
   it('openGameCenterLeaderboard: 에러 없이 실행된다', async () => {

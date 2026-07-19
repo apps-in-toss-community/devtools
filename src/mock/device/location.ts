@@ -56,7 +56,6 @@ async function getCurrentLocationWeb(): Promise<MockLocation> {
             heading: pos.coords.heading ?? 0,
           },
           timestamp: pos.timestamp,
-          accessLocation: 'FINE',
         });
       },
       () => {
@@ -68,7 +67,11 @@ async function getCurrentLocationWeb(): Promise<MockLocation> {
 }
 
 async function getCurrentLocationPrompt(): Promise<MockLocation> {
-  return waitForPromptResponse<MockLocation>('location');
+  // 패널의 prompt 응답은 startUpdateLocation과 채널을 공유하므로 accessLocation을
+  // 실어 온다. getCurrentLocation의 반환 shape는 모드와 무관해야 하므로(실기기엔
+  // mock/web/prompt 구분이 없다) 여기서 걷어낸다 — mock 모드와 같은 층의 처리다.
+  const { coords, timestamp } = await waitForPromptResponse<MockLocation>('location');
+  return { coords, timestamp } as MockLocation;
 }
 
 const _getCurrentLocation = async (_options?: { accuracy: Accuracy }): Promise<MockLocation> => {

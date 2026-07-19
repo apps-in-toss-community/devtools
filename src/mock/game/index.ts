@@ -10,18 +10,20 @@ import type {
 import { aitState } from '../state.js';
 
 // SDK: grantPromotionReward(params: GrantPromotionRewardParams): Promise<GrantPromotionRewardResponse>
-// 실기기(2.x×iOS) capture는 grantPromotionReward가 선언된 { key } 타입이 아니라
-// { errorCode, message } soft-failure shape로 resolve됨을 보였다(devtools#770). 원본 SDK
-// 타입 선언은 여전히 { key: string }이므로 시그니처는 그대로 두고, 런타임 반환값만
-// 실측과 동치시킨다 — errorCode/message 값 자체는 placeholder(shape만 유효).
+//
+// 실기기(2.x×iOS) capture는 선언된 { key }가 아니라 { errorCode, message }
+// soft-failure shape를 보였다(devtools#770). 다만 그 캡처는 **미등록
+// promotionCode** 시나리오였다 — 즉 프로비저닝에 의존하는 실패지 이 API의
+// 무조건적 계약이 아니다. 그래서 기본값은 선언 타입대로 성공(`{ key }`)으로
+// 두고, soft-failure 재현은 실패-모드 다이얼(#777의 failureModes)에 붙인다.
+// 기본값을 실패로 뒤집으면 SDK가 선언한 성공 분기가 mock에서 영구히 도달
+// 불가능해지고, "다이얼 미사용 시 zero behavior change"라는 #770의 acceptance도
+// 깨진다. 다이얼 배선은 devtools#785.
 export async function grantPromotionReward(
   params: GrantPromotionRewardParams,
 ): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionReward:', params.params);
-  return {
-    errorCode: 'MOCK',
-    message: 'mock promotion result',
-  } as unknown as GrantPromotionRewardResponse;
+  return { key: `mock-reward-${Date.now()}` };
 }
 
 // SDK: grantPromotionRewardForGame = typeof grantPromotionReward
@@ -29,10 +31,7 @@ export async function grantPromotionRewardForGame(
   params: GrantPromotionRewardParams,
 ): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionRewardForGame:', params.params);
-  return {
-    errorCode: 'MOCK',
-    message: 'mock promotion result',
-  } as unknown as GrantPromotionRewardResponse;
+  return { key: `mock-reward-${Date.now()}` };
 }
 
 export async function submitGameCenterLeaderBoardScore(params: {

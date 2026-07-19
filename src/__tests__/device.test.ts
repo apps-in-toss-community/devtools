@@ -33,6 +33,32 @@ describe('Device mock', () => {
       expect(typeof loc.timestamp).toBe('number');
     });
 
+    it('prompt 모드에서도 mock 모드와 같은 2키 shape를 반환한다', async () => {
+      // 반환 shape는 모드와 무관해야 한다 — mock/web/prompt는 우리 내부 개념이고
+      // 실기기엔 그런 구분이 없다. 패널 prompt 응답은 startUpdateLocation과 채널을
+      // 공유해 accessLocation을 실어 오므로, 여기서 걷어내지 않으면 같은 API가
+      // 모드에 따라 다른 키 구성을 내게 된다.
+      aitState.patch('deviceModes', { ...aitState.state.deviceModes, location: 'prompt' });
+      const pending = getCurrentLocation({ accuracy: Accuracy.High });
+      window.dispatchEvent(
+        new CustomEvent('__ait:prompt-response:location', {
+          detail: {
+            coords: {
+              latitude: 1,
+              longitude: 2,
+              altitude: 0,
+              accuracy: 10,
+              altitudeAccuracy: 0,
+              heading: 0,
+            },
+            timestamp: 123,
+            accessLocation: 'FINE',
+          },
+        }),
+      );
+      expect(Object.keys(await pending).sort()).toEqual(['coords', 'timestamp']);
+    });
+
     it('상태를 변경하면 새 좌표를 반환한다', async () => {
       aitState.patch('location', {
         coords: { ...aitState.state.location.coords, latitude: 35.0, longitude: 129.0 },
