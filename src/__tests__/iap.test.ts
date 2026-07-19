@@ -209,10 +209,15 @@ describe('IAP mock', () => {
   });
 
   describe('checkoutPayment', () => {
-    it('성공 시 { success: true }를 반환한다', async () => {
+    // 실기기(2.x×iOS) capture는 checkoutPayment의 valueKeys가 항상 { success, reason }
+    // 2개 키임을 보였다(devtools#770) — 성공 시에도 reason을 포함해 env1↔env3 valueKeys를
+    // 동치시킨다.
+    it('성공 시에도 { success: true, reason }로 resolve된다 (실기기 동치)', async () => {
       const promise = checkoutPayment({ params: { payToken: 'token-1' } });
       await vi.advanceTimersByTimeAsync(300);
-      expect(await promise).toEqual({ success: true });
+      const result = await promise;
+      expect(Object.keys(result).sort()).toEqual(['reason', 'success']);
+      expect(result.success).toBe(true);
     });
 
     it('실패 시 reason을 포함한다', async () => {

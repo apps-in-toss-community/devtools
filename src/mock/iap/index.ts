@@ -138,12 +138,23 @@ export const IAP = createMockProxy('IAP', {
     };
   },
 
+  // 실기기(2.x×iOS) capture는 getPendingOrders가 { orders }뿐 아니라 { orders, orderIds }
+  // 2개 키로 resolve됨을 보였다(devtools#770) — 선언된 SDK 타입엔 orderIds가 없으므로
+  // 시그니처는 그대로 두고 런타임 반환값만 캐스트한다.
   async getPendingOrders(): Promise<{
     orders: Array<{ orderId: string; sku: string; paymentCompletedDate: string }>;
   }> {
-    return { orders: [...aitState.state.iap.pendingOrders] };
+    const orders = [...aitState.state.iap.pendingOrders];
+    return {
+      orders,
+      orderIds: orders.map((o) => o.orderId),
+    } as unknown as {
+      orders: Array<{ orderId: string; sku: string; paymentCompletedDate: string }>;
+    };
   },
 
+  // 실기기(2.x×iOS) capture는 getCompletedOrRefundedOrders가 nextKey 없이
+  // { hasNext, orders } 2개 키로 resolve됨을 보였다(devtools#770).
   async getCompletedOrRefundedOrders(): Promise<{
     hasNext: boolean;
     nextKey?: string | null;
@@ -151,7 +162,6 @@ export const IAP = createMockProxy('IAP', {
   }> {
     return {
       hasNext: false,
-      nextKey: null,
       orders: [...aitState.state.iap.completedOrders],
     };
   },
@@ -178,24 +188,24 @@ export const IAP = createMockProxy('IAP', {
     return true;
   },
 
+  // 실기기(2.x×iOS) capture는 (프로비저닝된 구독이 없는 상태에서) getSubscriptionInfo가
+  // { subscription } 없이 빈 객체 {}로 resolve됨을 보였다(devtools#770). 선언된 SDK
+  // 타입은 subscription을 필수로 요구하므로 시그니처는 그대로 두고 런타임 반환값만
+  // 실측과 동치시킨다.
   async getSubscriptionInfo(_args: {
     params: { orderId: string };
   }): Promise<{ subscription: IapSubscriptionInfoResult }> {
-    return {
-      subscription: {
-        catalogId: 1,
-        status: 'ACTIVE',
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        isAutoRenew: true,
-        gracePeriodExpiresAt: null,
-        isAccessible: true,
-      },
-    };
+    return {} as unknown as { subscription: IapSubscriptionInfoResult };
   },
 });
 
 // --- TossPay ---
 
+// 실기기(2.x×iOS) capture는 checkoutPayment의 valueKeys가 { success, reason } 2개
+// 키로 실측됐다(devtools#770, nextResult='fail' 경로 capture). 이전 mock은 성공 시
+// { success: true } 1개 키만 반환해 env1↔env3 valueKeys가 어긋났다 — success 값은
+// 패널의 TossPay 시뮬레이터 dial(payment.nextResult)을 계속 따르되, reason은 항상
+// 포함해 실기기와 key set을 동치시킨다.
 export async function checkoutPayment(options: {
   params: { payToken: string };
 }): Promise<{ success: boolean; reason?: string }> {
@@ -205,12 +215,14 @@ export async function checkoutPayment(options: {
   await new Promise((r) => setTimeout(r, 300));
 
   if (nextResult === 'success') {
-    return { success: true };
+    return { success: true, reason: 'mock' };
   }
   return { success: false, reason: failReason || 'Mock payment failed' };
 }
 
 export const requestTossPayPaysBilling = Object.assign(
+  // requestTossPayPaysBilling도 checkoutPayment와 동일한 실측(devtools#770) — 항상
+  // { success, reason } 2개 키로 resolve된다.
   async function requestTossPayPaysBilling(options: {
     params: { wrappedToken: string };
   }): Promise<{ success: boolean; reason?: string } | undefined> {
@@ -220,7 +232,7 @@ export const requestTossPayPaysBilling = Object.assign(
     await new Promise((r) => setTimeout(r, 300));
 
     if (nextResult === 'success') {
-      return { success: true };
+      return { success: true, reason: 'mock' };
     }
     return { success: false, reason: failReason || 'Mock billing auth failed' };
   },
