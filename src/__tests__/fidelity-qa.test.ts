@@ -94,7 +94,10 @@ describe('fidelity-qa — mock runner smoke test', () => {
       runProbe('safe-area.getSafeAreaInsets', async () => getSafeAreaInsets()),
 
       // navigation (2)
-      runProbe('nav.getTossShareLink', async () => getTossShareLink('/test-path')),
+      // devtools#780: getTossShareLink는 이제 scheme 없는 bare path를 reject한다 —
+      // 이 스모크 테스트는 "에러 없이 실행되는지"만 보는 surface probe이므로 유효
+      // 입력(scheme 포함)으로 갱신한다.
+      runProbe('nav.getTossShareLink', async () => getTossShareLink('intoss://test-path')),
       runProbe('nav.requestReviewIsSupported', async () => requestReview.isSupported()),
 
       // storage (1 read-only)

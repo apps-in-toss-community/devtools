@@ -54,6 +54,19 @@ function callVibrate(pattern: VibratePattern): boolean {
 }
 
 export async function generateHapticFeedback(options: { type: HapticFeedbackType }): Promise<void> {
+  // 실기기(env3)는 알 수 없는 haptic type을 reject(errorCode: EXECUTION_ERROR)한다 —
+  // mock은 과거 알 수 없는 type도 30ms fallback 패턴으로 조용히 resolve했다
+  // (devtools#780, env1↔env3 capture diff 실측). 유효 판정은 SDK 타입 선언
+  // (HapticFeedbackType, 10종 union)을 그대로 쓴다 — 이 mock의 HAPTIC_VIBRATE_PATTERN
+  // 키 집합이 그 union과 정확히 일치하므로 별도 허용 목록을 새로 만들지 않는다.
+  if (!(options.type in HAPTIC_VIBRATE_PATTERN)) {
+    const err = new Error(
+      `[@ait-co/devtools] generateHapticFeedback: unknown haptic type "${options.type}"`,
+    );
+    (err as Error & { errorCode?: string }).errorCode = 'EXECUTION_ERROR';
+    throw err;
+  }
+
   const timestamp = Date.now();
   aitState.logAnalytics({ type: 'haptic', params: { hapticType: options.type } });
 

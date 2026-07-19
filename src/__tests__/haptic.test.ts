@@ -157,4 +157,33 @@ describe('generateHapticFeedback', () => {
       }
     });
   });
+
+  // devtools#780: 실기기(env3)는 알 수 없는 haptic type을 reject한다. mock은 과거
+  // 30ms fallback 패턴으로 조용히 resolve했다 — env1↔env3 capture diff 실측에 맞춰
+  // reject로 갱신.
+  describe('알 수 없는 type — devtools#780', () => {
+    it('SDK 타입 union 밖의 type 문자열은 EXECUTION_ERROR로 reject된다', async () => {
+      const bogusType = 'not-a-real-haptic-type' as Parameters<
+        typeof generateHapticFeedback
+      >[0]['type'];
+
+      await expect(generateHapticFeedback({ type: bogusType })).rejects.toThrow();
+
+      try {
+        await generateHapticFeedback({ type: bogusType });
+        expect.unreachable('reject되어야 한다');
+      } catch (err) {
+        // 캡처 하네스(aitCapture.extractErrorShape)는 errorName을 err.constructor.name,
+        // errorCode를 err.code ?? err.errorCode에서 뽑는다. 실기기 실측이
+        // errorName: "Error"이므로 서브클래스가 아닌 평범한 Error여야 한다.
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).constructor.name).toBe('Error');
+        expect((err as Error & { errorCode?: string }).errorCode).toBe('EXECUTION_ERROR');
+      }
+    });
+
+    it('알 수 없는 type이 거부되어도 유효한 type 호출은 계속 통과한다', async () => {
+      await expect(generateHapticFeedback({ type: 'success' })).resolves.toBeUndefined();
+    });
+  });
 });
