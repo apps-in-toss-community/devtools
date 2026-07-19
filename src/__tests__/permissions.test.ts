@@ -216,17 +216,36 @@ describe('Permissions mock', () => {
         getPermission: { geolocation: 'NO_PERMISSION', camera: 'NO_PERMISSION' },
       });
 
-      await expect(
-        openPermissionDialog({ name: 'geolocation', access: 'read' }),
-      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
-      await expect(
-        requestPermission({ name: 'geolocation', access: 'read' }),
-      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+      await expect(openPermissionDialog({ name: 'geolocation', access: 'read' })).rejects.toThrow();
+      await expect(requestPermission({ name: 'geolocation', access: 'read' })).rejects.toThrow();
 
       // access 축: 상태 조회는 다이얼이 걸린 이름이라도 통과한다.
       await expect(openPermissionDialog({ name: 'camera', access: 'access' })).resolves.toBe(
         'allowed',
       );
+    });
+
+    it('형제 API는 게이트 조건은 공유하되 errorCode는 갈린다 (실측: env3 run11)', async () => {
+      // 세 API가 같은 입력 `{ geolocation, read }`에 서로 다른 코드로 떨어진다:
+      //   getPermission        → NO_PERMISSION
+      //   requestPermission    → NO_PERMISSION
+      //   openPermissionDialog → INVALID_REQUEST
+      //
+      // 처음엔 requestPermission이 openPermissionDialog에 위임하니 게이트도
+      // 위임하면 된다고 보고 한 지점에만 배선했는데, 그 모델은 코드 층위에서
+      // 실측과 어긋났다(env1↔env3 capture diff가 잡아냈다). 위임 구조를 다시
+      // 좁히면 이 발산이 조용히 되살아나므로 여기서 못박는다.
+      aitState.patch('failureModes', { getPermission: { geolocation: 'NO_PERMISSION' } });
+
+      await expect(getPermission({ name: 'geolocation', access: 'read' })).rejects.toMatchObject({
+        code: 'NO_PERMISSION',
+      });
+      await expect(
+        requestPermission({ name: 'geolocation', access: 'read' }),
+      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+      await expect(
+        openPermissionDialog({ name: 'geolocation', access: 'read' }),
+      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     });
 
     it('게이트에 걸리면 권한 상태를 변이시키지 않는다 — 다이얼로그가 뜨기 전에 떨어지므로', async () => {
@@ -235,7 +254,7 @@ describe('Permissions mock', () => {
 
       await expect(
         openPermissionDialog({ name: 'geolocation', access: 'write' }),
-      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+      ).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
 
       expect(aitState.state.permissions.geolocation).toBe('notDetermined');
     });
