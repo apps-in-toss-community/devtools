@@ -178,7 +178,17 @@ describe('generateHapticFeedback', () => {
         // errorName: "Error"이므로 서브클래스가 아닌 평범한 Error여야 한다.
         expect(err).toBeInstanceOf(Error);
         expect((err as Error).constructor.name).toBe('Error');
-        expect((err as Error & { errorCode?: string }).errorCode).toBe('EXECUTION_ERROR');
+        expect((err as Error & { code?: string }).code).toBe('EXECUTION_ERROR');
+        // devtools#788: 손수 만든 `{errorCode}` 대신 buildNativeError의 실기기
+        // 2.x native envelope을 얹으므로, key-set도 env3 캡처와 필드 단위로
+        // 일치해야 한다 (Object.keys 발산이 sdk-example capture-diff가 잡아낸 회귀).
+        expect(Object.keys(err as object).sort()).toEqual([
+          '__isError',
+          'code',
+          'moduleName',
+          'name',
+          'userInfo',
+        ]);
       }
     });
 

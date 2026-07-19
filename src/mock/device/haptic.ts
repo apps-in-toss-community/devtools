@@ -64,12 +64,12 @@ export async function generateHapticFeedback(options: { type: HapticFeedbackType
   // 통과해버린다 — 이 함수가 막으려는 바로 그 부류(실기기가 거부할 입력을 mock이
   // 조용히 수락)가 그 집합에서 재발한다. 타입 시그니처가 막아줄 것 같지만
   // MCP `call_sdk`는 타입 없는 인자를 그대로 실어 보내므로 런타임에 도달한다.
+  // 이 throw는 결정적 입력-계약 위반이라 다이얼 뒤에 두지 않는다 — 던지는 error의
+  // *shape*만 buildNativeError로 실기기 2.x envelope(name/code/userInfo/moduleName/
+  // __isError)과 맞춘다(devtools#788, 손수 만든 `{errorCode}`가 env1↔env3
+  // errorKeys 발산의 원인이었다).
   if (!Object.hasOwn(HAPTIC_VIBRATE_PATTERN, options.type)) {
-    const err = new Error(
-      `[@ait-co/devtools] generateHapticFeedback: unknown haptic type "${options.type}"`,
-    );
-    (err as Error & { errorCode?: string }).errorCode = 'EXECUTION_ERROR';
-    throw err;
+    throw buildNativeError('EXECUTION_ERROR');
   }
 
   const timestamp = Date.now();

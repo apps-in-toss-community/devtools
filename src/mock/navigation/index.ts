@@ -4,6 +4,7 @@
 
 import type { GraniteEvent, TdsEvent } from '@apps-in-toss/web-framework';
 import { getNetworkStatusByMode } from '../device/index.js';
+import { buildNativeError } from '../native-error.js';
 import { observe } from '../observe.js';
 import { aitState } from '../state.js';
 import type { NetworkStatus } from '../types.js';
@@ -33,16 +34,16 @@ export async function share(message: { message: string }): Promise<void> {
 const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
 
 export async function getTossShareLink(path: string, _ogImageUrl?: string): Promise<string> {
-  // 실기기(env3)는 scheme 없는 bare path를 reject(errorCode: EXECUTION_ERROR)한다 —
+  // 실기기(env3)는 scheme 없는 bare path를 reject(code: EXECUTION_ERROR)한다 —
   // mock은 과거 어떤 문자열이든 조용히 resolve했다(devtools#780, env1↔env3 capture
   // diff 실측). string.resolve(path)로 만든 "mock 링크"가 유효한 mini-app 딥링크가
   // 아닌데도 성공한 것처럼 보이면 개발자가 dev에서 통과한 코드를 실기기에서 깨뜨린다.
+  // 이 throw는 결정적 입력-계약 위반이라 다이얼 뒤에 두지 않는다 — 던지는 error의
+  // *shape*만 buildNativeError로 실기기 2.x envelope(name/code/userInfo/moduleName/
+  // __isError)과 맞춘다(devtools#788, 손수 만든 `{errorCode}`가 env1↔env3
+  // errorKeys 발산의 원인이었다).
   if (!URI_SCHEME_PATTERN.test(path)) {
-    const err = new Error(
-      `[@ait-co/devtools] getTossShareLink: "${path}" is not a valid link — a URI scheme is required (e.g. "intoss://...")`,
-    );
-    (err as Error & { errorCode?: string }).errorCode = 'EXECUTION_ERROR';
-    throw err;
+    throw buildNativeError('EXECUTION_ERROR');
   }
   return `https://toss.im/share/mock${path}`;
 }
