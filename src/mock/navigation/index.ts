@@ -279,7 +279,20 @@ export const SafeAreaInsets = {
   },
 };
 
-/** @deprecated */
+/**
+ * @deprecated `SafeAreaInsets.get()`을 쓸 것.
+ *
+ * 상류 SDK의 타입 선언은 `getSafeAreaInsets(): number`지만, 실기기(2.x×iOS)
+ * capture는 이 함수가 숫자가 아니라 `SafeAreaInsets.get()`과 같은 객체
+ * (`{ top, right, bottom, left }`)를 반환함을 보였다(devtools#770 —
+ * `returnType: "object"`, `valueKeys: ["top","right","bottom","left"]`).
+ * 즉 선언과 런타임이 어긋나 있는 상류 타입 버그다.
+ *
+ * mock은 타입 선언이 아니라 **런타임 실측**을 재현해야 개발자가 env1에서 겪는
+ * 동작이 실기기와 같아진다. 그래서 시그니처는 상류와 동일하게 `number`로 두되
+ * (`__typecheck.ts`가 SDK 타입에 대해 계속 컴파일되도록) 반환값만 실측 객체로
+ * 캐스트한다 — Analytics·setClipboardText·Storage와 같은 처리(#775).
+ */
 export function getSafeAreaInsets(): number {
-  return aitState.state.safeAreaInsets.top;
+  return { ...aitState.state.safeAreaInsets } as unknown as number;
 }

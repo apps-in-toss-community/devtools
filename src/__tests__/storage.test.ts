@@ -25,6 +25,14 @@ describe('Storage mock', () => {
     expect(result).toBeNull();
   });
 
+  it('setItem/removeItem/clearItems: undefined가 아니라 null로 resolve한다 (실기기 실측 shape)', async () => {
+    // 실기기(2.x×iOS) capture는 세 메서드가 `null`로 resolve됨을 보였다(devtools#770).
+    // 상류 타입 선언은 `Promise<void>`지만 mock은 런타임 실측을 재현한다.
+    expect(await Storage.setItem('shape', 'v')).toBeNull();
+    expect(await Storage.removeItem('shape')).toBeNull();
+    expect(await Storage.clearItems()).toBeNull();
+  });
+
   it('clearItems: 모든 ait storage 키를 삭제한다', async () => {
     await Storage.setItem('a', '1');
     await Storage.setItem('b', '2');

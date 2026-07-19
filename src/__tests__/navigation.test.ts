@@ -228,9 +228,11 @@ describe('Navigation mock', () => {
     expect(result).toEqual({ enabled: true });
   });
 
-  it('getSafeAreaInsets (deprecated): top 값을 반환한다', () => {
+  it('getSafeAreaInsets (deprecated): insets 객체를 반환한다 — 상류 타입 선언(number)이 아니라 실측 shape', () => {
+    // 상류 SDK 선언은 `(): number`지만 실기기(2.x×iOS) capture는 SafeAreaInsets.get()과
+    // 같은 객체를 반환함을 보였다(devtools#770). mock은 런타임 실측을 재현한다.
     // default는 iPhone 15 Pro partner WebView 실측과 정합 (nav bar top 54).
-    expect(getSafeAreaInsets()).toBe(54);
+    expect(getSafeAreaInsets()).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
   });
 
   describe('SafeAreaInsets', () => {
