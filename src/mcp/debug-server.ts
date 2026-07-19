@@ -1339,11 +1339,18 @@ function errorResult(err: unknown, name: string, isLocal = false) {
  * SECRET-HANDLING: target `id`/`title`/`url` are not written to any log here.
  * Only an attach-detected stderr line is emitted (no target details).
  *
+ * `server` is optional (devtools#772): the standalone test-runner path
+ * (`test-runner/relay-factory.ts`) has no MCP `Server` instance to notify —
+ * it only needs the `onAttach`/`onDetach` dashboard-push side effects. When
+ * omitted, `sendToolListChanged()` is simply skipped; the signature-diff and
+ * callback logic is byte-for-byte the same. Existing MCP daemon call sites
+ * always pass a real `Server`, so their behavior is unchanged.
+ *
  * @returns `stop` — call this during shutdown to clear the interval.
  */
 export function startAttachWatcher(
   connection: CdpConnection,
-  server: Server,
+  server: Server | undefined,
   intervalMs = 1_000,
   onAttach?: () => void,
   onDetach?: () => void,
@@ -1360,7 +1367,7 @@ export function startAttachWatcher(
   let lastSignature = signature();
   // If already attached when the watcher starts, send once immediately.
   if (lastSignature !== '') {
-    void server.sendToolListChanged();
+    void server?.sendToolListChanged();
     onAttach?.();
   }
 
@@ -1372,7 +1379,7 @@ export function startAttachWatcher(
       lastSignature = current;
       if (current !== '') {
         // Non-empty signature change — new or replaced target(s).
-        void server.sendToolListChanged();
+        void server?.sendToolListChanged();
         onAttach?.();
       } else if (wasNonEmpty) {
         // Fix #705-A: genuine non-empty→empty edge — fire detach callback so

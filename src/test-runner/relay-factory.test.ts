@@ -46,17 +46,70 @@ const fakeConnection = {
   enableDomains: vi.fn(() => Promise.resolve()),
 };
 const fakeTunnelStatus = { up: true, wssUrl: null }; // wssUrl intentionally null (no real wss)
-const bootRelayFamilyMock = vi.fn(() =>
-  Promise.resolve({
-    connection: fakeConnection,
-    stop: fakeStop,
-    getTunnelStatus: () => fakeTunnelStatus,
-  }),
+/** Loosely-typed shape of a booted family fixture, for `mockResolvedValueOnce` overrides. */
+interface FakeBootedFamily {
+  connection: {
+    kind: 'relay';
+    listTargets: () => Array<{ id: string; title: string; url: string }>;
+    enableDomains: () => Promise<void>;
+    send?: (method: string) => Promise<unknown>;
+  };
+  stop: () => void;
+  getTunnelStatus: () => { up: boolean; wssUrl: string | null };
+  // relayHttpUrl is optional here (mirrors BootedFamily's own optional field)
+  // so existing `mockResolvedValueOnce` overrides throughout this file that
+  // predate devtools#772 do not need to grow the field. The devtools#772
+  // tests below inject it explicitly where the assertion needs a live value.
+  relayHttpUrl?: string;
+}
+const bootRelayFamilyMock = vi.fn(
+  (): Promise<FakeBootedFamily> =>
+    Promise.resolve({
+      connection: fakeConnection,
+      stop: fakeStop,
+      getTunnelStatus: () => fakeTunnelStatus,
+    }),
 );
 const buildRelayVerifyAuthMock = vi.fn(() => ({}));
+// devtools#772: startAttachWatcher — a lightweight stub that mirrors the real
+// function's signature-diff contract (fires onAttach when listTargets() is
+// non-empty at call time, exposes stop()) without the real polling interval.
+// Individual tests drive attach/detach by calling the captured onAttach/
+// onDetach callbacks directly (see startAttachWatcherMock.mock.calls).
+const attachWatcherStopMock = vi.fn();
+const startAttachWatcherMock = vi.fn(
+  (
+    connection: { listTargets(): Array<{ id: string }> },
+    _server: unknown,
+    _intervalMs: number,
+    onAttach?: () => void,
+    _onDetach?: () => void,
+  ) => {
+    if (connection.listTargets().length > 0) {
+      onAttach?.();
+    }
+    return { stop: attachWatcherStopMock };
+  },
+);
 vi.mock('../mcp/debug-server.js', () => ({
   bootRelayFamily: bootRelayFamilyMock,
   buildRelayVerifyAuth: buildRelayVerifyAuthMock,
+  startAttachWatcher: startAttachWatcherMock,
+}));
+
+// devtools-opener.ts — buildChiiInspectorUrl (used by getDirectInspectorUrl)
+const buildChiiInspectorUrlMock = vi.fn(
+  (_relayHttpUrl: string, targetId: string, _mintTotp?: () => string) =>
+    `http://127.0.0.1:9100/front_end/chii_app.html?target=${targetId}`,
+);
+vi.mock('../mcp/devtools-opener.js', () => ({
+  buildChiiInspectorUrl: buildChiiInspectorUrlMock,
+}));
+
+// totp.ts — generateTotp (used by getDirectInspectorUrl)
+const generateTotpMock = vi.fn(() => '123456');
+vi.mock('../mcp/totp.js', () => ({
+  generateTotp: generateTotpMock,
 }));
 
 // qr-http-server.ts — the key surface under test
@@ -120,15 +173,33 @@ function capturedAttachDeps(): {
 function capturedGetDashboardState(): () => {
   mode: string;
   tunnel: typeof fakeTunnelStatus;
-  pages: null;
+  pages: Array<{ id: string; url: string }>;
   attachUrl: string | null;
 } {
   return (startQrHttpServerMock.mock.calls[0] as unknown[])[0] as () => {
     mode: string;
     tunnel: typeof fakeTunnelStatus;
-    pages: null;
+    pages: Array<{ id: string; url: string }>;
     attachUrl: string | null;
   };
+}
+
+// Extract the getDirectInspectorUrl option passed to startQrHttpServer.
+function capturedGetDirectInspectorUrl():
+  | (() =>
+      | { ok: true; url: string }
+      | { ok: false; reason: 'relayDown' | 'noTarget' | 'totpUnavailable' })
+  | undefined {
+  return (
+    startQrHttpServerMock.mock.calls[0] as unknown as [
+      unknown,
+      { getDirectInspectorUrl?: () => { ok: boolean } } | undefined,
+    ]
+  )[1]?.getDirectInspectorUrl as
+    | (() =>
+        | { ok: true; url: string }
+        | { ok: false; reason: 'relayDown' | 'noTarget' | 'totpUnavailable' })
+    | undefined;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -343,7 +414,10 @@ describe('createRelayConnectionFactory — web-QR server (devtools#708)', () => 
       const state = getDashboardState();
       expect(state.mode).toBe('relay-dev');
       expect(state.tunnel).toEqual(fakeTunnelStatus);
-      expect(state.pages).toBeNull();
+      // devtools#772: pages now reflects booted.connection.listTargets() —
+      // no target attached yet in this fixture, so an empty array (NOT the
+      // old `null` placeholder that permanently disabled the Inspector gate).
+      expect(state.pages).toEqual([]);
       // Before onAttachUrlBuilt fires, attachUrl is null
       expect(state.attachUrl).toBeNull();
     });
@@ -371,6 +445,194 @@ describe('createRelayConnectionFactory — web-QR server (devtools#708)', () => 
       const state = getDashboardState();
       expect(mintAttachUrlMock).toHaveBeenCalled();
       expect(state.attachUrl).toBe('intoss-private://synthetic?at=placeholder');
+    });
+
+    // devtools#772: pages must reflect booted.connection.listTargets() so the
+    // SSE client's Inspector gate (`Array.isArray(s.pages) && s.pages.length
+    // > 0`, qr-http-server.ts #544) can ever flip true on the runner path —
+    // before this fix `pages` was hardcoded `null`, so the gate was
+    // structurally permanently false regardless of attach state.
+    it('reflects an attached target in pages (devtools#772)', async () => {
+      const attachedConnection = {
+        kind: 'relay' as const,
+        listTargets: () => [{ id: 'target-1', title: 'mini-app', url: 'https://example.test/' }],
+        enableDomains: vi.fn(() => Promise.resolve()),
+      };
+      bootRelayFamilyMock.mockResolvedValueOnce({
+        connection: attachedConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+        relayHttpUrl: 'http://127.0.0.1:9100',
+      });
+
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open();
+
+      const getDashboardState = capturedGetDashboardState();
+      const state = getDashboardState();
+      expect(state.pages).toEqual([{ id: 'target-1', url: 'https://example.test/' }]);
+    });
+  });
+
+  // devtools#772: parity with debug-server.ts's onPageAttach/onPageDetach wiring
+  // (~2348) — target connect/disconnect must push an immediate dashboard SSE
+  // update via qrServer.notifyStateChange(), not just wait for the next
+  // periodic refresh.
+  describe('attach watcher wiring (devtools#772)', () => {
+    it('starts an attach watcher on the booted connection and stop()s it on close()', async () => {
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      const conn = await factory.open();
+
+      expect(startAttachWatcherMock).toHaveBeenCalledTimes(1);
+      // server arg (2nd positional) must be undefined — the standalone runner
+      // has no MCP Server instance to notify (only the dashboard push matters).
+      expect(startAttachWatcherMock.mock.calls[0]?.[1]).toBeUndefined();
+
+      await factory.close(conn);
+      expect(attachWatcherStopMock).toHaveBeenCalled();
+    });
+
+    it('notifyStateChange fires when the attach watcher reports attach', async () => {
+      // fakeConnection.listTargets() returns [] by default, so
+      // startAttachWatcherMock's stub does not auto-fire onAttach at start
+      // time — invoke the captured onAttach callback directly to simulate a
+      // later target connect (mirrors the real watcher's polling tick).
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open();
+
+      const onAttach = startAttachWatcherMock.mock.calls[0]?.[3] as (() => void) | undefined;
+      expect(onAttach).toBeDefined();
+      qrServerNotifyMock.mockClear();
+      onAttach?.();
+      expect(qrServerNotifyMock).toHaveBeenCalled();
+    });
+
+    it('notifyStateChange fires when the attach watcher reports detach', async () => {
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open();
+
+      const onDetach = startAttachWatcherMock.mock.calls[0]?.[4] as (() => void) | undefined;
+      expect(onDetach).toBeDefined();
+      qrServerNotifyMock.mockClear();
+      onDetach?.();
+      expect(qrServerNotifyMock).toHaveBeenCalled();
+    });
+  });
+
+  // devtools#772: getDirectInspectorUrl — activates the /inspector stable
+  // route (#530) on the runner dashboard. Mirrors debug-server.ts's assembly:
+  // relayDown when no relayHttpUrl, noTarget when listTargets() is empty,
+  // totpUnavailable when AIT_DEBUG_TOTP_SECRET is unset, else ok:true with a
+  // buildChiiInspectorUrl-assembled URL.
+  describe('getDirectInspectorUrl (devtools#772)', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('returns relayDown when the booted family has no relayHttpUrl', async () => {
+      bootRelayFamilyMock.mockResolvedValueOnce({
+        connection: fakeConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+        // relayHttpUrl intentionally omitted
+      });
+
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open();
+
+      const getDirectInspectorUrl = capturedGetDirectInspectorUrl();
+      expect(getDirectInspectorUrl?.()).toEqual({ ok: false, reason: 'relayDown' });
+    });
+
+    it('returns noTarget when relay is up but no page has attached', async () => {
+      bootRelayFamilyMock.mockResolvedValueOnce({
+        connection: fakeConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+        relayHttpUrl: 'http://127.0.0.1:9100',
+      });
+
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open(); // fakeConnection.listTargets() === []
+
+      const getDirectInspectorUrl = capturedGetDirectInspectorUrl();
+      expect(getDirectInspectorUrl?.()).toEqual({ ok: false, reason: 'noTarget' });
+    });
+
+    it('returns totpUnavailable when AIT_DEBUG_TOTP_SECRET is unset', async () => {
+      vi.stubEnv('AIT_DEBUG_TOTP_SECRET', '');
+      const attachedConnection = {
+        kind: 'relay' as const,
+        listTargets: () => [{ id: 'target-1', title: 'mini-app', url: 'https://example.test/' }],
+        enableDomains: vi.fn(() => Promise.resolve()),
+      };
+      bootRelayFamilyMock.mockResolvedValueOnce({
+        connection: attachedConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+        relayHttpUrl: 'http://127.0.0.1:9100',
+      });
+
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open();
+
+      const getDirectInspectorUrl = capturedGetDirectInspectorUrl();
+      expect(getDirectInspectorUrl?.()).toEqual({ ok: false, reason: 'totpUnavailable' });
+    });
+
+    it('returns ok:true with an assembled URL once relay + target + TOTP secret are present', async () => {
+      // SECRET-HANDLING: synthetic placeholder value, not a real TOTP secret.
+      vi.stubEnv('AIT_DEBUG_TOTP_SECRET', 'synthetic-placeholder-secret');
+      const attachedConnection = {
+        kind: 'relay' as const,
+        listTargets: () => [{ id: 'target-1', title: 'mini-app', url: 'https://example.test/' }],
+        enableDomains: vi.fn(() => Promise.resolve()),
+      };
+      bootRelayFamilyMock.mockResolvedValueOnce({
+        connection: attachedConnection,
+        stop: fakeStop,
+        getTunnelStatus: () => fakeTunnelStatus,
+        relayHttpUrl: 'http://127.0.0.1:9100',
+      });
+
+      const factory = createRelayConnectionFactory({
+        schemeUrl: SYNTHETIC_SCHEME_URL,
+        onQrContent,
+      });
+      await factory.open();
+
+      const getDirectInspectorUrl = capturedGetDirectInspectorUrl();
+      const result = getDirectInspectorUrl?.();
+      expect(result?.ok).toBe(true);
+      expect(buildChiiInspectorUrlMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:9100',
+        'target-1',
+        expect.any(Function),
+      );
+      if (result?.ok) {
+        expect(result.url).toContain('target-1');
+      }
     });
   });
 });

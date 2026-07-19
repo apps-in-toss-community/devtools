@@ -169,6 +169,10 @@ export function createRelayConnectionFactory(
   let family: { connection: CdpConnection; stop(): void } | undefined;
   // QR HTTP server — started during open() when not headless, closed in close().
   let qrServer: QrHttpServer | undefined;
+  // devtools#772: target attach/detach poller (mirrors debug-server.ts's
+  // startAttachWatcher wiring) — started alongside qrServer in open(), stopped
+  // in close(). Optional-chained everywhere since qrServer startup can fail.
+  let attachWatcher: { stop(): void } | undefined;
   // Session-phase state (#730) — drives the dashboard's `phase` field so the
   // CLI's run start/complete and final teardown push an immediate SSE update
   // instead of the dashboard just going dark when the process exits.
@@ -186,7 +190,11 @@ export function createRelayConnectionFactory(
       );
       const { injectDebugIndicator, injectGlobals } = await import('./cell.js');
       const { loadRelaySecretReadOnly } = await import('../mcp/relay-secret-store.js');
-      const { bootRelayFamily, buildRelayVerifyAuth } = await import('../mcp/debug-server.js');
+      const { bootRelayFamily, buildRelayVerifyAuth, startAttachWatcher } = await import(
+        '../mcp/debug-server.js'
+      );
+      const { buildChiiInspectorUrl } = await import('../mcp/devtools-opener.js');
+      const { generateTotp } = await import('../mcp/totp.js');
 
       // Load the project-local .ait_relay secret into AIT_DEBUG_TOTP_SECRET
       // BEFORE booting the relay so assertRelayAuthConfigured()/buildRelayVerifyAuth()
@@ -268,17 +276,55 @@ export function createRelayConnectionFactory(
       try {
         const { startQrHttpServer } = await import('../mcp/qr-http-server.js');
 
+        // devtools#772: parity with the MCP daemon path (debug-server.ts) —
+        // read the live target list off the booted connection instead of the
+        // `pages: null` placeholder. `Array.isArray(pages) && pages.length > 0`
+        // is the SSE client's Inspector-active gate (qr-http-server.ts #544),
+        // so a hardcoded `null` left the Inspector section stuck on the
+        // waiting hint forever, independent of any actual attach state.
         const getDashboardState = (): DashboardState => ({
           tunnel: attachDeps.getTunnelStatus(),
-          pages: null, // CLI/pool: no page-list introspection needed
+          pages: booted.connection.listTargets().map((t) => ({ id: t.id, url: t.url })),
           attachUrl: lastAttachParts ? mintAttachUrl(attachDeps, lastAttachParts) : null,
           mode: 'relay-dev' as const,
           phase, // #730 — CLI-only 'running'/'complete' transitions via onSessionPhase
           manualPrompt, // #741 — CLI-only --manual-blocking transitions via onManualPrompt
         });
 
+        // devtools#772: getDirectInspectorUrl — mirrors debug-server.ts's
+        // assembly (buildChiiInspectorUrl over the relay's local HTTP base +
+        // a freshly-minted TOTP code) so the runner dashboard's `/inspector`
+        // stable route (#530) is actually functional once a page attaches.
+        // SECRET-HANDLING: `ok:true`'s `url` carries the relay host + TOTP
+        // `at=` code — never logged; it only ever rides a Location header.
+        const getDirectInspectorUrl = (): ReturnType<
+          NonNullable<
+            import('../mcp/qr-http-server.js').QrHttpServerOptions['getDirectInspectorUrl']
+          >
+        > => {
+          if (!booted.relayHttpUrl) {
+            return { ok: false, reason: 'relayDown' };
+          }
+          const targets = booted.connection.listTargets();
+          if (targets.length === 0) {
+            return { ok: false, reason: 'noTarget' };
+          }
+          const totpSecret = process.env.AIT_DEBUG_TOTP_SECRET;
+          if (!totpSecret) {
+            return { ok: false, reason: 'totpUnavailable' };
+          }
+          const url = buildChiiInspectorUrl(booted.relayHttpUrl, targets[0].id, () =>
+            generateTotp(totpSecret, Date.now()),
+          );
+          if (url === null) {
+            return { ok: false, reason: 'totpUnavailable' };
+          }
+          return { ok: true, url };
+        };
+
         qrServer = await startQrHttpServer(getDashboardState, {
           dashboardPort: opts.dashboardPort,
+          getDirectInspectorUrl,
         });
 
         // Wire the QR server into attachDeps BEFORE prepareAttach is called so
@@ -291,6 +337,22 @@ export function createRelayConnectionFactory(
           lastAttachParts = parts;
           qrServer?.notifyStateChange();
         };
+
+        // devtools#772: parity with the MCP daemon path's onPageAttach/
+        // onPageDetach wiring (debug-server.ts ~2348) — push an immediate SSE
+        // update whenever the target set changes, so the dashboard's Inspector
+        // section flips out of the waiting hint without waiting for the next
+        // periodic SSE refresh. `server` is omitted (no MCP Server here — the
+        // standalone runner has no tools/list to notify); startAttachWatcher
+        // treats that as "skip sendToolListChanged" and runs the rest of its
+        // signature-diff logic unchanged.
+        attachWatcher = startAttachWatcher(
+          booted.connection,
+          undefined,
+          1_000,
+          () => qrServer?.notifyStateChange(),
+          () => qrServer?.notifyStateChange(),
+        );
 
         // Print the loopback dashboard URL to stderr — it carries no secrets
         // (TOTP codes and relay wss live only in the in-memory HTTP response).
@@ -327,6 +389,10 @@ export function createRelayConnectionFactory(
       if (!prep.ok) {
         booted.stop();
         family = undefined;
+        // devtools#772: stop the attach watcher poller alongside the QR server
+        // on this failure path (mirrors the qrServer cleanup below).
+        attachWatcher?.stop();
+        attachWatcher = undefined;
         // SECONDARY FIX (devtools#714): close the QR server on the failure path
         // so the loopback port listener does not leak. The normal-exit path is
         // handled by close(); this mirrors that cleanup for the error path.
@@ -355,6 +421,10 @@ export function createRelayConnectionFactory(
       if (waitResult.isError) {
         booted.stop();
         family = undefined;
+        // devtools#772: stop the attach watcher poller alongside the QR server
+        // on this failure path (mirrors the prep.ok failure path above).
+        attachWatcher?.stop();
+        attachWatcher = undefined;
         // SECONDARY FIX (devtools#714): close the QR server on the timeout path
         // (mirrors the prep.ok failure path above).
         await qrServer?.close();
@@ -430,6 +500,10 @@ export function createRelayConnectionFactory(
       if (lastEnableError !== undefined) {
         booted.stop();
         family = undefined;
+        // devtools#772: stop the attach watcher poller alongside the QR server
+        // on this failure path (mirrors the two failure paths above).
+        attachWatcher?.stop();
+        attachWatcher = undefined;
         await qrServer?.close();
         qrServer = undefined;
         // SECRET-HANDLING: message contains only a duration + attempt count.
@@ -529,6 +603,10 @@ export function createRelayConnectionFactory(
       // shuts down the relay + cloudflared child.
       family?.stop();
       family = undefined;
+      // devtools#772: stop the attach watcher poller before closing the QR
+      // server it pushes into — idempotent via optional chaining.
+      attachWatcher?.stop();
+      attachWatcher = undefined;
       // Close the web-QR HTTP server if one was started during open().
       // close() is idempotent via optional chaining + reassignment to undefined.
       await qrServer?.close();
