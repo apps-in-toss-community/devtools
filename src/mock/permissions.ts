@@ -8,7 +8,7 @@ import type {
   PermissionName,
   PermissionStatus,
 } from '@apps-in-toss/web-framework';
-import { buildNativeError } from './native-error.js';
+import { buildNativeError, type NativeErrorCode } from './native-error.js';
 import { aitState } from './state.js';
 
 // --- PermissionError 계층 (web-framework 3.0+ 신규) ---
@@ -113,10 +113,7 @@ export async function getPermission(permission: {
   // 이름×access 2차원 맵으로 확장할 근거(이름별로 access 프로파일이 다르다는
   // 관측)는 아직 없고, 근거 없는 확장은 #783에서 이름 단위 맵을 택한 원칙에
   // 어긋난다.
-  const failureCode =
-    permission.access === 'access'
-      ? undefined
-      : aitState.state.failureModes.getPermission?.[permission.name];
+  const failureCode = permissionFailureCode(permission);
   if (failureCode) {
     throw buildNativeError(failureCode);
   }
@@ -124,11 +121,44 @@ export async function getPermission(permission: {
   return aitState.state.permissions[permission.name];
 }
 
+/**
+ * 선언 게이트에 걸리는 이름·access 조합이면 native errorCode를 돌려준다.
+ *
+ * `getPermission`뿐 아니라 `openPermissionDialog`(및 그것에 위임하는
+ * `requestPermission`)도 같은 게이트를 탄다 — 실기기가 그렇게 동작하기 때문이다.
+ * env3 run11 실측(sdk-example#313에서 시나리오 키가 통일되며 비교 대상에 들어온 값):
+ *
+ *   openPermissionDialog { camera, access }      → resolved
+ *   openPermissionDialog { geolocation, read }   → rejected
+ *   requestPermission    { geolocation, read }   → rejected
+ *
+ * `getPermission`의 access 축(위 주석)과 정확히 같은 그림이다 — 상태 조회는
+ * 통과하고 실제 capability 요구만 막힌다. 게이트가 `getPermission`에만 걸려
+ * 있었을 때 env1은 이 셋을 전부 resolve해 실기기와 2건 어긋났고, 그 발산은
+ * 시나리오 이름이 갈려 있어 커버리지 갭 뒤에 가려져 있었다.
+ */
+function permissionFailureCode(permission: {
+  name: PermissionName;
+  access: PermissionAccess;
+}): NativeErrorCode | undefined {
+  if (permission.access === 'access') {
+    return undefined;
+  }
+  return aitState.state.failureModes.getPermission?.[permission.name];
+}
+
 // SDK 시그니처: openPermissionDialog(permission: { name: PermissionName; access: PermissionAccess }): Promise<Exclude<PermissionStatus, "notDetermined">>
 export async function openPermissionDialog(permission: {
   name: PermissionName;
   access: PermissionAccess;
 }): Promise<'allowed' | 'denied'> {
+  // 선언 게이트는 다이얼로그를 열기 **전에** 탄다 — 미선언 권한은 실기기에서
+  // 프롬프트 자체가 뜨지 않고 native 오류로 떨어진다(`permissionFailureCode` 참조).
+  const failureCode = permissionFailureCode(permission);
+  if (failureCode) {
+    throw buildNativeError(failureCode);
+  }
+
   const current = aitState.state.permissions[permission.name];
   if (current === 'allowed') return 'allowed';
   // notDetermined나 denied일 때 — Panel에서 설정된 값을 사용

@@ -205,6 +205,41 @@ describe('Permissions mock', () => {
       expect((caught as { __isError?: boolean }).__isError).toBeUndefined();
     });
 
+    it('openPermissionDialog/requestPermission도 같은 선언 게이트를 탄다 (실측: env3 run11)', async () => {
+      // env3 실측 — sdk-example#313에서 시나리오 키가 통일되며 비교 대상에 들어왔다:
+      //   openPermissionDialog { camera, access }    → resolved
+      //   openPermissionDialog { geolocation, read } → rejected
+      //   requestPermission    { geolocation, read } → rejected
+      // getPermission의 access 축과 같은 그림이다. 게이트가 getPermission에만
+      // 걸려 있으면 env1이 셋을 전부 resolve해 실기기와 2건 어긋난다.
+      aitState.patch('failureModes', {
+        getPermission: { geolocation: 'NO_PERMISSION', camera: 'NO_PERMISSION' },
+      });
+
+      await expect(
+        openPermissionDialog({ name: 'geolocation', access: 'read' }),
+      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+      await expect(
+        requestPermission({ name: 'geolocation', access: 'read' }),
+      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+
+      // access 축: 상태 조회는 다이얼이 걸린 이름이라도 통과한다.
+      await expect(openPermissionDialog({ name: 'camera', access: 'access' })).resolves.toBe(
+        'allowed',
+      );
+    });
+
+    it('게이트에 걸리면 권한 상태를 변이시키지 않는다 — 다이얼로그가 뜨기 전에 떨어지므로', async () => {
+      aitState.patch('permissions', { geolocation: 'notDetermined' });
+      aitState.patch('failureModes', { getPermission: { geolocation: 'NO_PERMISSION' } });
+
+      await expect(
+        openPermissionDialog({ name: 'geolocation', access: 'write' }),
+      ).rejects.toMatchObject({ code: 'NO_PERMISSION' });
+
+      expect(aitState.state.permissions.geolocation).toBe('notDetermined');
+    });
+
     it("withPermission이 부착한 .getPermission()은 access: 'access' 경로라 다이얼을 타지 않는다", async () => {
       // `withPermission(...).getPermission()`은 `access: 'access'`로 고정 호출한다
       // (= 상태 조회 편의 헬퍼). 위 access 축 계약대로 상태 조회는 선언 게이트를
