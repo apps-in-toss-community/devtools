@@ -70,6 +70,8 @@ const {
   resolveDashboardPort,
   resolvePace,
   resolvePaceMethod,
+  resolveCellPlatform,
+  ALLOWED_CELL_PLATFORMS,
   normalizePaceArgv,
   renderSummary,
 } = await import('./cli.js');
@@ -172,6 +174,145 @@ describe('devtools-test main() exit codes', () => {
       | { collectCaptures?: boolean }
       | undefined;
     expect(runOpts?.collectCaptures).toBe(false);
+  });
+});
+
+/**
+ * env-2 launcher-attach mode (devtools#774). `--attach-launcher --app-url <url>`
+ * routes the factory through the launcher deep-link path instead of the env-3
+ * scheme path. These tests pin the CLI-level flag contract:
+ *   - --attach-launcher without --app-url → exit 1 before the factory is built
+ *   - --attach-launcher --app-url → factory gets { attachLauncher: true, appUrl }
+ *   - --scheme-url stays required (and used) when --attach-launcher is absent
+ *
+ * SECRET-HANDLING: appUrl is a synthetic placeholder tunnel host; a dedicated
+ * test asserts it is NOT echoed to stderr by the CLI.
+ */
+describe('devtools-test main() — env-2 launcher-attach (devtools#774)', () => {
+  const APP_URL = 'https://synthetic-placeholder.trycloudflare.com';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    discoverTestFilesMock.mockResolvedValue(['/abs/foo.ait.test.ts']);
+    factoryOpenMock.mockResolvedValue(FAKE_CONN);
+    runTestFilesOverRelayMock.mockResolvedValue(passingRun());
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+    vi.unstubAllEnvs();
+  });
+
+  it('exits 1 when --attach-launcher is passed without --app-url', async () => {
+    await main(['--attach-launcher', '**/*.ait.test.ts']);
+    expect(process.exitCode).toBe(1);
+    // Must fail before the factory is constructed.
+    expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+
+  it('does not require --scheme-url in launcher mode (app-url is the required input)', async () => {
+    await main(['--attach-launcher', '--app-url', APP_URL, '**/*.ait.test.ts']);
+    // Reached the factory → the missing-scheme-url guard did NOT trip.
+    expect(createRelayConnectionFactoryMock).toHaveBeenCalledOnce();
+    expect(process.exitCode).not.toBe(1);
+  });
+
+  it('passes { attachLauncher: true, appUrl } to the factory', async () => {
+    await main(['--attach-launcher', '--app-url', APP_URL, '**/*.ait.test.ts']);
+
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as {
+      attachLauncher?: boolean;
+      appUrl?: string;
+      schemeUrl?: string;
+    };
+    expect(factoryOpts?.attachLauncher).toBe(true);
+    expect(factoryOpts?.appUrl).toBe(APP_URL);
+  });
+
+  it('does NOT echo the app-url (tunnel host) to stderr (SECRET-HANDLING)', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await main(['--attach-launcher', '--app-url', APP_URL, '**/*.ait.test.ts']);
+    const allStderr = stderrSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(allStderr).not.toContain(APP_URL);
+    expect(allStderr).not.toContain('trycloudflare.com');
+    stderrSpy.mockRestore();
+  });
+
+  it('default (no --attach-launcher) still requires --scheme-url and passes it to the factory', async () => {
+    await main(ARGS);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as {
+      attachLauncher?: boolean;
+      schemeUrl?: string;
+    };
+    // attachLauncher omitted in scheme mode (env-3 path unchanged).
+    expect(factoryOpts?.attachLauncher).toBeUndefined();
+    expect(factoryOpts?.schemeUrl).toBe(SCHEME);
+  });
+});
+
+/**
+ * --cell-platform validation (devtools#774). Before #774 the flag was an
+ * unvalidated free string; it now rejects unknown values (typo guard, since it
+ * flows into report/capture filenames) while accepting the new env-2 `ios-pwa`.
+ */
+describe('resolveCellPlatform (devtools#774)', () => {
+  it('undefined → ok with value undefined (caller applies its own default)', () => {
+    expect(resolveCellPlatform(undefined)).toEqual({ ok: true, value: undefined });
+  });
+
+  it.each(ALLOWED_CELL_PLATFORMS)('accepts allowed platform "%s"', (plat) => {
+    expect(resolveCellPlatform(plat)).toEqual({ ok: true, value: plat });
+  });
+
+  it('accepts the new env-2 value "ios-pwa"', () => {
+    expect(resolveCellPlatform('ios-pwa')).toEqual({ ok: true, value: 'ios-pwa' });
+  });
+
+  it('rejects an unknown platform with an allowed-set error', () => {
+    const result = resolveCellPlatform('windows');
+    expect(result.ok).toBe(false);
+    if (result.ok) return; // narrow
+    expect(result.error).toContain('--cell-platform must be one of');
+    expect(result.error).toContain('ios-pwa');
+    expect(result.error).toContain('windows');
+  });
+});
+
+describe('devtools-test main() — --cell-platform validation (devtools#774)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    discoverTestFilesMock.mockResolvedValue(['/abs/foo.ait.test.ts']);
+    factoryOpenMock.mockResolvedValue(FAKE_CONN);
+    runTestFilesOverRelayMock.mockResolvedValue(passingRun());
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+    vi.unstubAllEnvs();
+  });
+
+  it('exits 1 on an unknown --cell-platform value', async () => {
+    await main([...ARGS, '--cell-platform', 'windows']);
+    expect(process.exitCode).toBe(1);
+    expect(createRelayConnectionFactoryMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts --cell-platform ios-pwa and injects it as the cell platform', async () => {
+    await main([
+      ...ARGS,
+      '--attach-launcher',
+      '--app-url',
+      'https://x.trycloudflare.com',
+      '--cell-platform',
+      'ios-pwa',
+    ]);
+    expect(process.exitCode).not.toBe(1);
+    const factoryOpts = createRelayConnectionFactoryMock.mock.calls[0]?.[0] as {
+      cell?: { platform?: string };
+    };
+    expect(factoryOpts?.cell?.platform).toBe('ios-pwa');
   });
 });
 

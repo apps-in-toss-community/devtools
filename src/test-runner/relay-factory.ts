@@ -52,8 +52,36 @@ export interface RelayConnectionFactoryOptions {
    * intoss-private:// scheme URL from `ait deploy --scheme-only` (env3). The
    * phone cold-loads the candidate bundle this URL points at. SECRET-HANDLING:
    * never logged.
+   *
+   * Ignored when {@link attachLauncher} is `true` — the env-2 launcher path
+   * builds its attach URL from {@link appUrl} + the relay wss, not a scheme URL.
+   * Pass `''` in that case.
    */
   schemeUrl: string;
+  /**
+   * env-2 (AITC Sandbox PWA) attach mode (devtools#774). When `true`, `open()`
+   * builds the attach URL as a **launcher deep-link**
+   * (`buildLauncherAttachUrl(appUrl, wssUrl, totp)` — the same env-2 path the
+   * MCP daemon takes via `prepareAttach(deps, 'relay-mobile', …)`, issue #378)
+   * instead of an intoss-private scheme deep-link. The relay boot, QR
+   * rendering, dashboard, and attach-wait are byte-for-byte identical to env 3;
+   * only the URL family differs. Omitted/false keeps the env-3 scheme path
+   * unchanged (zero behavior change).
+   */
+  attachLauncher?: boolean;
+  /**
+   * The consumer dev server's HTTP tunnel URL (e.g. an sdk-example
+   * `dev:phone:cdp` `*.trycloudflare.com` URL) that the launcher PWA frames.
+   * REQUIRED when {@link attachLauncher} is `true`; ignored otherwise.
+   *
+   * Threaded to the `relay-mobile` `prepareAttach` branch via the
+   * `AIT_TUNNEL_BASE_URL` env var (the same key the MCP daemon reads), so the
+   * exact same env-2 assembly runs — no divergent code path.
+   *
+   * SECRET-HANDLING: this is a tunnel host at the same sensitivity as the relay
+   * wss — NEVER logged. It rides only inside the QR/dashboard attach capsule.
+   */
+  appUrl?: string;
   /**
    * Project root for the `.ait_relay` secret lookup (read-only). Defaults to
    * `process.cwd()`.
@@ -139,12 +167,13 @@ export interface RelayConnectionFactoryOptions {
 }
 
 /**
- * Builds a {@link RelayConnectionFactory} that opens a standalone env3 relay
- * connection.
+ * Builds a {@link RelayConnectionFactory} that opens a standalone relay
+ * connection for env 3 (intoss-private scheme, default) or env 2 (AITC Sandbox
+ * PWA launcher deep-link, when `opts.attachLauncher` is set — devtools#774).
  *
  * `open()` performs the full attach lifecycle and BLOCKS while a human scans
- * the rendered QR with their phone — there is no way around the manual scan
- * for env3. By default the wait is UNBOUNDED (`opts.timeoutMs` omitted): the
+ * the rendered QR with their phone — there is no way around the manual scan.
+ * By default the wait is UNBOUNDED (`opts.timeoutMs` omitted): the
  * runner stays up until the user stops it (Ctrl-C/SIGTERM), since QR-scan is
  * a human-paced action with no sound default bound (devtools#735). Passing an
  * explicit `timeoutMs` opts into the old bounded behavior (CI/headless
@@ -286,7 +315,10 @@ export function createRelayConnectionFactory(
           tunnel: attachDeps.getTunnelStatus(),
           pages: booted.connection.listTargets().map((t) => ({ id: t.id, url: t.url })),
           attachUrl: lastAttachParts ? mintAttachUrl(attachDeps, lastAttachParts) : null,
-          mode: 'relay-dev' as const,
+          // devtools#774: label the dashboard chrome for the env being attached
+          // — 'relay-mobile' (env 2 launcher/sandbox family) vs 'relay-dev'
+          // (env 3 intoss family). Mirrors the MCP daemon's mode selection.
+          mode: opts.attachLauncher === true ? ('relay-mobile' as const) : ('relay-dev' as const),
           phase, // #730 — CLI-only 'running'/'complete' transitions via onSessionPhase
           manualPrompt, // #741 — CLI-only --manual-blocking transitions via onManualPrompt
         });
@@ -380,12 +412,35 @@ export function createRelayConnectionFactory(
         new Promise<void>((resolve) => setTimeout(resolve, TUNNEL_BOOT_TIMEOUT_MS)),
       ]);
 
-      const prep = await prepareAttach(
-        attachDeps,
-        'relay-dev',
-        { scheme_url: opts.schemeUrl },
-        booted.connection,
-      );
+      // devtools#774: env 2 (launcher) vs env 3 (scheme) attach. The relay
+      // boot / QR / dashboard / attach-wait above are identical for both — only
+      // the attach-URL family differs. We reuse `prepareAttach`'s existing
+      // `relay-mobile` branch (issue #378) rather than hand-rolling a second
+      // assembly: it reads AIT_TUNNEL_BASE_URL, verifies the tunnel wss + TOTP
+      // secret, and builds the launcher parts. We set that env var from
+      // `opts.appUrl` here (scoped to this open()) so the same code path runs.
+      // SECRET-HANDLING: appUrl is a tunnel host — set into the env only, never
+      // logged; prepareAttach's relay-mobile branch never echoes it either.
+      let prep: Awaited<ReturnType<typeof prepareAttach>>;
+      if (opts.attachLauncher === true) {
+        const priorTunnelBaseUrl = process.env.AIT_TUNNEL_BASE_URL;
+        process.env.AIT_TUNNEL_BASE_URL = opts.appUrl ?? '';
+        try {
+          prep = await prepareAttach(attachDeps, 'relay-mobile', {}, booted.connection);
+        } finally {
+          // Restore the prior env value so we don't leak the tunnel host into
+          // the process env past this attach (it is read only inside prepareAttach).
+          if (priorTunnelBaseUrl === undefined) delete process.env.AIT_TUNNEL_BASE_URL;
+          else process.env.AIT_TUNNEL_BASE_URL = priorTunnelBaseUrl;
+        }
+      } else {
+        prep = await prepareAttach(
+          attachDeps,
+          'relay-dev',
+          { scheme_url: opts.schemeUrl },
+          booted.connection,
+        );
+      }
       if (!prep.ok) {
         booted.stop();
         family = undefined;
