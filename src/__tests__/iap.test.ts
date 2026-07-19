@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkoutPayment, IAP } from '../mock/iap/index.js';
+import { checkoutPayment, IAP, requestTossPayPaysBilling } from '../mock/iap/index.js';
 import { aitState } from '../mock/state.js';
 import { renderIapTab } from '../panel/tabs/iap.js';
 
@@ -17,6 +17,24 @@ describe('IAP mock', () => {
     const result = await IAP.getProductItemList();
     expect(result.products).toHaveLength(1);
     expect(result.products[0]).toMatchObject({ sku: 'mock-gem-100', type: 'CONSUMABLE' });
+  });
+
+  describe('getSubscriptionInfo', () => {
+    // 회귀 테스트 (devtools#786): 미프로비저닝 env3 capture(valueKeys=[])를
+    // 무조건 기본값으로 굳혔던 회귀를 되돌린다. 선언 타입의 subscription은
+    // optional이 아니므로 다이얼 미설정 시 항상 populated 성공 shape여야 한다.
+    it('선언된 성공 shape로 resolve된다 — subscription의 필수 필드가 전부 존재', async () => {
+      const result = await IAP.getSubscriptionInfo({ params: { orderId: 'order-1' } });
+      expect(result.subscription).toBeDefined();
+      expect(result.subscription).toMatchObject({
+        catalogId: 1,
+        status: 'ACTIVE',
+        isAutoRenew: true,
+        gracePeriodExpiresAt: null,
+        isAccessible: true,
+      });
+      expect(typeof result.subscription.expiresAt).toBe('string');
+    });
   });
 
   describe('createOneTimePurchaseOrder', () => {
@@ -209,15 +227,16 @@ describe('IAP mock', () => {
   });
 
   describe('checkoutPayment', () => {
-    // 실기기(2.x×iOS) capture는 checkoutPayment의 valueKeys가 항상 { success, reason }
-    // 2개 키임을 보였다(devtools#770) — 성공 시에도 reason을 포함해 env1↔env3 valueKeys를
-    // 동치시킨다.
-    it('성공 시에도 { success: true, reason }로 resolve된다 (실기기 동치)', async () => {
+    // 회귀 테스트 (devtools#786): env3 capture는 전부 결제 실패 레코드였는데
+    // (I2-result-success-examined 시나리오조차 실패였다) 그 실패 shape(reason 포함)를
+    // 성공 분기에 일반화했던 회귀를 되돌린다. key-set 자체를 단언한다 — 이 버그
+    // 클래스는 값이 아니라 key 구성이 어긋나는 것이라 Object.keys로 확인해야 한다.
+    it('성공 시 { success: true }만 반환한다 — reason 키 없음', async () => {
       const promise = checkoutPayment({ params: { payToken: 'token-1' } });
       await vi.advanceTimersByTimeAsync(300);
       const result = await promise;
-      expect(Object.keys(result).sort()).toEqual(['reason', 'success']);
-      expect(result.success).toBe(true);
+      expect(Object.keys(result)).toEqual(['success']);
+      expect(result).toEqual({ success: true });
     });
 
     it('실패 시 reason을 포함한다', async () => {
@@ -225,6 +244,29 @@ describe('IAP mock', () => {
       const promise = checkoutPayment({ params: { payToken: 'token-2' } });
       await vi.advanceTimersByTimeAsync(300);
       expect(await promise).toEqual({ success: false, reason: 'Insufficient funds' });
+    });
+  });
+
+  describe('requestTossPayPaysBilling', () => {
+    // 회귀 테스트 (devtools#786): checkoutPayment와 동일한 이유로 성공 분기에
+    // reason을 얹었던 회귀를 되돌린다.
+    it('성공 시 { success: true }만 반환한다 — reason 키 없음', async () => {
+      const promise = requestTossPayPaysBilling({ params: { wrappedToken: 'wrapped-1' } });
+      await vi.advanceTimersByTimeAsync(300);
+      const result = await promise;
+      expect(Object.keys(result ?? {})).toEqual(['success']);
+      expect(result).toEqual({ success: true });
+    });
+
+    it('실패 시 reason을 포함한다', async () => {
+      aitState.patch('payment', { nextResult: 'fail', failReason: 'Billing auth denied' });
+      const promise = requestTossPayPaysBilling({ params: { wrappedToken: 'wrapped-2' } });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await promise).toEqual({ success: false, reason: 'Billing auth denied' });
+    });
+
+    it('isSupported()는 true를 반환한다', () => {
+      expect(requestTossPayPaysBilling.isSupported()).toBe(true);
     });
   });
 });

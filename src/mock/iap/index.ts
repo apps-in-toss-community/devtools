@@ -188,24 +188,43 @@ export const IAP = createMockProxy('IAP', {
     return true;
   },
 
-  // 실기기(2.x×iOS) capture는 (프로비저닝된 구독이 없는 상태에서) getSubscriptionInfo가
-  // { subscription } 없이 빈 객체 {}로 resolve됨을 보였다(devtools#770). 선언된 SDK
-  // 타입은 subscription을 필수로 요구하므로 시그니처는 그대로 두고 런타임 반환값만
-  // 실측과 동치시킨다.
+  // 실기기(2.x×iOS) capture는 getSubscriptionInfo가 { subscription } 없이 빈 객체
+  // {}로 resolve됨을 보였다(devtools#770, valueKeys=[]). 다만 그 캡처는 **31146에
+  // 구독이 프로비저닝되지 않은 상태**에서 얻은 것이다 — 즉 프로비저닝 의존 실패지 이
+  // API의 무조건적 계약이 아니다(grantPromotionReward에서 되돌린 것과 같은 실패
+  // 양상, devtools#786은 #778에서 이 되돌림만 누락됐던 잔여를 정정한다). 선언 타입
+  // `IapSubscriptionInfoResult`의 subscription은 optional이 아니므로, 빈 객체를
+  // 기본값으로 굳히면 SDK가 선언한 성공 분기가 mock에서 영구히 도달 불가능해진다.
+  // 그래서 기본값은 선언 타입대로 성공 shape로 두고, 미프로비저닝 재현은 실패-모드
+  // 다이얼에 붙인다 — devtools#785(game promotion)와 같은 성격의 배선 대상.
   async getSubscriptionInfo(_args: {
     params: { orderId: string };
   }): Promise<{ subscription: IapSubscriptionInfoResult }> {
-    return {} as unknown as { subscription: IapSubscriptionInfoResult };
+    return {
+      subscription: {
+        catalogId: 1,
+        status: 'ACTIVE',
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        isAutoRenew: true,
+        gracePeriodExpiresAt: null,
+        isAccessible: true,
+      },
+    };
   },
 });
 
 // --- TossPay ---
 
-// 실기기(2.x×iOS) capture는 checkoutPayment의 valueKeys가 { success, reason } 2개
-// 키로 실측됐다(devtools#770, nextResult='fail' 경로 capture). 이전 mock은 성공 시
-// { success: true } 1개 키만 반환해 env1↔env3 valueKeys가 어긋났다 — success 값은
-// 패널의 TossPay 시뮬레이터 dial(payment.nextResult)을 계속 따르되, reason은 항상
-// 포함해 실기기와 key set을 동치시킨다.
+// 실기기(2.x×iOS) capture는 checkoutPayment가 전부 결제 **실패** 레코드였다
+// (devtools#770/#786) — I2-result-success-examined 시나리오조차
+// valueKeys=['false','reason']로 돌아왔다. env3는 성공 경로 shape를 한 번도
+// 보여준 적이 없으므로, 실패 shape(reason 포함)를 성공 분기에 일반화하는 건
+// 미측정 셀에 대한 근거 없는 추정이다(startUpdateLocation을 실측 없이 건드리지
+// 않은 것과 같은 이유). 게다가 그 일반화로 주장한 key-set 동치도 실제로는
+// 달성되지 않는다 — env3의 첫 키는 'success'가 아니라 'false'라 reason을 더해도
+// 여전히 어긋난다('false' 키 자체는 하네스 버그가 아니라 실기기 shape로 확정된
+// 별개 사안, 여기서 "고치지" 않는다). 그래서 성공 분기는 선언 타입대로
+// { success: true }만 반환한다. 실패 분기(reason 포함)는 실측대로 유지.
 export async function checkoutPayment(options: {
   params: { payToken: string };
 }): Promise<{ success: boolean; reason?: string }> {
@@ -215,14 +234,18 @@ export async function checkoutPayment(options: {
   await new Promise((r) => setTimeout(r, 300));
 
   if (nextResult === 'success') {
-    return { success: true, reason: 'mock' };
+    return { success: true };
   }
   return { success: false, reason: failReason || 'Mock payment failed' };
 }
 
 export const requestTossPayPaysBilling = Object.assign(
-  // requestTossPayPaysBilling도 checkoutPayment와 동일한 실측(devtools#770) — 항상
-  // { success, reason } 2개 키로 resolve된다.
+  // requestTossPayPaysBilling도 checkoutPayment와 동일한 사정이다(devtools#770/#786)
+  // — result-success-examined·native-billing-cancelled·happy-varied-token 시나리오
+  // 전부 실패(valueKeys=['false','reason'])로 돌아왔다. env3가 성공 경로 shape를
+  // 보여준 적이 없으므로 성공 분기에 reason을 얹는 건 근거 없는 일반화고, 그마저도
+  // 첫 키가 'success'가 아닌 'false'라 주장한 key-set 동치를 달성하지 못한다.
+  // 성공 분기는 선언 타입대로 { success: true }만 반환한다.
   async function requestTossPayPaysBilling(options: {
     params: { wrappedToken: string };
   }): Promise<{ success: boolean; reason?: string } | undefined> {
@@ -232,7 +255,7 @@ export const requestTossPayPaysBilling = Object.assign(
     await new Promise((r) => setTimeout(r, 300));
 
     if (nextResult === 'success') {
-      return { success: true, reason: 'mock' };
+      return { success: true };
     }
     return { success: false, reason: failReason || 'Mock billing auth failed' };
   },
