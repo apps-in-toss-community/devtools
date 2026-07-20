@@ -33,36 +33,38 @@ describe('Navigation mock', () => {
     aitState.reset();
   });
 
-  it('getPlatformOS: 상태의 platform을 반환한다', () => {
-    expect(getPlatformOS()).toBe('ios');
+  // devtools#795: 실기기(2.x×iOS)는 이 6개를 Promise로 반환하지만 상류 타입은
+  // 동기로 선언한다(#775 원칙 확장) — mock도 Promise를 반환하므로 await한다.
+  it('getPlatformOS: 상태의 platform을 반환한다 (Promise, devtools#795)', async () => {
+    expect(await getPlatformOS()).toBe('ios');
     aitState.update({ platform: 'android' });
-    expect(getPlatformOS()).toBe('android');
+    expect(await getPlatformOS()).toBe('android');
   });
 
-  it('getOperationalEnvironment: 상태의 environment를 반환한다', () => {
-    expect(getOperationalEnvironment()).toBe('sandbox');
+  it('getOperationalEnvironment: 상태의 environment를 반환한다 (Promise, devtools#795)', async () => {
+    expect(await getOperationalEnvironment()).toBe('sandbox');
     aitState.update({ environment: 'toss' });
-    expect(getOperationalEnvironment()).toBe('toss');
+    expect(await getOperationalEnvironment()).toBe('toss');
   });
 
-  describe('isMinVersionSupported', () => {
-    it('현재 버전이 최소 버전 이상이면 true', () => {
-      expect(isMinVersionSupported({ ios: '5.240.0', android: '5.240.0' })).toBe(true);
-      expect(isMinVersionSupported({ ios: '5.200.0', android: '5.200.0' })).toBe(true);
+  describe('isMinVersionSupported (Promise, devtools#795)', () => {
+    it('현재 버전이 최소 버전 이상이면 true', async () => {
+      expect(await isMinVersionSupported({ ios: '5.240.0', android: '5.240.0' })).toBe(true);
+      expect(await isMinVersionSupported({ ios: '5.200.0', android: '5.200.0' })).toBe(true);
     });
 
-    it('현재 버전이 최소 버전 미만이면 false', () => {
-      expect(isMinVersionSupported({ ios: '6.0.0', android: '6.0.0' })).toBe(false);
+    it('현재 버전이 최소 버전 미만이면 false', async () => {
+      expect(await isMinVersionSupported({ ios: '6.0.0', android: '6.0.0' })).toBe(false);
     });
 
-    it('always는 항상 true, never는 항상 false', () => {
-      expect(isMinVersionSupported({ ios: 'always', android: 'always' })).toBe(true);
-      expect(isMinVersionSupported({ ios: 'never', android: 'never' })).toBe(false);
+    it('always는 항상 true, never는 항상 false', async () => {
+      expect(await isMinVersionSupported({ ios: 'always', android: 'always' })).toBe(true);
+      expect(await isMinVersionSupported({ ios: 'never', android: 'never' })).toBe(false);
     });
 
-    it('android 플랫폼일 때 android 버전을 비교한다', () => {
+    it('android 플랫폼일 때 android 버전을 비교한다', async () => {
       aitState.update({ platform: 'android' });
-      expect(isMinVersionSupported({ ios: '999.0.0', android: '1.0.0' })).toBe(true);
+      expect(await isMinVersionSupported({ ios: '999.0.0', android: '1.0.0' })).toBe(true);
     });
   });
 
@@ -91,12 +93,12 @@ describe('Navigation mock', () => {
     expect(getSchemeUri()).toBe('/test');
   });
 
-  it('getLocale: 상태의 locale을 반환한다', () => {
-    expect(getLocale()).toBe('ko-KR');
+  it('getLocale: 상태의 locale을 반환한다 (Promise, devtools#795)', async () => {
+    expect(await getLocale()).toBe('ko-KR');
   });
 
-  it('getDeviceId: 상태의 deviceId를 반환한다', () => {
-    expect(getDeviceId()).toBe(aitState.state.deviceId);
+  it('getDeviceId: 상태의 deviceId를 반환한다 (Promise, devtools#795)', async () => {
+    expect(await getDeviceId()).toBe(aitState.state.deviceId);
   });
 
   it('getGroupId: 상태의 groupId를 반환한다', () => {
@@ -255,11 +257,12 @@ describe('Navigation mock', () => {
     expect(result).toEqual({ enabled: true });
   });
 
-  it('getSafeAreaInsets (deprecated): insets 객체를 반환한다 — 상류 타입 선언(number)이 아니라 실측 shape', () => {
+  it('getSafeAreaInsets (deprecated): insets 객체를 담은 Promise를 반환한다 — 상류 타입 선언(동기 number)이 아니라 실측(devtools#770/#795)', async () => {
     // 상류 SDK 선언은 `(): number`지만 실기기(2.x×iOS) capture는 SafeAreaInsets.get()과
-    // 같은 객체를 반환함을 보였다(devtools#770). mock은 런타임 실측을 재현한다.
-    // default는 iPhone 15 Pro partner WebView 실측과 정합 (nav bar top 54).
-    expect(getSafeAreaInsets()).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
+    // 같은 객체를 Promise로 반환함을 보였다(devtools#770 shape, devtools#795 sync/async축).
+    // mock은 런타임 실측을 재현한다. default는 iPhone 15 Pro partner WebView 실측과 정합
+    // (nav bar top 54).
+    expect(await getSafeAreaInsets()).toEqual({ top: 54, bottom: 34, left: 0, right: 0 });
   });
 
   describe('SafeAreaInsets', () => {

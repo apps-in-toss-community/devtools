@@ -100,12 +100,29 @@ requestReview.isSupported = () => true;
 
 // --- 환경 정보 ---
 
+/**
+ * 아래 5개 함수(`getPlatformOS`/`getOperationalEnvironment`/`isMinVersionSupported`/
+ * `getLocale`/`getDeviceId`) + 이 파일 하단의 `getSafeAreaInsets`는 실기기(2.x×iOS)
+ * capture에서 전부 **Promise를 반환**함이 확인됐다(devtools#795 — sdk-example
+ * type-probe 실측). 그런데 상류 `.d.ts`는 이 6개를 전부 **동기**로 선언한다 —
+ * 선언과 런타임이 어긋난 상류 타입 버그다.
+ *
+ * mock은 타입 선언이 아니라 런타임 실측을 재현해야 개발자가 env1(브라우저)에서
+ * 겪는 동작이 env3(실기기)와 같아진다(#775 원칙 — Analytics·setClipboardText·
+ * Storage·getSafeAreaInsets(#770)에 이미 적용). 그래서 시그니처는 상류와 동일하게
+ * 두고(`__typecheck.ts`/`__typecheck-2x.ts`의 `Assert*`가 계속 컴파일되도록)
+ * 반환값만 `Promise.resolve(...)`로 감싸 기존 시그니처로 캐스트한다 — 선언 타입이
+ * 안 바뀌므로 런타임 Promise는 tsc에 보이지 않는다.
+ *
+ * `getTossAppVersion`/`getSchemeUri`/`getGroupId`는 이 이슈에서 실측되지 않아
+ * (#783 "측정 밖 확장 금지") 동기 그대로 둔다.
+ */
 export function getPlatformOS(): 'ios' | 'android' {
-  return aitState.state.platform;
+  return Promise.resolve(aitState.state.platform) as unknown as 'ios' | 'android';
 }
 
 export function getOperationalEnvironment(): 'toss' | 'sandbox' {
-  return aitState.state.environment;
+  return Promise.resolve(aitState.state.environment) as unknown as 'toss' | 'sandbox';
 }
 
 export function getTossAppVersion(): string {
@@ -113,6 +130,12 @@ export function getTossAppVersion(): string {
 }
 
 export function isMinVersionSupported(minVersions: { android: string; ios: string }): boolean {
+  const result = computeIsMinVersionSupported(minVersions);
+  // 실기기는 Promise 반환, 타입은 동기 — 위 "환경 정보" 섹션 상단 주석 참조(devtools#795).
+  return Promise.resolve(result) as unknown as boolean;
+}
+
+function computeIsMinVersionSupported(minVersions: { android: string; ios: string }): boolean {
   const platform = aitState.state.platform;
   const required = platform === 'ios' ? minVersions.ios : minVersions.android;
   if (required === 'always') return true;
@@ -132,11 +155,11 @@ export function getSchemeUri(): string {
 }
 
 export function getLocale(): string {
-  return aitState.state.locale;
+  return Promise.resolve(aitState.state.locale) as unknown as string;
 }
 
 export function getDeviceId(): string {
-  return aitState.state.deviceId;
+  return Promise.resolve(aitState.state.deviceId) as unknown as string;
 }
 
 export function getGroupId(): string {
@@ -304,13 +327,17 @@ export const SafeAreaInsets = {
  * capture는 이 함수가 숫자가 아니라 `SafeAreaInsets.get()`과 같은 객체
  * (`{ top, right, bottom, left }`)를 반환함을 보였다(devtools#770 —
  * `returnType: "object"`, `valueKeys: ["top","right","bottom","left"]`).
- * 즉 선언과 런타임이 어긋나 있는 상류 타입 버그다.
+ * 즉 선언과 런타임이 어긋나 있는 상류 타입 버그다. 게다가 그 반환 자체도
+ * 동기가 아니라 **Promise**다(devtools#795 — 위 "환경 정보" 섹션 상단 주석과
+ * 같은 축, type-probe 실측). shape(object)와 sync/async 두 축 모두 선언과
+ * 어긋나 있다.
  *
  * mock은 타입 선언이 아니라 **런타임 실측**을 재현해야 개발자가 env1에서 겪는
  * 동작이 실기기와 같아진다. 그래서 시그니처는 상류와 동일하게 `number`로 두되
- * (`__typecheck.ts`가 SDK 타입에 대해 계속 컴파일되도록) 반환값만 실측 객체로
- * 캐스트한다 — Analytics·setClipboardText·Storage와 같은 처리(#775).
+ * (`__typecheck.ts`가 SDK 타입에 대해 계속 컴파일되도록) 반환값만 실측 객체를
+ * `Promise.resolve`로 감싸 캐스트한다 — Analytics·setClipboardText·Storage와
+ * 같은 처리(#775).
  */
 export function getSafeAreaInsets(): number {
-  return { ...aitState.state.safeAreaInsets } as unknown as number;
+  return Promise.resolve({ ...aitState.state.safeAreaInsets }) as unknown as number;
 }

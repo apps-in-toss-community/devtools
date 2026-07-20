@@ -24,29 +24,26 @@ describe('Contacts mock', () => {
       await expect(fetchContacts({ size: 10, offset: 0 })).rejects.toThrow(PermissionError);
     });
 
-    it('getPermission()이 부착되어 있다', async () => {
-      expect(typeof fetchContacts.getPermission).toBe('function');
-      const status = await fetchContacts.getPermission();
-      expect(status).toBe('allowed');
+    // devtools#795: 실기기(2.x×iOS)엔 fetchContacts에 .getPermission/.openPermissionDialog가
+    // 런타임에 붙어있지 않다 — 상류가 타입에만 선언하고 런타임엔 부착하지 않는
+    // type↔runtime 불일치. mock도 bare fn으로 두어(#775 원칙 확장) 접근 시
+    // undefined, 호출 시 native TypeError로 떨어지는 실기기 동작을 그대로 재현한다.
+    // (이 테스트가 과거 재현하던 "resolved" 동작은 비충실했다 — standalone
+    // getPermission({name:'contacts'})는 여전히 resolved다, permissions.test.ts 참조.)
+    it('getPermission이 부착되어 있지 않다 (실기기 실측)', () => {
+      expect(fetchContacts.getPermission).toBeUndefined();
     });
 
-    it('openPermissionDialog()가 부착되어 있다', async () => {
-      expect(typeof fetchContacts.openPermissionDialog).toBe('function');
-      const result = await fetchContacts.openPermissionDialog();
-      expect(result).toBe('allowed');
+    it('getPermission() 호출은 native TypeError를 던진다 (실기기 실측)', () => {
+      expect(() => fetchContacts.getPermission()).toThrow(TypeError);
     });
 
-    it('getPermission()이 denied 상태를 반환한다', async () => {
-      aitState.patch('permissions', { contacts: 'denied' });
-      const status = await fetchContacts.getPermission();
-      expect(status).toBe('denied');
+    it('openPermissionDialog이 부착되어 있지 않다 (측정 밖 추론 — #783)', () => {
+      expect(fetchContacts.openPermissionDialog).toBeUndefined();
     });
 
-    it('openPermissionDialog()가 denied를 allowed로 전환한다', async () => {
-      aitState.patch('permissions', { contacts: 'denied' });
-      const result = await fetchContacts.openPermissionDialog();
-      expect(result).toBe('allowed');
-      expect(aitState.state.permissions.contacts).toBe('allowed');
+    it('openPermissionDialog() 호출은 native TypeError를 던진다 (측정 밖 추론 — #783)', () => {
+      expect(() => fetchContacts.openPermissionDialog()).toThrow(TypeError);
     });
 
     it('빈 contacts 배열일 때 빈 결과를 반환한다', async () => {
