@@ -21,6 +21,7 @@ describe('AitStateManager', () => {
         isTossLoginIntegrated: false,
         userKeyHash: '',
         anonymousKeyHash: '',
+        consentedUserData: {},
       },
     });
     expect(aitState.state.auth.isLoggedIn).toBe(false);

@@ -4,6 +4,7 @@
 
 import { buildNativeError } from '../native-error.js';
 import { aitState } from '../state.js';
+import type { ConsentedUserData } from '../types.js';
 
 export async function appLogin(): Promise<{
   authorizationCode: string;
@@ -55,4 +56,34 @@ export interface AppsInTossSignTossCertParams {
 
 export async function appsInTossSignTossCert(_params: AppsInTossSignTossCertParams): Promise<void> {
   console.log('[@ait-co/devtools] appsInTossSignTossCert called (no-op in mock)');
+}
+
+/**
+ * `getConsentedUserData` 옵션. SDK 선언(`@apps-in-toss/web-bridge` 경유, web-framework
+ * 2.x 라인)의 `GetConsentedUserDataOptions`와 shape 동일.
+ */
+export interface GetConsentedUserDataOptions {
+  consentedUserDataKey: string;
+  shouldRequestAgreementWhenUserDeclined?: boolean;
+}
+
+/**
+ * 사용자 동의 기반 데이터 mock (devtools#798 — env1에 배선 부재였던 실 export).
+ *
+ * SDK는 이 API를 web-framework 2.x 라인에서만 노출한다(`@apps-in-toss/web-bridge`
+ * 경유) — 3.0-beta 라인엔 대응 export가 없다(`__typecheck.ts`/`__typecheck-2x.ts`
+ * 양쪽 모두 `AssertIfPresent`로 capability-gate: PermissionError의 반대 방향
+ * 비대칭). 선언 시그니처는 `Promise<Partial<Record<ConsentedUserDataKey, string>>
+ * | undefined>` — appLogin과 같은 async bridge 모양이라 항상 resolve하는 낙관적
+ * 패턴을 따른다.
+ *
+ * 어떤 키가 채워지는지는 콘솔에 등록된 동의문/데이터 묶음(`consentedUserDataKey`)에
+ * 달려 있고 그 매핑은 서버 쪽 설정이라 mock이 알 수 없다 — 호출 파라미터와 무관하게
+ * 상태에 저장된 최소 plausible 객체를 그대로 resolve한다. SDK 선언 밖의 필드는
+ * 추가하지 않는다(devtools#783 — 실측/타입 밖 추정 금지).
+ */
+export async function getConsentedUserData(
+  _options: GetConsentedUserDataOptions,
+): Promise<ConsentedUserData | undefined> {
+  return aitState.state.auth.consentedUserData;
 }
