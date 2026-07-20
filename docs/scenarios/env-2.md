@@ -1,7 +1,7 @@
 # 시나리오 2 — AITC Sandbox PWA (환경 2) acceptance 절차
 
 > 대상: 실기기 Safari/WebKit + installable PWA(`devtools.aitc.dev/launcher/`) + cloudflared 터널.
-> HMR O (cloudflared quick tunnel). CDP relay는 opt-in(`tunnel: { cdp: true }`) — 켜면 실기기 WebKit 위에서 DOM·콘솔·예외·`measure_safe_area` 관측이 열린다. `call_sdk`는 환경 2에서 mock을 친다(실 SDK는 환경 3·4).
+> HMR O (cloudflared quick tunnel). CDP relay는 opt-in(`tunnel: { cdp: true }`) — 켜면 실기기 WebKit 위에서 DOM·콘솔·예외·`measure_safe_area` 관측이 열린다. `call_sdk`는 환경 2에서 mock을 친다(실 SDK는 환경 3).
 
 ## 전제조건
 
@@ -67,4 +67,4 @@ launcher가 URL을 iframe으로 전체 화면에 띄우면 dev 앱이 실기기 
 
 - **mock SDK 고정**: `call_sdk`는 환경 2에서 mock을 친다. 토스 WebView native bridge가 없어 실 SDK 응답은 확인할 수 없다 — 이건 환경 2의 알려진 천장이지 결함이 아니다(SDK fidelity가 필요하면 환경 3로 올라간다).
 - **CDP는 opt-in**: `tunnel: { cdp: true }`를 켜야 relay가 뜬다. 끄면 화면 미리보기만 동작하고 MCP relay attach는 일어나지 않는다.
-- **환경 3·4에서만 가능한 SDK 기능**: 실기기에서 실 SDK 동작 검증이 필요하면 환경 3으로 진행한다
+- **환경 3에서만 가능한 SDK 기능**: 실기기에서 실 SDK 동작 검증이 필요하면 환경 3으로 진행한다

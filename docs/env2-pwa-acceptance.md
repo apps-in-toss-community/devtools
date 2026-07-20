@@ -6,7 +6,7 @@
 
 환경 2가 존재하는 이유: 환경 1(로컬 브라우저 + mock SDK)은 desktop Chromium에서 실행되므로 실기기 WebKit 엔진 거동을 구조적으로 재현할 수 없다. 환경 2는 `devtools.aitc.dev/launcher/`에 배포된 installable PWA 셸이 cloudflared 터널을 통해 dev 서버를 iframe으로 띄우는 방식으로, 토스 앱 WebView 없이 실기기 Safari/WebKit 엔진을 타겟으로 삼는다.
 
-설계 정본: [umbrella `meta/four-environments-fidelity.md` §1.1–§1.2 환경 2 매트릭스](https://github.com/apps-in-toss-community/meta/blob/main/four-environments-fidelity.md#환경-2--aitc-sandbox-app-pwa)
+설계 정본: umbrella `meta/three-environments-fidelity.md` §1.1–§1.2 환경 2 매트릭스
 
 ---
 

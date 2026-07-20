@@ -20,7 +20,7 @@ Live demo: <https://devtools.aitc.dev/> (the `e2e/fixture/` from this repo deplo
 
 ## 15-second quickstart — pick your environment
 
-There are four runtime environments. Pick the card that fits your situation and follow the link to the detailed scenario doc.
+There are three runtime environments. Pick the card that fits your situation and follow the link to the detailed scenario doc.
 
 ---
 
@@ -47,7 +47,7 @@ pnpm dev:phone          # same as AIT_TUNNEL=1 pnpm dev
 # QR appears in the terminal → scan with your phone camera → opens in the launcher PWA
 ```
 
-With `tunnel: { cdp: true }`, a single QR scan opens both the screen preview and on-device CDP — inspect the real WebKit DOM, console, and exceptions from your MCP host (`call_sdk` still hits the mock on environment 2; the real SDK lives on environments 3·4).
+With `tunnel: { cdp: true }`, a single QR scan opens both the screen preview and on-device CDP — inspect the real WebKit DOM, console, and exceptions from your MCP host (`call_sdk` still hits the mock on environment 2; the real SDK lives on environment 3).
 
 One-time prerequisite: add `https://devtools.aitc.dev/launcher/` to your phone's home screen. Details: [`docs/scenarios/env-2.md`](./docs/scenarios/env-2.md)
 
@@ -83,7 +83,7 @@ What this single line does:
 - **SDK bridge**: installs `window.__sdk` / `window.__sdkCall` so an agent can drive any SDK API directly over the CDP relay via `Runtime.evaluate`. Silently skipped if `@apps-in-toss/web-framework` is not available.
 - **Types**: provides `Window.__sdk` / `__sdkCall` global type declarations automatically — no separate `globals.d.ts` needed in your project.
 
-For environments 3 and 4 (intoss-private relay), the relay QR deep-link carries `?debug=1&relay=<wss>` query params, so this one line is all the wiring you need. Environment 2 (PWA, `tunnel: { cdp: true }`) works the same way.
+For environment 3 (intoss-private relay), the relay QR deep-link carries `?debug=1&relay=<wss>` query params, so this one line is all the wiring you need. Environment 2 (PWA, `tunnel: { cdp: true }`) works the same way.
 
 > For dog-food builds with TOTP authentication, inject `__DEBUG_TOTP_SECRET__` via your build define and use `@ait-co/devtools/in-app` directly with `evaluateDebugGate({ verifyTotpCode })` + `maybeAttach()`. `in-app/auto` does not inject a TOTP verifier, so Layer C3 is disabled.
 
@@ -1020,7 +1020,7 @@ Read-only tools only. Tools are registered in two tiers based on attach state �
 
 Running `devtools-mcp` as a stdio server starts a local Chii relay on an OS-assigned port and opens a cloudflared quick tunnel, printing a public `wss://*.trycloudflare.com` URL and a QR code in the terminal (secrets/auth codes are never printed). When the phone enters the dog-food entry point, the in-app attach UI connects to the relay with that URL, and the agent reads console/network/page state via `chrome-devtools-mcp`-compatible tools — diagnosing regressions without anyone watching the phone.
 
-Environments 3 and 4 (intoss-private relay) — start `devtools-mcp` as-is, then enter via `start_debug(mode)`:
+Environment 3 (intoss-private relay) — start `devtools-mcp` as-is, then enter via `start_debug(mode)`:
 
 ```json
 {
