@@ -108,14 +108,24 @@ function renderAttachChrome(locale: Locale, family: AttachChromeFamily): string 
   const deploymentFull = s('attach.deployment', { label: '__LABEL_SPLIT__' });
   const deploymentPrefix = deploymentFull.split('__LABEL_SPLIT__')[0] ?? '';
 
+  // devtools#766: each family's step list ends with a proactive
+  // keep-foreground notice (attach.sandbox.step4 / attach.intoss.step5) —
+  // the background-suspend cascade root cause is user behavior, not the SDK
+  // or runner, so the fix is guidance shown before the test run starts.
   const steps =
     family === 'sandbox'
-      ? [s('attach.sandbox.step1'), s('attach.sandbox.step2'), s('attach.sandbox.step3')]
+      ? [
+          s('attach.sandbox.step1'),
+          s('attach.sandbox.step2'),
+          s('attach.sandbox.step3'),
+          s('attach.sandbox.step4'),
+        ]
       : [
           s('attach.intoss.step1'),
           s('attach.intoss.step2'),
           s('attach.intoss.step3'),
           s('attach.intoss.step4'),
+          s('attach.intoss.step5'),
         ];
   const faqItems =
     family === 'sandbox'

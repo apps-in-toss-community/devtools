@@ -247,6 +247,11 @@ export const ko = {
   'attach.sandbox.step2':
     'launcher 안의 <strong>"QR 카메라로 스캔"</strong>으로 이 QR 코드를 스캔하세요.',
   'attach.sandbox.step3': '미니앱이 풀스크린으로 열리고 디버그 세션이 자동으로 attach됩니다.',
+  // devtools#766: 백그라운드 전환 시 iOS가 WebView JS를 suspend → evaluate
+  // 타임아웃 → relay WS 사망 → 잔여 파일 전연쇄 실패로 이어지는 실기기 관측에
+  // 대한 사전 안내. 원인이 사용자 행동이라 감지/재개 로직 대신 안내 한 줄로 대응.
+  'attach.sandbox.step4':
+    '<strong>테스트가 끝날 때까지 앱을 화면 앞에 유지하세요</strong> — 백그라운드로 전환하면 디버그 세션이 끊어집니다.',
   'attach.sandbox.faq.notInstalled':
     '<strong>launcher가 설치돼 있지 않은 경우</strong> — <code>devtools.aitc.dev/launcher/</code>를 한 번 열어 홈 화면에 추가하세요',
   'attach.sandbox.faq.cameraApp':
@@ -261,6 +266,10 @@ export const ko = {
   'attach.intoss.step2': '폰 카메라 앱으로 QR 코드를 스캔하세요.',
   'attach.intoss.step3': '팝업이 뜨면 <strong>"토스로 열기"</strong>를 탭하세요.',
   'attach.intoss.step4': '미니앱이 열리고 디버그 세션이 자동으로 attach됩니다.',
+  // devtools#766: 2026-07-08 실기기 관측(46/8/6 부분 run vs 78/0/13 완주) —
+  // 백그라운드 전환 원인이 확정됐으므로 사전 안내 한 줄로 대응.
+  'attach.intoss.step5':
+    '<strong>테스트가 끝날 때까지 토스 앱을 화면 앞에 유지하세요</strong> — 백그라운드로 전환하면 디버그 세션이 끊어집니다.',
   'attach.intoss.faq.appNotOpen':
     '<strong>토스 앱이 안 열리는 경우</strong> — 앱 버전 확인, 카메라 앱으로 스캔 (토스 앱 내 QR 리더 X)',
   'attach.intoss.faq.prepare':
