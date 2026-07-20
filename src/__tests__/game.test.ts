@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   getGameCenterGameProfile,
   grantPromotionReward,
@@ -23,6 +23,38 @@ describe('Game mock', () => {
       params: { promotionCode: 'PROMO1', amount: 100 },
     });
     expect(Object.keys(result as object)).toEqual(['key']);
+  });
+
+  // soft-resolve 다이얼 (#789) — env3 run11 2.x/iOS 실측: 미등록 promotion이
+  // reject가 아니라 { errorCode, message } shape로 resolve됨. 다이얼을 켰을 때만
+  // 이 shape로 대체되고, 미설정 시 위 테스트처럼 { key } 성공을 유지해야 한다.
+  describe('grantPromotionReward soft-resolve 다이얼 (#789)', () => {
+    afterEach(() => {
+      aitState.patch('failureModes', { softResolve: undefined });
+    });
+
+    it('다이얼 on 시 { errorCode, message } 2키로 resolve된다 (실기기 동치)', async () => {
+      aitState.patch('failureModes', { softResolve: { grantPromotionReward: true } });
+      const result = await grantPromotionReward({
+        params: { promotionCode: 'PROMO1', amount: 100 },
+      });
+      expect(Object.keys(result as object).sort()).toEqual(['errorCode', 'message']);
+    });
+
+    it('다이얼이 다른 API(grantPromotionRewardForGame)만 켜져 있으면 영향받지 않는다', async () => {
+      aitState.patch('failureModes', { softResolve: { grantPromotionRewardForGame: true } });
+      const result = await grantPromotionReward({
+        params: { promotionCode: 'PROMO1', amount: 100 },
+      });
+      expect(Object.keys(result as object)).toEqual(['key']);
+    });
+
+    it('softResolve patch는 기존 reject 다이얼 키를 지우지 않는다', async () => {
+      aitState.patch('failureModes', { appLogin: 'APP_LOGIN' });
+      aitState.patch('failureModes', { softResolve: { grantPromotionReward: true } });
+      expect(aitState.state.failureModes.appLogin).toBe('APP_LOGIN');
+      expect(aitState.state.failureModes.softResolve?.grantPromotionReward).toBe(true);
+    });
   });
 
   describe('getGameCenterGameProfile', () => {
@@ -59,6 +91,20 @@ describe('Game mock', () => {
       params: { promotionCode: 'GAME1', amount: 50 },
     });
     expect(Object.keys(result as object)).toEqual(['key']);
+  });
+
+  describe('grantPromotionRewardForGame soft-resolve 다이얼 (#789)', () => {
+    afterEach(() => {
+      aitState.patch('failureModes', { softResolve: undefined });
+    });
+
+    it('다이얼 on 시 { errorCode, message } 2키로 resolve된다 (실기기 동치)', async () => {
+      aitState.patch('failureModes', { softResolve: { grantPromotionRewardForGame: true } });
+      const result = await grantPromotionRewardForGame({
+        params: { promotionCode: 'GAME1', amount: 50 },
+      });
+      expect(Object.keys(result as object).sort()).toEqual(['errorCode', 'message']);
+    });
   });
 
   it('openGameCenterLeaderboard: 에러 없이 실행된다', async () => {

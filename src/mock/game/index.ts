@@ -18,11 +18,21 @@ import { aitState } from '../state.js';
 // 두고, soft-failure 재현은 실패-모드 다이얼(#777의 failureModes)에 붙인다.
 // 기본값을 실패로 뒤집으면 SDK가 선언한 성공 분기가 mock에서 영구히 도달
 // 불가능해지고, "다이얼 미사용 시 zero behavior change"라는 #770의 acceptance도
-// 깨진다. 다이얼 배선은 devtools#785.
+// 깨진다. 다이얼 배선은 soft-resolve 모드(#789)로 구현됨 — #785 close.
 export async function grantPromotionReward(
   params: GrantPromotionRewardParams,
 ): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionReward:', params.params);
+  if (aitState.state.failureModes.softResolve?.grantPromotionReward) {
+    // env3 미등록 promotion soft-resolve 재현: { errorCode, message }.
+    // 선언 타입 { key }와 다른 off-contract shape라 cast가 불가피하다 — 실기기가
+    // SDK 선언보다 낙관적이지 않다는 사실 자체가 이 shape의 근거다. valueKeys=
+    // ['errorCode','message']만 실측이고 문자열 값은 예시다(#789).
+    return {
+      errorCode: 'PROMOTION_NOT_FOUND',
+      message: 'no active promotion',
+    } as unknown as GrantPromotionRewardResponse;
+  }
   return { key: `mock-reward-${Date.now()}` };
 }
 
@@ -31,6 +41,16 @@ export async function grantPromotionRewardForGame(
   params: GrantPromotionRewardParams,
 ): Promise<GrantPromotionRewardResponse> {
   console.log('[@ait-co/devtools] grantPromotionRewardForGame:', params.params);
+  if (aitState.state.failureModes.softResolve?.grantPromotionRewardForGame) {
+    // env3 미등록 promotion soft-resolve 재현: { errorCode, message }.
+    // 선언 타입 { key }와 다른 off-contract shape라 cast가 불가피하다 — 실기기가
+    // SDK 선언보다 낙관적이지 않다는 사실 자체가 이 shape의 근거다. valueKeys=
+    // ['errorCode','message']만 실측이고 문자열 값은 예시다(#789).
+    return {
+      errorCode: 'PROMOTION_NOT_FOUND',
+      message: 'no active promotion',
+    } as unknown as GrantPromotionRewardResponse;
+  }
   return { key: `mock-reward-${Date.now()}` };
 }
 

@@ -35,6 +35,28 @@ describe('IAP mock', () => {
       });
       expect(typeof result.subscription.expiresAt).toBe('string');
     });
+
+    // soft-resolve 다이얼 (#789) — env3 run11 2.x/iOS 실측: 미프로비저닝 구독이
+    // reject가 아니라 빈 객체 {}(valueKeys=[])로 resolve됨. 다이얼을 켰을 때만
+    // 이 shape로 대체되고, 미설정 시 위 테스트처럼 populated 성공 shape를 유지한다.
+    describe('soft-resolve 다이얼 (#789)', () => {
+      afterEach(() => {
+        aitState.patch('failureModes', { softResolve: undefined });
+      });
+
+      it('다이얼 on 시 빈 객체 {}로 resolve된다 (실기기 동치)', async () => {
+        aitState.patch('failureModes', { softResolve: { getSubscriptionInfo: true } });
+        const result = await IAP.getSubscriptionInfo({ params: { orderId: 'order-1' } });
+        expect(Object.keys(result as object)).toEqual([]);
+      });
+
+      it('softResolve patch는 기존 reject 다이얼 키를 지우지 않는다', async () => {
+        aitState.patch('failureModes', { appLogin: 'APP_LOGIN' });
+        aitState.patch('failureModes', { softResolve: { getSubscriptionInfo: true } });
+        expect(aitState.state.failureModes.appLogin).toBe('APP_LOGIN');
+        expect(aitState.state.failureModes.softResolve?.getSubscriptionInfo).toBe(true);
+      });
+    });
   });
 
   describe('createOneTimePurchaseOrder', () => {

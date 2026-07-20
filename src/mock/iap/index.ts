@@ -196,10 +196,14 @@ export const IAP = createMockProxy('IAP', {
   // `IapSubscriptionInfoResult`의 subscription은 optional이 아니므로, 빈 객체를
   // 기본값으로 굳히면 SDK가 선언한 성공 분기가 mock에서 영구히 도달 불가능해진다.
   // 그래서 기본값은 선언 타입대로 성공 shape로 두고, 미프로비저닝 재현은 실패-모드
-  // 다이얼에 붙인다 — devtools#785(game promotion)와 같은 성격의 배선 대상.
+  // 다이얼에 붙인다 — soft-resolve 모드(#789)로 구현됨.
   async getSubscriptionInfo(_args: {
     params: { orderId: string };
   }): Promise<{ subscription: IapSubscriptionInfoResult }> {
+    if (aitState.state.failureModes.softResolve?.getSubscriptionInfo) {
+      // env3 미프로비저닝 구독 soft-resolve: 빈 객체 {} (valueKeys=[]). off-contract라 cast (#789).
+      return {} as unknown as { subscription: IapSubscriptionInfoResult };
+    }
     return {
       subscription: {
         catalogId: 1,

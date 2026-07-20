@@ -215,6 +215,22 @@ export interface FailureModes {
    * 설정된 이름만 reject, 나머지는 기존대로 resolve.
    */
   getPermission?: Partial<Record<PermissionName, NativeErrorCode>>;
+
+  /**
+   * soft-resolve 다이얼 (#789) — reject가 아니라 "다른 shape로 resolve"하는 env3
+   * 프로비저닝-의존 실패를 재현한다. 켠 API만 실측 대체 shape로 resolve하고, 미설정
+   * API는 선언 타입대로 성공 shape를 유지한다(다이얼 미사용 시 zero behavior change).
+   * shape는 API별 고정(env3 run11 2.x/iOS 실측 — valueKeys만 실측, 문자열 내용은 예시):
+   *   grantPromotionReward/grantPromotionRewardForGame → { errorCode, message }
+   *   getSubscriptionInfo → {}
+   * (checkoutPayment/requestTossPayPaysBilling은 valueKeys=['false','reason']로 실측됐으나
+   *  값 수준 재확인이 폰-gated라 여기 아직 배선 안 함 — #303/#789.)
+   */
+  softResolve?: {
+    grantPromotionReward?: boolean;
+    grantPromotionRewardForGame?: boolean;
+    getSubscriptionInfo?: boolean;
+  };
 }
 
 const DEFAULT_STATE: AitDevtoolsState = {
