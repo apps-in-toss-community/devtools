@@ -79,6 +79,23 @@ export type IapNextResult =
 
 export type NotificationAgreementResult = 'newAgreement' | 'alreadyAgreed' | 'agreementRejected';
 
+/**
+ * `getConsentedUserData`가 반환할 수 있는 동의 데이터 키. SDK 선언(`@apps-in-toss/web-bridge`
+ * 경유, web-framework 2.x 라인)의 `ConsentedUserDataKey`와 이름·값 동일(devtools#798).
+ */
+export type ConsentedUserDataKey =
+  | 'USER_NAME'
+  | 'USER_GENDER'
+  | 'USER_NATIONALITY'
+  | 'USER_BIRTHDAY'
+  | 'USER_PHONE'
+  | 'USER_ADDRESS'
+  | 'USER_EMAIL'
+  | 'USER_CONSUMPTION_HISTORY';
+
+/** `getConsentedUserData`의 반환 shape. SDK 선언과 동일한 `Partial<Record<..., string>>`. */
+export type ConsentedUserData = Partial<Record<ConsentedUserDataKey, string>>;
+
 export interface AnalyticsLogEntry {
   timestamp: number;
   type: string;

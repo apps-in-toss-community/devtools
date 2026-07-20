@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   appLogin,
   appsInTossSignTossCert,
+  getConsentedUserData,
   getIsTossLoginIntegratedService,
   getUserKeyForGame,
 } from '../mock/auth/index.js';
@@ -44,6 +45,28 @@ describe('Auth mock', () => {
 
   it('appsInTossSignTossCert: 에러 없이 실행된다', async () => {
     await expect(appsInTossSignTossCert({ txId: 'mock-tx' })).resolves.toBeUndefined();
+  });
+
+  describe('getConsentedUserData (devtools#798)', () => {
+    it('상태에 저장된 동의 데이터 객체를 반환한다', async () => {
+      const result = await getConsentedUserData({ consentedUserDataKey: 'cud_delivery' });
+      expect(result).toEqual({ USER_NAME: 'mock-user-name' });
+    });
+
+    it('호출 파라미터와 무관하게 같은 상태값을 반환한다', async () => {
+      aitState.patch('auth', { consentedUserData: { USER_PHONE: '010-0000-0000' } });
+      const result = await getConsentedUserData({
+        consentedUserDataKey: 'cud_other',
+        shouldRequestAgreementWhenUserDeclined: true,
+      });
+      expect(result).toEqual({ USER_PHONE: '010-0000-0000' });
+    });
+
+    it('상태값이 빈 객체면 빈 객체를 반환한다', async () => {
+      aitState.patch('auth', { consentedUserData: {} });
+      const result = await getConsentedUserData({ consentedUserDataKey: 'cud_delivery' });
+      expect(result).toEqual({});
+    });
   });
 
   describe('실패-모드 다이얼 (devtools#770)', () => {

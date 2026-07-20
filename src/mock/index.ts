@@ -22,6 +22,7 @@ export {
   appLogin,
   appsInTossSignTossCert,
   getAnonymousKey,
+  getConsentedUserData,
   getIsTossLoginIntegratedService,
   getUserKeyForGame,
 } from './auth/index.js';
@@ -135,6 +136,8 @@ export { aitState } from './state.js';
 // --- @apps-in-toss/types re-export 호환 ---
 export type {
   AnalyticsLogEntry,
+  ConsentedUserData,
+  ConsentedUserDataKey,
   DeviceApiMode,
   DeviceModes,
   HapticFeedbackType,

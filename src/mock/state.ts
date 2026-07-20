@@ -7,6 +7,7 @@ import type { AitSdkCall } from '../mcp/ait-source.js';
 import type { NativeErrorCode } from './native-error.js';
 import type {
   AnalyticsLogEntry,
+  ConsentedUserData,
   DeviceModes,
   IapNextResult,
   MockContact,
@@ -124,6 +125,13 @@ export interface AitDevtoolsState {
     isTossLoginIntegrated: boolean;
     userKeyHash: string;
     anonymousKeyHash: string;
+    /**
+     * `getConsentedUserData`가 resolve할 최소 plausible 객체(devtools#798). 실제로는
+     * 콘솔에 등록된 동의문/데이터 묶음(`consentedUserDataKey`)에 따라 채워지는 키가
+     * 달라지지만 그 매핑은 서버 쪽 설정이라 mock이 알 수 없다 — 호출 파라미터와
+     * 무관하게 이 상태값을 그대로 반환한다.
+     */
+    consentedUserData: ConsentedUserData;
   };
 
   // 알림
@@ -329,6 +337,7 @@ const DEFAULT_STATE: AitDevtoolsState = {
     isTossLoginIntegrated: true,
     userKeyHash: 'mock-user-hash-abc123',
     anonymousKeyHash: 'mock-anon-hash-xyz789',
+    consentedUserData: { USER_NAME: 'mock-user-name' },
   },
 
   notification: {

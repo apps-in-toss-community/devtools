@@ -50,6 +50,12 @@ type _AppsInTossSignTossCert = Expect<
   AssertCompat<typeof Mock.appsInTossSignTossCert, typeof Original.appsInTossSignTossCert>
 >;
 
+// getConsentedUserData는 이 2.x stable 라인에만 존재한다(devtools#798,
+// `@apps-in-toss/web-bridge` 경유) — 3.0-beta 표면엔 대응 export가 없다
+// (`__typecheck.ts`에서 skip). PermissionError(3.0 신규, 2.x 부재)의 반대 방향
+// 비대칭이라 여기서는 AssertIfPresent가 엄격 검증으로 동작한다.
+type _GetConsentedUserData = Expect<AssertIfPresent<MockNS, OrigNS, 'getConsentedUserData'>>;
+
 // --- 화면/네비게이션 ---
 type _CloseView = Expect<AssertCompat<typeof Mock.closeView, typeof Original.closeView>>;
 type _OpenURL = Expect<AssertCompat<typeof Mock.openURL, typeof Original.openURL>>;
