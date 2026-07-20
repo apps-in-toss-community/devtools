@@ -184,10 +184,11 @@ describe('fidelity-qa — mock runner smoke test', () => {
     expect(results.length).toBeGreaterThanOrEqual(30);
   }, 15000);
 
-  it('environment probes return expected default values', () => {
-    expect(getOperationalEnvironment()).toBe('sandbox');
-    expect(getPlatformOS()).toBe('ios');
-    expect(getLocale()).toBe('ko-KR');
+  it('environment probes return expected default values', async () => {
+    // devtools#795: 실기기 실측이 Promise라 mock도 Promise를 반환한다(#775 원칙 확장).
+    expect(await getOperationalEnvironment()).toBe('sandbox');
+    expect(await getPlatformOS()).toBe('ios');
+    expect(await getLocale()).toBe('ko-KR');
   });
 
   it('permissions probes return valid PermissionStatus', async () => {
