@@ -245,6 +245,11 @@ export const en: Record<StringKey, string> = {
     'Scan this QR code with <strong>"Scan QR with camera"</strong> inside the launcher.',
   'attach.sandbox.step3':
     'The mini-app opens fullscreen and the debug session attaches automatically.',
+  // devtools#766: proactive notice for the background-suspend cascade
+  // observed on real devices (iOS suspends WebView JS on background →
+  // evaluate timeout → relay WS dies → every remaining file fails).
+  'attach.sandbox.step4':
+    '<strong>Keep the app in the foreground until the test run finishes</strong> — backgrounding it will drop the debug session.',
   'attach.sandbox.faq.notInstalled':
     '<strong>Launcher is not installed</strong> — open <code>devtools.aitc.dev/launcher/</code> once and add it to your home screen',
   'attach.sandbox.faq.cameraApp':
@@ -259,6 +264,10 @@ export const en: Record<StringKey, string> = {
   'attach.intoss.step2': 'Scan the QR code with your phone camera app.',
   'attach.intoss.step3': 'Tap <strong>"Open in Toss"</strong> when the popup appears.',
   'attach.intoss.step4': 'The mini-app opens and the debug session attaches automatically.',
+  // devtools#766: 2026-07-08 real-device observation (46/8/6 partial run vs.
+  // 78/0/13 clean full run) confirmed backgrounding as the root cause.
+  'attach.intoss.step5':
+    '<strong>Keep the Toss app in the foreground until the test run finishes</strong> — backgrounding it will drop the debug session.',
   'attach.intoss.faq.appNotOpen':
     '<strong>Toss app does not open</strong> — check app version; scan with the system camera app (not the Toss in-app QR reader)',
   'attach.intoss.faq.prepare':

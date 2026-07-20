@@ -461,7 +461,15 @@ export async function runTestFilesOverRelay(
                 // This fallback must equal rpc.ts DEFAULT_TIMEOUT_MS (60_000)
                 // so the displayed budget matches what was actually used when
                 // the caller omitted opts.timeoutMs (#731).
-                error: `${EVALUATE_TIMEOUT_MARKER} ${opts?.timeoutMs ?? 60_000}ms (after retry)`,
+                //
+                // devtools#766: append a diagnostic hint — a double timeout on
+                // a real-device relay run is the exact signature of the phone
+                // backgrounding the app (iOS suspends WebView JS → this
+                // evaluate never returns), not a bug in the SDK or runner.
+                // The suffix is appended AFTER "(after retry)" so existing
+                // `.toContain(EVALUATE_TIMEOUT_MARKER)` / `.toContain('...ms
+                // (after retry)')` checks keep matching.
+                error: `${EVALUATE_TIMEOUT_MARKER} ${opts?.timeoutMs ?? 60_000}ms (after retry) — the device's app may have been backgrounded`,
               },
             };
           }

@@ -623,8 +623,18 @@ export async function renderAndMaybeWait(
   let reminted = 0;
   const relayUrl = parts.wssUrl;
 
+  // devtools#766: proactive one-line notice, appended to the shared header so
+  // it rides along every render path (headless / browser-opened / browser-
+  // open-failed / no-http-server) and both callers (the `start_attach` MCP
+  // tool here in debug-server.ts, and the devtools-test CLI's runner-terminal
+  // output via relay-factory.ts's onQrContent). Real-device observation
+  // (2026-07-08, 46/8/6 partial run vs. 78/0/13 clean full run) confirmed the
+  // root cause is the human backgrounding the app mid-run, not the SDK or the
+  // runner — so the fix is this notice, not suspend detection/auto-resume
+  // (Page visibility signals die together with the relay).
   const header =
-    'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).';
+    'This tool result is shown to the user directly — do NOT re-print the QR below in your reply (it wastes output tokens). Just tell the user to scan the QR in this output (Ctrl+O to expand if collapsed).\n\n' +
+    '테스트가 끝날 때까지 앱을 화면 앞에 유지하세요 — 백그라운드로 전환하면 디버그 세션이 끊어집니다.';
   const warningPrefix = authorityWarning ? `⚠️  scheme_url 경고: ${authorityWarning}\n\n` : '';
   const guiAvailable = canOpenBrowserFn();
 
