@@ -1,8 +1,8 @@
 # dogfood → QR → relay 디버깅 루프 운영 가이드
 
-이 문서는 **환경 3·4(실기기 토스 앱 WebView + CDP relay)** 의 디버깅 루프를 처음 실행하거나 반복 실행할 때 막힘 없이 완주하기 위한 메인테이너 가이드다.
+이 문서는 **환경 3(실기기 토스 앱 WebView + CDP relay)** 의 디버깅 루프를 처음 실행하거나 반복 실행할 때 막힘 없이 완주하기 위한 메인테이너 가이드다.
 
-설계 정본(환경 4겹 모델, relay TOTP 인증 아키텍처): umbrella `meta/four-environments-fidelity.md` (private repo, 메인테이너 internal 문서)
+설계 정본(환경 3겹 모델, relay TOTP 인증 아키텍처): umbrella `meta/three-environments-fidelity.md` (private repo, 메인테이너 internal 문서)
 
 ---
 
@@ -228,7 +228,7 @@ call_sdk("setSecureScreen", [{ enabled: true }])               // ✓
 
 ## 관련 링크
 
-- umbrella `meta/four-environments-fidelity.md` (private repo, 메인테이너 internal) — 환경 3·4 설계 정본 (이 루프가 환경 3·4에 해당)
+- umbrella `meta/three-environments-fidelity.md` (private repo, 메인테이너 internal) — 환경 3 설계 정본 (이 루프가 환경 3에 해당)
 - [#194](https://github.com/apps-in-toss-community/devtools/issues/194) — relay TOTP 인증 구현 (`AIT_DEBUG_TOTP_SECRET` 배경)
 - [#252](https://github.com/apps-in-toss-community/devtools/issues/252) — cloudflared 연결 끊김 fail-fast
 - [`console-cli/docs/api/mini-apps.md`](https://github.com/apps-in-toss-community/console-cli/blob/main/docs/api/mini-apps.md) — 31146 dogfood 앱 운영 컨텍스트 (REVIEW 상태·이력)

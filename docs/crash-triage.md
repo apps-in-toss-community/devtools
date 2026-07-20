@@ -2,7 +2,7 @@
 
 이 문서는 실기기 토스 앱 WebView에서 crash가 발생했을 때 **메인테이너가 원인을 추적하기 위해 동원할 수 있는 데이터 소스와 절차**를 정리한다. 2026-05-28 `setDeviceOrientation` 시그니처 mismatch 사례를 계기로 작성됐다.
 
-설계 정본(환경 4겹 모델, relay TOTP 인증 아키텍처): umbrella `meta/four-environments-fidelity.md` (private repo, 메인테이너 internal 문서)
+설계 정본(환경 3겹 모델, relay TOTP 인증 아키텍처): umbrella `meta/three-environments-fidelity.md` (private repo, 메인테이너 internal 문서)
 
 ---
 

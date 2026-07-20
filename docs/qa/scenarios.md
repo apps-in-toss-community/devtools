@@ -158,7 +158,7 @@ npx -y @ait-co/devtools devtools-mcp --target=local
 
 상세 절차: [`docs/scenarios/env-2.md`](../scenarios/env-2.md)
 
-환경 2는 MCP relay 대상이 아니다(환경 3·4가 relay). cloudflared 터널은 데스크톱 vite dev 서버를 폰의 PWA iframe이 fetch하기 위한 HTTP 미리보기 채널이다. 관측은 데스크톱 Safari 원격 검사 또는 화면 관찰로 한다.
+환경 2는 MCP relay 대상이 아니다(환경 3이 relay). cloudflared 터널은 데스크톱 vite dev 서버를 폰의 PWA iframe이 fetch하기 위한 HTTP 미리보기 채널이다. 관측은 데스크톱 Safari 원격 검사 또는 화면 관찰로 한다.
 
 ### 진입 절차
 
