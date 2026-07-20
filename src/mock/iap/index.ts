@@ -221,19 +221,32 @@ export const IAP = createMockProxy('IAP', {
 
 // 실기기(2.x×iOS) capture는 checkoutPayment가 전부 결제 **실패** 레코드였다
 // (devtools#770/#786) — I2-result-success-examined 시나리오조차
-// valueKeys=['false','reason']로 돌아왔다. env3는 성공 경로 shape를 한 번도
-// 보여준 적이 없으므로, 실패 shape(reason 포함)를 성공 분기에 일반화하는 건
-// 미측정 셀에 대한 근거 없는 추정이다(startUpdateLocation을 실측 없이 건드리지
-// 않은 것과 같은 이유). 게다가 그 일반화로 주장한 key-set 동치도 실제로는
-// 달성되지 않는다 — env3의 첫 키는 'success'가 아니라 'false'라 reason을 더해도
-// 여전히 어긋난다('false' 키 자체는 하네스 버그가 아니라 실기기 shape로 확정된
-// 별개 사안, 여기서 "고치지" 않는다). 그래서 성공 분기는 선언 타입대로
-// { success: true }만 반환한다. 실패 분기(reason 포함)는 실측대로 유지.
+// valueKeys=['false','reason']로 돌아왔다. 성공 분기 기본값은 선언 타입대로
+// { success: true }로 두고(정상 프로비저닝된 앱의 dev 경험 보존), env3의
+// 미프로비저닝 soft-resolve shape({ false: …, reason: … })는 다이얼(#789)에 붙인다.
+// 리터럴 'false' 키는 하네스 버그가 아니라 실기기 WebView가 실제로 관측한 shape로
+// 확정됐다(sdk-example#303): capture는 WebView 안에서 Object.keys(value)로 계산돼
+// console 문자열로 방출되므로(devtools#696 capture.ts) 우리 CDP relay가 개입하기
+// 전이다 — relay 역직렬화 artifact 가설은 코드상 반증된다. 즉 모든 WebView 소비자가
+// 보는 shape라 env1이 재현하는 게 fidelity에 맞다.
 export async function checkoutPayment(options: {
   params: { payToken: string };
 }): Promise<{ success: boolean; reason?: string }> {
   const { nextResult, failReason } = aitState.state.payment;
   console.log('[@ait-co/devtools] checkoutPayment:', options.params.payToken);
+
+  if (aitState.state.failureModes.softResolve?.checkoutPayment) {
+    // env3 미프로비저닝 soft-resolve: { false: …, reason: … }. `{ false: … }`는
+    // JS에서 키 "false"로 코어스된다 → valueKeys=['false','reason']. 값은 비-boolean
+    // 문자열이라 booleanValues=null까지 실측과 일치. 선언 타입과 다른 off-contract라 cast.
+    return {
+      false: 'PAYMENT_FAILED',
+      reason: 'mock soft-resolve (env3 unprovisioned)',
+    } as unknown as {
+      success: boolean;
+      reason?: string;
+    };
+  }
 
   await new Promise((r) => setTimeout(r, 300));
 
@@ -246,15 +259,26 @@ export async function checkoutPayment(options: {
 export const requestTossPayPaysBilling = Object.assign(
   // requestTossPayPaysBilling도 checkoutPayment와 동일한 사정이다(devtools#770/#786)
   // — result-success-examined·native-billing-cancelled·happy-varied-token 시나리오
-  // 전부 실패(valueKeys=['false','reason'])로 돌아왔다. env3가 성공 경로 shape를
-  // 보여준 적이 없으므로 성공 분기에 reason을 얹는 건 근거 없는 일반화고, 그마저도
-  // 첫 키가 'success'가 아닌 'false'라 주장한 key-set 동치를 달성하지 못한다.
-  // 성공 분기는 선언 타입대로 { success: true }만 반환한다.
+  // 전부 실패(valueKeys=['false','reason'])로 돌아왔다. 성공 분기 기본값은 선언
+  // 타입대로 { success: true }로 두고, env3 미프로비저닝 soft-resolve shape는
+  // checkoutPayment와 같은 다이얼(#789)에 붙인다(근거는 위 checkoutPayment 주석).
   async function requestTossPayPaysBilling(options: {
     params: { wrappedToken: string };
   }): Promise<{ success: boolean; reason?: string } | undefined> {
     const { nextResult, failReason } = aitState.state.payment;
     console.log('[@ait-co/devtools] requestTossPayPaysBilling:', options.params.wrappedToken);
+
+    if (aitState.state.failureModes.softResolve?.requestTossPayPaysBilling) {
+      // env3 미프로비저닝 soft-resolve: { false: …, reason: … } (valueKeys=['false','reason'],
+      // booleanValues=null). off-contract라 cast (#789, 근거는 checkoutPayment 주석).
+      return {
+        false: 'BILLING_FAILED',
+        reason: 'mock soft-resolve (env3 unprovisioned)',
+      } as unknown as {
+        success: boolean;
+        reason?: string;
+      };
+    }
 
     await new Promise((r) => setTimeout(r, 300));
 

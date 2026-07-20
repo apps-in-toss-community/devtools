@@ -223,13 +223,26 @@ export interface FailureModes {
    * shape는 API별 고정(env3 run11 2.x/iOS 실측 — valueKeys만 실측, 문자열 내용은 예시):
    *   grantPromotionReward/grantPromotionRewardForGame → { errorCode, message }
    *   getSubscriptionInfo → {}
-   * (checkoutPayment/requestTossPayPaysBilling은 valueKeys=['false','reason']로 실측됐으나
-   *  값 수준 재확인이 폰-gated라 여기 아직 배선 안 함 — #303/#789.)
+   *   checkoutPayment/requestTossPayPaysBilling → { false, reason } (valueKeys=['false','reason'])
+   * payment shape의 리터럴 `false` 키가 하네스 artifact가 아니라 실기기 WebView 관측값임은
+   * 코드로 확정됐다(sdk-example#303: capture는 relay 개입 전 WebView 안에서 계산 — 아래
+   * checkoutPayment 항목 주석). #303/#789.
    */
   softResolve?: {
     grantPromotionReward?: boolean;
     grantPromotionRewardForGame?: boolean;
     getSubscriptionInfo?: boolean;
+    /**
+     * checkoutPayment/requestTossPayPaysBilling → `{ false: …, reason: … }`
+     * (valueKeys=['false','reason'], booleanValues=null). env3 run11 실측 shape로,
+     * 리터럴 `false` 키는 실기기 WebView가 실제로 관측한 형태다 — capture는 WebView
+     * 안에서 `Object.keys(value)`로 계산돼 console 문자열로 나오므로(devtools#696
+     * capture.ts) 우리 CDP relay가 개입하기 전이다. 즉 relay 역직렬화 artifact가 아니라
+     * 모든 WebView 소비자가 보는 shape다(sdk-example#303 진단 결론). 성공 분기 기본값
+     * ({ success: true })은 그대로 두고, 미프로비저닝 실패 재현만 다이얼에 붙인다.
+     */
+    checkoutPayment?: boolean;
+    requestTossPayPaysBilling?: boolean;
   };
 }
 
