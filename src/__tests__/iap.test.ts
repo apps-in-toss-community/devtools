@@ -267,6 +267,30 @@ describe('IAP mock', () => {
       await vi.advanceTimersByTimeAsync(300);
       expect(await promise).toEqual({ success: false, reason: 'Insufficient funds' });
     });
+
+    // soft-resolve 다이얼 (#789, payment 범위) — env3 run11 2.x/iOS 실측: 미프로비저닝
+    // 결제가 reject가 아니라 리터럴 `false` 키를 담은 { false, reason }
+    // (valueKeys=['false','reason'], booleanValues=null)로 resolve됨. 이 shape는 하네스
+    // artifact가 아니라 실기기 WebView가 관측한 값으로 확정됐다(sdk-example#303: capture는
+    // WebView 안 Object.keys로 계산 → relay 개입 전). 다이얼 미설정 시 위 { success } 계약 유지.
+    describe('soft-resolve 다이얼 (#789)', () => {
+      afterEach(() => {
+        aitState.patch('failureModes', { softResolve: undefined });
+      });
+
+      it('다이얼 off 시 { success: true }만 반환한다 (다이얼은 opt-in)', async () => {
+        const promise = checkoutPayment({ params: { payToken: 'token-off' } });
+        await vi.advanceTimersByTimeAsync(300);
+        expect(Object.keys(await promise)).toEqual(['success']);
+      });
+
+      it('다이얼 on 시 valueKeys=[false, reason]로 resolve된다 (실기기 동치)', async () => {
+        aitState.patch('failureModes', { softResolve: { checkoutPayment: true } });
+        // 다이얼 on 경로는 setTimeout 이전에 즉시 반환하므로 타이머 advance 불필요.
+        const result = await checkoutPayment({ params: { payToken: 'token-sr' } });
+        expect(Object.keys(result as object).sort()).toEqual(['false', 'reason']);
+      });
+    });
   });
 
   describe('requestTossPayPaysBilling', () => {
@@ -289,6 +313,26 @@ describe('IAP mock', () => {
 
     it('isSupported()는 true를 반환한다', () => {
       expect(requestTossPayPaysBilling.isSupported()).toBe(true);
+    });
+
+    // soft-resolve 다이얼 (#789, payment 범위) — checkoutPayment와 동일한 근거
+    // (env3 run11 2.x/iOS 실측, valueKeys=['false','reason']). 다이얼 미설정 시 { success } 유지.
+    describe('soft-resolve 다이얼 (#789)', () => {
+      afterEach(() => {
+        aitState.patch('failureModes', { softResolve: undefined });
+      });
+
+      it('다이얼 off 시 { success: true }만 반환한다 (다이얼은 opt-in)', async () => {
+        const promise = requestTossPayPaysBilling({ params: { wrappedToken: 'wrapped-off' } });
+        await vi.advanceTimersByTimeAsync(300);
+        expect(Object.keys((await promise) ?? {})).toEqual(['success']);
+      });
+
+      it('다이얼 on 시 valueKeys=[false, reason]로 resolve된다 (실기기 동치)', async () => {
+        aitState.patch('failureModes', { softResolve: { requestTossPayPaysBilling: true } });
+        const result = await requestTossPayPaysBilling({ params: { wrappedToken: 'wrapped-sr' } });
+        expect(Object.keys((result ?? {}) as object).sort()).toEqual(['false', 'reason']);
+      });
     });
   });
 });
