@@ -491,6 +491,10 @@ describe('installRelayWsObserver', () => {
   let originalWebSocket: typeof WebSocket | undefined;
 
   beforeEach(async () => {
+    // #748: the close handler now schedules a grace-window detach timer on
+    // non-4401 closes — fake timers keep that off the real clock so it never
+    // leaks into a later test, and afterEach clears any pending one.
+    vi.useFakeTimers();
     vi.resetModules();
     FakeWebSocket.instances.length = 0;
     // The observer PATCHES window.WebSocket and a module reset does not undo
@@ -508,6 +512,8 @@ describe('installRelayWsObserver', () => {
   });
 
   afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
     window.WebSocket = originalWebSocket as typeof WebSocket;
     Object.defineProperty(window, 'parent', {
       value: window,
@@ -586,11 +592,12 @@ describe('installRelayWsObserver', () => {
       const close = ev as CloseEvent;
       closes.push({ code: close.code, reason: close.reason });
     });
-    await vi.waitFor(() =>
-      expect(closes).toEqual([
-        { code: RELAY_AUTH_REJECT_CLOSE_CODE, reason: RELAY_AUTH_REJECT_REASON },
-      ]),
-    );
+    // createFailFastSocket dispatches its terminal close via setTimeout(…, 0);
+    // flush the fake timer to observe it (fake timers active per beforeEach).
+    await vi.runAllTimersAsync();
+    expect(closes).toEqual([
+      { code: RELAY_AUTH_REJECT_CLOSE_CODE, reason: RELAY_AUTH_REJECT_REASON },
+    ]);
 
     // Non-relay origins keep constructing natively even in the expired state.
     const foreign = new window.WebSocket('wss://api.app.example.com/live');
@@ -621,6 +628,9 @@ describe('installRelayWsObserver — ait:relay-ws-state broadcast (#730)', () =>
   let originalWebSocket: typeof WebSocket | undefined;
 
   beforeEach(async () => {
+    // #748: non-4401 closes schedule a grace-window detach timer — keep it on
+    // the fake clock so it never leaks past the test.
+    vi.useFakeTimers();
     vi.resetModules();
     FakeWebSocket.instances.length = 0;
     originalWebSocket = window.WebSocket;
@@ -636,6 +646,8 @@ describe('installRelayWsObserver — ait:relay-ws-state broadcast (#730)', () =>
   });
 
   afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
     window.WebSocket = originalWebSocket as typeof WebSocket;
     Object.defineProperty(window, 'parent', {
       value: window,
@@ -924,5 +936,199 @@ describe('reportWebViewType (#580)', () => {
     reportWebViewType();
 
     expect(postMessageSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Graceful detach (#748) — detachDebugSurface + WS-close teardown wiring
+//
+// Verifies the in-app half of issue #748: on run end / relay WS close, OUR
+// debug-surface elements are removed and the keepAwake side effect is restored,
+// so nothing we injected lingers and touch/click reach the app again. Transient
+// tunnel blips (reconnect within the grace window) must NOT tear the surface
+// down; 4401 (terminal) tears down immediately; the no-attach path is untouched.
+// ---------------------------------------------------------------------------
+
+describe('detachDebugSurface (#748)', () => {
+  let detachDebugSurface: () => void;
+  let setScreenAwakeMode: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    const framework = await import('@apps-in-toss/web-framework');
+    setScreenAwakeMode = framework.setScreenAwakeMode as ReturnType<typeof vi.fn>;
+    setScreenAwakeMode.mockClear();
+    setScreenAwakeMode.mockResolvedValue({ enabled: false });
+    ({ detachDebugSurface } = await import('../in-app/attach.js'));
+  });
+
+  /** Inserts a stand-in indicator badge so its removal can be asserted. */
+  function addBadge(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = '__ait_debug_indicator';
+    el.style.pointerEvents = 'auto';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('removes the #__ait_debug_indicator badge (blocking element gone)', () => {
+    addBadge();
+    expect(document.getElementById('__ait_debug_indicator')).not.toBeNull();
+    detachDebugSurface();
+    expect(document.getElementById('__ait_debug_indicator')).toBeNull();
+  });
+
+  it('restores screen sleep — setScreenAwakeMode({ enabled: false })', () => {
+    detachDebugSurface();
+    expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: false });
+  });
+
+  it('lets a click on the app reach it after teardown (no leftover badge intercepts)', () => {
+    addBadge();
+    detachDebugSurface();
+    // With the badge removed, a click dispatched on the body is delivered to the
+    // app's own handler — nothing of ours sits on top to swallow it.
+    const appHandler = vi.fn();
+    document.body.addEventListener('click', appHandler);
+    document.body.dispatchEvent(new Event('click', { bubbles: true }));
+    expect(appHandler).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('__ait_debug_indicator')).toBeNull();
+  });
+
+  it('does not throw when there is no badge present', () => {
+    expect(() => detachDebugSurface()).not.toThrow();
+  });
+
+  it('is idempotent — a second call does not disable awake again', () => {
+    detachDebugSurface();
+    detachDebugSurface();
+    expect(setScreenAwakeMode).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not throw even if setScreenAwakeMode rejects', async () => {
+    setScreenAwakeMode.mockRejectedValue(new Error('platform unsupported'));
+    expect(() => detachDebugSurface()).not.toThrow();
+    // Flush the swallowed rejection.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+});
+
+describe('graceful detach on relay WS close (#748)', () => {
+  const RELAY_URL = 'wss://relay.example.com/';
+  let installRelayWsObserver: (relayUrl: string) => void;
+  let setScreenAwakeMode: ReturnType<typeof vi.fn>;
+  let originalWebSocket: typeof WebSocket | undefined;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    document.body.innerHTML = '';
+    FakeWebSocket.instances.length = 0;
+    originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    Object.defineProperty(window, 'parent', {
+      value: { postMessage: vi.fn() },
+      writable: true,
+      configurable: true,
+    });
+    delete (window as unknown as Record<string, unknown>).__ait_relay_ws_observed;
+    const framework = await import('@apps-in-toss/web-framework');
+    setScreenAwakeMode = framework.setScreenAwakeMode as ReturnType<typeof vi.fn>;
+    setScreenAwakeMode.mockClear();
+    setScreenAwakeMode.mockResolvedValue({ enabled: false });
+    ({ installRelayWsObserver } = await import('../in-app/attach.js'));
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    window.WebSocket = originalWebSocket as typeof WebSocket;
+    Object.defineProperty(window, 'parent', {
+      value: window,
+      writable: true,
+      configurable: true,
+    });
+    delete (window as unknown as Record<string, unknown>).__ait_relay_ws_observed;
+  });
+
+  function addBadge(): HTMLElement {
+    const el = document.createElement('div');
+    el.id = '__ait_debug_indicator';
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it('tears down after the grace window on a non-4401 relay close', () => {
+    addBadge();
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/target/abc');
+    ws.dispatchEvent(closeEventWithCode(1006));
+
+    // Within the grace window a reconnect could still cancel it — not yet gone.
+    expect(document.getElementById('__ait_debug_indicator')).not.toBeNull();
+    expect(setScreenAwakeMode).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(5000);
+
+    expect(document.getElementById('__ait_debug_indicator')).toBeNull();
+    expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: false });
+  });
+
+  it('a reconnect within the grace window cancels the teardown (transient blip)', () => {
+    addBadge();
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/target/abc');
+    ws.dispatchEvent(closeEventWithCode(1006));
+
+    // Reconnect before the grace elapses.
+    vi.advanceTimersByTime(1000);
+    const reconnect = new window.WebSocket('wss://relay.example.com/target/def');
+    reconnect.dispatchEvent(new Event('open'));
+
+    // Even well past the original window, teardown must NOT have run.
+    vi.advanceTimersByTime(10000);
+    expect(document.getElementById('__ait_debug_indicator')).not.toBeNull();
+    expect(setScreenAwakeMode).not.toHaveBeenCalled();
+  });
+
+  it('tears down immediately on a 4401 relay close (terminal — no grace)', () => {
+    addBadge();
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/at/123456/target/abc');
+    ws.dispatchEvent(closeEventWithCode(RELAY_AUTH_REJECT_CLOSE_CODE));
+
+    expect(document.getElementById('__ait_debug_indicator')).toBeNull();
+    expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: false });
+  });
+
+  it('schedules teardown on a relay WS error (unclean-close path)', () => {
+    addBadge();
+    installRelayWsObserver(RELAY_URL);
+    const ws = new window.WebSocket('wss://relay.example.com/target/abc');
+    ws.dispatchEvent(new Event('error'));
+
+    expect(document.getElementById('__ait_debug_indicator')).not.toBeNull();
+    vi.advanceTimersByTime(5000);
+    expect(document.getElementById('__ait_debug_indicator')).toBeNull();
+  });
+
+  it('runs teardown on pagehide (beforeunload-safe path)', () => {
+    addBadge();
+    installRelayWsObserver(RELAY_URL);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(document.getElementById('__ait_debug_indicator')).toBeNull();
+    expect(setScreenAwakeMode).toHaveBeenCalledWith({ enabled: false });
+  });
+
+  it('no-attach path: without the observer installed, an app WS close does not tear down', () => {
+    // Gate blocked → installRelayWsObserver never ran. A plain app WebSocket
+    // closing must not remove our surface or disable awake (zero behavior change).
+    addBadge();
+    const ws = new FakeWebSocket('wss://api.app.example.com/live');
+    ws.dispatchEvent(closeEventWithCode(1006));
+    vi.advanceTimersByTime(10000);
+    expect(document.getElementById('__ait_debug_indicator')).not.toBeNull();
+    expect(setScreenAwakeMode).not.toHaveBeenCalled();
   });
 });

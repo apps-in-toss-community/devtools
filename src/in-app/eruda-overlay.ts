@@ -35,6 +35,13 @@
 let erudaMounted = false;
 
 /**
+ * The loaded eruda module, captured on a successful {@link mountEruda} so
+ * {@link unmountEruda} can call `.destroy()` on the same instance during
+ * graceful detach (#748). `null` when eruda was never mounted.
+ */
+let erudaModule: { init(): void; destroy(): void } | null = null;
+
+/**
  * Mounts the eruda in-page console once.
  *
  * Idempotent: repeated calls after a successful mount are no-ops, mirroring the
@@ -56,9 +63,40 @@ export async function mountEruda(): Promise<void> {
   try {
     const eruda = (await import('eruda')).default;
     eruda.init();
+    // Capture for graceful detach (#748) — only after init() succeeds.
+    erudaModule = eruda;
   } catch (err) {
     // Reset so a later attach can retry; never break the Chii session.
     erudaMounted = false;
     console.debug('[@ait-co/devtools] eruda console mount skipped:', err);
+  }
+}
+
+/**
+ * Unmounts the eruda in-page console (#748 graceful detach).
+ *
+ * Calls `eruda.destroy()`, which removes eruda's floating entry button, any
+ * open panel, and its `#eruda` shadow host — returning the phone screen to a
+ * clean, non-debug state when a debug session ends. After a successful unmount
+ * the guard is reset so a later {@link mountEruda} (a fresh attach) can
+ * re-mount.
+ *
+ * Idempotent: a call when eruda was never mounted (or already unmounted) is a
+ * no-op. Fail-silent: a `destroy()` throw is swallowed — teardown must never
+ * throw into the host app.
+ */
+export function unmountEruda(): void {
+  if (!erudaMounted || erudaModule === null) {
+    return;
+  }
+  try {
+    erudaModule.destroy();
+  } catch (err) {
+    console.debug('[@ait-co/devtools] eruda console unmount skipped:', err);
+  } finally {
+    // Reset regardless — a failed destroy should not wedge the guard, and a
+    // later attach must be free to re-mount.
+    erudaMounted = false;
+    erudaModule = null;
   }
 }

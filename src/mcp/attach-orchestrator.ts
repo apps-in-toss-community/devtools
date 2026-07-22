@@ -785,9 +785,20 @@ export async function renderAndMaybeWait(
 }
 
 /**
+ * How long the disconnected badge stays on screen before it fades and removes
+ * itself (#748). Long enough to read, short enough not to linger; a reconnect
+ * within this window cancels the self-dismiss (transient tunnel blips do not
+ * flash-remove the badge).
+ */
+const INDICATOR_SELF_DISMISS_MS = 5000;
+
+/** Fade duration before the self-dismissed badge is detached from the DOM. */
+const INDICATOR_FADE_MS = 400;
+
+/**
  * Builds a self-contained IIFE DOM expression that renders a LIVE
- * "Debugger Connected" / "Debugger Disconnected" badge on the bottom-left of
- * the phone screen (#730).
+ * "Debugger Connected" / disconnected badge on the bottom-left of the phone
+ * screen (#730), with a graceful self-dismiss on disconnect (#748).
  *
  * **Pure function** — returns a JS expression string; does NOT inject it.
  * Injection is performed by {@link injectDebugIndicator} in `cell.ts`.
@@ -804,7 +815,18 @@ export async function renderAndMaybeWait(
  *   3. A `pointerdown` listener dismisses (hides) the badge on tap — dismiss
  *      is NON-terminal: a later state transition un-dismisses it, so a
  *      genuine disconnect after a dismissed tap is still visible.
- *   4. Observes relay-socket lifecycle WITHOUT opening any new connection:
+ *   4. **Graceful self-dismiss (#748)** — the disconnected badge is NON-BLOCKING
+ *      (`pointer-events:none` the moment it flips to disconnected, so it can
+ *      never absorb a tap) and SELF-DISMISSING (it fades and detaches itself
+ *      after {@link INDICATOR_SELF_DISMISS_MS}). This is why a run that ends
+ *      with `close()` injecting `{ state: 'disconnected' }` no longer leaves a
+ *      permanent grey "Debugger Disconnected" element on the phone. A reconnect
+ *      (`setState(c, 'attached')`) cancels the pending self-dismiss and
+ *      re-mounts the badge if it had already detached — transient tunnel blips
+ *      do not flash-remove it, and a genuine re-attach restores it. The
+ *      controller object is retained across dismiss (never `delete`d), so a
+ *      later re-injection reuses it and never double-wraps `window.WebSocket`.
+ *   5. Observes relay-socket lifecycle WITHOUT opening any new connection:
  *      - Preferred path: if the in-app module (`src/in-app/attach.ts`) has
  *        already installed its relay-WS observer (`window.__ait_relay_ws_observed`),
  *        subscribe to the `ait:relay-ws-state` CustomEvent it broadcasts.
@@ -821,7 +843,9 @@ export async function renderAndMaybeWait(
  * pathname match (`/target/`) only.
  *
  * @param opts.label - Attached-state badge text (default: `'Debugger Connected'`).
- * @param opts.disconnectedLabel - Disconnected-state badge text (default: `'Debugger Disconnected'`).
+ * @param opts.disconnectedLabel - Disconnected-state badge text. Default is the
+ *   Korean notice `'디버거 연결 끊김'` (ko-primary in-app string convention) —
+ *   shown briefly then self-dismissed.
  * @param opts.state - Initial/forced state for THIS injection call (default: `'attached'`).
  * @returns A JS expression string suitable for `Runtime.evaluate`.
  */
@@ -831,7 +855,7 @@ export function buildIndicatorExpression(opts?: {
   state?: 'attached' | 'disconnected';
 }): string {
   const label = opts?.label ?? 'Debugger Connected';
-  const disconnectedLabel = opts?.disconnectedLabel ?? 'Debugger Disconnected';
+  const disconnectedLabel = opts?.disconnectedLabel ?? '디버거 연결 끊김';
   // JSON.stringify ensures the labels/state are safely embedded even if they
   // contain quotes or backslashes.
   const safeLabel = JSON.stringify(label);
@@ -840,17 +864,40 @@ export function buildIndicatorExpression(opts?: {
   return (
     `(() => {` +
     `var W = window;` +
+    // mount(c) — (re-)attach the badge node to <body> if it is not connected.
+    // A self-dismissed badge detaches itself; a later 'attached' re-mounts it.
+    `function mount(c) { if (!c.el.isConnected && document.body) { document.body.appendChild(c.el); } }` +
     // render(c) — paints the DOM node from the controller's current state.
     `function render(c) {` +
+    `if (c.removed) { c.el.style.display = 'none'; return; }` +
+    `mount(c);` +
     `if (c.dismissed) { c.el.style.display = 'none'; return; }` +
     `c.el.style.display = 'block';` +
+    `c.el.style.opacity = '1';` +
     `var up = c.state !== 'disconnected';` +
     `c.el.style.background = up ? '#e5484d' : '#8a8f98';` +
+    // Disconnected badge is non-blocking — it can never absorb a tap (#748).
+    `c.el.style.pointerEvents = up ? 'auto' : 'none';` +
     `c.el.textContent = up ? ${safeLabel} : ${safeDisconnectedLabel};` +
     `}` +
-    // setState(c, next) — a later transition always un-dismisses the badge,
-    // so a genuine disconnect after a tap-dismiss is still surfaced.
-    `function setState(c, next) { c.state = next; c.dismissed = false; render(c); }` +
+    // clearTimers(c) — cancel any pending self-dismiss fade/remove timers.
+    `function clearTimers(c) { if (c.t1) { clearTimeout(c.t1); c.t1 = 0; } if (c.t2) { clearTimeout(c.t2); c.t2 = 0; } }` +
+    // setState(c, next) — a later transition always un-dismisses AND un-removes
+    // the badge (a reconnect after a self-dismiss re-mounts it), and cancels any
+    // pending self-dismiss so a transient blip that reconnects does not remove it.
+    `function setState(c, next) {` +
+    `clearTimers(c);` +
+    `c.state = next; c.dismissed = false; c.removed = false;` +
+    `render(c);` +
+    `if (next === 'disconnected') {` +
+    // Graceful self-dismiss: fade after a readable delay, then detach (#748).
+    // The controller object is retained so a re-injection reuses it.
+    `c.t1 = setTimeout(function () {` +
+    `try { c.el.style.transition = 'opacity ${INDICATOR_FADE_MS}ms ease'; c.el.style.opacity = '0'; } catch (_) {}` +
+    `c.t2 = setTimeout(function () { c.removed = true; if (c.el.parentNode) { c.el.parentNode.removeChild(c.el); } }, ${INDICATOR_FADE_MS});` +
+    `}, ${INDICATOR_SELF_DISMISS_MS});` +
+    `}` +
+    `}` +
     // Idempotent controller — re-injection updates the SAME controller/DOM
     // node instead of creating a duplicate.
     `var c = W.__ait_indicator;` +
@@ -871,7 +918,7 @@ export function buildIndicatorExpression(opts?: {
     `'user-select:none',` +
     `].join(';');` +
     `document.body.appendChild(el);` +
-    `c = { el: el, state: 'attached', dismissed: false };` +
+    `c = { el: el, state: 'attached', dismissed: false, removed: false, t1: 0, t2: 0 };` +
     // One-tap dismiss — hides the badge; NOT terminal, `setState` re-shows it.
     `el.addEventListener('pointerdown', function () { c.dismissed = true; render(c); }, { passive: true });` +
     `W.__ait_indicator = c;` +
