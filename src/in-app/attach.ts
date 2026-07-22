@@ -15,6 +15,7 @@ import {
   RELAY_AUTH_REJECT_CLOSE_CODE,
   RELAY_AUTH_REJECT_REASON,
 } from '../shared/relay-auth-close.js';
+import { installBridgeObserver, uninstallBridgeObserver } from './bridge-observer.js';
 import { mountEruda, unmountEruda } from './eruda-overlay.js';
 import { checkDebugGate, type GateResult } from './index.js';
 
@@ -279,11 +280,16 @@ function scheduleDetach(): void {
  * Removes every debug-surface element WE injected and restores the one side
  * effect WE applied:
  *   1. The CDP-injected `#__ait_debug_indicator` badge (the persistent
- *      "Debugger Disconnected" element). `buildIndicatorExpression` also
- *      self-dismisses it; this is the in-app hard guarantee — idempotent, a
- *      no-op if it is already gone.
+ *      "Debugger Disconnected" element). Its live heartbeat/pending-call timer
+ *      (#749) is stopped first via the badge controller's `stop()` so no 1 Hz
+ *      interval leaks past detach; `buildIndicatorExpression` also
+ *      self-dismisses the node — this is the in-app hard guarantee, idempotent,
+ *      a no-op if it is already gone.
  *   2. The eruda in-page console (floating button + any open panel).
- *   3. keepAwake — forced on at attach; restored here so a run that ends
+ *   3. The native-bridge call observer (#749) — its `callAsyncMethod` /
+ *      `postMessage` / emitter wraps are restored and `window.__ait_bridge` is
+ *      removed, so nothing we wrapped survives the run's end.
+ *   4. keepAwake — forced on at attach; restored here so a run that ends
  *      WITHOUT a page unload does not leave the screen pinned awake (the
  *      existing `beforeunload` restore only covers the unload path).
  *
@@ -300,8 +306,14 @@ export function detachDebugSurface(): void {
   debugSurfaceDetached = true;
   cancelScheduledDetach();
 
-  // 1. Remove the on-phone indicator badge if it is still present.
+  // 1. Stop the badge's heartbeat/pending-call interval (#749) BEFORE removing
+  // the node, then remove the on-phone indicator badge if it is still present.
+  // The controller (`window.__ait_indicator`) exposes `stop()`; the optional
+  // chaining makes this a no-op for a bare pre-#749 badge or when absent.
   try {
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __ait_indicator?: { stop?: () => void } }).__ait_indicator?.stop?.();
+    }
     if (typeof document !== 'undefined') {
       document.getElementById('__ait_debug_indicator')?.remove();
     }
@@ -316,7 +328,15 @@ export function detachDebugSurface(): void {
     // unmountEruda already swallows internally; this is belt-and-suspenders.
   }
 
-  // 3. Restore normal screen sleep. SECRET-HANDLING: no relay/TOTP value is
+  // 3. Restore the native-bridge call observer wraps and drop the snapshot
+  // (#749) — never throws (uninstallBridgeObserver guards each undo).
+  try {
+    uninstallBridgeObserver();
+  } catch {
+    // Belt-and-suspenders — uninstall is already internally guarded.
+  }
+
+  // 4. Restore normal screen sleep. SECRET-HANDLING: no relay/TOTP value is
   // read or logged here — this only flips the awake flag off.
   try {
     void setScreenAwakeMode({ enabled: false }).catch(() => {});
@@ -545,6 +565,12 @@ export function maybeAttach(gateResult: GateResult = checkDebugGate()): void {
   // drop — is covered. The relay names a TOTP rejection with close code 4401;
   // the observer relays it to the launcher banner and cuts the retry storm.
   installRelayWsObserver(gateResult.relayUrl);
+
+  // Issue #749: observe the REAL native bridge (env 3) so the indicator can
+  // show in-flight SDK calls + a last-call stamp — the mock's sdkCallLog does
+  // not see the real SDK here. SECRET-HANDLING: records API names + timings
+  // only, never arguments/results. Fail-safe: never throws into attach.
+  installBridgeObserver();
 
   // Also guard against a script with the same src already in the DOM
   // (e.g. injected by a different code path or a page reload within SPA).

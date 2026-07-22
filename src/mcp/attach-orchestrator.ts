@@ -796,6 +796,25 @@ const INDICATOR_SELF_DISMISS_MS = 5000;
 const INDICATOR_FADE_MS = 400;
 
 /**
+ * Heartbeat / pending-call render tick (#749). 1 Hz — cheap enough to be
+ * invisible (a single text write per second, no layout thrash) while making a
+ * JS main-thread wedge obvious: the compositor-driven pulse dot keeps animating
+ * but this JS-driven `♥<beats>` token freezes. Pending-call elapsed times are
+ * recomputed on the same tick so they advance without any bridge event.
+ */
+const INDICATOR_HEARTBEAT_MS = 1000;
+
+/**
+ * Display-side staleness guard (#749): the badge skips rendering a pending call
+ * older than this. A safety net independent of the in-app observer's own prune
+ * (`bridge-observer.ts` MAX_PENDING_AGE_MS) — kept local so the daemon-graph
+ * expression builder never imports the in-app module (install-graph invariant).
+ * Generous enough that a genuinely slow native call still shows while plausibly
+ * in flight.
+ */
+const INDICATOR_PENDING_STALE_MS = 120_000;
+
+/**
  * Builds a self-contained IIFE DOM expression that renders a LIVE
  * "Debugger Connected" / disconnected badge on the bottom-left of the phone
  * screen (#730), with a graceful self-dismiss on disconnect (#748).
@@ -834,9 +853,29 @@ const INDICATOR_FADE_MS = 400;
  *        by PATHNAME SHAPE only (`/target/`) — never by host/wss value — so a
  *        bare CDP-injected badge (no in-app bundle) still reacts to the
  *        chii target socket's own open/close lifecycle.
+ *   6. **Freeze/spinner triage (#749)** — renders three debug-only signals so a
+ *      real-device spinner is attributable at a glance (run7):
+ *      - **Main-thread heartbeat**: a compositor-driven pulse dot
+ *        (`Element.animate`, keeps running during JS jank) PLUS a JS-driven
+ *        `♥<beats>` token incremented by a 1 Hz `setInterval`. `CSS pulse alive
+ *        + ♥ frozen = JS main-thread wedge`.
+ *      - **Pending bridge calls**: in-flight native calls (API name + live
+ *        elapsed) read from `window.__ait_bridge` (published by the in-app
+ *        bridge observer, `src/in-app/bridge-observer.ts`). `⏳ present =
+ *        native/Toss-app spinner`.
+ *      - **Last SDK call stamp**: the most recent call's API name + wall-clock.
+ *        `no ⏳ + heartbeat healthy = the miniapp's own UI`.
+ *      The `title` tooltip states this mapping. When no in-app observer is
+ *      present (env 2 mock / no bridge) the pending/last lines are simply empty
+ *      — the heartbeat still renders. The 1 Hz interval is stored on the
+ *      controller (`c.hb`) and stopped by `c.stop()` (called from
+ *      `detachDebugSurface`) and by the self-dismiss removal, so no timer leaks
+ *      past detach (#748 lifecycle).
  *
  * The expression intentionally contains NO relay URLs, wss addresses, TOTP
- * codes, or any other secrets. It is pure DOM UI text + enum state only.
+ * codes, or any other secrets. `window.__ait_bridge` holds API NAMES + timings
+ * only (never call arguments/results — see `bridge-observer.ts`
+ * SECRET-HANDLING). It is pure DOM UI text + enum/name state only.
  *
  * SECRET-HANDLING: this expression contains no secrets, relay URLs, wss
  * addresses, or TOTP codes whatsoever — DOM label text + a structural
@@ -861,13 +900,47 @@ export function buildIndicatorExpression(opts?: {
   const safeLabel = JSON.stringify(label);
   const safeDisconnectedLabel = JSON.stringify(disconnectedLabel);
   const safeState = JSON.stringify(opts?.state ?? 'attached');
+  // Freeze/spinner triage legend (#749), ko-primary. Shown as the badge's
+  // `title` so the ⏳/♥ mapping is discoverable. Contains no secrets.
+  const safeTriageTitle = JSON.stringify(
+    '⏳ 네이티브 호출 대기 = 토스앱 스피너 · ♥ 정지 = JS 멈춤 · ⏳ 없고 ♥ 정상 = 앱 UI',
+  );
   return (
     `(() => {` +
     `var W = window;` +
+    // pad2/clock — wall-clock HH:MM:SS for the last-call stamp (#749).
+    `function pad2(n) { return (n < 10 ? '0' : '') + n; }` +
+    `function clock(ms) { var d = new Date(ms); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }` +
+    // renderDetail(c) — paints the #749 signals: JS heartbeat token + pending
+    // native calls (API name + live elapsed) + last-call stamp. Reads the
+    // enum/name-only snapshot on W.__ait_bridge; API NAMES + timings only, never
+    // call args/results.
+    `function renderDetail(c) {` +
+    `c.beatEl.textContent = ' \\u2665' + c.beats;` +
+    `var b = W.__ait_bridge;` +
+    `var now = Date.now();` +
+    `var lines = [];` +
+    `if (b) {` +
+    `if (b.last) { lines.push('last: ' + b.last.method + ' ' + clock(b.last.at)); }` +
+    `var p = b.pending || {};` +
+    `var ids = Object.keys(p);` +
+    `var shown = 0;` +
+    `for (var i = 0; i < ids.length; i++) {` +
+    `var e = p[ids[i]];` +
+    `if (!e || now - e.startedAt > ${INDICATOR_PENDING_STALE_MS}) { continue; }` +
+    `if (shown < 3) { lines.push('\\u23f3 ' + e.method + ' ' + Math.max(0, Math.round((now - e.startedAt) / 1000)) + 's'); }` +
+    `shown++;` +
+    `}` +
+    `if (shown > 3) { lines.push('+' + (shown - 3) + ' more'); }` +
+    `}` +
+    `c.detailEl.textContent = lines.join('\\n');` +
+    `}` +
     // mount(c) — (re-)attach the badge node to <body> if it is not connected.
     // A self-dismissed badge detaches itself; a later 'attached' re-mounts it.
     `function mount(c) { if (!c.el.isConnected && document.body) { document.body.appendChild(c.el); } }` +
-    // render(c) — paints the DOM node from the controller's current state.
+    // render(c) — paints the DOM node from the controller's current state. The
+    // heartbeat/pending detail render only while attached; disconnected clears
+    // the child text so the badge collapses to the plain notice label.
     `function render(c) {` +
     `if (c.removed) { c.el.style.display = 'none'; return; }` +
     `mount(c);` +
@@ -878,7 +951,11 @@ export function buildIndicatorExpression(opts?: {
     `c.el.style.background = up ? '#e5484d' : '#8a8f98';` +
     // Disconnected badge is non-blocking — it can never absorb a tap (#748).
     `c.el.style.pointerEvents = up ? 'auto' : 'none';` +
-    `c.el.textContent = up ? ${safeLabel} : ${safeDisconnectedLabel};` +
+    `c.labelEl.textContent = up ? ${safeLabel} : ${safeDisconnectedLabel};` +
+    `c.dotEl.style.display = up ? 'inline-block' : 'none';` +
+    `c.beatEl.style.display = up ? 'inline' : 'none';` +
+    `c.detailEl.style.display = up ? 'block' : 'none';` +
+    `if (up) { renderDetail(c); } else { c.beatEl.textContent = ''; c.detailEl.textContent = ''; }` +
     `}` +
     // clearTimers(c) — cancel any pending self-dismiss fade/remove timers.
     `function clearTimers(c) { if (c.t1) { clearTimeout(c.t1); c.t1 = 0; } if (c.t2) { clearTimeout(c.t2); c.t2 = 0; } }` +
@@ -891,10 +968,11 @@ export function buildIndicatorExpression(opts?: {
     `render(c);` +
     `if (next === 'disconnected') {` +
     // Graceful self-dismiss: fade after a readable delay, then detach (#748).
-    // The controller object is retained so a re-injection reuses it.
+    // The controller object is retained so a re-injection reuses it. The 1 Hz
+    // heartbeat interval is cleared on removal so no timer leaks past detach.
     `c.t1 = setTimeout(function () {` +
     `try { c.el.style.transition = 'opacity ${INDICATOR_FADE_MS}ms ease'; c.el.style.opacity = '0'; } catch (_) {}` +
-    `c.t2 = setTimeout(function () { c.removed = true; if (c.el.parentNode) { c.el.parentNode.removeChild(c.el); } }, ${INDICATOR_FADE_MS});` +
+    `c.t2 = setTimeout(function () { c.removed = true; if (c.hb) { clearInterval(c.hb); c.hb = 0; } if (c.el.parentNode) { c.el.parentNode.removeChild(c.el); } }, ${INDICATOR_FADE_MS});` +
     `}, ${INDICATOR_SELF_DISMISS_MS});` +
     `}` +
     `}` +
@@ -904,6 +982,7 @@ export function buildIndicatorExpression(opts?: {
     `if (!c) {` +
     `var el = document.createElement('div');` +
     `el.id = '__ait_debug_indicator';` +
+    `try { el.title = ${safeTriageTitle}; } catch (_) {}` +
     // Position: fixed, bottom-left with safe-area inset support.
     `el.style.cssText = [` +
     `'position:fixed',` +
@@ -911,16 +990,47 @@ export function buildIndicatorExpression(opts?: {
     `'bottom:max(12px,calc(env(safe-area-inset-bottom,0px) + 8px))',` +
     `'z-index:2147483647',` +
     `'color:#fff',` +
-    `'font:bold 11px/1 system-ui,sans-serif',` +
+    `'font:bold 11px/1.2 system-ui,sans-serif',` +
     `'padding:5px 9px',` +
     `'border-radius:6px',` +
+    `'max-width:72vw',` +
     `'pointer-events:auto',` +
     `'user-select:none',` +
     `].join(';');` +
+    // Child nodes: a compositor pulse dot, the connection label, a JS heartbeat
+    // token, and the pending/last detail block. Kept as children (not a single
+    // textContent) so the heartbeat + pending list can update independently.
+    `var dotEl = document.createElement('span');` +
+    `dotEl.style.cssText = 'display:inline-block;width:6px;height:6px;border-radius:50%;background:#fff;margin-right:5px;vertical-align:middle';` +
+    `var labelEl = document.createElement('span');` +
+    `labelEl.id = '__ait_indicator_label';` +
+    `var beatEl = document.createElement('span');` +
+    `beatEl.style.cssText = 'font-weight:normal;opacity:0.85;margin-left:6px';` +
+    `var detailEl = document.createElement('div');` +
+    `detailEl.style.cssText = 'font-weight:normal;font-size:10px;line-height:1.35;margin-top:3px;white-space:pre-line;opacity:0.95';` +
+    `el.appendChild(dotEl); el.appendChild(labelEl); el.appendChild(beatEl); el.appendChild(detailEl);` +
     `document.body.appendChild(el);` +
-    `c = { el: el, state: 'attached', dismissed: false, removed: false, t1: 0, t2: 0 };` +
+    `c = { el: el, dotEl: dotEl, labelEl: labelEl, beatEl: beatEl, detailEl: detailEl, state: 'attached', dismissed: false, removed: false, beats: 0, t1: 0, t2: 0, hb: 0 };` +
+    // Compositor-driven pulse (opacity animation runs off the main thread) — it
+    // keeps pulsing even while the JS main thread is wedged, so a frozen
+    // ♥<beats> next to a still-pulsing dot reads as a JS wedge at a glance.
+    `try { dotEl.animate([{ opacity: 1 }, { opacity: 0.25 }, { opacity: 1 }], { duration: 1400, iterations: Infinity }); } catch (_) {}` +
+    // JS-driven 1 Hz heartbeat — increments the beat counter and re-renders the
+    // detail (so pending elapsed advances). Self-clears once the node detaches,
+    // and stop() (below) clears it on explicit teardown (#748/#749).
+    `c.hb = (typeof setInterval !== 'undefined') ? setInterval(function () {` +
+    `if (c.removed || !c.el.isConnected) { if (c.hb) { clearInterval(c.hb); c.hb = 0; } return; }` +
+    `c.beats = (c.beats || 0) + 1;` +
+    `if (c.state !== 'disconnected' && !c.dismissed) { renderDetail(c); }` +
+    `}, ${INDICATOR_HEARTBEAT_MS}) : 0;` +
+    // stop() — teardown hook called by detachDebugSurface (src/in-app/attach.ts)
+    // so the interval never outlives the debug session.
+    `c.stop = function () { clearTimers(c); if (c.hb) { clearInterval(c.hb); c.hb = 0; } };` +
     // One-tap dismiss — hides the badge; NOT terminal, `setState` re-shows it.
     `el.addEventListener('pointerdown', function () { c.dismissed = true; render(c); }, { passive: true });` +
+    // Re-render promptly on every bridge call start/settle (#749) — additive to
+    // the 1 Hz tick so a new pending call or a settle shows without a 1 s wait.
+    `W.addEventListener('ait:bridge-call', function () { if (c.state !== 'disconnected' && !c.dismissed && !c.removed) { renderDetail(c); } });` +
     `W.__ait_indicator = c;` +
     // Observe relay-socket lifecycle without opening a new connection.
     `if (W.__ait_relay_ws_observed) {` +
