@@ -15,7 +15,7 @@ import {
   RELAY_AUTH_REJECT_CLOSE_CODE,
   RELAY_AUTH_REJECT_REASON,
 } from '../shared/relay-auth-close.js';
-import { mountEruda } from './eruda-overlay.js';
+import { mountEruda, unmountEruda } from './eruda-overlay.js';
 import { checkDebugGate, type GateResult } from './index.js';
 
 /**
@@ -206,6 +206,125 @@ function createFailFastSocket(url: string): WebSocket {
   return sock as unknown as WebSocket;
 }
 
+// ---------------------------------------------------------------------------
+// Graceful detach — return the mini-app to a clean, usable state on run end
+// (issue #748).
+//
+// Real-device observation (run7): after an env3 run completes the phone showed
+// a persistent "Debugger Disconnected" badge and the app felt wedged. This is
+// the in-app half of the fix — a single idempotent teardown that removes OUR
+// debug-surface elements (the CDP-injected indicator badge, the eruda console)
+// and restores the keepAwake side effect, so nothing we injected lingers after
+// the relay session ends.
+//
+// Trigger model (all close paths, transient-safe):
+//   - Normal completion / relay death / tunnel drop that does NOT recover /
+//     dashboard-initiated stop → relay WS closes (any non-4401 code). We
+//     schedule teardown after a grace window; a reconnect 'open' cancels it, so
+//     a transient tunnel blip that target.js recovers from does NOT flash away
+//     the surface.
+//   - 4401 (relay TOTP auth-reject, #478) → terminal by design (the session
+//     cannot reconnect without a QR rescan), so we tear down immediately.
+//   - WS 'error' with no clean close → scheduled defensively (unclean-close
+//     path).
+//   - pagehide → immediate (navigating away; restores keepAwake even if no
+//     close fired).
+//
+// OUT OF OUR LAYER (issue #748 hypothesis (a)): a native Toss-app loading
+// overlay / spinner that absorbs touches is NOT something a JS surface can
+// dismiss — we never try. Our surface adds no full-viewport element, no
+// capture-phase document listener, and no body pointer-events/scroll lock, so
+// it structurally cannot absorb ALL input; the total-touch-absorb + spinner
+// symptom is native and stays device-gated (tracked in #748 / sdk-example#277).
+// ---------------------------------------------------------------------------
+
+/** Grace window before a non-terminal relay close tears the surface down. */
+const RECONNECT_GRACE_MS = 5000;
+
+/** One-shot guard so the teardown runs at most once per page lifecycle. */
+let debugSurfaceDetached = false;
+
+/** Pending grace-window timer for a non-terminal close, or `null`. */
+let pendingDetachTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Cancels a scheduled teardown — called when a relay socket re-opens. */
+function cancelScheduledDetach(): void {
+  if (pendingDetachTimer !== null) {
+    clearTimeout(pendingDetachTimer);
+    pendingDetachTimer = null;
+  }
+}
+
+/**
+ * Schedules {@link detachDebugSurface} after {@link RECONNECT_GRACE_MS} unless
+ * a reconnect cancels it first. No-op if teardown already ran or is already
+ * scheduled. Defensive: if `setTimeout` is somehow unavailable, tears down
+ * immediately rather than never.
+ */
+function scheduleDetach(): void {
+  if (debugSurfaceDetached || pendingDetachTimer !== null) return;
+  if (typeof setTimeout === 'undefined') {
+    detachDebugSurface();
+    return;
+  }
+  pendingDetachTimer = setTimeout(() => {
+    pendingDetachTimer = null;
+    detachDebugSurface();
+  }, RECONNECT_GRACE_MS);
+}
+
+/**
+ * Idempotent, non-throwing teardown of the in-app debug surface (issue #748).
+ *
+ * Removes every debug-surface element WE injected and restores the one side
+ * effect WE applied:
+ *   1. The CDP-injected `#__ait_debug_indicator` badge (the persistent
+ *      "Debugger Disconnected" element). `buildIndicatorExpression` also
+ *      self-dismisses it; this is the in-app hard guarantee — idempotent, a
+ *      no-op if it is already gone.
+ *   2. The eruda in-page console (floating button + any open panel).
+ *   3. keepAwake — forced on at attach; restored here so a run that ends
+ *      WITHOUT a page unload does not leave the screen pinned awake (the
+ *      existing `beforeunload` restore only covers the unload path).
+ *
+ * Deliberately NOT touched: the `window.WebSocket` observer proxy (kept so the
+ * #478 post-4401 fail-fast survives; it is non-blocking and never absorbs
+ * input), and any NATIVE overlay (out of our layer — see the block comment
+ * above and issue #748 hypothesis (a)).
+ *
+ * Never throws into the host app — every step is individually guarded.
+ * Exported for unit tests and for a consumer that wants to force a clean detach.
+ */
+export function detachDebugSurface(): void {
+  if (debugSurfaceDetached) return;
+  debugSurfaceDetached = true;
+  cancelScheduledDetach();
+
+  // 1. Remove the on-phone indicator badge if it is still present.
+  try {
+    if (typeof document !== 'undefined') {
+      document.getElementById('__ait_debug_indicator')?.remove();
+    }
+  } catch {
+    // Never let a DOM edge case break teardown.
+  }
+
+  // 2. Tear down the eruda console (unmountEruda is itself fail-silent).
+  try {
+    unmountEruda();
+  } catch {
+    // unmountEruda already swallows internally; this is belt-and-suspenders.
+  }
+
+  // 3. Restore normal screen sleep. SECRET-HANDLING: no relay/TOTP value is
+  // read or logged here — this only flips the awake flag off.
+  try {
+    void setScreenAwakeMode({ enabled: false }).catch(() => {});
+  } catch {
+    // Some platforms/mock reject synchronously — swallow.
+  }
+}
+
 /**
  * Wraps `window.WebSocket` with a relay-origin-scoped observer (issue #478).
  *
@@ -232,6 +351,12 @@ export function installRelayWsObserver(relayUrl: string): void {
   // instead of installing a second Proxy on window.WebSocket.
   window.__ait_relay_ws_observed = true;
 
+  // #748: beforeunload-safe teardown — navigating away restores keepAwake and
+  // clears the surface even if no WS close fired. Registered ONLY here (inside
+  // the observer install, which runs only after a debug attach), so there is
+  // zero behavior change when no debug attach happened. Idempotent + fail-safe.
+  window.addEventListener('pagehide', () => detachDebugSurface(), { once: true });
+
   const NativeWebSocket = window.WebSocket;
   const observed = new Proxy(NativeWebSocket, {
     construct(target, args: unknown[]): object {
@@ -248,13 +373,30 @@ export function installRelayWsObserver(relayUrl: string): void {
       // #730: broadcast generic open/close lifecycle (any close code) so the
       // debug indicator can flip its live badge — additive to the existing
       // 4401-specific branch below, which is untouched.
-      ws.addEventListener('open', () => broadcastRelayWsState('open'));
+      ws.addEventListener('open', () => {
+        broadcastRelayWsState('open');
+        // #748: a (re)connect aborts any pending graceful-detach — a transient
+        // tunnel blip that target.js recovers from must not tear the surface down.
+        cancelScheduledDetach();
+      });
       ws.addEventListener('close', (event) => {
         broadcastRelayWsState('close');
         if ((event as CloseEvent).code === RELAY_AUTH_REJECT_CLOSE_CODE) {
           relayAuthExpired = true;
           notifyAuthExpired();
+          // #748: 4401 is terminal by design (no reconnect without a QR rescan)
+          // — tear down immediately, no grace window.
+          detachDebugSurface();
+        } else {
+          // #748: any other close may be transient — schedule teardown after a
+          // grace window; a reconnect 'open' cancels it.
+          scheduleDetach();
         }
+      });
+      // #748: an error that never emits a clean close still needs teardown
+      // (unclean-close path) — schedule defensively; a recovery 'open' cancels it.
+      ws.addEventListener('error', () => {
+        scheduleDetach();
       });
       return ws;
     },

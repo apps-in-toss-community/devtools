@@ -272,14 +272,32 @@ describe('buildIndicatorExpression', () => {
     expect(expr).toContain('#8a8f98');
   });
 
-  it('embeds the default disconnected label "Debugger Disconnected"', () => {
+  // #748: the default disconnected label is now the ko-primary notice (the
+  // persistent English "Debugger Disconnected" is replaced by a self-dismissing
+  // one). DOM behavior of the notice is covered in
+  // src/mcp/__tests__/indicator-expression.test.ts.
+  it('embeds the ko default disconnected label "디버거 연결 끊김"', () => {
     const expr = buildIndicatorExpression();
-    expect(expr).toContain('Debugger Disconnected');
+    expect(expr).toContain('디버거 연결 끊김');
   });
 
   it('embeds a custom disconnected label', () => {
     const expr = buildIndicatorExpression({ disconnectedLabel: 'Gone' });
     expect(expr).toContain('"Gone"');
+  });
+
+  // #748: the disconnected badge is non-blocking (pointer-events flips off) and
+  // self-dismisses (a timer detaches it), so a run that ends does not leave a
+  // permanent element intercepting taps.
+  it('is non-blocking + self-dismissing in the disconnected state (#748)', () => {
+    const expr = buildIndicatorExpression();
+    // pointer-events is driven off the up/disconnected flag.
+    expect(expr).toContain("c.el.style.pointerEvents = up ? 'auto' : 'none'");
+    // A self-dismiss timer detaches the node after the window.
+    expect(expr).toContain("if (next === 'disconnected')");
+    expect(expr).toContain('removeChild(c.el)');
+    // A reconnect un-removes it (durable controller) rather than duplicating.
+    expect(expr).toContain('c.removed = false');
   });
 
   it('accepts an explicit initial state — disconnected', () => {
