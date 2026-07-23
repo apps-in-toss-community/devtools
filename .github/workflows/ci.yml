@@ -55,12 +55,14 @@ jobs:
       # both 3.0-beta (bare devDep) and the 2.x stable line (web-framework-2x
       # alias). If the alias silently disappears or drifts off the expected
       # version, tsconfig.2x.json would skip silently — fail fast instead of
-      # green-lying. The alias is pinned to 2.10.0 exact (NOT 2.10.x): 2.10.1
-      # has the upstream CodegenTypes type regression (web-bridge imports an
-      # unbuilt raw .ts subpath from native-modules), so the guard must reject
-      # any drift off 2.10.0 — including 2.10.1. Bump this expected version in
-      # lockstep whenever the alias is advanced.
-      - run: 'node -e "const p=require(''@apps-in-toss/web-framework-2x/package.json''); if(!/^2\.10\.0/.test(p.version)){console.error(''2x alias not 2.10.0: ''+p.version);process.exit(1)}"'
+      # green-lying. The alias is pinned to 2.10.7 exact (latest verified-clean
+      # 2.x as of 2026-07): 2.10.1 had the upstream CodegenTypes type regression
+      # (web-bridge imported an unbuilt raw .ts subpath from native-modules),
+      # fixed upstream by 2.10.2 (confirmed clean 2.10.2 through 2.10.7). The
+      # guard rejects any drift off the pinned version — exact pin, not a range,
+      # so every alias bump goes through a PR that re-verifies tsc cleanliness.
+      # Bump this expected version in lockstep whenever the alias is advanced.
+      - run: 'node -e "const p=require(''@apps-in-toss/web-framework-2x/package.json''); if(!/^2\.10\.7$/.test(p.version)){console.error(''2x alias not 2.10.7: ''+p.version);process.exit(1)}"'
 
       - run: pnpm typecheck
 
