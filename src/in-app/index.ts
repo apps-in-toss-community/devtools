@@ -30,6 +30,14 @@ export {
   maybeAttach,
   reportWebViewType,
 } from './attach.js';
+export {
+  BRIDGE_CALL_EVENT,
+  type BridgeLastCall,
+  type BridgeObserverState,
+  type BridgePendingCall,
+  installBridgeObserver,
+  uninstallBridgeObserver,
+} from './bridge-observer.js';
 export { mountEruda, unmountEruda } from './eruda-overlay.js';
 export type { GateInput, GateResult, GateResultAttach, GateResultBlocked } from './gate.js';
 export {

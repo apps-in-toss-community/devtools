@@ -223,6 +223,13 @@ describe('maybeAttach', () => {
     expect(script?.src).toBe('https://relay.example.com:9100/target.js');
   });
 
+  it('installs the native-bridge call observer on attach (#749 — publishes __ait_bridge)', () => {
+    maybeAttach(passResult('wss://abc.trycloudflare.com/'));
+    expect((window as unknown as { __ait_bridge?: unknown }).__ait_bridge).toBeDefined();
+    // Clean the planted global so it does not leak into a later test.
+    (window as unknown as { __ait_bridge?: unknown }).__ait_bridge = undefined;
+  });
+
   // ---------------------------------------------------------------------------
   // TOTP path-prefix transport — page URL `at` param → script src (issue #466)
   // ---------------------------------------------------------------------------
@@ -1011,6 +1018,73 @@ describe('detachDebugSurface (#748)', () => {
     expect(() => detachDebugSurface()).not.toThrow();
     // Flush the swallowed rejection.
     await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detachDebugSurface — #749 teardown wiring (bridge observer + heartbeat stop)
+//
+// The in-app teardown (#748) now also (a) restores the native-bridge observer
+// wraps and drops window.__ait_bridge, and (b) stops the badge's 1 Hz
+// heartbeat/pending interval via the controller's stop() hook — so nothing the
+// #749 signals installed survives a run's end. Imports attach.js AND
+// bridge-observer.js AFTER the same vi.resetModules() so they share one
+// bridge-observer instance (same install/uninstall state).
+// ---------------------------------------------------------------------------
+
+describe('detachDebugSurface — #749 teardown wiring', () => {
+  let detachDebugSurface: () => void;
+  let installBridgeObserver: () => void;
+
+  type BridgeWindow = {
+    __appsInTossNativeBridge?: { callAsyncMethod?: (name: string, params?: unknown) => unknown };
+    __ait_bridge?: unknown;
+    __ait_indicator?: { stop?: () => void };
+  };
+  const bw = (): BridgeWindow => window as unknown as BridgeWindow;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    document.body.innerHTML = '';
+    const framework = await import('@apps-in-toss/web-framework');
+    const setScreenAwakeMode = framework.setScreenAwakeMode as ReturnType<typeof vi.fn>;
+    setScreenAwakeMode.mockClear();
+    setScreenAwakeMode.mockResolvedValue({ enabled: false });
+    ({ detachDebugSurface } = await import('../in-app/attach.js'));
+    ({ installBridgeObserver } = await import('../in-app/bridge-observer.js'));
+  });
+
+  afterEach(() => {
+    bw().__appsInTossNativeBridge = undefined;
+    bw().__ait_bridge = undefined;
+    bw().__ait_indicator = undefined;
+  });
+
+  it('uninstalls the bridge observer — restores the wrap and drops __ait_bridge', () => {
+    const original = (): Promise<unknown> => Promise.resolve();
+    const bridge = { callAsyncMethod: original };
+    bw().__appsInTossNativeBridge = bridge;
+    installBridgeObserver();
+    expect(bw().__ait_bridge).toBeDefined();
+    expect(bridge.callAsyncMethod).not.toBe(original); // wrapped
+
+    detachDebugSurface();
+
+    expect(bw().__ait_bridge).toBeUndefined();
+    expect(bridge.callAsyncMethod).toBe(original); // restored
+  });
+
+  it('stops the badge heartbeat interval via the controller stop() hook', () => {
+    const stop = vi.fn();
+    bw().__ait_indicator = { stop };
+
+    detachDebugSurface();
+
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not throw when neither a controller nor a bridge observer is present', () => {
+    expect(() => detachDebugSurface()).not.toThrow();
   });
 });
 
