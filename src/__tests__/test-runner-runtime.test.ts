@@ -819,6 +819,97 @@ describe('Expectation.toContain — string receiver, substring absent fails (reg
 });
 
 /* -------------------------------------------------------------------------- */
+/* toHaveLength — array/string receiver (devtools#807)                         */
+/* -------------------------------------------------------------------------- */
+
+describe('Expectation.toHaveLength — array receiver, matching length passes', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('9 probes', () => {
+        rg.expect(['a', 'b', 'c']).toHaveLength(3);
+      });
+    });
+  });
+  it('1 passed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('Expectation.toHaveLength — array receiver, mismatched length fails', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('length mismatch', () => {
+        rg.expect(['a', 'b', 'c']).toHaveLength(9);
+      });
+    });
+  });
+  it('1 failed', () => {
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('Expectation.toHaveLength — string receiver, matching length passes', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('hello has length 5', () => {
+        rg.expect('hello').toHaveLength(5);
+      });
+    });
+  });
+  it('1 passed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('Expectation.toHaveLength — string receiver, mismatched length fails', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('hello does not have length 3', () => {
+        rg.expect('hello').toHaveLength(3);
+      });
+    });
+  });
+  it('1 failed', () => {
+    expect(report.failed).toBe(1);
+  });
+});
+
+describe('Expectation.toHaveLength — not.toHaveLength passes on mismatch', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('not 3', () => {
+        rg.expect(['a', 'b']).not.toHaveLength(3);
+      });
+    });
+  });
+  it('1 passed', () => {
+    expect(report.passed).toBe(1);
+    expect(report.failed).toBe(0);
+  });
+});
+
+describe('Expectation.toHaveLength — receiver without a numeric length fails', () => {
+  let report: RunReport;
+  beforeAll(async () => {
+    report = await run(() => {
+      rg.it('object has no length', () => {
+        rg.expect({ a: 1 }).toHaveLength(1);
+      });
+    });
+  });
+  it('1 failed', () => {
+    expect(report.failed).toBe(1);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
 /* State reset between runTestModule calls                                     */
 /* -------------------------------------------------------------------------- */
 
