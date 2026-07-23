@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.1.142
+
+### Patch Changes
+
+- dbe07ec: `web-framework-2x` alias를 `2.10.0` → `2.10.7`(2.x 최신) exact pin으로 갱신 — devDep-only 변경이지만 pin이 곧 "이 버전까지 2.x 호환을 검증했다"는 claim이라 peer-compat-claim surface에 대해 patch changeset을 남긴다(#638 선례와 동일 원칙).
+
+  `2.10.1`의 upstream type regression(`@apps-in-toss/web-bridge@2.10.1`이 `@apps-in-toss/native-modules`의 미빌드 raw `.ts` subpath를 import해 `tsc`가 `spec/MiniAppModule.brick.ts`의 `CodegenTypes`(RN 0.80+ export, 트랜지티브 RN 0.72.6엔 부재)에서 실패)는 **2.10.2에서 이미 해소**됐다. `2.10.0`으로의 회피 핀은 더 이상 필요 없다 — 검증한 버전 매트릭스:
+
+  | 버전   | `tsc -p tsconfig.2x.json`              |
+  | ------ | -------------------------------------- |
+  | 2.10.0 | clean                                  |
+  | 2.10.1 | **FAIL** (`CodegenTypes` not exported) |
+  | 2.10.2 | clean                                  |
+  | 2.10.4 | clean                                  |
+  | 2.10.7 | clean (최신, 이번 pin 대상)            |
+
+  `ci.yml`의 lockstep 가드를 `2.10.7`로, `CLAUDE.md`의 alias pin 정책 문단과 `__typecheck-2x.ts` 헤더 주석의 버전 언급도 함께 갱신. `__typecheck-2x.ts`의 `getConsentedUserData` 등 기존 assertion은 2.10.7 기준으로도 그대로 유효(신규 표면 변경 없음, 전체 typecheck clean으로 확인).
+
+  런타임 동작 변화 없음. 검증: `pnpm build`·`pnpm typecheck`(4개 라인)·`pnpm test`(113 files / 2565 tests)·`pnpm lint`·`check:mcp-react-free`·`check:debug-surface-absent` 모두 EXIT:0.
+
+- c2d9764: env3 러너/대시보드에 "테스트 완료까지 앱 전면 유지" 안내 추가 — 2026-07-08 실기기 관측(46/8/6 부분 run vs 78/0/13 클린 완주)으로 원인이 확정된 백그라운드 suspend 연쇄 실패(iOS WebView JS suspend → evaluate 60s 타임아웃 → relay WS 사망 → 잔여 파일 전연쇄 실패)에 대한 사전 안내. 원인이 사용자 행동이라 suspend 감지/재개 로직 대신 안내 한 줄로 대응(Page visibility 신호가 relay 죽음과 동시에 끊기므로 사전 안내가 실효적 해법).
+
+  - QR 대시보드(attach 페이지) 스캔 절차에 마지막 단계로 추가 — sandbox(env 2, `attach.sandbox.step4`)·intoss(env 3, `attach.intoss.step5`) 양쪽 family, ko/en 모두.
+  - `devtools-test` CLI의 러너 터미널 출력(scan-wait 배너) — `attach-orchestrator.ts`의 공유 `header`에 한 줄 추가, `start_attach` MCP 도구 결과와 CLI 표준출력 양쪽에 동일하게 실림.
+  - (선택) evaluate 타임아웃이 재시도까지 실패했을 때의 최종 에러 메시지에 진단 힌트 추가(`relay-worker.ts`) — "기기 앱이 백그라운드로 갔을 수 있음"을 덧붙여 사후 진단을 빠르게.
+
+  Closes #766.
+
+- 22653eb: in-app 디버그 표면에 graceful detach 추가 — run 종료 시 우리가 주입한 오버레이·상태를 정리해 미니앱을 조작 가능 상태로 되돌린다 (#748).
+
+  run7 실기기 관측(디버그 세션 종료 후 "Debugger Disconnected" 잔존)의 (b)-가설 코드 원인은 우리 표면 3건이었다: ① CDP로 주입된 `#__ait_debug_indicator` 배지가 종료 후 영구 잔존(`attach-orchestrator.ts` `buildIndicatorExpression`가 렌더, `relay-factory.ts` `close()`가 disconnected로만 바꾸고 제거는 안 함), ② eruda 인-페이지 콘솔이 unmount 없이 잔존, ③ keepAwake가 `beforeunload`에서만 복구돼 세션 종료(비-unload) 시 화면이 계속 awake.
+
+  - **배지**(`buildIndicatorExpression`): disconnected 상태를 non-blocking(`pointer-events:none` 즉시)·self-dismissing(창 이후 fade→DOM 제거)으로 변경. 재연결(`ait:relay-ws-state` open) 시 self-dismiss 취소·재마운트(transient 터널 blip은 배지를 날리지 않음), 컨트롤러는 유지돼 재주입 시 `window.WebSocket` 이중 래핑 없음. 기본 disconnected 라벨을 ko-primary `디버거 연결 끊김`으로.
+  - **in-app**(`attach.ts` `detachDebugSurface()`): 단일 idempotent·비-throw 정리 함수. 배지 제거 + eruda unmount(`unmountEruda()`) + keepAwake 복구. relay WS 종료의 모든 경로에 배선 — 비-4401 종료는 grace window 후(재연결 시 취소), 4401(TOTP 만료=종결)은 즉시, `error`는 방어적 스케줄, `pagehide`는 즉시(beforeunload-safe). `#478` fail-fast 보존을 위해 WS observer proxy는 의도적으로 유지.
+
+  경계(가설 a): 스피너 + 전체 터치 무반응은 우리 레이어 밖 — 우리 표면은 full-viewport 요소·body 스크롤/pointer 잠금·capture-phase 리스너가 없어 구조적으로 모든 입력을 흡수할 수 없다. 네이티브 토스 앱 오버레이는 JS로 해제 불가라 시도하지 않고 코드 주석으로 명시. 실기기 run7 재현 확인은 폰-게이트라 다음 env3 세션에서 검증 예정.
+
+- 8640e65: in-app 디버그 indicator에 freeze/스피너 출처 판별 신호 3종 추가 — 실기기 스피너가 (i) 네이티브 브리지 호출 대기인지 (ii) 미니앱 자체 UI인지 (iii) JS 메인스레드 멈춤인지를 배지에서 한눈에 구별 (#749).
+
+  run7 사후, 사용자가 스피너 출처를 구별할 수 없다고 지적했으나 in-app 디버그 표면엔 판별 정보가 없었다. debug 빌드 한정으로 #804 배지(`buildIndicatorExpression`)를 확장해 세 신호를 노출한다:
+
+  - **Pending 브리지 호출**(`⏳ <API명> <경과>s`): 진행 중인 네이티브 호출을 API명·실시간 경과와 함께. 관측 지점은 새 `src/in-app/bridge-observer.ts`가 잡는다 — mock의 `observe()`/`aitState.sdkCallLog`는 **mock SDK만** 감싸므로 env3(실 토스 WebView) 실 SDK 호출을 못 본다(run7이 벌어진 지점). 모든 실 async 브리지 호출이 지나는 단일 choke point를 래핑한다: 3.0 라인은 `window.__appsInTossNativeBridge.callAsyncMethod`(네이티브 Promise 반환 → 한 훅에서 pending→settle 전체 수명), 2.x 라인은 단일 dispatcher가 없어 START를 `ReactNativeWebView.postMessage`, SETTLE을 `__GRANITE_NATIVE_EMITTER.emit('<m>/resolve|reject/<id>')`에서. version-agnostic — GA flip 2.x↔3.0에 흔들리지 않는다.
+  - **Main-thread 하트비트**: compositor 구동 pulse dot(`Element.animate`, JS jank 중에도 계속 도는 opacity 애니메이션) **+** JS 구동 `♥<beats>` 토큰(1 Hz `setInterval`). `CSS pulse 살아있음 + ♥ 정지 = JS 메인스레드 멈춤`. CSS 애니메이션은 compositor라 freeze여도 돌기 때문에 하트비트는 반드시 JS 구동이어야 한다는 이슈의 핵심 통찰을 그대로 반영. 오버헤드는 초당 텍스트 1회 write(레이아웃 thrash 없음).
+  - **마지막 SDK 호출 스탬프**(`last: <API명> <벽시계>`): 가장 최근 호출의 API명 + 시각. `⏳ 없고 하트비트 정상 = 앱 자체 UI`.
+
+  triage 매핑(`⏳ 대기 = 토스앱 스피너 · ♥ 정지 = JS 멈춤 · ⏳ 없고 ♥ 정상 = 앱 UI`)은 배지 `title` 툴팁에 명시.
+
+  - **#804 lifecycle 통합**: 1 Hz 인터벌은 컨트롤러(`c.hb`)에 저장되고 `c.stop()`(detach 시 호출)·self-dismiss 제거·노드 detach(다음 tick self-clear) 모두에서 정리 — detach 이후 타이머 leak 없음. `detachDebugSurface()`(attach.ts)가 배지 `stop()` + `uninstallBridgeObserver()`(브리지 래핑 복구 + `window.__ait_bridge` 제거)를 함께 수행.
+  - **SECRET-HANDLING**: API **명**과 타이밍만 노출 — 호출 인자/결과는 절대 기록·표시하지 않는다(토큰·URL·유저 데이터 유출 방지). outbound 파서는 `type`/`name`/`functionName`/`callbackId`/`eventId`만 읽고 `params`/`args`는 건드리지 않는다. relay wss/TOTP/tunnel 값은 배지 표현식에 전무.
+  - **debug 빌드 한정**: 전량 in-app 그래프(`maybeAttach` 경유)에 있어 release 빌드에서 DCE — `check:debug-surface-absent`(release 번들 0 bytes) green 유지, 프로덕션 영향 0.
+
+  env2(mock)/브리지 부재 컨텍스트에선 pending/last 라인이 비고 하트비트만 렌더돼 graceful. 실기기 triage 실효성 검증은 폰-게이트라 다음 env3 세션에서 확인 예정.
+
+  Refs #749.
+
+- adab590: `getConsentedUserData` mock 추가 — `@apps-in-toss/web-framework` 2.x stable 라인에만 존재하는 export(3.0-beta 표면엔 부재, `PermissionError`의 역비대칭)를 mock 표면에 반영. `appLogin`/`getAnonymousKey` async-bridge 패턴을 미러해 `aitState.state.auth.consentedUserData`(기본 `{ USER_NAME: 'mock-user-name' }`, `aitState.patch('auth', …)`로 dial)를 resolve. 타입 asymmetry는 기존 `AssertIfPresent`로 처리(3.0-beta는 skip, 2.x는 strict `AssertCompat` 게이트) — `as unknown as` 캐스트 불필요(선언 shape를 로컬 재선언, 반환값이 선언 타입 내부라 구조적 호환). 다운스트림 sdk-example 배선은 sdk-example#331. Closes #798.
+
 ## 0.1.141
 
 ### Patch Changes
