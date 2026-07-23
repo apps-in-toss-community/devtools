@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.143
+
+### Patch Changes
+
+- 767834b: env3(실기기) 재캡처(web-framework 2.10.0 × iOS)에서 실측된 mock↔런타임 불일치 3건을 닫음(#775 원칙 확장) — 전부 상류 SDK의 type↔runtime 불일치, mock 품질 결함 아님.
+
+  - (A) `getSchemeUri`(`src/mock/navigation/index.ts`) — 상류 타입 선언은 동기지만 실기기는 Promise를 반환한다. 선언 타입은 그대로 두고 반환값만 `Promise.resolve(...)`로 감싸 캐스트(#796과 동일 패턴). 같은 accessor군의 `getGroupId`/`getTossAppVersion`/`getAppsInTossGlobals`/`env.getDeploymentId`는 이번 run에서도 미측정이라 손대지 않음(#783).
+  - (B) `loadFullScreenAd.isSupported`(`src/mock/ads/index.ts`) — 상류가 타입에는 선언하지만 실기기 런타임에는 부착하지 않는다(`fetchContacts.getPermission` 부재, #795 (B)와 동일 family). `withIsSupported()` 대신 bare fn을 상류 타입으로 캐스트해 접근 시 `undefined`, 호출 시 native `TypeError`로 떨어지도록 재현. `showFullScreenAd`/`GoogleAdMob.*`은 미측정이라 확장하지 않음(#783).
+  - (C) `requestNotificationAgreement`(`src/mock/notification.ts`) — 실기기는 cancel 함수가 아니라 object를 반환한다. 반환 object의 내부 shape은 미측정이라 "함수가 아니라 object"까지만 정렬, 빈-계약 object로 캐스트.
+
+  Refs #806, #775, #795, #796, #783.
+
+- 18cad50: `devtools-test` runner의 on-device expect shim에 `toHaveLength(n)` matcher를 추가한다 — Vitest 의미론과 동일하게 `received.length === n`을 배열·문자열·유사배열에 대해 검사한다. 그동안 미구현이라 `expect(arr).toHaveLength(n)`을 쓰는 소비자 테스트가 env1(Vitest)에서는 통과하고 env3(실기기 runner)에서만 `toHaveLength is not a function`으로 실패했다 — harness 결함이지 device 발견이 아니었는데도 env3 리포트의 fail 카운트를 오염시켰다.
+
+  `src/test-runner/runtime.ts`의 `Expectation` 클래스에 매칭 케이스(성공/실패/`not.toHaveLength`/길이 없는 receiver)를 추가하고, `src/__tests__/test-runner-runtime.test.ts`에 회귀 테스트를 추가했다.
+
+  검증: `pnpm build`·`pnpm typecheck`(4개 라인)·`pnpm test`(113 files / 2571 tests)·`pnpm lint` 모두 EXIT:0.
+
 ## 0.1.142
 
 ### Patch Changes
