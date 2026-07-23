@@ -513,6 +513,16 @@ class Expectation {
       `Expected typeof "${typeStr}", received "${typeof this.#received}"`,
     );
   }
+
+  // ---- New matcher (devtools#807) -------------------------------------------
+
+  toHaveLength(n: number): void {
+    const length = (this.#received as { length?: unknown } | null | undefined)?.length;
+    this.#assert(
+      typeof length === 'number' && length === n,
+      `Expected length ${n}, received ${typeof length === 'number' ? length : String(this.#received)}`,
+    );
+  }
 }
 
 /**
