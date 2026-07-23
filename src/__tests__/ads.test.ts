@@ -459,6 +459,21 @@ describe('Ads mock', () => {
       expect(aitState.state.sdkCallLog.some((e) => e.method === 'loadFullScreenAd')).toBe(true);
     });
 
+    // devtools#806: 실기기(2.x×iOS)엔 loadFullScreenAd에 .isSupported가 런타임에
+    // 붙어있지 않다 — 상류가 타입에만 선언하고 런타임엔 부착하지 않는 type↔runtime
+    // 불일치(fetchContacts.getPermission 부재, devtools#795 (B)와 동일 family).
+    // showFullScreenAd/GoogleAdMob.*의 isSupported 부재는 측정 밖 추론이라
+    // 건드리지 않는다(#783).
+    it('isSupported가 부착되어 있지 않다 (실기기 실측)', () => {
+      expect((loadFullScreenAd as { isSupported?: unknown }).isSupported).toBeUndefined();
+    });
+
+    it('isSupported() 호출은 native TypeError를 던진다 (실기기 실측)', () => {
+      expect(() =>
+        (loadFullScreenAd as unknown as { isSupported: () => boolean }).isSupported(),
+      ).toThrow(TypeError);
+    });
+
     describe('실패-모드 다이얼 (devtools#770)', () => {
       it('failureModes.loadFullScreenAd 미설정 시 기존처럼 happy-load된다', async () => {
         const onEvent = vi.fn();

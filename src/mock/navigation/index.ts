@@ -101,11 +101,12 @@ requestReview.isSupported = () => true;
 // --- 환경 정보 ---
 
 /**
- * 아래 5개 함수(`getPlatformOS`/`getOperationalEnvironment`/`isMinVersionSupported`/
- * `getLocale`/`getDeviceId`) + 이 파일 하단의 `getSafeAreaInsets`는 실기기(2.x×iOS)
- * capture에서 전부 **Promise를 반환**함이 확인됐다(devtools#795 — sdk-example
- * type-probe 실측). 그런데 상류 `.d.ts`는 이 6개를 전부 **동기**로 선언한다 —
- * 선언과 런타임이 어긋난 상류 타입 버그다.
+ * 아래 6개 함수(`getPlatformOS`/`getOperationalEnvironment`/`isMinVersionSupported`/
+ * `getSchemeUri`/`getLocale`/`getDeviceId`, `getSchemeUri`는 devtools#806) + 이
+ * 파일 최하단의 `getSafeAreaInsets`는 실기기(2.x×iOS) capture에서 전부
+ * **Promise를 반환**함이 확인됐다(devtools#795/#806 — sdk-example type-probe
+ * 실측). 그런데 상류 `.d.ts`는 이 함수들을 전부 **동기**로 선언한다 — 선언과
+ * 런타임이 어긋난 상류 타입 버그다.
  *
  * mock은 타입 선언이 아니라 런타임 실측을 재현해야 개발자가 env1(브라우저)에서
  * 겪는 동작이 env3(실기기)와 같아진다(#775 원칙 — Analytics·setClipboardText·
@@ -114,8 +115,11 @@ requestReview.isSupported = () => true;
  * 반환값만 `Promise.resolve(...)`로 감싸 기존 시그니처로 캐스트한다 — 선언 타입이
  * 안 바뀌므로 런타임 Promise는 tsc에 보이지 않는다.
  *
- * `getTossAppVersion`/`getSchemeUri`/`getGroupId`는 이 이슈에서 실측되지 않아
- * (#783 "측정 밖 확장 금지") 동기 그대로 둔다.
+ * `getTossAppVersion`/`getGroupId`/`getAppsInTossGlobals`/`env.getDeploymentId`는
+ * devtools#806 env3 재캡처에서도 여전히 미측정이다 — environment 테스트가
+ * `getSchemeUri` 단언에서 조기 실패해 뒤 4개 accessor 캡처가 애초에 안 떨어졌다.
+ * 같은 async 축일 가능성은 있으나 관측 전까지 손대지 않는다(#783 "측정 밖 확장
+ * 금지").
  */
 export function getPlatformOS(): 'ios' | 'android' {
   return Promise.resolve(aitState.state.platform) as unknown as 'ios' | 'android';
@@ -151,7 +155,10 @@ function computeIsMinVersionSupported(minVersions: { android: string; ios: strin
 }
 
 export function getSchemeUri(): string {
-  return aitState.state.schemeUri || window.location.pathname;
+  const result = aitState.state.schemeUri || window.location.pathname;
+  // 실기기는 Promise 반환, 타입은 동기 — 위 "환경 정보" 섹션 상단 주석 참조
+  // (devtools#806).
+  return Promise.resolve(result) as unknown as string;
 }
 
 export function getLocale(): string {

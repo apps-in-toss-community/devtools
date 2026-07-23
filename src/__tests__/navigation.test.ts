@@ -87,10 +87,10 @@ describe('Navigation mock', () => {
     expect(getTossAppVersion()).toBe('5.240.0');
   });
 
-  it('getSchemeUri: 상태의 schemeUri를 반환한다', () => {
-    expect(getSchemeUri()).toBe('/');
+  it('getSchemeUri: 상태의 schemeUri를 반환한다 (Promise, devtools#806)', async () => {
+    expect(await getSchemeUri()).toBe('/');
     aitState.update({ schemeUri: '/test' });
-    expect(getSchemeUri()).toBe('/test');
+    expect(await getSchemeUri()).toBe('/test');
   });
 
   it('getLocale: 상태의 locale을 반환한다 (Promise, devtools#795)', async () => {

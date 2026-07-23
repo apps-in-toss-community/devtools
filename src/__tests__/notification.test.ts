@@ -22,6 +22,21 @@ describe('Notification mock', () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  // devtools#806: 실기기(2.x×iOS)는 cancel 함수가 아니라 object를 반환한다(env3
+  // 재캡처, "Expected function, received object"). object 내부 shape은
+  // 미측정이므로(#783) "함수가 아니라 object"까지만 정렬한다 — 이 테스트가 과거
+  // 재현하던 "cancel 함수 반환"은 비충실했다.
+  it('반환값이 함수가 아니라 object다 (실기기 실측)', () => {
+    const result = requestNotificationAgreement({
+      options: { templateCode: 'tmpl' },
+      onEvent: vi.fn(),
+      onError: vi.fn(),
+    });
+
+    expect(typeof result).toBe('object');
+    expect(result).not.toBeNull();
+  });
+
   describe('실패-모드 다이얼 (devtools#783)', () => {
     it('failureModes.requestNotificationAgreement 미설정 시 기존처럼 onEvent 경로를 탄다', async () => {
       const onEvent = vi.fn();
