@@ -311,35 +311,54 @@ export const TossAds = createMockProxy('TossAds', {
 
 // --- FullScreen Ad ---
 
-export const loadFullScreenAd = withIsSupported(
-  observe(
-    'loadFullScreenAd',
-    'faithful',
-    (args: {
-      options: LoadFullScreenAdOptions;
-      onEvent: (event: LoadFullScreenAdEvent) => void;
-      onError: (error: unknown) => void;
-    }): (() => void) => {
-      setTimeout(() => {
-        // 실패-모드 다이얼 (devtools#770): aitState.patch('failureModes',
-        // { loadFullScreenAd: 'EXECUTION_ERROR' })로 실기기 프로비저닝 실패를 재현한다.
-        // 미설정 시 forceNoFill/happy-load 기존 동작 그대로.
-        const failureCode = aitState.state.failureModes.loadFullScreenAd;
-        if (failureCode) {
-          args.onError(buildNativeError(failureCode));
-          return;
-        }
-        if (aitState.state.ads.forceNoFill) {
-          args.onError(new Error('No fill'));
-          return;
-        }
-        aitState.patch('ads', { isLoaded: true });
-        args.onEvent({ type: 'loaded' });
-      }, 200);
-      return () => {};
-    },
-  ),
+/**
+ * 상류 SDK는 `loadFullScreenAd`의 타입에 `.isSupported`를 부착 시그니처로
+ * 선언하지만, 실기기(2.x×iOS)에는 그 메서드가 **런타임에 붙어 있지 않다**
+ * (devtools#806 — env3 재캡처, `loadFullScreenAd.isSupported is not a function`
+ * native TypeError). `fetchContacts.getPermission` 부재(devtools#795 (B),
+ * `src/mock/device/contacts.ts`)와 동일 family — 상류가 타입으로만 선언하고
+ * 런타임엔 안 붙인다.
+ *
+ * 측정된 것은 `loadFullScreenAd` 1건뿐이다(env3 테스트가 첫 번째 함수에서
+ * 실패해 뒤 함수들은 미측정). `showFullScreenAd`/`GoogleAdMob.*`의 `isSupported`
+ * 부재는 추론이지 관측이 아니므로 건드리지 않는다(#783 "측정 밖 확장 금지").
+ *
+ * mock은 다른 광고 API처럼 `withIsSupported()`로 감싸지 않고, bare fn을 상류
+ * 시그니처로만 캐스트한다 — `.isSupported` 접근은 `undefined`가 되고, 호출하면
+ * `undefined()` → native TypeError로 떨어져 실기기와 일치한다(`__typecheck.ts`/
+ * `__typecheck-2x.ts`는 캐스트 타입에 `isSupported`가 여전히 남아 있어 그대로
+ * 통과).
+ */
+const _loadFullScreenAdImpl = observe(
+  'loadFullScreenAd',
+  'faithful',
+  (args: {
+    options: LoadFullScreenAdOptions;
+    onEvent: (event: LoadFullScreenAdEvent) => void;
+    onError: (error: unknown) => void;
+  }): (() => void) => {
+    setTimeout(() => {
+      // 실패-모드 다이얼 (devtools#770): aitState.patch('failureModes',
+      // { loadFullScreenAd: 'EXECUTION_ERROR' })로 실기기 프로비저닝 실패를 재현한다.
+      // 미설정 시 forceNoFill/happy-load 기존 동작 그대로.
+      const failureCode = aitState.state.failureModes.loadFullScreenAd;
+      if (failureCode) {
+        args.onError(buildNativeError(failureCode));
+        return;
+      }
+      if (aitState.state.ads.forceNoFill) {
+        args.onError(new Error('No fill'));
+        return;
+      }
+      aitState.patch('ads', { isLoaded: true });
+      args.onEvent({ type: 'loaded' });
+    }, 200);
+    return () => {};
+  },
 );
+export const loadFullScreenAd = _loadFullScreenAdImpl as typeof _loadFullScreenAdImpl & {
+  isSupported: () => boolean;
+};
 
 export const showFullScreenAd = withIsSupported(
   observe(
